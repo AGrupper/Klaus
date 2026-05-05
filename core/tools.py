@@ -206,7 +206,7 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
 # I/O (e.g. during tests or early import cycles). The singletons are
 # built on the first actual tool call, not at module load time.
 
-from core.auth_google import GoogleAuthManager          # noqa: E402 (post-constant import)
+from core.auth_google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402 (post-constant import)
 from mcp_tools.gmail_tool import GmailTool              # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from memory.firestore_db import FirestoreQueue          # noqa: E402
@@ -223,19 +223,14 @@ _things_queue_writer: ThingsQueueWriter | None = None
 def _get_auth_manager() -> GoogleAuthManager:
     """Return the shared GoogleAuthManager, constructing it on first call.
 
-    Reads credential paths from environment variables so the singleton
-    works in both local dev (config/ dir) and cloud deployments.
+    Delegates construction entirely to `build_auth_manager_from_env()`, which
+    selects the correct token storage backend (file vs. Secret Manager) based
+    on the `GOOGLE_TOKEN_STORAGE` env var. This makes the singleton work in
+    both local dev and Cloud Run without any code changes here.
     """
     global _auth_manager
     if _auth_manager is None:
-        credentials_path = os.getenv(
-            "GOOGLE_APPLICATION_CREDENTIALS", "./config/credentials.json"
-        )
-        token_path = os.getenv("GOOGLE_TOKEN_PATH", "./config/token.json")
-        _auth_manager = GoogleAuthManager(
-            credentials_path=credentials_path,
-            token_path=token_path,
-        )
+        _auth_manager = build_auth_manager_from_env()
     return _auth_manager
 
 
