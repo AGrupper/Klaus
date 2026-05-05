@@ -63,7 +63,7 @@ jobs:
           # --allow-unauthenticated: REQUIRED for the same reason — Telegram
           #   cannot attach a Google-signed IAM token to its requests.
           #   Security is enforced by validating the X-Telegram-Bot-Api-Secret-Token
-          #   header on every incoming webhook (see interfaces/telegram_webhook.py).
+          #   header on every incoming webhook (see interfaces/web_server.py).
           #
           # --min-instances 0: scale-to-zero — at personal usage volumes the
           #   service is idle most of the time, keeping cost near-zero.
