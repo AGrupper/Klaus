@@ -1,0 +1,33 @@
+# =====================================================================
+# Klaus — Personal Hybrid Agent
+# Python 3.11+
+# =====================================================================
+
+# --- Google OAuth & APIs (Phase 1: Auth & scaffolding) ---
+google-auth>=2.30
+google-auth-oauthlib>=1.2
+google-auth-httplib2>=0.2
+google-api-python-client>=2.140    # Gmail + Calendar service builders
+
+# --- Cloud state (Firestore: Things 3 queue + user profile) ---
+google-cloud-firestore>=2.18
+
+# --- Vector memory (Pinecone: unstructured RAG) ---
+# NOTE: the legacy 'pinecone-client' package is deprecated; the new SDK is 'pinecone'.
+pinecone>=5.0
+
+# --- LLM SDKs (dual-model architecture + universal fallback) ---
+anthropic>=0.40                    # Likely main "Smart" agent (Claude)
+google-genai>=1.0                  # Gemini Flash router (fast/cheap) — new official SDK (google-generativeai is deprecated)
+openai>=1.50                       # OpenAI-compatible protocol = lingua franca for self-hosted models (e.g. Hermes)
+
+# --- MCP tool definitions ---
+mcp>=1.0                           # Official MCP Python SDK
+
+# --- Interface (Phase 1: Telegram) ---
+python-telegram-bot>=21.0
+
+# --- Runtime utilities ---
+python-dotenv>=1.0
+requests>=2.32
+tzdata>=2024.1                     # Timezone database for zoneinfo (needed on Linux/Cloud Run)

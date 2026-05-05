@@ -1,0 +1,62 @@
+# =====================================================================
+# Klaus — Personal Hybrid Agent
+# .gitignore — protect secrets, keep the repo clean
+# =====================================================================
+
+# ---------- Secrets & credentials (NEVER commit) ----------
+.env
+.env.*
+!.env.example
+
+# Whole config/ dir is treated as secret material; only the README is tracked.
+config/*
+!config/README.md
+
+# Loose credential files anywhere in the tree, just in case.
+credentials.json
+token.json
+*.pickle
+service-account*.json
+
+# ---------- Python build / cache artifacts ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- macOS & IDE noise ----------
+.DS_Store
+.AppleDouble
+.LSOverride
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ---------- Logs & local databases ----------
+*.log
+logs/
+*.sqlite
+*.sqlite3
+.firebase/
+
+# ---------- Git worktrees ----------
+.worktrees/
