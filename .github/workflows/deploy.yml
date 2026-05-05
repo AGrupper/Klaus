@@ -1,0 +1,101 @@
+name: Deploy Klaus to Cloud Run
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# id-token: write is REQUIRED for Workload Identity Federation.
+# GitHub Actions mints a short-lived OIDC token that Google's WIF pool
+# exchanges for temporary GCP credentials — no long-lived service-account
+# JSON keys are ever stored in this repository.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    # Defining IMAGE here avoids repeating the full tag in every step.
+    env:
+      IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/klaus/agent:${{ github.sha }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # Exchange the GitHub OIDC token for short-lived GCP credentials.
+      # The WIF provider is scoped to this exact repo via attribute.repository,
+      # so no other repo can impersonate the deployer SA.
+      - name: Authenticate to Google Cloud (WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Configures Docker's credential helper so subsequent docker push calls
+      # are automatically authenticated against Artifact Registry.
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: Build Docker image
+        run: docker build -t "$IMAGE" .
+
+      - name: Push Docker image to Artifact Registry
+        run: docker push "$IMAGE"
+
+      - name: Deploy to Cloud Run
+        run: |
+          # --service-account: runs as the runtime SA (datastore.user +
+          #   secretmanager.secretAccessor + logging.logWriter).
+          #   GOOGLE_APPLICATION_CREDENTIALS is intentionally absent from
+          #   --set-env-vars: Cloud Run injects ADC automatically via the
+          #   metadata server when a runtime SA is attached.
+          #
+          # --ingress all: REQUIRED — Telegram's webhook POSTs come from the
+          #   public Internet, not from within the VPC.
+          #
+          # --allow-unauthenticated: REQUIRED for the same reason — Telegram
+          #   cannot attach a Google-signed IAM token to its requests.
+          #   Security is enforced by validating the X-Telegram-Bot-Api-Secret-Token
+          #   header on every incoming webhook (see interfaces/telegram_webhook.py).
+          #
+          # --min-instances 0: scale-to-zero — at personal usage volumes the
+          #   service is idle most of the time, keeping cost near-zero.
+          #
+          # --timeout 60: generous for a single LLM + tool-call round trip.
+          #
+          # Worker-count / --concurrency is omitted: the Dockerfile CMD already
+          # passes --workers to uvicorn, keeping that concern in one place.
+          gcloud run deploy klaus-agent \
+            --image "$IMAGE" \
+            --region "${{ secrets.GCP_REGION }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --service-account "klaus-runtime@${{ secrets.GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --ingress all \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 2 \
+            --cpu 1 \
+            --memory 512Mi \
+            --timeout 60 \
+            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,FIRESTORE_DATABASE=klaus-firestore,FIRESTORE_COLLECTION_THINGS_QUEUE=things_queue,SMART_AGENT_BACKEND=anthropic,SMART_AGENT_MODEL=claude-opus-4-7,WORKER_AGENT_BACKEND=gemini,WORKER_AGENT_MODEL=gemini-2.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }}" \
+            --update-secrets "SMART_AGENT_API_KEY=klaus-anthropic-key:latest,WORKER_AGENT_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest" \
+            --quiet
+
+      # Fetch the live URL and hit /healthz to confirm the new revision is
+      # serving traffic before the workflow reports success.
+      # --quiet suppresses verbose gcloud output; the curl exit code confirms success.
+      - name: Smoke-test health endpoint
+        run: |
+          SERVICE_URL=$(gcloud run services describe klaus-agent \
+            --region "${{ secrets.GCP_REGION }}" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --format 'value(status.url)')
+          echo "Service URL: ${SERVICE_URL}"
+          curl --fail --silent --show-error "${SERVICE_URL}/healthz"
