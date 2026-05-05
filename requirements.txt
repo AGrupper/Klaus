@@ -11,6 +11,7 @@ google-api-python-client>=2.140    # Gmail + Calendar service builders
 
 # --- Cloud state (Firestore: Things 3 queue + user profile) ---
 google-cloud-firestore>=2.18
+google-cloud-secret-manager>=2.20  # OAuth token persistence on Cloud Run
 
 # --- Vector memory (Pinecone: unstructured RAG) ---
 # NOTE: the legacy 'pinecone-client' package is deprecated; the new SDK is 'pinecone'.
@@ -21,11 +22,10 @@ anthropic>=0.40                    # Likely main "Smart" agent (Claude)
 google-genai>=1.0                  # Gemini Flash router (fast/cheap) — new official SDK (google-generativeai is deprecated)
 openai>=1.50                       # OpenAI-compatible protocol = lingua franca for self-hosted models (e.g. Hermes)
 
-# --- MCP tool definitions ---
-mcp>=1.0                           # Official MCP Python SDK
-
-# --- Interface (Phase 1: Telegram) ---
+# --- Interface ---
 python-telegram-bot>=21.0
+fastapi>=0.115                     # Cloud Run webhook server
+uvicorn[standard]>=0.30            # ASGI server for FastAPI
 
 # --- Runtime utilities ---
 python-dotenv>=1.0
