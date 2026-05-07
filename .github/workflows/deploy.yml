@@ -88,7 +88,7 @@ jobs:
             --update-secrets "SMART_AGENT_API_KEY=klaus-anthropic-key:latest,WORKER_AGENT_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest" \
             --quiet
 
-      # Fetch the live URL and hit /healthz to confirm the new revision is
+      # Fetch the live URL and hit /health to confirm the new revision is
       # serving traffic before the workflow reports success.
       # --quiet suppresses verbose gcloud output; the curl exit code confirms success.
       - name: Smoke-test health endpoint
@@ -98,4 +98,4 @@ jobs:
             --project "${{ secrets.GCP_PROJECT_ID }}" \
             --format 'value(status.url)')
           echo "Service URL: ${SERVICE_URL}"
-          curl --fail --silent --show-error "${SERVICE_URL}/healthz"
+          curl --fail --silent --show-error "${SERVICE_URL}/health"

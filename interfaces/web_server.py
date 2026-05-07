@@ -121,7 +121,7 @@ app = FastAPI(
 # Routes                                                              #
 # ------------------------------------------------------------------ #
 
-@app.get("/healthz")
+@app.get("/health")
 async def health_check() -> JSONResponse:
     """Liveness and startup probe used by Cloud Run.
 
