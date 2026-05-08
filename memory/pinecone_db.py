@@ -148,6 +148,11 @@ class MemoryStore:
             from google import genai
             # WHY: reuse the Worker Agent API key — same Gemini key already
             # provisioned in both local .env and Cloud Run Secret Manager.
+            # WHY api_version="v1": text-embedding-004 is only available in the
+            # stable v1 API; the SDK defaults to v1beta which returns 404.
             api_key = os.environ["WORKER_AGENT_API_KEY"]
-            self._genai = genai.Client(api_key=api_key)
+            self._genai = genai.Client(
+                api_key=api_key,
+                http_options={"api_version": "v1"},
+            )
         return self._genai
