@@ -3,7 +3,8 @@
 Defines the full set of tools available to the agent in Anthropic's tool_use
 JSON format.  Phase 3 replaced the Gmail/Calendar mock handlers with real
 Google API calls.  Phase 4 replaced the add_task mock with a real Firestore
-queue via `FirestoreQueue` and `ThingsQueueWriter`.
+queue via `FirestoreQueue` and `ThingsQueueWriter`.  Phase 6 adds remember
+and recall tools for long-term Pinecone-backed memory.
 
 Switching tool backends requires only editing this file — the orchestrator,
 LLM client, and callers do not need to change.
@@ -12,11 +13,30 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import timezone, timedelta
 
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
+
+# Thread-local storage for the current user_id, set by AgentOrchestrator
+# before each handle_message call so memory handlers can scope queries correctly.
+_thread_local = threading.local()
+
+
+def set_current_user_id(user_id: int) -> None:
+    """Called by AgentOrchestrator at the start of each handle_message."""
+    _thread_local.user_id = user_id
+
+
+def _get_current_user_id() -> int:
+    return getattr(_thread_local, "user_id", 0)
+
+
+# Tools that Claude calls directly (not via delegate_to_worker).
+# The orchestrator uses this set to suppress spurious "unexpected direct call" warnings.
+SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall"})
 
 # ------------------------------------------------------------------ #
 # Tool schemas in Anthropic tool_use format.                         #
@@ -163,11 +183,66 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "remember",
+        "description": (
+            "Save a durable piece of information about the user to long-term memory. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Use kind='fact' for short atomic statements (preferred). "
+            "Use kind='chunk' for longer contextual passages where the narrative "
+            "or emotional thread matters more than a single statement. "
+            "Content cap: 2000 characters."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The information to store. Max 2000 characters.",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["fact", "chunk"],
+                    "description": (
+                        "'fact': short atomic statement e.g. 'Amit's gym is Mon/Wed/Fri'. "
+                        "'chunk': longer contextual passage (a story, evolving situation). "
+                        "Prefer 'fact' when in doubt."
+                    ),
+                },
+            },
+            "required": ["content", "kind"],
+        },
+    },
+    {
+        "name": "recall",
+        "description": (
+            "Search long-term memory for information relevant to a query. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Returns top-k matches across facts and chunks, ranked by semantic "
+            "similarity. Call proactively before asking the user clarifying questions "
+            "about their preferences or history."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query.",
+                },
+                "k": {
+                    "type": "integer",
+                    "description": "Number of results to return (default 5, max 10).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "delegate_to_worker",
         "description": (
             "Delegate a task to your worker agent (Gemini Flash) for tool execution "
             "or data gathering. The worker has access to all other tools listed above. "
-            "Use this for any operation requiring calendar, email, or task tools."
+            "Use this for any operation requiring calendar, email, or task tools. "
+            "Do NOT use for remember or recall — call those directly."
         ),
         "input_schema": {
             "type": "object",
@@ -193,9 +268,11 @@ TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
-# Schemas passed to the worker agent — excludes the meta delegate_to_worker tool.
+# Schemas passed to the worker agent — excludes meta tool and memory tools
+# (memory tools require Claude's judgment; the worker must not call them).
 WORKER_TOOL_SCHEMAS: list[dict] = [
-    s for s in TOOL_SCHEMAS if s["name"] != "delegate_to_worker"
+    s for s in TOOL_SCHEMAS
+    if s["name"] not in {"delegate_to_worker", "remember", "recall"}
 ]
 
 
@@ -211,6 +288,8 @@ from mcp_tools.gmail_tool import GmailTool              # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from memory.firestore_db import FirestoreQueue          # noqa: E402
 from mcp_tools.things_queue import ThingsQueueWriter    # noqa: E402
+from memory.pinecone_db import MemoryStore              # noqa: E402
+from mcp_tools.memory import MemoryTool                 # noqa: E402
 import os                                               # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None
@@ -218,6 +297,8 @@ _gmail_tool: GmailTool | None = None
 _calendar_tool: GoogleCalendarManager | None = None
 _firestore_queue: FirestoreQueue | None = None
 _things_queue_writer: ThingsQueueWriter | None = None
+_memory_store: MemoryStore | None = None
+_memory_tool: MemoryTool | None = None
 
 
 def _get_auth_manager() -> GoogleAuthManager:
@@ -271,6 +352,24 @@ def _get_things_queue_writer() -> ThingsQueueWriter:
     if _things_queue_writer is None:
         _things_queue_writer = ThingsQueueWriter(firestore_queue=_get_firestore_queue())
     return _things_queue_writer
+
+
+def _get_memory_store() -> MemoryStore:
+    """Return the shared MemoryStore instance, building it on first call."""
+    global _memory_store
+    if _memory_store is None:
+        api_key = os.environ["PINECONE_API_KEY"]
+        index_name = os.getenv("PINECONE_INDEX_NAME", "klaus-memory")
+        _memory_store = MemoryStore(api_key=api_key, index_name=index_name)
+    return _memory_store
+
+
+def _get_memory_tool() -> MemoryTool:
+    """Return the shared MemoryTool instance, building it on first call."""
+    global _memory_tool
+    if _memory_tool is None:
+        _memory_tool = MemoryTool(memory_store=_get_memory_store())
+    return _memory_tool
 
 
 # ------------------------------------------------------------------ #
@@ -334,6 +433,18 @@ def _handle_add_task(title: str, notes: str = "", deadline: str | None = None,
     return json.dumps(result)
 
 
+def _handle_remember(content: str, kind: str) -> str:
+    """Delegate to MemoryTool.remember and serialise the result."""
+    result = _get_memory_tool().remember(_get_current_user_id(), content, kind)
+    return json.dumps(result)
+
+
+def _handle_recall(query: str, k: int = 5) -> str:
+    """Delegate to MemoryTool.recall and serialise the result."""
+    result = _get_memory_tool().recall(_get_current_user_id(), query, k)
+    return json.dumps(result)
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -346,6 +457,8 @@ _HANDLERS: dict[str, object] = {
     "list_unread_emails":    lambda args: _handle_list_unread_emails(**args),
     "get_email":             lambda args: _handle_get_email(**args),
     "add_task":              lambda args: _handle_add_task(**args),
+    "remember":              lambda args: _handle_remember(**args),
+    "recall":                lambda args: _handle_recall(**args),
 }
 
 

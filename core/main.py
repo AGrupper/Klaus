@@ -12,9 +12,11 @@ tools and gathers data on Claude's behalf via two delegation paths:
     Claude delegates via delegate_to_worker (respond_directly=true)
     → Flash handles the request end-to-end → response goes directly to user.
 
-Conversation history is kept in-memory per user (Firestore persistence
-lands in Phase 4). The orchestrator is interface-agnostic: Telegram,
-Web Chat, and future interfaces all call handle_message().
+Conversation history storage is pluggable via the ConversationStore protocol:
+  - InMemoryConversationStore: default for local dev (no persistence).
+  - FirestoreConversationStore: Cloud Run (survives scale-to-zero evictions).
+
+Select the backend with CONVERSATION_STORE=memory|firestore (default: memory).
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ import logging
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
@@ -43,11 +46,32 @@ MAX_TOOL_ITERATIONS = 8
 MAX_CONVERSATION_TURNS = 50
 
 
-class ConversationManager:
-    """In-memory per-user conversation history with automatic truncation.
+# ------------------------------------------------------------------ #
+# ConversationStore protocol + backends                              #
+# ------------------------------------------------------------------ #
 
-    Stores messages in canonical Anthropic format. History is keyed by
-    Telegram user ID (or any int). Firestore persistence replaces this in Phase 4.
+@runtime_checkable
+class ConversationStore(Protocol):
+    """Protocol for pluggable per-user conversation history backends."""
+
+    def get(self, user_id: int) -> list[dict]:
+        """Return the stored message list for user_id (newest-last order)."""
+        ...
+
+    def append(self, user_id: int, role: str, content: str) -> None:
+        """Append one message and enforce the configured message cap."""
+        ...
+
+    def clear(self, user_id: int) -> None:
+        """Wipe conversation history for user_id (e.g. on /reset)."""
+        ...
+
+
+class InMemoryConversationStore:
+    """In-memory per-user conversation history (default for local dev).
+
+    History is lost on process restart. Suitable for development and
+    local long-poll mode where the process runs continuously.
     """
 
     def __init__(self, max_turns: int = MAX_CONVERSATION_TURNS) -> None:
@@ -55,21 +79,60 @@ class ConversationManager:
         self._histories: dict[int, list[dict]] = {}
 
     def get(self, user_id: int) -> list[dict]:
-        """Return a copy of the conversation history for user_id."""
         return list(self._histories.get(user_id, []))
 
     def append(self, user_id: int, role: str, content: str) -> None:
-        """Append a single message and truncate if over the cap."""
         history = self._histories.setdefault(user_id, [])
         history.append({"role": role, "content": content})
-        # WHY: truncating at the top (oldest messages) preserves recent context
-        # which is what the model needs most.
+        # WHY: keep newest messages — they carry the most relevant context.
         if len(history) > self._max_messages:
             self._histories[user_id] = history[-self._max_messages:]
 
     def clear(self, user_id: int) -> None:
-        """Wipe conversation history for a user (e.g. on /reset command)."""
         self._histories.pop(user_id, None)
+
+
+# Keep the old name as an alias so external code referencing ConversationManager
+# continues to work without modification.
+ConversationManager = InMemoryConversationStore
+
+
+def build_conversation_store_from_env() -> ConversationStore:
+    """Construct the conversation store backend selected by CONVERSATION_STORE.
+
+    ``"memory"`` (default):
+        `InMemoryConversationStore` — no persistence, suitable for local dev.
+
+    ``"firestore"``:
+        `FirestoreConversationStore` — persists in Firestore, required for
+        Cloud Run where containers scale to zero between messages.
+        Reads GCP_PROJECT_ID and FIRESTORE_DATABASE from env.
+
+    Raises:
+        KeyError: If CONVERSATION_STORE is ``"firestore"`` but GCP_PROJECT_ID
+            is not set.
+        ValueError: If CONVERSATION_STORE is set to an unrecognised value.
+    """
+    backend = os.getenv("CONVERSATION_STORE", "memory")
+
+    if backend == "memory":
+        return InMemoryConversationStore()
+
+    if backend == "firestore":
+        from memory.firestore_conversation import FirestoreConversationStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        collection = os.getenv("FIRESTORE_COLLECTION_CONVERSATIONS", "conversations")
+        return FirestoreConversationStore(
+            project_id=project_id,
+            collection=collection,
+            database=database,
+        )
+
+    raise ValueError(
+        f"Unknown CONVERSATION_STORE value: {backend!r}. "
+        "Expected 'memory' or 'firestore'."
+    )
 
 
 class AgentOrchestrator:
@@ -98,7 +161,7 @@ class AgentOrchestrator:
         self._smart_prompt_template = _load_prompt("prompts/smart_agent.md")
         self._worker_prompt_template = _load_prompt("prompts/worker_agent.md")
 
-        self.conversation_manager = ConversationManager()
+        self.conversation_manager = build_conversation_store_from_env()
 
     def handle_message(self, user_message: str, user_id: int) -> str:
         """Process one user message through the full dual-model pipeline.
@@ -110,6 +173,12 @@ class AgentOrchestrator:
         Returns:
             The agent's final response string, ready to send to the user.
         """
+        # WHY: memory tools (remember/recall) need the user_id but the tool
+        # dispatch signature does not pass it. A thread-local is safe here
+        # because handle_message always runs in asyncio.to_thread — each call
+        # gets its own thread from the pool.
+        tool_registry.set_current_user_id(user_id)
+
         # Inject today's date in Israel time so the agent has accurate temporal context.
         today_label = _today_israel()
         smart_system = self._smart_prompt_template.replace("{today_date}", today_label)
@@ -208,11 +277,13 @@ class AgentOrchestrator:
                     })
 
                 else:
-                    # Claude called a tool directly — unexpected with our prompts, but
-                    # handled gracefully so the loop can continue cleanly.
-                    logger.warning(
-                        "Claude called tool '%s' directly (expected delegation).", tool_name
-                    )
+                    # WHY: remember/recall are always called directly by Claude —
+                    # they require Claude's judgment and must not go via the worker.
+                    # Any other direct tool call is unexpected; log a warning.
+                    if tool_name not in tool_registry.SMART_AGENT_DIRECT_TOOLS:
+                        logger.warning(
+                            "Claude called tool '%s' directly (expected delegation).", tool_name
+                        )
                     try:
                         result = tool_registry.dispatch(tool_name, tool_args)
                     except KeyError as exc:
