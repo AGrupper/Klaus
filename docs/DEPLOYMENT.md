@@ -394,7 +394,7 @@ The steps are:
 4. Build Docker image
 5. Push image to Artifact Registry
 6. Deploy to Cloud Run (`gcloud run deploy`)
-7. Smoke-test `/healthz`
+7. Smoke-test `/health`
 
 The full workflow takes approximately 3 minutes. When it finishes, the
 **Deploy to Cloud Run** step prints the service URL in its output.
@@ -461,7 +461,7 @@ one verifies a different layer of the stack.
 
 1. **Health endpoint returns 200**
    ```bash
-   curl --fail --silent --show-error "${SERVICE_URL}/healthz"
+   curl --fail --silent --show-error "${SERVICE_URL}/health"
    # Expected: {"status":"ok"}
    ```
 

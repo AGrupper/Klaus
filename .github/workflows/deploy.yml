@@ -84,8 +84,8 @@ jobs:
             --cpu 1 \
             --memory 512Mi \
             --timeout 60 \
-            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,FIRESTORE_DATABASE=klaus-firestore,FIRESTORE_COLLECTION_THINGS_QUEUE=things_queue,SMART_AGENT_BACKEND=anthropic,SMART_AGENT_MODEL=claude-opus-4-7,WORKER_AGENT_BACKEND=gemini,WORKER_AGENT_MODEL=gemini-2.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }}" \
-            --update-secrets "SMART_AGENT_API_KEY=klaus-anthropic-key:latest,WORKER_AGENT_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest" \
+            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,FIRESTORE_DATABASE=klaus-firestore,FIRESTORE_COLLECTION_THINGS_QUEUE=things_queue,SMART_AGENT_BACKEND=anthropic,SMART_AGENT_MODEL=claude-opus-4-7,WORKER_AGENT_BACKEND=gemini,WORKER_AGENT_MODEL=gemini-2.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }},CONVERSATION_STORE=firestore,PINECONE_INDEX_NAME=klaus-memory" \
+            --update-secrets "SMART_AGENT_API_KEY=klaus-anthropic-key:latest,WORKER_AGENT_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest,PINECONE_API_KEY=klaus-pinecone-key:latest" \
             --quiet
 
       # Fetch the live URL and hit /health to confirm the new revision is
