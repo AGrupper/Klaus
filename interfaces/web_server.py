@@ -19,6 +19,7 @@ causing the agent to lose context mid-conversation.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
@@ -31,6 +32,7 @@ from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application
 
+from core import heartbeat as _heartbeat
 from core.main import AgentOrchestrator
 from interfaces._router import MessageRouter, parse_allowed_user_ids
 
@@ -215,3 +217,75 @@ async def telegram_webhook(
     await _router.handle_update(update)
 
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/heartbeat")
+async def cron_heartbeat(request: Request) -> JSONResponse:
+    """Scheduled heartbeat tick — called every 30 min by Cloud Scheduler.
+
+    Verifies the request via OIDC bearer token (or dev bypass), runs one
+    detection cycle, and sends a Telegram message if signals are found.
+
+    Returns:
+        JSONResponse: ``{"ok": true, "action": "notified"|"silent"}``
+    """
+    _verify_heartbeat_request(request)
+
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Server still initialising"})
+
+    message = await asyncio.to_thread(_heartbeat.run_tick)
+
+    if message:
+        user_ids = parse_allowed_user_ids()
+        chat_id = next(iter(user_ids))
+        await _application.bot.send_message(chat_id=chat_id, text=message)
+        logger.info("Heartbeat ping sent to chat_id=%d: %.100s", chat_id, message)
+        return JSONResponse(content={"ok": True, "action": "notified"})
+
+    return JSONResponse(content={"ok": True, "action": "silent"})
+
+
+def _verify_heartbeat_request(request: Request) -> None:
+    """Verify the /cron/heartbeat request is from Cloud Scheduler.
+
+    Accepts an OIDC bearer token signed by Google and checks the service
+    account email matches CLOUD_SCHEDULER_SA_EMAIL.
+
+    Set HEARTBEAT_DEV_BYPASS=true to skip verification in local dev.
+
+    Raises:
+        HTTPException 401: If the token is absent, invalid, or from the wrong account.
+    """
+    if os.getenv("HEARTBEAT_DEV_BYPASS") == "true":
+        logger.debug("Heartbeat auth: dev bypass active")
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        logger.warning("Heartbeat: missing OIDC bearer token")
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Missing OIDC bearer token"},
+        )
+
+    token = auth_header[7:]
+    audience = os.environ.get("CLOUD_RUN_URL", "")
+    expected_email = os.environ.get("CLOUD_SCHEDULER_SA_EMAIL", "")
+
+    try:
+        from google.oauth2 import id_token as _id_token
+        from google.auth.transport import requests as _grequests
+        info = _id_token.verify_oauth2_token(
+            token, _grequests.Request(), audience=audience or None
+        )
+        if expected_email and info.get("email") != expected_email:
+            raise ValueError(
+                f"Token email {info.get('email')!r} != expected {expected_email!r}"
+            )
+    except Exception as exc:
+        logger.warning("Heartbeat auth failed: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Invalid or untrusted OIDC token"},
+        )

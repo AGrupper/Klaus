@@ -237,6 +237,55 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "fetch_weather",
+        "description": (
+            "Fetch current weather conditions and today/tomorrow forecast for a location. "
+            "Defaults to Tel Aviv. Use when the user asks about weather, temperature, "
+            "rain, or when composing a daily briefing."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": "City name or coordinates (default: 'Tel Aviv').",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_readwise_today",
+        "description": (
+            "Fetch today's reading highlights from Readwise. "
+            "Returns the most recent highlights updated today. "
+            "Use when the user asks about their reading, highlights, or daily brief."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of highlights to return (default 5).",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_garmin_today",
+        "description": (
+            "Fetch today's health summary from Garmin Connect: sleep score, sleep hours, "
+            "HRV status, body battery, and resting heart rate. "
+            "Use when the user asks about sleep, recovery, readiness, or health data."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
         "name": "delegate_to_worker",
         "description": (
             "Delegate a task to your worker agent (Gemini Flash) for tool execution "
@@ -286,6 +335,9 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
 from core.auth_google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402 (post-constant import)
 from mcp_tools.gmail_tool import GmailTool              # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
+from mcp_tools.weather_tool import fetch_weather        # noqa: E402
+from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
+from mcp_tools.garmin_tool import fetch_garmin_today    # noqa: E402
 from memory.firestore_db import FirestoreQueue          # noqa: E402
 from mcp_tools.things_queue import ThingsQueueWriter    # noqa: E402
 from memory.pinecone_db import MemoryStore              # noqa: E402
@@ -433,6 +485,21 @@ def _handle_add_task(title: str, notes: str = "", deadline: str | None = None,
     return json.dumps(result)
 
 
+def _handle_fetch_weather(location: str = "Tel Aviv") -> str:
+    result = fetch_weather(location=location)
+    return json.dumps(result)
+
+
+def _handle_fetch_readwise_today(limit: int = 5) -> str:
+    result = fetch_readwise_today(limit=limit)
+    return json.dumps(result)
+
+
+def _handle_fetch_garmin_today() -> str:
+    result = fetch_garmin_today()
+    return json.dumps(result)
+
+
 def _handle_remember(content: str, kind: str) -> str:
     """Delegate to MemoryTool.remember and serialise the result."""
     result = _get_memory_tool().remember(_get_current_user_id(), content, kind)
@@ -450,6 +517,9 @@ def _handle_recall(query: str, k: int = 5) -> str:
 # ------------------------------------------------------------------ #
 
 _HANDLERS: dict[str, object] = {
+    "fetch_weather":          lambda args: _handle_fetch_weather(**args),
+    "fetch_readwise_today":   lambda args: _handle_fetch_readwise_today(**args),
+    "fetch_garmin_today":     lambda args: _handle_fetch_garmin_today(**args),
     "list_calendar_events":   lambda args: _handle_list_calendar_events(**args),
     "create_calendar_event":  lambda args: _handle_create_calendar_event(**args),
     "check_calendar_free":    lambda args: _handle_check_calendar_free(**args),
