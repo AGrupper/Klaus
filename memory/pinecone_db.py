@@ -1,7 +1,7 @@
 """Pinecone-backed long-term memory store.
 
 Stores durable facts and contextual chunks about the user as vector
-embeddings (Gemini text-embedding-004, 768-dim) for semantic search.
+embeddings (Gemini gemini-embedding-2 truncated to 768-dim) for semantic search.
 
 Two kinds of memory:
   "fact"  — short atomic statement ("Amit's gym is Mon/Wed/Fri").
@@ -135,11 +135,13 @@ class MemoryStore:
         return self._index
 
     def _embed(self, text: str) -> list[float]:
-        """Embed text using Gemini text-embedding-004 (768-dim)."""
+        """Embed text using Gemini gemini-embedding-2 truncated to 768-dim."""
+        from google.genai import types
         client = self._get_genai()
         response = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-2",
             contents=text,
+            config=types.EmbedContentConfig(output_dimensionality=768),
         )
         return list(response.embeddings[0].values)
 
@@ -148,11 +150,6 @@ class MemoryStore:
             from google import genai
             # WHY: reuse the Worker Agent API key — same Gemini key already
             # provisioned in both local .env and Cloud Run Secret Manager.
-            # WHY api_version="v1": text-embedding-004 is only available in the
-            # stable v1 API; the SDK defaults to v1beta which returns 404.
             api_key = os.environ["WORKER_AGENT_API_KEY"]
-            self._genai = genai.Client(
-                api_key=api_key,
-                http_options={"api_version": "v1"},
-            )
+            self._genai = genai.Client(api_key=api_key)
         return self._genai
