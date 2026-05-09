@@ -10,7 +10,22 @@ Create a highly personalized, cloud-hosted AI agent that manages scheduling, tas
 * **Google Workspace Integration:** Direct, persistent connection to Gmail and Google Calendar via a Google Cloud "Internal" OAuth App to prevent token expiration.
 
 ## 3. Interfaces
-* **Phase 1:** Telegram Bot (Text/Audio processing).
-* **Phase 2:** Web Chat UI with voice capabilities.
+* **Phase 1:** Telegram Bot (Text/Audio processing). ✓ Live.
+* **Phase 2:** Web Chat UI with voice capabilities. (Planned)
+
+## 4. External Connections (Phase 7) ✓ Live
+* **Weather:** wttr.in — current conditions + forecast for Tel Aviv. No auth required.
+* **Readwise:** Daily reading highlights via Readwise API (`READWISE_TOKEN`).
+* **Garmin Connect:** Sleep score, HRV, body battery, resting HR via `garminconnect` lib.
+* All three registered as callable tools — Claude can invoke them mid-conversation or fan them out when asked for a daily brief.
+
+## 5. Proactive Heartbeat (Phase 7) ✓ Live
+* Cloud Scheduler fires `POST /cron/heartbeat` every 30 minutes.
+* Deterministic detection: upcoming calendar events (next 75 min) + pending Things 3 tasks with deadlines due/overdue today.
+* Gemini Flash composes a short Telegram ping only when signals are found — most ticks are silent.
+* Quiet hours and enabled flag configurable in Firestore `config/heartbeat` without redeploy.
+
+## 6. Planned
+* **Five Fingers practice helper:** Calendar-event-triggered Hebrew WhatsApp drafter for sports group. Post-practice attendance nudge. Will be built fresh (not ported from JarvisClaw). Requires WhatsApp as a new outbound interface.
 
 

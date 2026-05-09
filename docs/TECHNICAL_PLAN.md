@@ -20,7 +20,21 @@ We will build the following functional blocks:
 5.  **Local Mac Poller (Separate Script):** A lightweight daemon running on macOS that watches Firestore and executes AppleScript to create Things 3 to-dos.
 
 ## 4. Execution Phases
-* **Phase 1:** Auth and scaffolding. Establish persistent Google OAuth.
-* **Phase 2:** Build the Router/Main LLM abstraction and the Telegram Bot listener.
+* **Phase 1:** Auth and scaffolding. Establish persistent Google OAuth. ✓ Complete.
+* **Phase 2:** Build the Router/Main LLM abstraction and the Telegram Bot listener. ✓ Complete — dual-model (Claude brain + Gemini Flash hands), `core/llm_client.py`, `core/main.py`, `interfaces/telegram_bot.py`.
 * **Phase 3:** Develop the custom Google Calendar and Gmail tools. ✓ Complete — list, create, free/busy, and delete (with workout prep block cleanup) all live and smoke-tested.
-* **Phase 4:** Build the Firestore Queue and the local macOS Things 3 injector.
+* **Phase 4:** Build the Firestore Queue and the local macOS Things 3 injector. ✓ Complete — `memory/firestore_db.py` (FirestoreQueue), `mcp_tools/things_queue.py`, `local_mac/things_poller.py` (launchd daemon).
+* **Phase 5:** Cloud Run deployment. ✓ Complete — Dockerfile, `interfaces/web_server.py` (FastAPI + Telegram webhook), GitHub Actions CI/CD with Workload Identity Federation, Secret Manager for all API keys.
+* **Phase 6:** Conversation persistence + long-term memory. ✓ Complete — `memory/firestore_conversation.py` (Firestore per-user history), `memory/pinecone_db.py` (Pinecone RAG via gemini-embedding-2), `mcp_tools/memory.py` (remember/recall tools).
+* **Phase 7:** External connections + proactive heartbeat. ✓ Complete — `mcp_tools/weather_tool.py` (wttr.in), `mcp_tools/readwise_tool.py` (Readwise API), `mcp_tools/garmin_tool.py` (Garmin Connect), all registered as callable tools. `core/heartbeat.py` + `POST /cron/heartbeat` on Cloud Run, triggered every 30 min by Cloud Scheduler (`Klaus-heartbeat` job, `me-west1`). Heartbeat checks upcoming calendar events and due/overdue Things 3 tasks; pings via Telegram when warranted. Quiet hours and enabled flag configurable via Firestore `config/heartbeat`.
+* **Phase 8 (planned):** Five Fingers practice helper — calendar-event-triggered Hebrew WhatsApp drafter for sports group, with post-practice attendance nudge. Requires adding WhatsApp as an outbound interface alongside Telegram.
+
+## 5. Live Infrastructure (as of Phase 7)
+* **Cloud Run service:** `Klaus-agent` — region `me-west1`, project `Klaus-agent`
+* **Firestore database:** `Klaus-firestore`
+  * Collection `things_queue` — Things 3 Mac poller queue
+  * Collection `conversations` — per-user conversation history (Phase 6)
+  * Document `config/heartbeat` — heartbeat scheduler config (quiet hours, enabled flag)
+* **Pinecone index:** `Klaus-memory` — serverless, AWS, dimension=768, cosine
+* **Cloud Scheduler job:** `Klaus-heartbeat` — `*/30 * * * *`, `me-west1`, OIDC auth via `Klaus-heartbeat@Klaus-agent.iam.gserviceaccount.com`
+* **Secrets in Secret Manager:** `Klaus-anthropic-key`, `Klaus-gemini-key`, `Klaus-telegram-token`, `Klaus-telegram-webhook-secret`, `Klaus-google-oauth-token`, `Klaus-pinecone-key`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `READWISE_TOKEN`
