@@ -281,6 +281,29 @@ class TestAttendanceStoreAddPingedPre:
         })
 
 
+class TestAttendanceStoreAddPingedPost:
+    def test_uses_array_union_for_dedup(self):
+        from memory.firestore_db import AttendanceStore
+
+        with patch("memory.firestore_db.firestore") as mock_fs:
+            mock_client = MagicMock()
+            mock_fs.Client.return_value = mock_client
+            mock_fs.ArrayUnion.return_value = "ARRAY_UNION_SENTINEL"
+
+            mock_col = MagicMock()
+            mock_client.collection.return_value = mock_col
+            mock_doc_ref = MagicMock()
+            mock_col.document.return_value = mock_doc_ref
+
+            store = AttendanceStore(project_id="test-proj")
+            store.add_pinged_post("2026-05-10", ["id1", "id2"])
+
+        mock_fs.ArrayUnion.assert_called_once_with(["id1", "id2"])
+        mock_doc_ref.update.assert_called_once_with({
+            "pinged_post_practice": "ARRAY_UNION_SENTINEL",
+        })
+
+
 class TestAttendanceStoreRecentPractices:
     def test_returns_newest_first(self):
         from memory.firestore_db import AttendanceStore

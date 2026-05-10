@@ -1,16 +1,11 @@
 """Firestore-backed state storage.
 
-Two responsibilities (per `docs/TECHNICAL_PLAN.md` §1 and §3.4):
+Four store classes (per `docs/TECHNICAL_PLAN.md` §1 and §3.4):
 
 1. `FirestoreQueue` — write-side of the cloud-to-local Things 3 bridge.
-   The cloud agent appends task documents here; the local Mac poller
-   (see `local_mac/things_poller.py`) drains them.
-
-2. `UserProfileStore` — read/write static user configuration (routines,
-   travel buffers, hardcoded rules from `docs/USER.md`) so they're not
-   baked into source code.
-
-Phase 4 implements `FirestoreQueue`. `UserProfileStore` remains a stub.
+2. `UserProfileStore` — read/write static user configuration (stub, Phase 5).
+3. `RosterStore` — five_fingers_roster collection; one doc per teammate.
+4. `AttendanceStore` — five_fingers_practices collection; one doc per practice day.
 """
 from __future__ import annotations
 
@@ -22,6 +17,25 @@ from google.cloud import firestore
 from google.api_core.exceptions import GoogleAPICallError
 
 logger = logging.getLogger(__name__)
+
+
+def _make_firestore_client(project_id: str, database: str) -> firestore.Client:
+    """Return an authenticated Firestore client.
+
+    Uses a service-account key file when FIRESTORE_CREDENTIALS is set;
+    falls back to gcloud application-default credentials otherwise.
+    """
+    credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
+    if credentials_path:
+        from google.oauth2 import service_account
+        credentials = service_account.Credentials.from_service_account_file(
+            credentials_path,
+            scopes=["https://www.googleapis.com/auth/datastore"],
+        )
+        return firestore.Client(
+            project=project_id, credentials=credentials, database=database
+        )
+    return firestore.Client(project=project_id, database=database)
 
 
 class FirestoreQueue:
@@ -59,20 +73,9 @@ class FirestoreQueue:
 
         # WHY eager init: the client performs no network I/O at construction time;
         # credential resolution is deferred to the first actual API call.
-        credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
-        if credentials_path:
-            from google.oauth2 import service_account
-            credentials = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/datastore"],
-            )
-            self._client = firestore.Client(
-                project=project_id, credentials=credentials, database=database,
-            )
-        else:
-            # WHY database param: Firestore databases are not always named "(default)".
-            # The Klaus project uses "klaus-firestore" — set FIRESTORE_DATABASE accordingly.
-            self._client = firestore.Client(project=project_id, database=database)
+        # WHY database param: Firestore databases are not always named "(default)".
+        # The Klaus project uses "klaus-firestore" — set FIRESTORE_DATABASE accordingly.
+        self._client = _make_firestore_client(project_id, database)
 
         self._col = self._client.collection(collection)
 
@@ -197,19 +200,7 @@ class RosterStore:
             Uses gcloud application-default credentials. If FIRESTORE_CREDENTIALS
             env var is set to a service-account JSON path, that is used instead.
         """
-        credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
-        if credentials_path:
-            from google.oauth2 import service_account
-            credentials = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/datastore"],
-            )
-            self._client = firestore.Client(
-                project=project_id, credentials=credentials, database=database,
-            )
-        else:
-            self._client = firestore.Client(project=project_id, database=database)
-
+        self._client = _make_firestore_client(project_id, database)
         self._col = self._client.collection(collection)
 
     def add(self, name: str, phone_e164: str, nickname: str | None = None,
@@ -277,6 +268,10 @@ class RosterStore:
         Returns:
             Dict with all fields plus ``"doc_id"``, or ``None`` if not found or
             inactive.
+
+        Returns ``None`` if the document does not exist OR if the player has
+        been deactivated. Callers that need to distinguish these cases must
+        query the collection directly.
         """
         try:
             snap = self._col.document(doc_id).get()
@@ -349,19 +344,7 @@ class AttendanceStore:
             Uses gcloud application-default credentials. If FIRESTORE_CREDENTIALS
             env var is set to a service-account JSON path, that is used instead.
         """
-        credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
-        if credentials_path:
-            from google.oauth2 import service_account
-            credentials = service_account.Credentials.from_service_account_file(
-                credentials_path,
-                scopes=["https://www.googleapis.com/auth/datastore"],
-            )
-            self._client = firestore.Client(
-                project=project_id, credentials=credentials, database=database,
-            )
-        else:
-            self._client = firestore.Client(project=project_id, database=database)
-
+        self._client = _make_firestore_client(project_id, database)
         self._col = self._client.collection(collection)
 
     def get_practice(self, date_str: str) -> dict | None:
@@ -476,6 +459,9 @@ class AttendanceStore:
             Returns an empty list on Firestore error.
         """
         try:
+            # WHY stream() + sort in Python: five_fingers_practices will hold at most
+            # a few hundred documents in a single-user context. Sorting by practice_date
+            # in Python avoids a composite-index requirement.
             snapshots = self._col.stream()
         except GoogleAPICallError:
             logger.error("AttendanceStore.recent_practices failed")
