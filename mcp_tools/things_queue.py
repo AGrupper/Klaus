@@ -27,13 +27,16 @@ class ThingsQueueWriter:
         self.queue = firestore_queue
 
     def add_todo(self, title: str, notes: str = "", deadline: str | None = None,
+                 reminder: str | None = None,
                  tags: list[str] | None = None) -> dict:
         """Push a new to-do onto the cloud queue.
 
         Args:
             title: Task title shown in Things 3.
             notes: Optional notes body.
-            deadline: Optional ISO 8601 date string (e.g. "2025-12-31").
+            deadline: Optional ISO 8601 date string (YYYY-MM-DD). Sets Things 3 due date.
+            reminder: Optional datetime string (YYYY-MM-DDTHH:MM, local time). Sets
+                Things 3 'when' / activation date — Things fires a notification at this time.
             tags: Optional list of Things 3 tag names.
 
         Returns:
@@ -50,6 +53,7 @@ class ThingsQueueWriter:
                 title=title,
                 notes=notes or "",
                 deadline=deadline,
+                reminder=reminder,
                 tags=list(tags) if tags else [],
             )
         except GoogleAPICallError as exc:
@@ -59,7 +63,11 @@ class ThingsQueueWriter:
         return {
             "queue_doc_id": doc_id,
             "title": title,
-            "confirmation": f"Task '{title}' added to your Things 3 queue.",
+            "confirmation": (
+                f"Task '{title}' queued for Things 3. "
+                "The Mac poller will inject it within ~30 seconds "
+                "(or after wake if your Mac is asleep)."
+            ),
         }
 
 

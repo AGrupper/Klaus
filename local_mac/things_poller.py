@@ -31,6 +31,25 @@ def _escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _format_things_datetime(reminder: str) -> str:
+    """Convert YYYY-MM-DDTHH:MM (or YYYY-MM-DDTHH:MM:SS) to Things 3 AppleScript format.
+
+    Things 3 accepts date strings in the form "YYYY-MM-DD HH:MM:SS" (space separator,
+    no T, no timezone).
+
+    Args:
+        reminder: ISO-style datetime string, e.g. "2026-05-15T09:30" or "2026-05-15T09:30:00".
+
+    Returns:
+        A string like "2026-05-15 09:30:00" ready for AppleScript's `date` coercion.
+    """
+    # Replace T separator with space and ensure HH:MM:SS (add :00 if only HH:MM given).
+    formatted = reminder.replace("T", " ")
+    if len(formatted) == 16:  # "YYYY-MM-DD HH:MM"
+        formatted += ":00"
+    return formatted
+
+
 class ThingsPoller:
     """Polls Firestore and injects to-dos into Things 3 locally via AppleScript."""
 
@@ -115,7 +134,7 @@ class ThingsPoller:
         """Build the AppleScript string to create one Things 3 to-do.
 
         Args:
-            task: Task dict with keys title, notes, deadline, tags.
+            task: Task dict with keys title, notes, deadline, reminder, tags.
 
         Returns:
             A complete AppleScript string ready for `osascript -e`.
@@ -124,6 +143,7 @@ class ThingsPoller:
         notes = task.get("notes") or ""
         tags: list[str] = task.get("tags") or []
         deadline: str | None = task.get("deadline")
+        reminder: str | None = task.get("reminder")
 
         # Build the property list piecewise so optional fields don't introduce
         # empty-string values (Things 3 accepts them, but it looks cleaner without).
@@ -142,6 +162,13 @@ class ThingsPoller:
             # exposes "due date" as the deadline property; the `date` coercion
             # parses ISO dates without time components cleanly on macOS.
             props.append(f'due date:(date "{deadline}")')
+
+        if reminder:
+            # WHY `activation date`: Things 3's "when" / scheduled-for field. Setting
+            # this date+time causes Things 3 to fire a macOS notification at that moment.
+            # Format must be "YYYY-MM-DD HH:MM:SS" (space-separated, no T, no timezone).
+            things_dt = _format_things_datetime(reminder)
+            props.append(f'activation date:(date "{things_dt}")')
 
         properties = "{" + ", ".join(props) + "}"
         return (

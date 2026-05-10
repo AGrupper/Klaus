@@ -162,7 +162,9 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "add_task",
         "description": (
             "Add a to-do item to the Things 3 task queue. The local Mac poller will "
-            "inject it into Things 3 automatically."
+            "inject it into Things 3 within ~30 seconds. Use 'reminder' "
+            "(YYYY-MM-DDTHH:MM) for a scheduled notification; use 'deadline' "
+            "(YYYY-MM-DD) for a hard due date. Both can coexist."
         ),
         "input_schema": {
             "type": "object",
@@ -171,7 +173,18 @@ TOOL_SCHEMAS: list[dict] = [
                 "notes": {"type": "string", "description": "Optional notes or details."},
                 "deadline": {
                     "type": "string",
-                    "description": "Optional deadline, YYYY-MM-DD format.",
+                    "description": (
+                        "Optional hard deadline (YYYY-MM-DD). Things 3 shows this as "
+                        "the red due-date badge. Date-only — no notification fires."
+                    ),
+                },
+                "reminder": {
+                    "type": "string",
+                    "description": (
+                        "Optional scheduled time (YYYY-MM-DDTHH:MM, local time). "
+                        "Things 3 will fire a macOS notification at this time. "
+                        "Maps to Things 3's 'when' / activation date."
+                    ),
                 },
                 "tags": {
                     "type": "array",
@@ -477,10 +490,11 @@ def _handle_get_email(message_id: str) -> str:
 
 
 def _handle_add_task(title: str, notes: str = "", deadline: str | None = None,
+                     reminder: str | None = None,
                      tags: list[str] | None = None) -> str:
     """Delegate to ThingsQueueWriter.add_todo and serialise the result."""
     result = _get_things_queue_writer().add_todo(
-        title=title, notes=notes, deadline=deadline, tags=tags,
+        title=title, notes=notes, deadline=deadline, reminder=reminder, tags=tags,
     )
     return json.dumps(result)
 

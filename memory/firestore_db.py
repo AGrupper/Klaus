@@ -77,6 +77,7 @@ class FirestoreQueue:
         self._col = self._client.collection(collection)
 
     def enqueue(self, title: str, notes: str = "", deadline: str | None = None,
+                reminder: str | None = None,
                 tags: list[str] | None = None) -> str:
         """Append a task to the cloud queue.
 
@@ -84,6 +85,9 @@ class FirestoreQueue:
             title: Task title shown in Things 3.
             notes: Optional notes body.
             deadline: Optional ISO 8601 date string (e.g. "2025-12-31").
+            reminder: Optional datetime string (YYYY-MM-DDTHH:MM, local time). The Mac
+                poller converts this to an AppleScript `activation date` so Things 3
+                fires a notification.
             tags: Optional list of Things 3 tag names.
 
         Returns:
@@ -96,6 +100,7 @@ class FirestoreQueue:
             "title": title,
             "notes": notes or "",
             "deadline": deadline,
+            "reminder": reminder,
             "tags": list(tags) if tags else [],
             "status": "pending",
             # WHY SERVER_TIMESTAMP: lets Firestore set creation time server-side,
