@@ -16,14 +16,14 @@ We will build the following functional blocks:
 1.  **Google Auth Manager:** Implements the OAuth 2.0 flow using `credentials.json` from a Google Cloud Project (Internal User Type). Manages token refresh permanently.
 2.  **Gmail Tool:** Parses unread emails, summarizes, and extracts action items.
 3.  **Calendar Tool:** Reads availability, proposes times, injects events, and deletes events (including paired Get Ready prep blocks for workouts).
-4.  **Things 3 Cloud Queue Tool:** Writes structured JSON tasks (Title, Notes, Deadline, Tags) to Firestore.
+4.  **Things 3 Cloud Queue Tool:** Writes structured JSON tasks (Title, Notes, Deadline, Reminder, Tags) to Firestore. `reminder` (YYYY-MM-DDTHH:MM) maps to Things 3's `activation date` for time-of-day notifications.
 5.  **Local Mac Poller (Separate Script):** A lightweight daemon running on macOS that watches Firestore and executes AppleScript to create Things 3 to-dos.
 
 ## 4. Execution Phases
 * **Phase 1:** Auth and scaffolding. Establish persistent Google OAuth. ✓ Complete.
 * **Phase 2:** Build the Router/Main LLM abstraction and the Telegram Bot listener. ✓ Complete — dual-model (Claude brain + Gemini Flash hands), `core/llm_client.py`, `core/main.py`, `interfaces/telegram_bot.py`.
 * **Phase 3:** Develop the custom Google Calendar and Gmail tools. ✓ Complete — list, create, free/busy, and delete (with workout prep block cleanup) all live and smoke-tested.
-* **Phase 4:** Build the Firestore Queue and the local macOS Things 3 injector. ✓ Complete — `memory/firestore_db.py` (FirestoreQueue), `mcp_tools/things_queue.py`, `local_mac/things_poller.py` (launchd daemon).
+* **Phase 4:** Build the Firestore Queue and the local macOS Things 3 injector. ✓ Complete + patched — `memory/firestore_db.py` (FirestoreQueue), `mcp_tools/things_queue.py`, `local_mac/things_poller.py` (launchd daemon, live). Added `reminder` field (YYYY-MM-DDTHH:MM → AppleScript `activation date`). Daemon running at `com.amitgrupper.klaus.things-poller` via `~/Library/LaunchAgents/`.
 * **Phase 5:** Cloud Run deployment. ✓ Complete — Dockerfile, `interfaces/web_server.py` (FastAPI + Telegram webhook), GitHub Actions CI/CD with Workload Identity Federation, Secret Manager for all API keys.
 * **Phase 6:** Conversation persistence + long-term memory. ✓ Complete — `memory/firestore_conversation.py` (Firestore per-user history), `memory/pinecone_db.py` (Pinecone RAG via gemini-embedding-2), `mcp_tools/memory.py` (remember/recall tools).
 * **Phase 7:** External connections. ✓ Complete — `mcp_tools/weather_tool.py` (wttr.in), `mcp_tools/readwise_tool.py` (Readwise API), `mcp_tools/garmin_tool.py` (Garmin Connect), all registered as callable tools.
