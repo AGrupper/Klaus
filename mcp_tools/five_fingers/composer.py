@@ -37,8 +37,10 @@ def normalize_phone(raw: str) -> str:
         cleaned = cleaned[1:]
 
     if cleaned.startswith("972"):
+        if len(cleaned) < 12 or cleaned[3] != "5":
+            raise ValueError(f"Cannot normalize phone number: {raw!r}")
         result = cleaned
-    elif cleaned.startswith("0"):
+    elif cleaned.startswith("05"):
         result = "972" + cleaned[1:]
     else:
         raise ValueError(f"Cannot normalize phone number: {raw!r}")
@@ -78,7 +80,8 @@ def build_wa_link(phone_e164: str, message_text: str) -> str:
 
     Args:
         phone_e164: An already-normalised phone number without a leading
-            ``+``, e.g. ``"972521234567"``.
+            ``+``, e.g. ``"972521234567"``.  Must be non-empty.  Use
+            :func:`normalize_phone` to normalise raw input before calling.
         message_text: The message body (may contain Hebrew or any Unicode).
 
     Returns:
@@ -96,7 +99,7 @@ def render_captains_status(names: list[str]) -> str:
     """Generate the Hebrew status message for the captains WhatsApp group.
 
     Args:
-        names: Ordered list of captain names being pinged today (0–3 items).
+        names: Ordered list of names being pinged today.
 
     Returns:
         A Hebrew sentence announcing which captains are being checked in

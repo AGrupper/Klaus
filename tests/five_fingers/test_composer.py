@@ -41,10 +41,15 @@ class TestNormalizePhone:
         with pytest.raises(ValueError):
             normalize_phone("")
 
-    def test_non_israeli_prefix_raises(self):
-        # German number starting with 0049
+    def test_landline_prefix_raises(self):
+        # Tel Aviv landline (03x), not a mobile number
         with pytest.raises(ValueError):
-            normalize_phone("0049123456789")
+            normalize_phone("0321234567")
+
+    def test_too_few_digits_raises(self):
+        # Valid mobile prefix but too short
+        with pytest.raises(ValueError):
+            normalize_phone("052123")
 
     def test_result_is_exactly_12_digits(self):
         result = normalize_phone("0521234567")
@@ -113,3 +118,7 @@ class TestRenderCaptainsStatus:
     def test_three_names(self):
         result = render_captains_status(["יוסי", "דוד", "אבי"])
         assert result == "היי, אני בודק היום עם יוסי, דוד ו-אבי."
+
+    def test_four_names(self):
+        result = render_captains_status(["א", "ב", "ג", "ד"])
+        assert result == "היי, אני בודק היום עם א, ב, ג ו-ד."
