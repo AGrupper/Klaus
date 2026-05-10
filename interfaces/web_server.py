@@ -19,11 +19,14 @@ causing the agent to lose context mid-conversation.
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import AsyncGenerator
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -214,4 +217,102 @@ async def telegram_webhook(
     # ---- Dispatch ----
     await _router.handle_update(update)
 
+    return JSONResponse(content={"ok": True})
+
+
+# ------------------------------------------------------------------ #
+# Cloud Scheduler OIDC verification                                  #
+# ------------------------------------------------------------------ #
+
+async def _verify_cron_request(request: Request) -> None:
+    """Verify a Cloud Scheduler OIDC bearer token, or skip in dev mode.
+
+    Reads three env vars:
+      CRON_DEV_BYPASS         — set to "true" to skip auth in local dev.
+      CLOUD_RUN_URL           — OIDC audience (the Cloud Run service URL).
+      CLOUD_SCHEDULER_SA_EMAIL — expected service-account email in the token.
+
+    Raises:
+        HTTPException 401: Token missing, invalid, or wrong audience.
+        HTTPException 403: Token valid but service account does not match.
+    """
+    if os.getenv("CRON_DEV_BYPASS", "false").lower() == "true":
+        logger.info("CRON_DEV_BYPASS=true — skipping OIDC verification")
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Missing or malformed Authorization header"},
+        )
+
+    token = auth_header.removeprefix("Bearer ").strip()
+    cloud_run_url = os.environ["CLOUD_RUN_URL"]
+    expected_sa = os.environ["CLOUD_SCHEDULER_SA_EMAIL"]
+
+    try:
+        from google.auth.transport.requests import Request as GoogleRequest
+        from google.oauth2.id_token import verify_oauth2_token
+
+        payload = verify_oauth2_token(token, GoogleRequest(), audience=cloud_run_url)
+    except Exception as exc:
+        logger.warning("Cron OIDC verification failed: %s", exc)
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Invalid OIDC token"},
+        )
+
+    if payload.get("email") != expected_sa:
+        raise HTTPException(
+            status_code=403,
+            detail={"error": "Unexpected service account in OIDC token"},
+        )
+
+
+# ------------------------------------------------------------------ #
+# Five Fingers cron routes                                           #
+# ------------------------------------------------------------------ #
+
+@app.post("/cron/five-fingers-morning")
+async def cron_five_fingers_morning(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler morning tick and run the Five Fingers morning flow.
+
+    Schedule: 30 10 * * 0,1,3,4  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+
+    import core.five_fingers as _five_fingers
+
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    await _five_fingers.run_morning_endpoint(_application.bot, today)
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/five-fingers-evening")
+async def cron_five_fingers_evening(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler evening tick and run the Five Fingers evening flow.
+
+    Schedule: 15 21 * * 0,3  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+
+    import core.five_fingers as _five_fingers
+
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    await _five_fingers.run_evening_endpoint(_application.bot, today)
     return JSONResponse(content={"ok": True})
