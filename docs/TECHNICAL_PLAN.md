@@ -27,12 +27,14 @@ We will build the following functional blocks:
 * **Phase 5:** Cloud Run deployment. ✓ Complete — Dockerfile, `interfaces/web_server.py` (FastAPI + Telegram webhook), GitHub Actions CI/CD with Workload Identity Federation, Secret Manager for all API keys.
 * **Phase 6:** Conversation persistence + long-term memory. ✓ Complete — `memory/firestore_conversation.py` (Firestore per-user history), `memory/pinecone_db.py` (Pinecone RAG via gemini-embedding-2), `mcp_tools/memory.py` (remember/recall tools).
 * **Phase 7:** External connections. ✓ Complete — `mcp_tools/weather_tool.py` (wttr.in), `mcp_tools/readwise_tool.py` (Readwise API), `mcp_tools/garmin_tool.py` (Garmin Connect), all registered as callable tools.
-* **Phase 8 (planned):** Five Fingers practice helper — calendar-event-triggered Hebrew WhatsApp drafter for sports group, with post-practice attendance nudge. Requires adding WhatsApp as an outbound interface alongside Telegram.
+* **Phase 8 (in progress):** Five Fingers practice helper. Three cron-driven flows (pre-practice, post-practice attendance, morning-after follow-up). `wa.me` prefilled-link delivery via Telegram DM — no autonomous WhatsApp sending. New Firestore collections: `five_fingers_roster`, `five_fingers_practices`. New modules: `mcp_tools/five_fingers/` (composer, recommender, roster, attendance), `core/five_fingers.py`. Two new Cloud Scheduler jobs + OIDC-protected cron endpoints in `interfaces/web_server.py`. Inline-keyboard attendance entry wired into `interfaces/_router.py`.
 
 ## 5. Live Infrastructure (as of Phase 7)
 * **Cloud Run service:** `Klaus-agent` — region `me-west1`, project `Klaus-agent`
 * **Firestore database:** `Klaus-firestore`
   * Collection `things_queue` — Things 3 Mac poller queue
   * Collection `conversations` — per-user conversation history (Phase 6)
+  * Collection `five_fingers_roster` — Phase 8 sub-team roster (one doc per teammate)
+  * Collection `five_fingers_practices` — Phase 8 attendance log (one doc per practice, ID = YYYY-MM-DD)
 * **Pinecone index:** `Klaus-memory` — serverless, AWS, dimension=768, cosine
 * **Secrets in Secret Manager:** `Klaus-anthropic-key`, `Klaus-gemini-key`, `Klaus-telegram-token`, `Klaus-telegram-webhook-secret`, `Klaus-google-oauth-token`, `Klaus-pinecone-key`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `READWISE_TOKEN`

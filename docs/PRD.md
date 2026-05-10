@@ -22,7 +22,14 @@ Create a highly personalized, cloud-hosted AI agent that manages scheduling, tas
 ## 5. Proactive Heartbeat (Parked)
 * Code preserved in `attic/heartbeat/` — see `attic/heartbeat/README.md` to revive.
 
-## 6. Planned
-* **Five Fingers practice helper:** Calendar-event-triggered Hebrew WhatsApp drafter for sports group. Post-practice attendance nudge. Will be built fresh (not ported from JarvisClaw). Requires WhatsApp as a new outbound interface.
+## 6. Five Fingers Practice Helper (Phase 8 — In Progress)
+
+Three proactive flows triggered by Cloud Scheduler (Sun/Wed mornings and evenings, Mon/Thu mornings):
+
+* **Pre-practice (Wed/Sun 10:30):** Klaus reads the calendar to confirm practice is on, runs a recommendation engine against the sub-team roster and attendance history, and sends a Telegram DM with `wa.me` prefilled-message links for 2–3 teammates to ping. Includes a copy-paste Hebrew status block for the captains WhatsApp group. If the calendar event is missing, Klaus asks Amit whether practice is happening before proceeding.
+* **Post-practice attendance (Wed/Sun 21:15):** Klaus sends a Telegram inline-keyboard checklist of the 10-person sub-team. Amit taps ✓/✗ per person; results are written to Firestore.
+* **Morning-after follow-up (Mon/Thu 10:30):** Klaus cross-references attendance against who was pre-pinged and sends `wa.me` links for anyone who missed practice and wasn't already contacted.
+
+WhatsApp sending is always user-initiated (tap a link or copy-paste a group message) — Klaus never sends autonomously. Roster and attendance are stored in Firestore; a single Hebrew message template lives in `docs/USER.md`.
 
 

@@ -23,3 +23,14 @@
 ## 5. Procrastination & Accountability Protocols
 * **Strict Intervention:** If essential tasks (like coding projects or required errands) are delayed without a valid physical or scheduling conflict, the agent is authorized to politely challenge the delay and restrict scheduling leisure or social events until primary tasks are addressed.
 * **Actionable Reminders:** If a high-priority task is pending by late afternoon, the agent should actively suggest setting a micro-timer (e.g., 25 minutes) to initiate momentum rather than simply moving the deadline.
+
+## 6. Five Fingers Template
+
+The following Hebrew message template is used for all pre-practice and morning-after pings to sub-team members. The `{name}` placeholder is replaced with the teammate's nickname (or first name).
+
+```
+היי {name}, אתה מגיע היום לאימון?
+```
+
+<!-- Replace the template above with your actual Hebrew text before going live. -->
+<!-- Template applies to all ping reasons: missed-last-week, shaky-attendance, social check-in. -->
