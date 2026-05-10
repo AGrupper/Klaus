@@ -78,37 +78,49 @@ Automation access to control Things 3. Click **OK**. This prompt appears only on
 
 ## 5. Running automatically with launchd
 
-To have the poller start on login and restart after crashes:
+The tracked plist is at `local_mac/launchd/com.amitgrupper.klaus.things-poller.plist`.
+It is already configured for this machine and relies on `.env` in the project root for
+all GCP and Firestore credentials (loaded via `load_dotenv(override=True)` at daemon start).
 
-1. Copy the template plist to your LaunchAgents folder:
-   ```bash
-   cp local_mac/launchd/com.klaus.thingspoller.plist.template \
-      ~/Library/LaunchAgents/com.klaus.thingspoller.plist
-   ```
+### Install (one-time)
 
-2. Open the copied file and replace every `/PATH/TO/...` placeholder with
-   your actual absolute paths (project root, venv python, service-account JSON).
+```bash
+# Copy plist to LaunchAgents
+cp /Users/amitgrupper/Desktop/Klaus/local_mac/launchd/com.amitgrupper.klaus.things-poller.plist \
+   ~/Library/LaunchAgents/com.amitgrupper.klaus.things-poller.plist
 
-3. Load the agent:
-   ```bash
-   launchctl load ~/Library/LaunchAgents/com.klaus.thingspoller.plist
-   ```
+# Load it into launchd (modern syntax)
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.amitgrupper.klaus.things-poller.plist
+```
 
-4. Verify it's running:
-   ```bash
-   launchctl list | grep klaus
-   ```
+The first time `osascript` runs, macOS will prompt for Automation permission to control
+Things 3. Approve it in the dialog.
 
-5. View logs:
-   ```bash
-   tail -f /tmp/klaus-thingspoller.out.log
-   tail -f /tmp/klaus-thingspoller.err.log
-   ```
+### Verify
 
-6. To stop / unload:
-   ```bash
-   launchctl unload ~/Library/LaunchAgents/com.klaus.thingspoller.plist
-   ```
+```bash
+# Should print a line with com.amitgrupper.klaus.things-poller and a PID
+launchctl list | grep klaus
+
+# Watch live logs
+tail -f ~/Library/Logs/klaus-things-poller.log
+```
+
+You should see: `Things poller starting (poll_interval=30s)` within a few seconds.
+
+### Stop / unload
+
+```bash
+launchctl bootout gui/$(id -u)/com.amitgrupper.klaus.things-poller
+```
+
+### Update plist after code changes
+
+If you edit the plist, copy it to `~/Library/LaunchAgents/` again, then:
+```bash
+launchctl bootout gui/$(id -u)/com.amitgrupper.klaus.things-poller
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.amitgrupper.klaus.things-poller.plist
+```
 
 ---
 
