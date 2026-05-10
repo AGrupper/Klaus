@@ -19,11 +19,8 @@ Create a highly personalized, cloud-hosted AI agent that manages scheduling, tas
 * **Garmin Connect:** Sleep score, HRV, body battery, resting HR via `garminconnect` lib.
 * All three registered as callable tools — Claude can invoke them mid-conversation or fan them out when asked for a daily brief.
 
-## 5. Proactive Heartbeat (Phase 7) ✓ Live
-* Cloud Scheduler fires `POST /cron/heartbeat` every 30 minutes.
-* Deterministic detection: upcoming calendar events (next 75 min) + pending Things 3 tasks with deadlines due/overdue today.
-* Gemini Flash composes a short Telegram ping only when signals are found — most ticks are silent.
-* Quiet hours and enabled flag configurable in Firestore `config/heartbeat` without redeploy.
+## 5. Proactive Heartbeat (Parked)
+* Code preserved in `attic/heartbeat/` — see `attic/heartbeat/README.md` to revive.
 
 ## 6. Planned
 * **Five Fingers practice helper:** Calendar-event-triggered Hebrew WhatsApp drafter for sports group. Post-practice attendance nudge. Will be built fresh (not ported from JarvisClaw). Requires WhatsApp as a new outbound interface.
