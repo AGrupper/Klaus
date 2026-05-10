@@ -178,6 +178,319 @@ class FirestoreQueue:
             raise
 
 
+class RosterStore:
+    """Manages the five_fingers_roster Firestore collection.
+
+    One document per teammate. Documents are soft-deleted via the ``active``
+    flag — hard deletes are never performed so attendance history remains intact.
+    """
+
+    def __init__(self, project_id: str, collection: str = "five_fingers_roster",
+                 database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            collection: Firestore collection name for the roster.
+            database: Firestore database name.
+
+        Auth:
+            Uses gcloud application-default credentials. If FIRESTORE_CREDENTIALS
+            env var is set to a service-account JSON path, that is used instead.
+        """
+        credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
+        if credentials_path:
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path,
+                scopes=["https://www.googleapis.com/auth/datastore"],
+            )
+            self._client = firestore.Client(
+                project=project_id, credentials=credentials, database=database,
+            )
+        else:
+            self._client = firestore.Client(project=project_id, database=database)
+
+        self._col = self._client.collection(collection)
+
+    def add(self, name: str, phone_e164: str, nickname: str | None = None,
+            notes: str | None = None) -> str:
+        """Create a new roster entry.
+
+        Args:
+            name: Display name (Hebrew or English).
+            phone_e164: Already-normalised E.164 number (e.g. ``"972521234567"``).
+            nickname: Used in outbound messages when set; falls back to ``name``.
+            notes: Free-text notes.
+
+        Returns:
+            The auto-generated Firestore document ID.
+
+        Raises:
+            GoogleAPICallError: If the Firestore write fails.
+        """
+        payload = {
+            "name": name,
+            "nickname": nickname,
+            "phone_e164": phone_e164,
+            "notes": notes,
+            "active": True,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        try:
+            _, doc_ref = self._col.add(payload)
+        except GoogleAPICallError:
+            logger.error("RosterStore.add failed for name=%r", name)
+            raise
+        return doc_ref.id
+
+    def list_active(self) -> list[dict]:
+        """Return all active roster entries.
+
+        Returns:
+            List of dicts, each with all stored fields plus ``"doc_id"``.
+        """
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            snapshots = (
+                self._col
+                .where(filter=FieldFilter("active", "==", True))
+                .stream()
+            )
+        except GoogleAPICallError:
+            logger.error("RosterStore.list_active failed")
+            return []
+
+        results = []
+        for snap in snapshots:
+            data = snap.to_dict() or {}
+            data["doc_id"] = snap.id
+            results.append(data)
+        return results
+
+    def get(self, doc_id: str) -> dict | None:
+        """Return a single roster entry by document ID.
+
+        Args:
+            doc_id: Firestore document ID.
+
+        Returns:
+            Dict with all fields plus ``"doc_id"``, or ``None`` if not found or
+            inactive.
+        """
+        try:
+            snap = self._col.document(doc_id).get()
+        except GoogleAPICallError:
+            logger.error("RosterStore.get(%r) failed", doc_id)
+            raise
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        if not data.get("active", False):
+            return None
+        data["doc_id"] = snap.id
+        return data
+
+    def deactivate(self, doc_id: str) -> None:
+        """Soft-delete a roster entry by setting ``active=False``.
+
+        Args:
+            doc_id: Firestore document ID.
+
+        Raises:
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        try:
+            self._col.document(doc_id).update({
+                "active": False,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+        except GoogleAPICallError:
+            logger.error("RosterStore.deactivate(%r) failed", doc_id)
+            raise
+
+    def update(self, doc_id: str, **fields) -> None:
+        """Merge arbitrary fields into an existing roster document.
+
+        Always sets ``updated_at`` to the server timestamp.
+
+        Args:
+            doc_id: Firestore document ID.
+            **fields: Any subset of the doc shape to overwrite.
+
+        Raises:
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        fields["updated_at"] = firestore.SERVER_TIMESTAMP
+        try:
+            self._col.document(doc_id).update(fields)
+        except GoogleAPICallError:
+            logger.error("RosterStore.update(%r) failed", doc_id)
+            raise
+
+
+class AttendanceStore:
+    """Manages the five_fingers_practices Firestore collection.
+
+    One document per practice day, keyed by YYYY-MM-DD date string.
+    """
+
+    _VALID_STATUSES = {"came", "missed", "unknown"}
+
+    def __init__(self, project_id: str, collection: str = "five_fingers_practices",
+                 database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            collection: Firestore collection name for practice records.
+            database: Firestore database name.
+
+        Auth:
+            Uses gcloud application-default credentials. If FIRESTORE_CREDENTIALS
+            env var is set to a service-account JSON path, that is used instead.
+        """
+        credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
+        if credentials_path:
+            from google.oauth2 import service_account
+            credentials = service_account.Credentials.from_service_account_file(
+                credentials_path,
+                scopes=["https://www.googleapis.com/auth/datastore"],
+            )
+            self._client = firestore.Client(
+                project=project_id, credentials=credentials, database=database,
+            )
+        else:
+            self._client = firestore.Client(project=project_id, database=database)
+
+        self._col = self._client.collection(collection)
+
+    def get_practice(self, date_str: str) -> dict | None:
+        """Return the practice document for a given date.
+
+        Args:
+            date_str: YYYY-MM-DD date string (also the document ID).
+
+        Returns:
+            Dict with all fields plus ``"doc_id"``, or ``None`` if not found.
+
+        Raises:
+            GoogleAPICallError: If the Firestore read fails.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+        except GoogleAPICallError:
+            logger.error("AttendanceStore.get_practice(%r) failed", date_str)
+            raise
+        if not snap.exists:
+            return None
+        data = snap.to_dict() or {}
+        data["doc_id"] = snap.id
+        return data
+
+    def upsert_practice(self, date_str: str, **fields) -> None:
+        """Create or merge fields into the practice document for a date.
+
+        Args:
+            date_str: YYYY-MM-DD date string used as the document ID.
+            **fields: Any subset of the practice doc shape to set or overwrite.
+
+        Raises:
+            GoogleAPICallError: If the Firestore write fails.
+        """
+        payload = {"practice_date": date_str, **fields}
+        try:
+            self._col.document(date_str).set(payload, merge=True)
+        except GoogleAPICallError:
+            logger.error("AttendanceStore.upsert_practice(%r) failed", date_str)
+            raise
+
+    def mark_attendance(self, date_str: str, roster_id: str, status: str) -> None:
+        """Record whether a player came to or missed a practice.
+
+        Args:
+            date_str: YYYY-MM-DD practice date.
+            roster_id: Firestore document ID from RosterStore.
+            status: One of ``"came"``, ``"missed"``, or ``"unknown"``.
+
+        Raises:
+            ValueError: If ``status`` is not a recognised value.
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        if status not in self._VALID_STATUSES:
+            raise ValueError(
+                f"Invalid attendance status {status!r}; "
+                f"must be one of {sorted(self._VALID_STATUSES)}"
+            )
+        try:
+            self._col.document(date_str).update({f"attendance.{roster_id}": status})
+        except GoogleAPICallError:
+            logger.error(
+                "AttendanceStore.mark_attendance(%r, %r) failed", date_str, roster_id
+            )
+            raise
+
+    def add_pinged_pre(self, date_str: str, roster_ids: list[str]) -> None:
+        """Atomically extend the pre-practice ping list without duplicating IDs.
+
+        Args:
+            date_str: YYYY-MM-DD practice date.
+            roster_ids: Roster document IDs that were pinged.
+
+        Raises:
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        try:
+            self._col.document(date_str).update({
+                "pinged_pre_practice": firestore.ArrayUnion(roster_ids),
+            })
+        except GoogleAPICallError:
+            logger.error("AttendanceStore.add_pinged_pre(%r) failed", date_str)
+            raise
+
+    def add_pinged_post(self, date_str: str, roster_ids: list[str]) -> None:
+        """Atomically extend the post-practice follow-up list without duplicating IDs.
+
+        Args:
+            date_str: YYYY-MM-DD practice date.
+            roster_ids: Roster document IDs that were pinged.
+
+        Raises:
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        try:
+            self._col.document(date_str).update({
+                "pinged_post_practice": firestore.ArrayUnion(roster_ids),
+            })
+        except GoogleAPICallError:
+            logger.error("AttendanceStore.add_pinged_post(%r) failed", date_str)
+            raise
+
+    def recent_practices(self, n: int) -> list[dict]:
+        """Return the most-recent practice documents, newest-first.
+
+        Args:
+            n: Maximum number of documents to return.
+
+        Returns:
+            List of practice dicts, each with all stored fields plus ``"doc_id"``.
+            Returns an empty list on Firestore error.
+        """
+        try:
+            snapshots = self._col.stream()
+        except GoogleAPICallError:
+            logger.error("AttendanceStore.recent_practices failed")
+            return []
+
+        results = []
+        for snap in snapshots:
+            data = snap.to_dict() or {}
+            data["doc_id"] = snap.id
+            results.append(data)
+
+        results.sort(key=lambda d: d.get("practice_date", ""), reverse=True)
+        return results[:n]
+
+
 class UserProfileStore:
     """Read/write the user's static profile + scheduling rules in Firestore."""
 
