@@ -509,7 +509,66 @@ one verifies a different layer of the stack.
 
 ---
 
-## 14. Common Gotchas
+## 14. Phase 9 — Proactive Alerts Setup
+
+### 14a. Enable Routes API
+
+```bash
+gcloud services enable routes.googleapis.com --project=${PROJECT_ID}
+```
+
+No additional IAM role is needed — the runtime SA uses ADC (OAuth2 access token)
+which is accepted by the Routes API.
+
+### 14b. Store Home Address in Secret Manager
+
+```bash
+# Create the secret (one-time)
+gcloud secrets create klaus-home-address \
+  --replication-policy=automatic \
+  --project=${PROJECT_ID}
+
+# Populate it
+printf '%s' "YOUR_HOME_ADDRESS" | gcloud secrets versions add klaus-home-address \
+  --data-file=- --project=${PROJECT_ID}
+
+# Grant the runtime SA read access
+gcloud secrets add-iam-policy-binding klaus-home-address \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project=${PROJECT_ID}
+```
+
+The `deploy.yml` workflow injects this as `HOME_ADDRESS` via `--update-secrets`.
+
+### 14c. Create the Cloud Scheduler Job
+
+```bash
+gcloud scheduler jobs create http klaus-proactive-alerts \
+  --schedule="30 21 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/proactive-alerts" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+### 14d. Verify
+
+```bash
+# Trigger manually from GCP Console or:
+gcloud scheduler jobs run klaus-proactive-alerts \
+  --location="${REGION}" --project="${PROJECT_ID}"
+```
+
+Check Telegram for the alert message and Cloud Logging for clean execution.
+Run a second time to confirm deduplication (no duplicate message sent).
+
+---
+
+## 15. Common Gotchas
 
 ### 1. Missing `secretVersionAdder` IAM (most common)
 

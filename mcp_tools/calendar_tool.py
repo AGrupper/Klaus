@@ -133,6 +133,7 @@ class GoogleCalendarManager:
                         "start": start,
                         "end": end,
                         "description": item.get("description", ""),
+                        "location": item.get("location", ""),
                     }
                 )
 
