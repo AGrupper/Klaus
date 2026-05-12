@@ -150,7 +150,14 @@ def build_conversation_store_from_env() -> ConversationStore:
 
 
 class AgentOrchestrator:
-    """Coordinates Claude (Smart Agent) and Gemini Flash (Worker Agent).
+    """Coordinates Smart Agent and Worker Agent with optional fallback.
+
+    The Smart Agent (primary: Gemini 3 Flash, fallback: Claude Haiku) receives
+    every user message, makes judgment calls, and crafts responses.
+    The Worker Agent (Gemini 2.5 Flash) executes tools on the Smart Agent's behalf.
+
+    If the primary Smart Agent's API returns an error (e.g. overload, outage),
+    the orchestrator automatically retries the request using the fallback model.
 
     Instantiate once at startup and share across all user sessions. The
     LLMClient instances are stateless after construction; conversation state
@@ -170,6 +177,22 @@ class AgentOrchestrator:
             model=os.environ["WORKER_AGENT_MODEL"],
             api_key=os.environ["WORKER_AGENT_API_KEY"],
         )
+
+        # WHY: fallback Smart Agent is optional — if the env vars are not set,
+        # the orchestrator degrades gracefully to the old single-model behavior.
+        fb_backend = os.environ.get("SMART_AGENT_FALLBACK_BACKEND")
+        fb_model = os.environ.get("SMART_AGENT_FALLBACK_MODEL")
+        fb_key = os.environ.get("SMART_AGENT_FALLBACK_API_KEY")
+        if fb_backend and fb_model and fb_key:
+            self.smart_agent_fallback: LLMClient | None = LLMClient(
+                backend=fb_backend, model=fb_model, api_key=fb_key,
+            )
+            logger.info(
+                "Smart Agent fallback configured: %s / %s",
+                fb_backend, fb_model,
+            )
+        else:
+            self.smart_agent_fallback = None
 
         # Load prompts from disk at startup — avoids repeated file I/O per message.
         self._smart_prompt_template = _load_prompt("prompts/smart_agent.md")
@@ -235,11 +258,32 @@ class AgentOrchestrator:
                     tools=tool_registry.get_all_schemas(),
                 )
             except LLMError as exc:
-                logger.error("Smart agent error (iter %d): %s", iteration, exc)
-                return (
-                    "I'm afraid I encountered a connectivity issue, Sir. "
-                    "Please try again in a moment."
+                logger.warning(
+                    "Smart agent PRIMARY error (iter %d): %s", iteration, exc,
                 )
+                # Attempt the fallback model if one is configured.
+                if self.smart_agent_fallback is not None:
+                    try:
+                        logger.info("Retrying with Smart Agent fallback…")
+                        response = self.smart_agent_fallback.chat(
+                            current_messages,
+                            system=smart_system,
+                            tools=tool_registry.get_all_schemas(),
+                        )
+                    except LLMError as fallback_exc:
+                        logger.error(
+                            "Smart agent FALLBACK also failed (iter %d): %s",
+                            iteration, fallback_exc,
+                        )
+                        return (
+                            "I'm afraid I encountered a connectivity issue, Sir. "
+                            "Please try again in a moment."
+                        )
+                else:
+                    return (
+                        "I'm afraid I encountered a connectivity issue, Sir. "
+                        "Please try again in a moment."
+                    )
 
             tool_calls = response["tool_calls"]
             response_text = response["text"]
