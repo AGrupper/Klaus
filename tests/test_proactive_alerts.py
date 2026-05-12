@@ -66,11 +66,15 @@ def test_sends_telegram_when_alerts_found(
     mock_weather_fn.return_value = [
         {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
     ]
-    # fetch_weather imported locally; return a non-empty dict so `if weather` is truthy
-    with patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}):
-        from core.proactive_alerts import run_proactive_alerts
-        asyncio.run(run_proactive_alerts(mock_bot, "2026-05-12"))
+    # Patch _compose_alert directly so the test exercises the send path,
+    # not the fallback path, regardless of env vars.
+    with patch("core.proactive_alerts._compose_alert", return_value="LLM-produced alert text"):
+        with patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}):
+            from core.proactive_alerts import run_proactive_alerts
+            asyncio.run(run_proactive_alerts(mock_bot, "2026-05-12"))
     mock_bot.send_message.assert_called_once()
+    call_text = mock_bot.send_message.call_args.kwargs.get("text", "")
+    assert call_text == "LLM-produced alert text"
     mock_mark.assert_called_once_with("2026-05-12", alert_sent=True)
 
 
@@ -97,5 +101,5 @@ def test_plain_text_fallback_on_llm_failure(
             asyncio.run(run_proactive_alerts(mock_bot, "2026-05-12"))
     mock_bot.send_message.assert_called_once()
     # Should still have sent something (plain-text fallback)
-    call_text = mock_bot.send_message.call_args[1].get("text", "")
-    assert "tomorrow" in call_text.lower() or "2026-05-12" in call_text
+    call_text = mock_bot.send_message.call_args.kwargs.get("text", "")
+    assert call_text.startswith("Tomorrow (2026-05-12) — heads up, Sir:")
