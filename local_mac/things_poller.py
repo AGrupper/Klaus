@@ -50,6 +50,71 @@ def _format_things_datetime(reminder: str) -> str:
     return formatted
 
 
+def _shape_task(t: dict) -> dict:
+    """Project a things.py raw task dict to the snapshot schema."""
+    return {
+        "uuid": t.get("uuid", ""),
+        "title": t.get("title", ""),
+        "area": t.get("area", "") or "",
+        "project": t.get("project", "") or None,
+        "due_date": t.get("deadline") or None,
+    }
+
+
+def push_things_snapshot(firestore_queue) -> None:
+    """Read today's Things 3 tasks and write a snapshot to Firestore.
+
+    Called inside the main poll loop. Failures are logged but never raised —
+    they must not crash the long-running poller daemon.
+
+    NOTE: Requires the things.py library on the Mac. Install with:
+        pip install things.py
+
+    Args:
+        firestore_queue: A FirestoreQueue instance (used to access the Firestore client).
+    """
+    try:
+        import things
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo("Asia/Jerusalem")
+        today_iso = datetime.now(tz).date().isoformat()
+
+        today_tasks = [_shape_task(t) for t in (things.today() or [])]
+        today_uuids = {t["uuid"] for t in today_tasks}
+
+        all_due = things.due() or []
+        overdue = [
+            _shape_task(t) for t in all_due
+            if t.get("deadline") and t["deadline"] < today_iso
+        ]
+        due_today = [
+            _shape_task(t) for t in all_due
+            if t.get("deadline") == today_iso and t.get("uuid", "") not in today_uuids
+        ]
+
+        snapshot = {
+            "version": 1,
+            "updated_at": datetime.now(tz).isoformat(),
+            "today": today_tasks,
+            "overdue": overdue,
+            "due_today": due_today,
+        }
+
+        # Write snapshot to Firestore using the queue's underlying client.
+        # FirestoreQueue exposes its Firestore client as ._client (see memory/firestore_db.py).
+        firestore_queue._client.collection("things_snapshot").document("latest").set(snapshot)
+        logger.debug(
+            "push_things_snapshot: wrote %d today, %d overdue, %d due_today",
+            len(today_tasks), len(overdue), len(due_today),
+        )
+    except ImportError:
+        logger.warning("push_things_snapshot: things.py not installed — run: pip install things.py")
+    except Exception as exc:
+        logger.warning("push_things_snapshot: failed — %s", exc)
+
+
 class ThingsPoller:
     """Polls Firestore and injects to-dos into Things 3 locally via AppleScript."""
 
@@ -103,6 +168,9 @@ class ThingsPoller:
                         "may appear as duplicate on next poll: %s",
                         doc_id, exc,
                     )
+
+            # Push Things 3 snapshot to Firestore for the morning briefing.
+            push_things_snapshot(self.queue)
 
             time.sleep(self.poll_interval_seconds)
 
