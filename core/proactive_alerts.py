@@ -55,11 +55,6 @@ def _gap_min() -> int:
 # Small helpers                                                      #
 # ------------------------------------------------------------------ #
 
-def _telegram_user_id() -> int:
-    raw = os.environ["TELEGRAM_ALLOWED_USER_IDS"].split(",")[0].strip()
-    return int(raw)
-
-
 def _get_calendar_tool():
     from core.tools import _get_calendar_tool as _ct
     return _ct()
@@ -100,8 +95,6 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         bot:         Telegram Bot instance (from _application.bot in web_server).
         target_date: YYYY-MM-DD of the day to scan (typically tomorrow).
     """
-    chat_id = _telegram_user_id()
-
     if _already_sent(target_date):
         logger.info("Proactive alerts: already processed for %s — skipping", target_date)
         return
@@ -141,7 +134,8 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     }
     message = _compose_alert(alerts_context)
 
-    await bot.send_message(chat_id=chat_id, text=message)
+    from core.scheduled_message import send_and_inject
+    await send_and_inject(bot, message, inject_into_conversation=False)
     _mark_processed(target_date, alert_sent=True)
     logger.info("Proactive alerts: sent alert for %s", target_date)
 
