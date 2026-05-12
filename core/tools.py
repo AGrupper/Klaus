@@ -36,7 +36,7 @@ def _get_current_user_id() -> int:
 
 # Tools that Claude calls directly (not via delegate_to_worker).
 # The orchestrator uses this set to suppress spurious "unexpected direct call" warnings.
-SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall"})
+SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall", "run_morning_briefing"})
 
 # ------------------------------------------------------------------ #
 # Tool schemas in Anthropic tool_use format.                         #
@@ -397,6 +397,21 @@ TOOL_SCHEMAS: list[dict] = [
                 "notes": {"type": "string", "description": "Optional notes about the practice."},
             },
             "required": ["date"],
+        },
+    },
+    {
+        "name": "run_morning_briefing",
+        "description": (
+            "Compose and send the morning briefing to Telegram immediately. "
+            "Fetches weather, calendar, email, Garmin health, and Things 3 tasks "
+            "for today, then sends a single briefing message. "
+            "Use when the user asks for the morning briefing, daily briefing, "
+            "or any variant of 'morning briefing' / 'give me my briefing'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
         },
     },
     {
@@ -768,6 +783,29 @@ def _handle_five_fingers_log_attendance(
     return json.dumps({"date": date, "logged": logged, "warnings": warnings})
 
 
+def _handle_run_morning_briefing() -> str:
+    """Trigger run_morning_briefing as a background task on the running event loop."""
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    try:
+        from interfaces.web_server import _application
+        if _application is None:
+            return json.dumps({"error": "Application not initialised — use CLI smoke test instead."})
+        today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        loop = asyncio.get_event_loop()
+        from core.morning_briefing import run_morning_briefing
+        loop.create_task(run_morning_briefing(_application.bot, today_iso, dedup=False))
+        # Mark as manual trigger in Firestore so dedup knows it was user-triggered.
+        from core.morning_briefing import _set_state
+        _set_state(today_iso, {"status": "manual", "trigger": "manual",
+                               "sent_at": datetime.now(ZoneInfo("Asia/Jerusalem")).isoformat()})
+        return json.dumps({"status": "composing", "message": "Composing your morning briefing now, sir — it will arrive in Telegram shortly."})
+    except Exception as exc:
+        logger.warning("run_morning_briefing tool error: %s", exc)
+        return json.dumps({"error": str(exc)})
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -790,6 +828,7 @@ _HANDLERS: dict[str, object] = {
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
     "five_fingers_bulk_import":     lambda args: _handle_five_fingers_bulk_import(**args),
     "five_fingers_log_attendance":  lambda args: _handle_five_fingers_log_attendance(**args),
+    "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
 }
 
 
