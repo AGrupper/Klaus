@@ -19,8 +19,22 @@ Create a highly personalized, cloud-hosted AI agent that manages scheduling, tas
 * **Garmin Connect:** Sleep score, HRV, body battery, resting HR via `garminconnect` lib.
 * All three registered as callable tools — Claude can invoke them mid-conversation or fan them out when asked for a daily brief.
 
-## 5. Proactive Heartbeat (Parked)
-* Code preserved in `attic/heartbeat/` — see `attic/heartbeat/README.md` to revive.
+## 5. Proactive Alerts (Phase 9)
+
+A nightly background job (21:30 Asia/Jerusalem) scans tomorrow's calendar and conditions,
+detects problems, and sends a proactive Telegram message in Klaus's voice.
+
+Three alert types:
+* **Weather conflicts** — outdoor or workout events scheduled when weather is bad
+  (rain ≥ 20%, extreme heat ≥ 38°C, cold ≤ 8°C, or severe conditions).
+* **Overloaded day** — not enough breathing room: longest gap < 30 min AND
+  total free time < 60 min between first and last event.
+* **Travel time validation** — events with a location are checked against Google Routes API
+  (traffic-aware). If the predicted drive time exceeds the travel buffer Klaus wrote into
+  the event description by more than 5 minutes, an alert is raised.
+
+Detection is template-based (zero LLM cost on quiet days). If any alerts are found,
+the structured data is passed to the Smart Agent to compose a single message in Klaus voice.
 
 ## 6. Five Fingers Practice Helper (Phase 8 — In Progress)
 

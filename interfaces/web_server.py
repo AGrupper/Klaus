@@ -24,7 +24,7 @@ import hmac
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
@@ -293,6 +293,28 @@ async def cron_five_fingers_morning(request: Request) -> JSONResponse:
 
     today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     await _five_fingers.run_morning_endpoint(_application.bot, today)
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/proactive-alerts")
+async def cron_proactive_alerts(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler evening tick and run the proactive alerts scan.
+
+    Schedule: 30 21 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+
+    import core.proactive_alerts as _proactive
+
+    tomorrow = (datetime.now(ZoneInfo("Asia/Jerusalem")) + timedelta(days=1)).date().isoformat()
+    await _proactive.run_proactive_alerts(_application.bot, tomorrow)
     return JSONResponse(content={"ok": True})
 
 
