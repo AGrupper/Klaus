@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import firestore
@@ -35,14 +36,16 @@ def _txn_append(
     role: str,
     content: str,
     max_messages: int,
+    timeout_hours: int,
 ) -> None:
     """Transactional helper: read → append → truncate → write."""
     snapshot = doc_ref.get(transaction=transaction)
-    messages: list[dict] = (
-        list((snapshot.to_dict() or {}).get("messages", []))
-        if snapshot.exists
-        else []
-    )
+    doc_data: dict = (snapshot.to_dict() or {}) if snapshot.exists else {}
+    updated_at = doc_data.get("updated_at")
+    if updated_at and datetime.now(timezone.utc) - updated_at > timedelta(hours=timeout_hours):
+        messages: list[dict] = []
+    else:
+        messages = list(doc_data.get("messages", []))
     messages.append({"role": role, "content": content})
     if len(messages) > max_messages:
         # WHY: keep the newest messages — they carry the most relevant context.
@@ -81,6 +84,7 @@ class FirestoreConversationStore:
             max_messages: Hard cap on stored messages per user.
         """
         self._max_messages = max_messages
+        self._timeout_hours = int(os.getenv("SESSION_TIMEOUT_HOURS", "6"))
 
         credentials_path = os.getenv("FIRESTORE_CREDENTIALS")
         if credentials_path:
@@ -116,14 +120,18 @@ class FirestoreConversationStore:
             return []
         if not snapshot.exists:
             return []
-        return list((snapshot.to_dict() or {}).get("messages", []))
+        doc_data = snapshot.to_dict() or {}
+        updated_at = doc_data.get("updated_at")
+        if updated_at and datetime.now(timezone.utc) - updated_at > timedelta(hours=self._timeout_hours):
+            return []
+        return list(doc_data.get("messages", []))
 
     def append(self, user_id: int, role: str, content: str) -> None:
         """Append one message and cap the list via a Firestore transaction."""
         doc_ref = self._col.document(str(user_id))
         transaction = self._client.transaction()
         try:
-            _txn_append(transaction, doc_ref, role, content, self._max_messages)
+            _txn_append(transaction, doc_ref, role, content, self._max_messages, self._timeout_hours)
         except GoogleAPICallError:
             logger.error(
                 "FirestoreConversationStore.append failed for user_id=%d role=%s; "

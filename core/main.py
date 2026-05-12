@@ -23,7 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
@@ -76,17 +76,31 @@ class InMemoryConversationStore:
 
     def __init__(self, max_turns: int = MAX_CONVERSATION_TURNS) -> None:
         self._max_messages = max_turns * 2  # each turn = 1 user + 1 assistant msg
-        self._histories: dict[int, list[dict]] = {}
+        self._timeout = timedelta(hours=int(os.getenv("SESSION_TIMEOUT_HOURS", "6")))
+        # values: {"messages": list[dict], "updated_at": datetime}
+        self._histories: dict[int, dict] = {}
 
     def get(self, user_id: int) -> list[dict]:
-        return list(self._histories.get(user_id, []))
+        entry = self._histories.get(user_id)
+        if entry is None:
+            return []
+        if datetime.now(timezone.utc) - entry["updated_at"] > self._timeout:
+            self._histories.pop(user_id, None)
+            return []
+        return list(entry["messages"])
 
     def append(self, user_id: int, role: str, content: str) -> None:
-        history = self._histories.setdefault(user_id, [])
-        history.append({"role": role, "content": content})
+        now = datetime.now(timezone.utc)
+        entry = self._histories.get(user_id)
+        if entry is None or now - entry["updated_at"] > self._timeout:
+            messages: list[dict] = []
+        else:
+            messages = list(entry["messages"])
+        messages.append({"role": role, "content": content})
         # WHY: keep newest messages — they carry the most relevant context.
-        if len(history) > self._max_messages:
-            self._histories[user_id] = history[-self._max_messages:]
+        if len(messages) > self._max_messages:
+            messages = messages[-self._max_messages:]
+        self._histories[user_id] = {"messages": messages, "updated_at": now}
 
     def clear(self, user_id: int) -> None:
         self._histories.pop(user_id, None)
