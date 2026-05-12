@@ -834,3 +834,10 @@ def dispatch(tool_name: str, args: dict) -> str:
         error_msg = f"Tool '{tool_name}' received unexpected arguments: {exc}"
         logger.warning(error_msg)
         return json.dumps({"error": error_msg})
+    except Exception as exc:
+        # WHY: catch ValueErrors (like invalid date formats) and network errors
+        # so they don't crash the orchestrator. Feed the error back to the LLM
+        # so it can self-correct.
+        error_msg = f"Tool '{tool_name}' encountered an error: {type(exc).__name__}: {exc}"
+        logger.exception(error_msg)
+        return json.dumps({"error": error_msg})
