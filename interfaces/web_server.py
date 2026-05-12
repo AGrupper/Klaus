@@ -338,3 +338,24 @@ async def cron_five_fingers_evening(request: Request) -> JSONResponse:
     today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     await _five_fingers.run_evening_endpoint(_application.bot, today)
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/morning-briefing-tick")
+async def cron_morning_briefing_tick(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler 10-min tick and run the Garmin-sync detection logic.
+
+    Schedule: */10 6-10 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+
+    import core.morning_briefing as _morning
+
+    await _morning.handle_tick(_application.bot)
+    return JSONResponse(content={"ok": True})
