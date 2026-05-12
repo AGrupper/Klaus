@@ -173,11 +173,6 @@ def test_compose_briefing_llm_empty_text_falls_back():
 
 def test_fetch_garmin_safe_returns_none_on_exception():
     """_fetch_garmin_safe returns None when garmin_tool raises."""
-    from core.morning_briefing import _fetch_garmin_safe
-    with patch("core.morning_briefing._fetch_garmin_safe", wraps=lambda: None):
-        # Test the actual function by patching the import
-        pass
-
     with patch("mcp_tools.garmin_tool.fetch_garmin_today", side_effect=Exception("auth failed")):
         # Reimport to get fresh reference
         import importlib
@@ -191,10 +186,8 @@ def test_fetch_garmin_safe_returns_none_when_no_sleep():
     import core.morning_briefing as mb
     today = "2026-05-12"
     garmin_data = {"date": today, "sleep_score": None, "sleep_hours": None, "hrv_status": "BALANCED"}
-    with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=garmin_data), \
-         patch("core.morning_briefing.date") as mock_date:
-        mock_date.today.return_value.isoformat.return_value = today
-        result = mb._fetch_garmin_safe()
+    with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=garmin_data):
+        result = mb._fetch_garmin_safe(today)
     assert result is None
 
 
@@ -203,10 +196,8 @@ def test_fetch_garmin_safe_returns_data_when_sleep_score_present():
     import core.morning_briefing as mb
     today = "2026-05-12"
     garmin_data = {"date": today, "sleep_score": 78, "sleep_hours": 7.5, "hrv_status": "BALANCED"}
-    with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=garmin_data), \
-         patch("core.morning_briefing.date") as mock_date:
-        mock_date.today.return_value.isoformat.return_value = today
-        result = mb._fetch_garmin_safe()
+    with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=garmin_data):
+        result = mb._fetch_garmin_safe(today)
     assert result is not None
     assert result["sleep_score"] == 78
 

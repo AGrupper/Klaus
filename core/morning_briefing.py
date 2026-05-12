@@ -51,10 +51,6 @@ def _set_state(today_iso: str, fields: dict) -> None:
         logger.warning("morning_briefing: failed to write state for %s", today_iso, exc_info=True)
 
 
-def _telegram_user_id() -> int:
-    return int(os.environ["TELEGRAM_ALLOWED_USER_IDS"].split(",")[0].strip())
-
-
 # ------------------------------------------------------------------ #
 # Cron tick handler                                                  #
 # ------------------------------------------------------------------ #
@@ -83,7 +79,7 @@ async def handle_tick(bot: Bot) -> None:
         return
 
     if status == "pending":
-        sleep_data = _fetch_garmin_safe()
+        sleep_data = _fetch_garmin_safe(today_iso)
         if not sleep_data:
             logger.debug("morning_briefing: Garmin sync not detected yet")
             return
@@ -144,8 +140,8 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
     await send_and_inject(bot, text, inject_into_conversation=True)
 
     # Store structured data alongside the state doc for follow-up replies.
+    # Note: status is the caller's responsibility — do NOT set it here.
     _set_state(today_iso, {
-        "status": "manual",
         "structured": {
             "events": today_data.get("calendar") or [],
             "tasks_today": (today_data.get("tasks") or {}).get("today", []),
@@ -159,11 +155,11 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
 # Data gathering                                                     #
 # ------------------------------------------------------------------ #
 
-def _fetch_garmin_safe() -> dict | None:
+def _fetch_garmin_safe(today_iso: str | None = None) -> dict | None:
     """Return Garmin data if today's sync has happened (has sleep data), else None."""
     try:
         from mcp_tools.garmin_tool import fetch_garmin_today
-        today = date.today().isoformat()
+        today = today_iso or datetime.now(_TZ).date().isoformat()
         data = fetch_garmin_today()
         if data and data.get("date") == today and (
             data.get("sleep_score") is not None or data.get("sleep_hours") is not None
@@ -190,9 +186,11 @@ def _gather_data(today_iso: str) -> dict:
     # Calendar — _get_calendar_tool() is a module-level function in core/tools.py
     try:
         from core.tools import _get_calendar_tool
+        tz_start = datetime.fromisoformat(today_iso).replace(tzinfo=_TZ)
+        tz_end = datetime(tz_start.year, tz_start.month, tz_start.day, 23, 59, 59, tzinfo=_TZ)
         events = _get_calendar_tool().list_events(
-            f"{today_iso}T00:00:00+03:00",
-            f"{today_iso}T23:59:59+03:00",
+            tz_start.isoformat(),
+            tz_end.isoformat(),
             max_results=20,
         )
         data["calendar"] = events
