@@ -16,23 +16,26 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ThingsSnapshot:
-    stale_minutes: int | None          # None = doc missing entirely
+    stale_minutes: int | None          # None = updated_at absent or unparseable
+    doc_exists: bool = True            # False = Firestore doc missing or read error
     today: list[dict] = field(default_factory=list)
     overdue: list[dict] = field(default_factory=list)
     due_today: list[dict] = field(default_factory=list)
 
     @property
     def is_missing(self) -> bool:
-        return self.stale_minutes is None
+        return not self.doc_exists
 
     @property
     def staleness_warning(self) -> str | None:
         """Return a warning string if the snapshot is stale, else None."""
+        if self.is_missing:
+            return "Task data unavailable, sir."
         if self.stale_minutes is None:
             return "Task data unavailable, sir."
         if self.stale_minutes > 1440:  # > 24 h
             return "Task data unavailable, sir."
-        if self.stale_minutes > 60:
+        if self.stale_minutes >= 60:
             return "Things 3 last synced over an hour ago — the list below may be out of date."
         if self.stale_minutes > 10:
             return f"(Things 3 last synced {self.stale_minutes} min ago, sir)"
@@ -52,11 +55,11 @@ def get_today_tasks() -> ThingsSnapshot:
         client = _make_firestore_client(project_id, database)
         snap = client.collection("things_snapshot").document("latest").get()
         if not snap.exists:
-            return ThingsSnapshot(stale_minutes=None)
+            return ThingsSnapshot(stale_minutes=None, doc_exists=False)
         doc = snap.to_dict() or {}
     except Exception:
         logger.warning("things_snapshot: Firestore read failed", exc_info=True)
-        return ThingsSnapshot(stale_minutes=None)
+        return ThingsSnapshot(stale_minutes=None, doc_exists=False)
 
     updated_at_raw = doc.get("updated_at")
     stale_minutes: int | None = None

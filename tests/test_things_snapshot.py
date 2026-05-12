@@ -54,6 +54,7 @@ def test_missing_doc_returns_none_stale():
         importlib.reload(mod)
         result = mod.get_today_tasks()
     assert result.stale_minutes is None
+    assert result.doc_exists is False
     assert result.is_missing
     assert result.staleness_warning == "Task data unavailable, sir."
 
