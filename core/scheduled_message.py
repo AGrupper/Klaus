@@ -46,7 +46,8 @@ async def send_and_inject(
         from memory.firestore_conversation import FirestoreConversationStore
         project_id = os.environ["GCP_PROJECT_ID"]
         database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        store = FirestoreConversationStore(project_id=project_id, database=database)
+        collection = os.getenv("FIRESTORE_COLLECTION_CONVERSATIONS", "conversations")
+        store = FirestoreConversationStore(project_id=project_id, database=database, collection=collection)
         store.append(user_id, "assistant", text)
         logger.info("scheduled_message: injected into conversation for user_id=%d", user_id)
     except Exception:
