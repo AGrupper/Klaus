@@ -89,6 +89,8 @@ class MessageRouter:
         elif message_text == "/reset":
             await self._handle_reset(update, telegram_user_id)
         else:
+            if getattr(update.message, 'forward_origin', None) or getattr(update.message, 'forward_date', None):
+                message_text = f"[Forwarded Message]:\n{message_text}"
             await self._handle_text_message(update, telegram_user_id, message_text)
 
     # ------------------------------------------------------------------ #

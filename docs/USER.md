@@ -29,7 +29,7 @@
 The following Hebrew message template is used for all pre-practice and morning-after pings to sub-team members. The `{name}` placeholder is replaced with the teammate's nickname (or first name).
 
 ```
-היי {name}, אתה מגיע היום לאימון?
+מה אומר {name}? אתה בא היום?
 ```
 
 <!-- Replace the template above with your actual Hebrew text before going live. -->
