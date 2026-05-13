@@ -36,7 +36,7 @@ Three alert types:
 Detection is template-based (zero LLM cost on quiet days). If any alerts are found,
 the structured data is passed to the Smart Agent to compose a single message in Klaus voice.
 
-## 6. Five Fingers Practice Helper (Phase 8 — In Progress)
+## 6. Five Fingers Practice Helper (Phase 8) ✓ Live
 
 Three proactive flows triggered by Cloud Scheduler (Sun/Wed mornings and evenings, Mon/Thu mornings):
 
