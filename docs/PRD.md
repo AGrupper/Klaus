@@ -46,4 +46,14 @@ Three proactive flows triggered by Cloud Scheduler (Sun/Wed mornings and evening
 
 WhatsApp sending is always user-initiated (tap a link or copy-paste a group message) — Klaus never sends autonomously. Roster and attendance are stored in Firestore; a single Hebrew message template lives in `docs/USER.md`.
 
+## 7. Morning Briefing (Phase 10)
+
+**Goal:** Daily Garmin-sync-anchored morning briefing via Telegram.
+
+**Delivery trigger:** Cloud Scheduler polls every 10 min (06:00–10:15 Asia/Jerusalem). Briefing fires 10–20 min after Garmin sleep data appears. Manual trigger via Telegram ("morning briefing").
+
+**Data sources:** Weather (wttr.in), Google Calendar (today), Gmail (unread, actionable), Garmin health (sleep score, HRV, body battery), Things 3 tasks (via Mac-side snapshot). Readwise: link-only to `https://readwise.io/daily_review`.
+
+**Interactive:** Briefing written into Firestore conversation history so replies are natural follow-up turns. Structured event/task IDs stored in `morning_briefings/{date}` for tool use.
+
 

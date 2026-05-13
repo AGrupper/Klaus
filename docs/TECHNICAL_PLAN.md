@@ -38,3 +38,13 @@ We will build the following functional blocks:
   * Collection `five_fingers_practices` — Phase 8 attendance log (one doc per practice, ID = YYYY-MM-DD)
 * **Pinecone index:** `Klaus-memory` — serverless, AWS, dimension=768, cosine
 * **Secrets in Secret Manager:** `Klaus-anthropic-key`, `Klaus-gemini-key`, `Klaus-telegram-token`, `Klaus-telegram-webhook-secret`, `Klaus-google-oauth-token`, `Klaus-pinecone-key`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `READWISE_TOKEN`
+
+### Phase 10 components
+
+- `core/morning_briefing.py` — state machine (`handle_tick`), `run_morning_briefing`, data gathering, LLM composition, plain-text fallback, CLI smoke test.
+- `core/scheduled_message.py` — shared Telegram send + Firestore conversation injection (used by Phase 9 and Phase 10).
+- `mcp_tools/things_snapshot.py` — reads `things_snapshot/latest` from Firestore with staleness tiers.
+- `local_mac/things_poller.py` — now also pushes Things 3 snapshot each poll cycle via `push_things_snapshot()`.
+- `prompts/morning_briefing.md` — Klaus JARVIS × C-3PO voice + format spec for briefing composition.
+- Firestore collections: `morning_briefings/{date}` (state machine + structured metadata), `things_snapshot/latest` (Mac-side task snapshot).
+- Cloud Scheduler job: `klaus-morning-briefing-tick`, schedule `*/10 6-10 * * *` Asia/Jerusalem.
