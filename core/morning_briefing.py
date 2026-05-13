@@ -285,12 +285,15 @@ def _plain_text_fallback(today_data: dict, today_iso: str) -> str:
             start = e.get("start", "")
             end = e.get("end", "")
             summary = e.get("summary", "Event")
+            # Prefix with LRM (U+200E) if the summary contains RTL characters
+            # so Telegram renders time ranges left-to-right.
+            lrm = "\u200e" if any("\u0590" <= ch <= "\u08ff" for ch in summary) else ""
             try:
                 s = datetime.fromisoformat(start).strftime("%H:%M")
                 en = datetime.fromisoformat(end).strftime("%H:%M")
-                lines.append(f"{s}–{en} — {summary}")
+                lines.append(f"{lrm}{s}–{en} — {summary}")
             except (ValueError, TypeError):
-                lines.append(f"— {summary}")
+                lines.append(f"{lrm}— {summary}")
     else:
         lines.append("Nothing on the calendar today, sir.")
 
@@ -331,7 +334,7 @@ def _plain_text_fallback(today_data: dict, today_iso: str) -> str:
             lines.append("No tasks today, sir.")
 
     lines.append("")
-    lines.append("📚 https://readwise.io/daily_review")
+    lines.append("📚 https://readwise.io/dailyreview")
     return "\n".join(lines)
 
 

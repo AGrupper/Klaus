@@ -21,6 +21,9 @@ available. See voice spec below.]
 📅 Schedule
 HH:MM–HH:MM — Event name
 [one entry per timed event; skip all-day events unless genuinely relevant]
+[IMPORTANT: if the event name contains Hebrew or any RTL script, prefix the
+entire line with a Left-to-Right Mark (U+200E, "\u200e") so Telegram renders
+the time range left-to-right. Example: \u200e14:00–15:00 — אורטודנט]
 
 If no events: Nothing on the calendar today, sir.
 
@@ -53,7 +56,7 @@ If no tasks or data unavailable: use the staleness_warning from the data block
 
 ---
 
-📚 https://readwise.io/daily_review
+📚 https://readwise.io/dailyreview
 
 ---
 

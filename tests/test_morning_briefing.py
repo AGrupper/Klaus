@@ -43,7 +43,7 @@ def test_plain_text_fallback_all_sections_present():
     assert "No actionable email this morning, sir." in result
     assert "✅ Tasks" in result
     assert "No tasks today, sir." in result
-    assert "📚 https://readwise.io/daily_review" in result
+    assert "📚 https://readwise.io/dailyreview" in result
 
 
 def test_plain_text_fallback_with_events():
@@ -137,7 +137,7 @@ def test_compose_briefing_llm_failure_falls_back():
         result = _compose_briefing(data, "2026-05-12")
     assert "Good morning, sir." in result
     assert "📅 Schedule" in result
-    assert "📚 https://readwise.io/daily_review" in result
+    assert "📚 https://readwise.io/dailyreview" in result
 
 
 def test_compose_briefing_uses_llm_when_available():

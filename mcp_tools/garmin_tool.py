@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import date
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,7 @@ def fetch_garmin_today() -> dict:
     except Exception as exc:
         raise GarminAuthError(f"Garmin login failed: {exc}") from exc
 
-    today = date.today().isoformat()
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
 
     try:
         result: dict = {"date": today}
