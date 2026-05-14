@@ -86,7 +86,7 @@ gcloud services enable \
 | `run.googleapis.com` | Deploy and serve the Klaus container |
 | `artifactregistry.googleapis.com` | Store Docker images before deploying |
 | `secretmanager.googleapis.com` | Store API keys and the OAuth token |
-| `firestore.googleapis.com` | Things 3 task queue |
+| `firestore.googleapis.com` | Conversation history, roster, attendance, and morning briefing state |
 | `iamcredentials.googleapis.com` | Service account impersonation (WIF) |
 | `sts.googleapis.com` | Token exchange for Workload Identity Federation |
 | `iam.googleapis.com` | Create and manage service accounts |
@@ -137,7 +137,7 @@ done
 
 | Role | Why it is needed |
 |---|---|
-| `roles/datastore.user` | Read and write Firestore (Things 3 queue) |
+| `roles/datastore.user` | Read and write Firestore (conversation history, roster, attendance, morning briefing state) |
 | `roles/secretmanager.secretAccessor` | Read secret versions (API keys, OAuth token) |
 | `roles/logging.logWriter` | Write structured logs to Cloud Logging |
 
@@ -259,6 +259,74 @@ Every subsequent token refresh is handled silently in the background by
 
 ---
 
+## 7b. TickTick OAuth Bootstrap
+
+Klaus writes tasks directly to the TickTick Open API — no Mac daemon required.
+This one-time step obtains the initial token pair and uploads it to Secret Manager.
+
+**Prerequisite:** Register a developer app at
+[developer.ticktick.com](https://developer.ticktick.com/). Set the redirect
+URI to `http://localhost:8765/callback`. Copy the `client_id` and
+`client_secret` into `.env`.
+
+### Create the TickTick secrets in Secret Manager
+
+```bash
+for secret in TICKTICK_CLIENT_ID TICKTICK_CLIENT_SECRET \
+              TICKTICK_ACCESS_TOKEN TICKTICK_REFRESH_TOKEN; do
+  gcloud secrets create $secret \
+    --replication-policy=automatic \
+    --project=${PROJECT_ID}
+done
+```
+
+### Grant the runtime SA permission to write refreshed tokens
+
+When the access token expires (~180 days), `ticktick_auth.py` silently
+refreshes it and writes the new token back to Secret Manager. This requires
+`secretVersionAdder` on both token secrets.
+
+```bash
+for secret in TICKTICK_ACCESS_TOKEN TICKTICK_REFRESH_TOKEN; do
+  gcloud secrets add-iam-policy-binding $secret \
+    --member="serviceAccount:${RUNTIME_SA}" \
+    --role="roles/secretmanager.secretVersionAdder" \
+    --project=${PROJECT_ID}
+done
+```
+
+### Run the bootstrap script
+
+```bash
+# Run on your Mac — opens a browser for the TickTick consent screen.
+python scripts/ticktick_oauth_bootstrap.py
+```
+
+The script saves tokens to `config/ticktick_tokens.json` and prints the
+exact `gcloud` commands to upload them to Secret Manager. Run those commands.
+If TickTick does not return a refresh token, upload `none` as a placeholder:
+
+```bash
+echo -n "none" | gcloud secrets versions add TICKTICK_REFRESH_TOKEN \
+  --data-file=- --project=${PROJECT_ID}
+```
+
+Upload the client credentials (source `.env` first so the vars are in scope):
+
+```bash
+source .env
+echo -n "$TICKTICK_CLIENT_ID" | gcloud secrets versions add TICKTICK_CLIENT_ID \
+  --data-file=- --project=${PROJECT_ID}
+echo -n "$TICKTICK_CLIENT_SECRET" | gcloud secrets versions add TICKTICK_CLIENT_SECRET \
+  --data-file=- --project=${PROJECT_ID}
+```
+
+**Note:** TickTick access tokens last approximately 180 days. If a token
+expires, re-run `python scripts/ticktick_oauth_bootstrap.py` and re-upload
+`TICKTICK_ACCESS_TOKEN` to Secret Manager.
+
+---
+
 ## 8. Firestore Database
 
 Skip this step if you already created the Firestore database during Phase 4.
@@ -274,9 +342,10 @@ gcloud firestore databases create \
 ```
 
 The database name `klaus-firestore` matches the `FIRESTORE_DATABASE` env var
-set in `.github/workflows/deploy.yml`. The `things_queue` collection inside
-this database is where the cloud agent writes tasks for the local Mac poller
-(`local_mac/things_poller.py`) to pick up.
+set in `.github/workflows/deploy.yml`. Collections used: `conversations`
+(per-user chat history), `five_fingers_roster`, `five_fingers_practices`
+(Phase 8 basketball helper), and `morning_briefings/{date}` (Phase 10
+morning briefing state machine).
 
 ---
 
@@ -490,10 +559,10 @@ one verifies a different layer of the stack.
    was added (timestamp should be within the last minute). If no new version
    appears, the `secretVersionAdder` IAM binding from Step 6d is missing.
 
-6. **Things 3 task injection**
+6. **TickTick task creation**
    Ask Klaus to add a task (e.g. `"Add a task: test the deployment"`).
-   Verify it appears in Things 3 on your Mac within a few seconds (requires
-   `local_mac/things_poller.py` to be running on your Mac).
+   Verify it appears in TickTick immediately across all your devices (no Mac
+   required — tasks are written directly to the TickTick Open API).
 
 7. **Cold start latency**
    Wait at least 15 minutes with no messages (so the Cloud Run instance scales
