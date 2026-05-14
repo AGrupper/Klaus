@@ -46,12 +46,17 @@ class FirestoreQueue:
             "title": str,
             "notes": str,
             "deadline": ISO8601 str | None,
+            "reminder": ISO8601 datetime str | None,
             "tags": list[str],
-            "status": "pending" | "consumed",
+            "status": "pending" | "in_flight" | "consumed",
             "created_at": Firestore server timestamp,
+            "claimed_at": Firestore server timestamp | None,   # set when in_flight
             "consumed_at": Firestore server timestamp | None,
         }
-    The local poller marks documents as "consumed" once injected into Things 3.
+    Lifecycle: pending → in_flight (claimed by poller) → consumed (injected into Things 3).
+    Docs that fail injection stay in_flight and are excluded from fetch_pending, preventing
+    the infinite-duplication loop where Things 3 had already accepted the task before the
+    AppleScript subprocess returned an error.
     """
 
     def __init__(self, project_id: str, collection: str = "things_queue",
@@ -159,6 +164,32 @@ class FirestoreQueue:
         # Sort oldest-first using created_at; docs without the field sort last.
         results.sort(key=lambda d: d.get("created_at") or 0)
         return results
+
+    def mark_in_flight(self, doc_id: str) -> None:
+        """Atomically claim a pending doc before the local injector runs AppleScript.
+
+        Sets status='in_flight' so subsequent poll cycles skip this doc. If the
+        injection into Things 3 succeeds, the caller flips it to 'consumed'. If it
+        fails, the doc stays in_flight and is excluded from fetch_pending — this
+        breaks the infinite-duplication loop where Things 3 had already accepted the
+        to-do before the AppleScript subprocess returned an error.
+
+        To retry a stuck in_flight doc: manually set status='pending' in Firestore.
+
+        Args:
+            doc_id: Firestore document ID returned by fetch_pending.
+
+        Raises:
+            GoogleAPICallError: If the Firestore update fails.
+        """
+        try:
+            self._col.document(doc_id).update({
+                "status": "in_flight",
+                "claimed_at": firestore.SERVER_TIMESTAMP,
+            })
+        except GoogleAPICallError:
+            logger.error("FirestoreQueue.mark_in_flight(%r) failed", doc_id)
+            raise
 
     def mark_consumed(self, doc_id: str) -> None:
         """Flip a task's status to "consumed" after local injection succeeds.

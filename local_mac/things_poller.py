@@ -23,7 +23,7 @@ from google.api_core.exceptions import GoogleAPICallError
 logger = logging.getLogger(__name__)
 
 # Seconds before an osascript call is considered hung and killed.
-APPLESCRIPT_TIMEOUT_SECONDS = 15
+APPLESCRIPT_TIMEOUT_SECONDS = 60
 
 
 def _escape_applescript(value: str) -> str:
@@ -31,23 +31,23 @@ def _escape_applescript(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _format_things_datetime(reminder: str) -> str:
-    """Convert YYYY-MM-DDTHH:MM (or YYYY-MM-DDTHH:MM:SS) to Things 3 AppleScript format.
+def _iso_to_applescript_date(iso_date: str) -> str:
+    """Convert an ISO date string to DD/MM/YYYY for AppleScript on Israeli locale (en_IL).
 
-    Things 3 accepts date strings in the form "YYYY-MM-DD HH:MM:SS" (space separator,
-    no T, no timezone).
+    AppleScript's `date` coercion is locale-sensitive. On Israeli/European locales
+    the expected format is DD/MM/YYYY. Passing YYYY-MM-DD silently produces wrong dates
+    (e.g. "2026-05-15" parses as Nov 16, 2025 on en_IL).
 
     Args:
-        reminder: ISO-style datetime string, e.g. "2026-05-15T09:30" or "2026-05-15T09:30:00".
+        iso_date: "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM" (time component is ignored;
+                  use the `schedule` verb for the date, not activation date property).
 
     Returns:
-        A string like "2026-05-15 09:30:00" ready for AppleScript's `date` coercion.
+        "DD/MM/YYYY" string suitable for `date "..."` in AppleScript on en_IL.
     """
-    # Replace T separator with space and ensure HH:MM:SS (add :00 if only HH:MM given).
-    formatted = reminder.replace("T", " ")
-    if len(formatted) == 16:  # "YYYY-MM-DD HH:MM"
-        formatted += ":00"
-    return formatted
+    date_part = iso_date[:10]  # strip any time component
+    year, month, day = date_part.split("-")
+    return f"{day}/{month}/{year}"
 
 
 def _shape_task(t: dict) -> dict:
@@ -135,23 +135,36 @@ class ThingsPoller:
                 pending = self.queue.fetch_pending(limit=25)
             except GoogleAPICallError as exc:
                 # WHY: transient Firestore outage must not kill the long-running daemon.
-                # Sleep and retry; fetch_pending also swallows errors and returns [],
-                # but mark_consumed re-raises so we guard here too.
                 logger.error("fetch_pending failed, will retry next tick: %s", exc)
                 time.sleep(self.poll_interval_seconds)
                 continue
 
             for task in pending:
                 doc_id = task.get("doc_id")
+
+                # WHY claim before inject: AppleScript may fail (exit code 1, timeout)
+                # AFTER Things 3 has already accepted the to-do. Without this claim step
+                # the doc stays "pending" and gets re-injected every 30s, creating
+                # infinite duplicates. Claiming first means a failed injection leaves the
+                # doc "in_flight" — excluded from fetch_pending — so it never re-runs
+                # automatically. To retry, manually reset status to "pending" in Firestore.
+                try:
+                    self.queue.mark_in_flight(doc_id)
+                except GoogleAPICallError as exc:
+                    logger.error(
+                        "mark_in_flight failed for doc_id=%r — skipping this tick: %s",
+                        doc_id, exc,
+                    )
+                    continue
+
                 try:
                     self.inject_into_things(task)
                 except (subprocess.CalledProcessError,
                         subprocess.TimeoutExpired,
                         FileNotFoundError) as exc:
-                    # WHY do NOT mark consumed: leave the doc pending so it retries
-                    # on the next poll. The user can investigate and re-run.
                     logger.error(
-                        "AppleScript injection failed for doc_id=%r title=%r: %s",
+                        "AppleScript injection failed for doc_id=%r title=%r — "
+                        "doc left in 'in_flight' (will NOT auto-retry; inspect/reset manually): %s",
                         doc_id, task.get("title"), exc,
                     )
                     continue
@@ -160,12 +173,11 @@ class ThingsPoller:
                     self.queue.mark_consumed(doc_id)
                     logger.info("Injected & consumed doc_id=%r title=%r", doc_id, task.get("title"))
                 except GoogleAPICallError as exc:
-                    # WHY log loudly: the task is already in Things 3 but still shows
-                    # "pending" in Firestore, so the next poll will try to inject it again
-                    # (duplicate). This is the safer failure mode for a solo-user setup.
+                    # Doc is in_flight; Things 3 has the task. No duplicate risk on restart
+                    # because in_flight is excluded from fetch_pending.
                     logger.error(
                         "Injected doc_id=%r into Things 3 but mark_consumed failed — "
-                        "may appear as duplicate on next poll: %s",
+                        "doc stuck in 'in_flight' (no duplicate risk; reconcile manually): %s",
                         doc_id, exc,
                     )
 
@@ -226,19 +238,30 @@ class ThingsPoller:
             props.append(f"tag names:{{{tag_list}}}")
 
         if deadline:
-            # WHY `due date:(date "YYYY-MM-DD")`: Things 3's AppleScript dictionary
-            # exposes "due date" as the deadline property; the `date` coercion
-            # parses ISO dates without time components cleanly on macOS.
-            props.append(f'due date:(date "{deadline}")')
-
-        if reminder:
-            # WHY `activation date`: Things 3's "when" / scheduled-for field. Setting
-            # this date+time causes Things 3 to fire a macOS notification at that moment.
-            # Format must be "YYYY-MM-DD HH:MM:SS" (space-separated, no T, no timezone).
-            things_dt = _format_things_datetime(reminder)
-            props.append(f'activation date:(date "{things_dt}")')
+            # WHY DD/MM/YYYY: AppleScript `date` coercion is locale-sensitive.
+            # On Israeli locale (en_IL) the expected format is DD/MM/YYYY;
+            # passing YYYY-MM-DD silently parses to a wrong date (e.g. 2026-05-20
+            # becomes Nov 16, 2025).
+            props.append(f'due date:(date "{_iso_to_applescript_date(deadline)}")')
 
         properties = "{" + ", ".join(props) + "}"
+
+        if reminder:
+            # WHY `schedule` verb instead of `activation date` property:
+            # Things 3's sdef declares `activation date` as access="r" (read-only).
+            # Setting it in `make new to do with properties` raises AppleEvent error
+            # -10000. The `schedule` verb is the correct API; it sets the day the
+            # task appears in Today. Note: Things 3's `schedule` accepts a date only
+            # (time component is ignored); minute-precise reminders require the
+            # Things URL scheme and are not supported via AppleScript.
+            activation_date = _iso_to_applescript_date(reminder)
+            return (
+                'tell application "Things3"\n'
+                f'    set t to make new to do with properties {properties}\n'
+                f'    schedule t for date "{activation_date}"\n'
+                'end tell'
+            )
+
         return (
             'tell application "Things3"\n'
             f'    make new to do with properties {properties}\n'
@@ -294,13 +317,22 @@ def _smoke_test() -> int:
         for task in pending:
             doc_id = task.get("doc_id")
             try:
+                poller.queue.mark_in_flight(doc_id)
+            except GoogleAPICallError as exc:
+                logger.error("mark_in_flight failed for doc_id=%r — skipping: %s", doc_id, exc)
+                continue
+            try:
                 poller.inject_into_things(task)
-                poller.queue.mark_consumed(doc_id)
-                logger.info("Injected & consumed doc_id=%r title=%r", doc_id, task.get("title"))
             except (subprocess.CalledProcessError,
                     subprocess.TimeoutExpired,
                     FileNotFoundError) as exc:
-                logger.error("Failed to inject doc_id=%r: %s", doc_id, exc)
+                logger.error(
+                    "Failed to inject doc_id=%r — doc left in 'in_flight': %s", doc_id, exc,
+                )
+                continue
+            try:
+                poller.queue.mark_consumed(doc_id)
+                logger.info("Injected & consumed doc_id=%r title=%r", doc_id, task.get("title"))
             except GoogleAPICallError as exc:
                 logger.error("Failed to mark_consumed doc_id=%r: %s", doc_id, exc)
         return 0
