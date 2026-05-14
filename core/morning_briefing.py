@@ -219,19 +219,12 @@ def _gather_data(today_iso: str) -> dict:
         logger.warning("morning_briefing: Garmin data fetch failed", exc_info=True)
         data["garmin"] = {"state": 2}
 
-    # Things 3 snapshot
+    # TickTick tasks
     try:
-        from mcp_tools.things_snapshot import get_today_tasks
-        snapshot = get_today_tasks()
-        data["tasks"] = {
-            "stale_minutes": snapshot.stale_minutes,
-            "staleness_warning": snapshot.staleness_warning,
-            "overdue": snapshot.overdue,
-            "today": snapshot.today,
-            "due_today": snapshot.due_today,
-        }
+        from mcp_tools.ticktick_tool import get_today_tasks
+        data["tasks"] = get_today_tasks()
     except Exception:
-        logger.warning("morning_briefing: Things 3 snapshot fetch failed", exc_info=True)
+        logger.warning("morning_briefing: TickTick task fetch failed", exc_info=True)
         data["tasks"] = {"staleness_warning": "Task data unavailable, sir."}
 
     return data

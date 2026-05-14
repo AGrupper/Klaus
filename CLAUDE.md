@@ -1,7 +1,7 @@
 # Master Blueprint: Personal Hybrid Agent
 
 ## 1. Project Overview
-This project is a custom, cloud-hosted personal AI agent. It uses a dual-model architecture (a fast router model and a smart primary model) to handle scheduling, task management, and tool execution. It bridges cloud-native APIs (Gmail, Google Calendar) with local apps (Things 3) via a cloud database queue. 
+This project is a custom, cloud-hosted personal AI agent. It uses a dual-model architecture (a fast router model and a smart primary model) to handle scheduling, task management, and tool execution. It integrates with cloud-native APIs (Gmail, Google Calendar, TickTick) and is fully cloud-hosted with no local Mac dependency.
 
 ## 2. Context Files Reference
 Before writing any code, you must read and adhere to the following context files:
@@ -30,11 +30,12 @@ Klaus/
 │   ├── auth_google.py    # Google OAuth 2.0 persistent logic
 │   └── llm_client.py     # Agnostic LLM API wrapper
 ├── memory/
-│   ├── firestore_db.py   # State and Things 3 Queue logic
+│   ├── firestore_db.py   # Firestore state (roster, attendance, conversation store)
 │   └── pinecone_db.py    # Vector RAG logic
 ├── mcp_tools/            # Custom MCP server logic
 │   ├── gmail_tool.py
 │   ├── calendar_tool.py
-│   └── things_queue.py
-└── local_mac/
-    └── things_poller.py  # Standalone script for macOS to poll Firestore
+│   ├── ticktick_tool.py  # TickTick task integration (add_task, get_today_tasks)
+│   └── ticktick_auth.py  # TickTick OAuth 2.0 token management
+└── scripts/
+    └── ticktick_oauth_bootstrap.py  # One-time OAuth setup script

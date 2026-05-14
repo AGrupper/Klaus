@@ -5,7 +5,7 @@ The codebase must be highly readable and easy to maintain. Avoid overly complex 
 
 ## 2. Object-Oriented Principles
 * Since the system will have multiple tools and connections, utilize standard Object-Oriented Programming (OOP). 
-* Use clear Classes for external integrations (e.g., `class GoogleCalendarManager:`, `class FirestoreQueue:`). 
+* Use clear Classes for external integrations (e.g., `class GoogleCalendarManager:`, `class RosterStore:`). 
 * This mirrors standard practices taught in C# and foundational Python, keeping the architecture organized and predictable.
 
 ## 3. Naming Conventions
@@ -20,4 +20,4 @@ The codebase must be highly readable and easy to maintain. Avoid overly complex 
 ## 5. Error Handling & Modularity
 * Never use bare `except:` blocks. Always catch specific exceptions (e.g., `except requests.exceptions.Timeout:`).
 * If an API call fails, the code must gracefully log the error and return a clear message to the agent, rather than crashing the application.
-* Keep tools strictly modular. The `gmail_tool.py` should not contain any logic for the Things 3 queue.
+* Keep tools strictly modular. The `gmail_tool.py` should not contain any logic for TickTick tasks.

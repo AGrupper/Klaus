@@ -6,7 +6,7 @@ Create a highly personalized, cloud-hosted AI agent that manages scheduling, tas
 ## 2. Core Features & Workflows
 * **Dual-Model Orchestration:** The system will use a fast, cheap model (e.g., Gemini Flash or a small local-in-cloud model) to route requests, fetch data, and handle simple queries. Complex logic and planning will be routed to a primary "Smart" model (TBD).
 * **Custom Tooling (MCPs):** The agent will utilize custom-built Python tools to interact with external services, avoiding bloated third-party wrappers.
-* **The "Things 3" Queue System:** ✓ Live. The cloud agent pushes tasks (title, notes, deadline, reminder, tags) into a Firestore queue. A launchd daemon on the user's MacBook Air M4 polls the queue every 30s and injects each task into Things 3 via AppleScript. `deadline` sets Things 3's due-date badge; `reminder` (YYYY-MM-DDTHH:MM) sets an `activation date` so Things 3 fires a macOS notification at the scheduled time.
+* **TickTick Integration:** ✓ Live. The cloud agent writes tasks directly to TickTick via the Open API (developer.ticktick.com). `deadline` (YYYY-MM-DD) sets a due date; `reminder` (YYYY-MM-DDTHH:MM) sets a due datetime with a push notification alarm. Fully cloud-native — no MacBook dependency.
 * **Google Workspace Integration:** Direct, persistent connection to Gmail and Google Calendar via a Google Cloud "Internal" OAuth App to prevent token expiration.
 
 ## 3. Interfaces
@@ -52,7 +52,7 @@ WhatsApp sending is always user-initiated (tap a link or copy-paste a group mess
 
 **Delivery trigger:** Cloud Scheduler polls every 10 min (06:00–10:15 Asia/Jerusalem). Briefing fires 10–20 min after Garmin sleep data appears. Manual trigger via Telegram ("morning briefing").
 
-**Data sources:** Weather (wttr.in), Google Calendar (today), Gmail (unread, actionable), Garmin health (sleep score, HRV, body battery), Things 3 tasks (via Mac-side snapshot). Readwise: link-only to `https://readwise.io/daily_review`.
+**Data sources:** Weather (wttr.in), Google Calendar (today), Gmail (unread, actionable), Garmin health (sleep score, HRV, body battery), TickTick tasks (via Open API, real-time). Readwise: link-only to `https://readwise.io/daily_review`.
 
 **Interactive:** Briefing written into Firestore conversation history so replies are natural follow-up turns. Structured event/task IDs stored in `morning_briefings/{date}` for tool use.
 

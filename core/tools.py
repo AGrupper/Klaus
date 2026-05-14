@@ -2,9 +2,9 @@
 
 Defines the full set of tools available to the agent in Anthropic's tool_use
 JSON format.  Phase 3 replaced the Gmail/Calendar mock handlers with real
-Google API calls.  Phase 4 replaced the add_task mock with a real Firestore
-queue via `FirestoreQueue` and `ThingsQueueWriter`.  Phase 6 adds remember
-and recall tools for long-term Pinecone-backed memory.
+Google API calls.  Phase 4 added the add_task tool (originally Firestore/Things 3
+queue; now replaced by TickTick Open API).  Phase 6 adds remember and recall tools
+for long-term Pinecone-backed memory.
 
 Switching tool backends requires only editing this file — the orchestrator,
 LLM client, and callers do not need to change.
@@ -161,10 +161,10 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "add_task",
         "description": (
-            "Add a to-do item to the Things 3 task queue. The local Mac poller will "
-            "inject it into Things 3 within ~30 seconds. Use 'reminder' "
-            "(YYYY-MM-DDTHH:MM) for a scheduled notification; use 'deadline' "
-            "(YYYY-MM-DD) for a hard due date. Both can coexist."
+            "Add a to-do item to TickTick. Tasks appear immediately on all of Amit's "
+            "TickTick devices (phone, web, etc.). Use 'reminder' (YYYY-MM-DDTHH:MM) "
+            "for a time-specific push notification; use 'deadline' (YYYY-MM-DD) for a "
+            "silent hard due date. If both are supplied, reminder takes precedence."
         ),
         "input_schema": {
             "type": "object",
@@ -174,16 +174,16 @@ TOOL_SCHEMAS: list[dict] = [
                 "deadline": {
                     "type": "string",
                     "description": (
-                        "Optional hard deadline (YYYY-MM-DD). Things 3 shows this as "
-                        "the red due-date badge. Date-only — no notification fires."
+                        "Optional hard deadline (YYYY-MM-DD). Shows as a due date in "
+                        "TickTick. Date-only — no push notification fires."
                     ),
                 },
                 "reminder": {
                     "type": "string",
                     "description": (
                         "Optional scheduled time (YYYY-MM-DDTHH:MM, local time). "
-                        "Things 3 will fire a macOS notification at this time. "
-                        "Maps to Things 3's 'when' / activation date."
+                        "TickTick will fire a push notification at this exact time. "
+                        "Use for 'remind me at HH:MM' requests."
                     ),
                 },
                 "tags": {
@@ -403,7 +403,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "run_morning_briefing",
         "description": (
             "Compose and send the morning briefing to Telegram immediately. "
-            "Fetches weather, calendar, email, Garmin health, and Things 3 tasks "
+            "Fetches weather, calendar, email, Garmin health, and TickTick tasks "
             "for today, then sends a single briefing message. "
             "Use when the user asks for the morning briefing, daily briefing, "
             "or any variant of 'morning briefing' / 'give me my briefing'."
@@ -467,8 +467,8 @@ from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from mcp_tools.weather_tool import fetch_weather        # noqa: E402
 from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
 from mcp_tools.garmin_tool import fetch_garmin_today    # noqa: E402
-from memory.firestore_db import FirestoreQueue, RosterStore, AttendanceStore  # noqa: E402
-from mcp_tools.things_queue import ThingsQueueWriter    # noqa: E402
+from memory.firestore_db import RosterStore, AttendanceStore  # noqa: E402
+from mcp_tools.ticktick_tool import add_task as _ticktick_add_task  # noqa: E402
 from memory.pinecone_db import MemoryStore              # noqa: E402
 from mcp_tools.memory import MemoryTool                 # noqa: E402
 from mcp_tools.five_fingers.composer import normalize_phone  # noqa: E402
@@ -477,8 +477,6 @@ import os                                               # noqa: E402
 _auth_manager: GoogleAuthManager | None = None
 _gmail_tool: GmailTool | None = None
 _calendar_tool: GoogleCalendarManager | None = None
-_firestore_queue: FirestoreQueue | None = None
-_things_queue_writer: ThingsQueueWriter | None = None
 _memory_store: MemoryStore | None = None
 _memory_tool: MemoryTool | None = None
 _roster_store: RosterStore | None = None
@@ -514,28 +512,6 @@ def _get_calendar_tool() -> GoogleCalendarManager:
         _calendar_tool = GoogleCalendarManager(auth_manager=_get_auth_manager())
     return _calendar_tool
 
-
-def _get_firestore_queue() -> FirestoreQueue:
-    """Return the shared FirestoreQueue instance, building it on first call."""
-    global _firestore_queue
-    if _firestore_queue is None:
-        project_id = os.getenv("GCP_PROJECT_ID")
-        if not project_id:
-            raise RuntimeError("GCP_PROJECT_ID env var is required for add_task")
-        collection = os.getenv("FIRESTORE_COLLECTION_THINGS_QUEUE", "things_queue")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        _firestore_queue = FirestoreQueue(
-            project_id=project_id, collection=collection, database=database,
-        )
-    return _firestore_queue
-
-
-def _get_things_queue_writer() -> ThingsQueueWriter:
-    """Return the shared ThingsQueueWriter instance, building it on first call."""
-    global _things_queue_writer
-    if _things_queue_writer is None:
-        _things_queue_writer = ThingsQueueWriter(firestore_queue=_get_firestore_queue())
-    return _things_queue_writer
 
 
 def _get_memory_store() -> MemoryStore:
@@ -635,9 +611,9 @@ def _handle_get_email(message_id: str) -> str:
 def _handle_add_task(title: str, notes: str = "", deadline: str | None = None,
                      reminder: str | None = None,
                      tags: list[str] | None = None) -> str:
-    """Delegate to ThingsQueueWriter.add_todo and serialise the result."""
-    result = _get_things_queue_writer().add_todo(
-        title=title, notes=notes, deadline=deadline, reminder=reminder, tags=tags,
+    """Delegate to ticktick_tool.add_task and serialise the result."""
+    result = _ticktick_add_task(
+        title=title, notes=notes or None, deadline=deadline, reminder=reminder, tags=tags,
     )
     return json.dumps(result)
 
