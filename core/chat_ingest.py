@@ -519,7 +519,7 @@ def run_one_batch() -> dict:
             continue
 
     remaining = len(work_queue) - processed_count
-    done = len(work_queue) == 0
+    done = remaining == 0
 
     return {
         "ok": True,
@@ -539,7 +539,7 @@ async def handle_tick() -> dict:
     Offloads the blocking run_one_batch() call to the default thread
     executor so the event loop remains unblocked.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, run_one_batch)
 
 
