@@ -36,7 +36,7 @@ def _get_current_user_id() -> int:
 
 # Tools that Claude calls directly (not via delegate_to_worker).
 # The orchestrator uses this set to suppress spurious "unexpected direct call" warnings.
-SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall", "run_morning_briefing"})
+SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall", "run_morning_briefing", "search_chat_history"})
 
 # ------------------------------------------------------------------ #
 # Tool schemas in Anthropic tool_use format.                         #
@@ -244,6 +244,34 @@ TOOL_SCHEMAS: list[dict] = [
                 "k": {
                     "type": "integer",
                     "description": "Number of results to return (default 5, max 10).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "search_chat_history",
+        "description": (
+            "Search ingested Claude Code chat history for relevant sessions. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Returns semantically similar chat chunks from past Claude Code sessions. "
+            "Use when the user asks what they worked on, asks about a past decision, "
+            "or wants to find a specific past conversation."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language search query (e.g. 'OAuth flow implementation').",
+                },
+                "k": {
+                    "type": "integer",
+                    "description": "Number of results to return (default 5, max 10).",
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Optional project path to narrow results (e.g. '/Users/amit/Desktop/Klaus').",
                 },
             },
             "required": ["query"],
@@ -571,7 +599,7 @@ TOOL_SCHEMAS: list[dict] = [
 # (memory tools require Claude's judgment; the worker must not call them).
 WORKER_TOOL_SCHEMAS: list[dict] = [
     s for s in TOOL_SCHEMAS
-    if s["name"] not in {"delegate_to_worker", "remember", "recall"}
+    if s["name"] not in {"delegate_to_worker", "remember", "recall", "search_chat_history"}
 ]
 
 
@@ -773,6 +801,12 @@ def _handle_recall(query: str, k: int = 5) -> str:
     return json.dumps(result)
 
 
+def _handle_search_chat_history(query: str, k: int = 5, project: str | None = None) -> str:
+    """Delegate to MemoryTool.search_chat_history and serialise the result."""
+    result = _get_memory_tool().search_chat_history(_get_current_user_id(), query, k, project)
+    return json.dumps(result)
+
+
 def _handle_five_fingers_add_teammate(
     name: str,
     phone: str,
@@ -971,6 +1005,7 @@ _HANDLERS: dict[str, object] = {
     "add_task":              lambda args: _handle_add_task(**args),
     "remember":              lambda args: _handle_remember(**args),
     "recall":                lambda args: _handle_recall(**args),
+    "search_chat_history":   lambda args: _handle_search_chat_history(**args),
     "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
     "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
