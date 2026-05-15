@@ -28,7 +28,8 @@ Klaus/
 ├── core/
 │   ├── main.py           # Application entry point & router
 │   ├── auth_google.py    # Google OAuth 2.0 persistent logic
-│   └── llm_client.py     # Agnostic LLM API wrapper
+│   ├── llm_client.py     # Agnostic LLM API wrapper
+│   └── chat_ingest.py    # Phase 12: Claude Code log parser + GCS→Pinecone/Notion pipeline
 ├── memory/
 │   ├── firestore_db.py   # Firestore state (roster, attendance, conversation store)
 │   └── pinecone_db.py    # Vector RAG logic
@@ -38,4 +39,6 @@ Klaus/
 │   ├── ticktick_tool.py  # TickTick task integration (add_task, get_today_tasks)
 │   └── ticktick_auth.py  # TickTick OAuth 2.0 token management
 └── scripts/
-    └── ticktick_oauth_bootstrap.py  # One-time OAuth setup script
+    ├── ticktick_oauth_bootstrap.py  # One-time OAuth setup script
+    ├── upload_claude_logs.sh        # Mac: push ~/.claude/projects/ to GCS hourly
+    └── upload_claude_logs.ps1       # Windows: same for PC

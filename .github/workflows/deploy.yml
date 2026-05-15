@@ -49,6 +49,9 @@ jobs:
       - name: Push Docker image to Artifact Registry
         run: docker push "$IMAGE"
 
+      # TODO: Set CHAT_LOGS_BUCKET and NOTION_CHAT_LOG_DB_ID as GitHub Actions secrets
+      # (or repository variables) and reference them here before going to production.
+      # For now they are wired as empty strings so the env vars exist in Cloud Run.
       - name: Deploy to Cloud Run
         run: |
           # --service-account: runs as the runtime SA (datastore.user +
@@ -84,7 +87,7 @@ jobs:
             --cpu 1 \
             --memory 512Mi \
             --timeout 60 \
-            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,FIRESTORE_DATABASE=klaus-firestore,TICKTICK_TOKEN_STORAGE=secret_manager,SMART_AGENT_BACKEND=gemini,SMART_AGENT_MODEL=gemini-3-flash-preview,SMART_AGENT_FALLBACK_BACKEND=anthropic,SMART_AGENT_FALLBACK_MODEL=claude-haiku-4-5,WORKER_AGENT_BACKEND=gemini,WORKER_AGENT_MODEL=gemini-2.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }},CONVERSATION_STORE=firestore,PINECONE_INDEX_NAME=Klaus-memory,CLOUD_RUN_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,CLOUD_SCHEDULER_SA_EMAIL=klaus-heartbeat@klaus-agent.iam.gserviceaccount.com,PROACTIVE_RAIN_THRESHOLD=20,PROACTIVE_TEMP_MAX=38,PROACTIVE_TEMP_MIN=8,PROACTIVE_FREE_TIME_MIN=60,PROACTIVE_GAP_MIN=30" \
+            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,FIRESTORE_DATABASE=klaus-firestore,TICKTICK_TOKEN_STORAGE=secret_manager,SMART_AGENT_BACKEND=gemini,SMART_AGENT_MODEL=gemini-3-flash-preview,SMART_AGENT_FALLBACK_BACKEND=anthropic,SMART_AGENT_FALLBACK_MODEL=claude-haiku-4-5,WORKER_AGENT_BACKEND=gemini,WORKER_AGENT_MODEL=gemini-2.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }},CONVERSATION_STORE=firestore,PINECONE_INDEX_NAME=Klaus-memory,CLOUD_RUN_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,CLOUD_SCHEDULER_SA_EMAIL=klaus-heartbeat@klaus-agent.iam.gserviceaccount.com,PROACTIVE_RAIN_THRESHOLD=20,PROACTIVE_TEMP_MAX=38,PROACTIVE_TEMP_MIN=8,PROACTIVE_FREE_TIME_MIN=60,PROACTIVE_GAP_MIN=30,CHAT_LOGS_BUCKET=,NOTION_CHAT_LOG_DB_ID=" \
             --update-secrets "SMART_AGENT_API_KEY=klaus-gemini-key:latest,SMART_AGENT_FALLBACK_API_KEY=klaus-anthropic-key:latest,WORKER_AGENT_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest,PINECONE_API_KEY=klaus-pinecone-key:latest,NOTION_API_TOKEN=NOTION_API_TOKEN:latest,GARMIN_EMAIL=GARMIN_EMAIL:latest,GARMIN_PASSWORD=GARMIN_PASSWORD:latest,READWISE_TOKEN=READWISE_TOKEN:latest,HOME_ADDRESS=klaus-home-address:latest,TICKTICK_CLIENT_ID=TICKTICK_CLIENT_ID:latest,TICKTICK_CLIENT_SECRET=TICKTICK_CLIENT_SECRET:latest" \
             --quiet
 
