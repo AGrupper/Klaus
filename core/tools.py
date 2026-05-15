@@ -415,6 +415,127 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "notion_search",
+        "description": (
+            "Search across all Notion pages and databases shared with Klaus. "
+            "Returns matching pages/databases with their IDs, titles, and URLs. "
+            "Use filter_type='page' to search only pages, 'database' to search only databases."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query text."},
+                "filter_type": {
+                    "type": "string",
+                    "enum": ["page", "database"],
+                    "description": "Optional. Narrow results to 'page' or 'database'.",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "notion_get_page",
+        "description": (
+            "Fetch the full content of a Notion page by its ID. "
+            "Returns the page title, readable text, flattened properties, "
+            "and a list of child pages/databases for PARA tree traversal."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Notion page ID (32-char UUID, from notion_search results).",
+                },
+            },
+            "required": ["page_id"],
+        },
+    },
+    {
+        "name": "notion_query_database",
+        "description": (
+            "Query a Notion database. Returns the schema (property names and types) "
+            "and all matching rows. Call this before notion_create_page to understand "
+            "property names. Supports Notion filter objects."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "database_id": {"type": "string", "description": "Notion database ID."},
+                "filter": {
+                    "type": "object",
+                    "description": "Optional Notion filter object (e.g. {\"property\": \"Date\", \"date\": {\"equals\": \"2026-05-15\"}}).",
+                },
+                "sorts": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Optional Notion sort objects.",
+                },
+                "page_size": {
+                    "type": "integer",
+                    "description": "Results per page, default 100.",
+                },
+            },
+            "required": ["database_id"],
+        },
+    },
+    {
+        "name": "notion_create_page",
+        "description": (
+            "Create a new page in Notion — either as a database entry or a sub-page. "
+            "For database parents, call notion_query_database first to get the schema, "
+            "then pass properties in Notion API format. "
+            "content is plain text or light markdown (# headings, - bullets, [ ] todos)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "parent_id": {
+                    "type": "string",
+                    "description": "ID of the parent database or page.",
+                },
+                "parent_type": {
+                    "type": "string",
+                    "enum": ["database", "page"],
+                    "description": "'database' for a database entry, 'page' for a sub-page.",
+                },
+                "title": {"type": "string", "description": "Page title."},
+                "content": {
+                    "type": "string",
+                    "description": "Optional body text in plain text or light markdown.",
+                },
+                "properties": {
+                    "type": "object",
+                    "description": "Optional Notion properties dict in API format (overrides default title property).",
+                },
+            },
+            "required": ["parent_id", "parent_type", "title"],
+        },
+    },
+    {
+        "name": "notion_append_blocks",
+        "description": (
+            "Append text content to the end of an existing Notion page. "
+            "Use for adding to journal entries, logging notes, or extending any page. "
+            "Supports plain text or light markdown (# headings, - bullets, [ ] todos)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "page_id": {
+                    "type": "string",
+                    "description": "Notion page ID to append to.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Text to append (plain text or light markdown).",
+                },
+            },
+            "required": ["page_id", "content"],
+        },
+    },
+    {
         "name": "delegate_to_worker",
         "description": (
             "Delegate a task to your worker agent (Gemini Flash) for tool execution "
@@ -472,6 +593,13 @@ from mcp_tools.ticktick_tool import add_task as _ticktick_add_task  # noqa: E402
 from memory.pinecone_db import MemoryStore              # noqa: E402
 from mcp_tools.memory import MemoryTool                 # noqa: E402
 from mcp_tools.five_fingers.composer import normalize_phone  # noqa: E402
+from mcp_tools.notion_tool import (                     # noqa: E402
+    search as _notion_search,
+    get_page as _notion_get_page,
+    query_database as _notion_query_database,
+    create_page as _notion_create_page,
+    append_blocks as _notion_append_blocks,
+)
 import os                                               # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None
@@ -782,6 +910,50 @@ def _handle_run_morning_briefing() -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _handle_notion_search(query: str, filter_type: str | None = None) -> str:
+    result = _notion_search(query=query, filter_type=filter_type)
+    return json.dumps(result)
+
+
+def _handle_notion_get_page(page_id: str) -> str:
+    result = _notion_get_page(page_id=page_id)
+    return json.dumps(result)
+
+
+def _handle_notion_query_database(
+    database_id: str,
+    filter: dict | None = None,
+    sorts: list | None = None,
+    page_size: int = 100,
+) -> str:
+    result = _notion_query_database(
+        database_id=database_id, filter=filter, sorts=sorts, page_size=page_size
+    )
+    return json.dumps(result)
+
+
+def _handle_notion_create_page(
+    parent_id: str,
+    parent_type: str,
+    title: str,
+    content: str | None = None,
+    properties: dict | None = None,
+) -> str:
+    result = _notion_create_page(
+        parent_id=parent_id,
+        parent_type=parent_type,
+        title=title,
+        content=content,
+        properties=properties,
+    )
+    return json.dumps(result)
+
+
+def _handle_notion_append_blocks(page_id: str, content: str) -> str:
+    result = _notion_append_blocks(page_id=page_id, content=content)
+    return json.dumps(result)
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -805,6 +977,11 @@ _HANDLERS: dict[str, object] = {
     "five_fingers_bulk_import":     lambda args: _handle_five_fingers_bulk_import(**args),
     "five_fingers_log_attendance":  lambda args: _handle_five_fingers_log_attendance(**args),
     "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
+    "notion_search":          lambda args: _handle_notion_search(**args),
+    "notion_get_page":        lambda args: _handle_notion_get_page(**args),
+    "notion_query_database":  lambda args: _handle_notion_query_database(**args),
+    "notion_create_page":     lambda args: _handle_notion_create_page(**args),
+    "notion_append_blocks":   lambda args: _handle_notion_append_blocks(**args),
 }
 
 
