@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import time
+import uuid as _uuid_mod
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,8 +35,8 @@ logger = logging.getLogger(__name__)
 MIN_TURN_CHARS = 12
 CHUNK_MAX_CHARS = 1800
 CHUNK_OVERLAP_CHARS = 200
-BATCH_MAX_FILES = int(os.getenv("CHAT_INGEST_BATCH_MAX_FILES", "8"))
-BATCH_TIME_BUDGET_SEC = int(os.getenv("CHAT_INGEST_TIME_BUDGET_SEC", "45"))
+BATCH_MAX_FILES = 8
+BATCH_TIME_BUDGET_SEC = 45
 _COLLECTION = "chat_ingest"
 _STATE_DOC = "state"
 _GCS_PREFIX = "claude-code/"
@@ -128,8 +129,12 @@ def _decode_project_path(encoded: str) -> str:
         return encoded
     if encoded.startswith("/"):
         return encoded
-    # Replace leading '-' that represents the root '/' separator
-    return encoded.replace("-", "/")
+    # Step 1: protect literal hyphens (encoded as '--') with a placeholder
+    result = encoded.replace("--", "\x00")
+    # Step 2: decode path separators
+    result = result.replace("-", "/")
+    # Step 3: restore literal hyphens
+    return result.replace("\x00", "-")
 
 
 # ------------------------------------------------------------------ #
@@ -206,7 +211,7 @@ def parse_claude_code_jsonl(
             text = content.strip()
             if len(text) < MIN_TURN_CHARS:
                 continue
-            turn_uuid = obj.get("uuid", "")
+            turn_uuid = obj.get("uuid") or _uuid_mod.uuid4().hex
             turns.append(Turn(uuid=turn_uuid, role="user", text=text, timestamp=ts))
             if ts:
                 timestamps.append(ts)
@@ -228,7 +233,7 @@ def parse_claude_code_jsonl(
             text = " ".join(text_parts).strip()
             if len(text) < MIN_TURN_CHARS:
                 continue
-            turn_uuid = obj.get("uuid", "")
+            turn_uuid = obj.get("uuid") or _uuid_mod.uuid4().hex
             turns.append(Turn(uuid=turn_uuid, role="assistant", text=text, timestamp=ts))
             if ts:
                 timestamps.append(ts)
@@ -242,7 +247,7 @@ def parse_claude_code_jsonl(
 
     # Fallback project
     if not project:
-        project = _decode_project_path(session_id)
+        project = ""  # cwd not found; project metadata will be empty
 
     # Timestamps
     started_at = min(timestamps) if timestamps else ""
@@ -428,6 +433,9 @@ def run_one_batch() -> dict:
     """
     import google.cloud.storage  # lazy import — triggers no I/O at import time
 
+    batch_max = int(os.getenv("CHAT_INGEST_BATCH_MAX_FILES", str(BATCH_MAX_FILES)))
+    batch_budget = int(os.getenv("CHAT_INGEST_TIME_BUDGET_SEC", str(BATCH_TIME_BUDGET_SEC)))
+
     state = _get_state()
     completed: dict = state.get("completed", {})
 
@@ -448,14 +456,16 @@ def run_one_batch() -> dict:
     ]
 
     processed_count = 0
+    iterated_count = 0
     start_time = time.monotonic()
 
     for blob in work_queue:
-        if processed_count >= BATCH_MAX_FILES:
+        if processed_count >= batch_max:
             break
-        if time.monotonic() - start_time >= BATCH_TIME_BUDGET_SEC:
+        if time.monotonic() - start_time >= batch_budget:
             break
 
+        iterated_count += 1
         try:
             # Extract machine_id from blob path: claude-code/{machine_id}/...
             path_parts = blob.name.split("/")
@@ -518,8 +528,8 @@ def run_one_batch() -> dict:
             # Leave blob in work queue so it can be retried next tick.
             continue
 
-    remaining = len(work_queue) - processed_count
-    done = remaining == 0
+    remaining = len(work_queue) - iterated_count
+    done = remaining <= 0
 
     return {
         "ok": True,
