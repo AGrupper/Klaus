@@ -157,6 +157,12 @@ class TestBlocksToText:
         assert len(children) == 1
         assert children[0] == {"id": "db-456", "title": "My DB", "type": "database"}
 
+    def test_numbered(self):
+        from mcp_tools.notion_tool import _blocks_to_text
+        blocks = [{"type": "numbered_list_item", "numbered_list_item": {"rich_text": _rt("first item")}}]
+        text, children = _blocks_to_text(blocks)
+        assert text == "1. first item\n"
+
     def test_unknown_type_skipped(self):
         from mcp_tools.notion_tool import _blocks_to_text
         blocks = [{"type": "synced_block", "synced_block": {}}]
@@ -549,6 +555,14 @@ class TestAppendBlocks:
             result = append_blocks("page-1", "")
         mock_patch.assert_not_called()
         assert "error" in result
+
+    def test_chunked_large_content(self):
+        from mcp_tools.notion_tool import append_blocks, _BLOCK_CHUNK
+        big_content = "\n".join(f"line {i}" for i in range(_BLOCK_CHUNK + 1))
+        with patch("mcp_tools.notion_tool._api_patch", return_value={}) as mock_patch:
+            result = append_blocks("page-1", big_content)
+        assert mock_patch.call_count == 2
+        assert result["appended"] == _BLOCK_CHUNK + 1
 
     def test_api_error(self):
         from mcp_tools.notion_tool import append_blocks

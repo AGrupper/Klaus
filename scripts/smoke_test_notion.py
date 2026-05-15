@@ -34,11 +34,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 load_dotenv(override=True)
 
 from mcp_tools.notion_tool import (  # noqa: E402  (import after sys.path patch)
-    notion_append_blocks,
-    notion_create_page,
-    notion_get_page,
-    notion_query_database,
-    notion_search,
+    append_blocks as notion_append_blocks,
+    create_page as notion_create_page,
+    get_page as notion_get_page,
+    query_database as notion_query_database,
+    search as notion_search,
 )
 
 
@@ -150,6 +150,7 @@ def main() -> None:
         try:
             result = notion_create_page(
                 parent_id=first_page_id,
+                parent_type="page",
                 title="Klaus Smoke Test — DELETE ME",
                 content="- Automated smoke test\n- Safe to delete",
             )
