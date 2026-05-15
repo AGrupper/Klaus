@@ -453,3 +453,135 @@ def append_blocks(page_id: str, content: str) -> dict:
         }
     except requests.RequestException as exc:
         return {"error": str(exc), "page_id": page_id}
+
+
+def build_chat_log_properties(
+    conv: "object",
+    summary: str,
+    topics: list[str],
+) -> dict:
+    """Build a Notion properties dict for a chat-log database row.
+
+    Args:
+        conv:    A ParsedConversation instance with session_id, title, project,
+                 machine_id, started_at fields.
+        summary: 2-3 sentence summary from _summarize.
+        topics:  List of topic labels from _summarize.
+
+    Returns:
+        Notion-typed properties dict suitable for create_page or update_page_properties.
+    """
+    # Extract date from started_at (ISO string), fall back to today
+    from datetime import datetime, timezone
+    try:
+        date_str = conv.started_at[:10] if conv.started_at else ""
+        # Validate it's a real date
+        datetime.fromisoformat(date_str)
+    except (ValueError, AttributeError):
+        date_str = datetime.now(tz=timezone.utc).date().isoformat()
+
+    # Truncate summary to Notion's 2000-char rich_text limit
+    summary_truncated = summary[:2000] if summary else ""
+
+    # Truncate each topic name to Notion's 100-char select limit
+    topics_clean = [t[:100] for t in (topics or [])]
+
+    return {
+        "Name": {
+            "title": [{"type": "text", "text": {"content": (conv.title or "Untitled")[:2000]}}]
+        },
+        "Date": {
+            "date": {"start": date_str} if date_str else None
+        },
+        "Project": {
+            "select": {"name": (conv.project or "Unknown")[:100]} if conv.project else None
+        },
+        "Summary": {
+            "rich_text": [{"type": "text", "text": {"content": summary_truncated}}]
+        },
+        "Topics": {
+            "multi_select": [{"name": t} for t in topics_clean]
+        },
+        "Machine": {
+            "select": {"name": conv.machine_id[:100]} if conv.machine_id else None
+        },
+        "Session ID": {
+            "rich_text": [{"type": "text", "text": {"content": conv.session_id or ""}}]
+        },
+    }
+
+
+def update_page_properties(page_id: str, properties: dict) -> dict:
+    """Update properties of an existing Notion page.
+
+    Args:
+        page_id:    The Notion page ID to update.
+        properties: Notion-typed properties dict (same format as create_page).
+
+    Returns:
+        Dict with page_id and confirmation on success, or "error" on failure.
+    """
+    try:
+        data = _api_patch(f"pages/{page_id}", {"properties": properties})
+        return {
+            "page_id": data["id"],
+            "confirmation": f"Updated properties on page {page_id}.",
+        }
+    except requests.RequestException as exc:
+        return {"error": str(exc), "page_id": page_id}
+
+
+def upsert_database_row(
+    database_id: str,
+    match_property: str,
+    match_value: str,
+    properties: dict,
+    content: str | None = None,
+) -> dict:
+    """Create or update a database row, keyed on a single property value.
+
+    Queries the database for an existing row where match_property == match_value.
+    If found, updates its properties. If not found, creates a new row.
+
+    Args:
+        database_id:    Notion database ID.
+        match_property: Property name to match on (e.g. "Session ID").
+        match_value:    Value to match (e.g. the session UUID).
+        properties:     Notion-typed properties dict for the row.
+        content:        Optional page body text (only used on create).
+
+    Returns:
+        Dict with page_id, url, action ("created" or "updated"), confirmation.
+    """
+    try:
+        # Query for existing row matching the key
+        filter_obj = {
+            "property": match_property,
+            "rich_text": {"equals": match_value},
+        }
+        existing = _fetch_db_query(database_id, filter=filter_obj, page_size=1)
+        rows = existing.get("results", [])
+
+        if rows:
+            page_id = rows[0]["id"]
+            result = update_page_properties(page_id, properties)
+            result["action"] = "updated"
+            result["url"] = rows[0].get("url", "")
+            return result
+        else:
+            # Extract title from properties for the create_page call
+            title_prop = properties.get("Name", {})
+            title_parts = title_prop.get("title", [])
+            title = title_parts[0]["text"]["content"] if title_parts else "Untitled"
+            result = create_page(
+                parent_id=database_id,
+                parent_type="database",
+                title=title,
+                content=content,
+                properties=properties,
+            )
+            result["action"] = "created"
+            return result
+
+    except requests.RequestException as exc:
+        return {"error": str(exc), "database_id": database_id, "match_value": match_value}
