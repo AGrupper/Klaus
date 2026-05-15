@@ -56,4 +56,20 @@ WhatsApp sending is always user-initiated (tap a link or copy-paste a group mess
 
 **Interactive:** Briefing written into Firestore conversation history so replies are natural follow-up turns. Structured event/task IDs stored in `morning_briefings/{date}` for tool use.
 
+## 8. Notion Integration (Phase 11)
+
+**Access level:** Read + create/append (never edits or deletes existing content).
+
+Five callable tools:
+* **notion_search** — full-text search across all shared Notion content; returns pages/databases with IDs, titles, URLs.
+* **notion_get_page** — fetches a page's title, text content, flattened properties, and child pages/databases for PARA tree traversal.
+* **notion_query_database** — queries a Notion database; returns schema (property names/types) + rows. Call before `notion_create_page` to know the property format.
+* **notion_create_page** — creates a new page as a database entry or sub-page; converts plain text / light markdown to Notion blocks.
+* **notion_append_blocks** — appends text content to an existing page (e.g. today's journal entry).
+
+Auth: single Notion internal integration token (`NOTION_API_TOKEN`) — does not expire, no OAuth flow required.
+
+Use cases: searching notes, querying PARA databases, logging journal entries, creating project pages.
+
+Proactive scanning and Pinecone memory ingestion are deferred to a later phase.
 

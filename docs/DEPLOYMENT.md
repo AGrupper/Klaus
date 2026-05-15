@@ -753,3 +753,76 @@ workflow:
 
 If an env var is missing in Cloud Run, add it to the appropriate flag in
 `.github/workflows/deploy.yml`.
+
+---
+
+## 16. Phase 11 — Notion Integration Setup
+
+### 16a. Create a Notion Internal Integration
+
+1. Go to [https://www.notion.so/my-integrations](https://www.notion.so/my-integrations) and click **New integration**.
+2. Name it **Klaus**, select your workspace, and set capabilities to **Read content**, **Insert content**, and **Update content** (no delete required).
+3. Click **Submit**. On the next screen, copy the **Internal Integration Token** — this is your `NOTION_API_TOKEN`.
+
+### 16b. Share Your PARA Databases with the Integration
+
+Notion requires each database to be explicitly shared with the integration. For each of your PARA databases (Projects, Areas, Resources, Archives — and optionally your Journal/Daily Log):
+
+1. Open the database page in Notion.
+2. Click the **`...`** menu (top-right) → **Add connections**.
+3. Search for **Klaus** and select it.
+
+Repeat for every database you want Klaus to be able to read or write.
+
+### 16c. Add `NOTION_API_TOKEN` to Secret Manager
+
+```bash
+echo -n "your_token_here" | gcloud secrets create NOTION_API_TOKEN \
+  --data-file=- --project=${PROJECT_ID}
+```
+
+If the secret already exists and you are rotating the token:
+
+```bash
+echo -n "your_token_here" | gcloud secrets versions add NOTION_API_TOKEN \
+  --data-file=- --project=${PROJECT_ID}
+```
+
+### 16d. Wire the Secret into Cloud Run
+
+Add `NOTION_API_TOKEN` to the `--update-secrets` flag in `.github/workflows/deploy.yml`:
+
+```
+NOTION_API_TOKEN=NOTION_API_TOKEN:latest
+```
+
+The next CI/CD deploy will inject the token as an environment variable inside the container.
+
+### 16e. Optional — Set `NOTION_JOURNAL_DB_ID` as a Plain Env Var
+
+If you want Klaus to append journal entries reliably without searching for the database each time, set the journal database ID as a plain env var in Cloud Run:
+
+```bash
+gcloud run services update klaus-agent \
+  --update-env-vars NOTION_JOURNAL_DB_ID=your_journal_db_id \
+  --region=${REGION} \
+  --project=${PROJECT_ID}
+```
+
+Or add it to `--set-env-vars` in the deploy workflow alongside other non-sensitive config.
+
+### 16f. No Bootstrap Script Needed
+
+Unlike Google OAuth or TickTick, the Notion internal integration token is issued directly in the Notion UI and **does not expire**. There is no refresh flow and no bootstrap script to run. Simply create the secret once (Step 16c) and it remains valid indefinitely.
+
+### 16g. Verify
+
+After the next deployment completes, send Klaus a message like:
+
+> "Search Notion for project ideas"
+
+Confirm that he returns results with page titles and URLs. If he returns an empty list or an error, check:
+
+1. The `NOTION_API_TOKEN` secret value in Secret Manager (no leading/trailing whitespace).
+2. That the target databases were shared with the Klaus integration (Step 16b) — Notion returns an empty result set, not an error, for unshared content.
+3. Cloud Logging for any `401 Unauthorized` or `403 Forbidden` responses from the Notion API.
