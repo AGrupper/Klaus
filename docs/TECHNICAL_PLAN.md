@@ -31,6 +31,46 @@ We will build the following functional blocks:
 * **Phase 9:** Proactive evening alerts. ✓ Complete — nightly Cloud Scheduler job (`30 21 * * *` Asia/Jerusalem) scans tomorrow's calendar and detects weather conflicts, overloaded days, and travel-time violations. Template-based detection (zero LLM cost on quiet days); Smart Agent composes message when alerts exist. `core/proactive_alerts.py` refactored to use `core/scheduled_message.py` (shared Telegram send + Firestore conversation injection). Cloud Scheduler job: `Klaus-proactive-alerts`.
 * **Phase 10:** Morning briefing. ✓ Complete — Garmin-sync-anchored daily briefing via Telegram. State machine in Firestore (`morning_briefings/{date}`), polled every 10 min by Cloud Scheduler (`*/10 6-10 * * *` Asia/Jerusalem). Data sources: weather, calendar, Gmail, Garmin, TickTick tasks (real-time Open API, replaces Things 3 snapshot). Briefing injected into conversation history as assistant turn. Manual trigger via Smart Agent tool `run_morning_briefing`. Key modules: `core/morning_briefing.py`, `prompts/morning_briefing.md`. Cloud Scheduler job: `Klaus-morning-briefing-tick`.
 * **Phase 11:** Notion integration. ✓ Complete — `mcp_tools/notion_tool.py` (5 tools: search, get_page, query_database, create_page, append_blocks), wired in `core/tools.py`. Internal integration token (`NOTION_API_TOKEN`), no OAuth flow. Read + create/append access. Auth pattern: static token (like `READWISE_TOKEN`).
+* **Phase 12:** Claude Code chat-log ingestion. `core/chat_ingest.py` (parser, chunker, summarizer, batch controller), `prompts/chat_summary.md`, `scripts/upload_claude_logs.{sh,ps1}`. Daily cron at 04:00 Asia/Jerusalem (`/cron/ingest-chats`). Embeds chunks → Pinecone (`kind="chat"`), summarizes sessions → Notion chat-log DB. New tool: `search_chat_history`. Firestore `chat_ingest/state` tracks dedup progress.
+
+## Phase 12 — Claude Code Chat-Log Ingestion
+
+### Architecture
+
+**Data flow:**
+```
+Local machine (~/.claude/projects/)
+    ↓ gcloud storage rsync (hourly, upload_claude_logs.sh/.ps1)
+GCS bucket: gs://CHAT_LOGS_BUCKET/claude-code/{mac,pc}/
+    ↓ Cloud Scheduler (0 4 * * * Asia/Jerusalem)
+POST /cron/ingest-chats → core.chat_ingest.run_one_batch()
+    ↓ parse_claude_code_jsonl (JSONL → ParsedConversation)
+    ↓ _chunk_conversation (1800-char windows, 200-char overlap)
+    ├── MemoryStore.upsert_chat_chunks → Pinecone (kind="chat")
+    └── _summarize (Flash LLM) → notion_tool.upsert_database_row → Notion
+```
+
+**New components:**
+- `core/chat_ingest.py` — parser, chunker, summarizer, batch controller
+- `prompts/chat_summary.md` — Flash system prompt for JSON summary
+- `scripts/upload_claude_logs.{sh,ps1}` — rsync wrappers per OS
+- Notion chat-log DB — browsable session index (user-created)
+
+**Bounded-batch state machine (Firestore `chat_ingest/state`):**
+- `completed` map: `{blob_name: generation}` — generation-token dedup
+- Each tick processes ≤8 files within ≤45s, persisting after each file
+- Backfill: run `gcloud scheduler jobs run klaus-chat-ingest` repeatedly until `done:true`
+
+**Memory scoping:**
+- `recall()` default: `kind $in ["fact", "chunk"]` — chat excluded
+- `search_chat_history()` tool: `kind $in ["chat"]` — explicitly scoped
+- Pinecone IDs: `cc-{session_id}-{message_uuid}-{chunk_index}` (deterministic)
+
+**IAM:**
+- `klaus-log-uploader@{project}.iam.gserviceaccount.com` → `roles/storage.objectCreator` (bucket only)
+- Cloud Run runtime SA → `roles/storage.objectViewer` (bucket only)
+
+**GCS bucket:** `klaus-chat-logs-{project-id}`, uniform access, versioning off
 
 ## 5. Live Infrastructure (as of Phase 11)
 * **Cloud Run service:** `Klaus-agent` — region `me-west1`, project `Klaus-agent`

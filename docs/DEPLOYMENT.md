@@ -826,3 +826,145 @@ Confirm that he returns results with page titles and URLs. If he returns an empt
 1. The `NOTION_API_TOKEN` secret value in Secret Manager (no leading/trailing whitespace).
 2. That the target databases were shared with the Klaus integration (Step 16b) — Notion returns an empty result set, not an error, for unshared content.
 3. Cloud Logging for any `401 Unauthorized` or `403 Forbidden` responses from the Notion API.
+
+---
+
+## 17. Phase 12 — Chat-Log Ingestion Setup
+
+### 17a. Create the GCS Bucket
+
+```bash
+PROJECT_ID=$(gcloud config get-value project)
+BUCKET_NAME="klaus-chat-logs-${PROJECT_ID}"
+
+gcloud storage buckets create "gs://${BUCKET_NAME}" \
+  --location=europe-west1 \
+  --uniform-bucket-level-access \
+  --project=${PROJECT_ID}
+
+echo "CHAT_LOGS_BUCKET=${BUCKET_NAME}"
+```
+
+### 17b. Create the Log-Uploader Service Account
+
+```bash
+gcloud iam service-accounts create klaus-log-uploader \
+  --display-name="Klaus Chat Log Uploader" \
+  --project=${PROJECT_ID}
+
+# Grant objectCreator on the bucket only (minimal scope)
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:klaus-log-uploader@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/storage.objectCreator"
+
+# Grant objectViewer to the Cloud Run runtime SA
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:klaus-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/storage.objectViewer"
+```
+
+### 17c. Download the Uploader Key to Both Machines
+
+```bash
+# Create and download the key (do this once — keep the JSON secure)
+gcloud iam service-accounts keys create /tmp/log-uploader-key.json \
+  --iam-account="klaus-log-uploader@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Copy the key to each machine at ~/.config/klaus/log-uploader-key.json
+mkdir -p ~/.config/klaus
+cp /tmp/log-uploader-key.json ~/.config/klaus/log-uploader-key.json
+chmod 600 ~/.config/klaus/log-uploader-key.json
+```
+
+**Security note:** This key can only write objects to this bucket. It has no access to Pinecone, Gemini, Notion, or any other Klaus credential.
+
+### 17d. Create the Notion Chat-Log Database
+
+1. In Notion, create a new **full-page database** (not inline) called **"Klaus Chat Logs"**.
+2. Add these exact properties (type matters):
+   - `Name` (Title) — already exists by default
+   - `Date` (Date)
+   - `Project` (Select)
+   - `Summary` (Text / Rich Text)
+   - `Topics` (Multi-select)
+   - `Machine` (Select)
+   - `Session ID` (Text / Rich Text)
+3. Share the database with your Klaus integration (**... → Add connections → Klaus**).
+4. Copy the database ID from the URL and set it as `NOTION_CHAT_LOG_DB_ID`.
+
+### 17e. Set the Cloud Run Environment Variables
+
+```bash
+gcloud run services update klaus-agent \
+  --update-env-vars "CHAT_LOGS_BUCKET=${BUCKET_NAME},NOTION_CHAT_LOG_DB_ID=your-db-id" \
+  --region=europe-west1 \
+  --project=${PROJECT_ID}
+```
+
+Or add them to `.github/workflows/deploy.yml` under `--set-env-vars` for the next CI deploy.
+
+### 17f. Create the Cloud Scheduler Job
+
+```bash
+gcloud scheduler jobs create http klaus-chat-ingest \
+  --schedule="0 4 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="https://your-cloud-run-url/cron/ingest-chats" \
+  --http-method=POST \
+  --oidc-service-account-email="$(gcloud config get-value account)" \
+  --oidc-token-audience="https://your-cloud-run-url" \
+  --project=${PROJECT_ID}
+```
+
+Replace `your-cloud-run-url` with your Cloud Run service URL (same as `CLOUD_RUN_URL`).
+
+Use the same `CLOUD_SCHEDULER_SA_EMAIL` service account that already runs the other cron jobs.
+
+### 17g. Set Up the Local Upload Cron (Mac)
+
+Test the script first:
+```bash
+CHAT_LOGS_BUCKET="${BUCKET_NAME}" ./scripts/upload_claude_logs.sh
+```
+
+Then add to crontab (edit with `crontab -e`):
+```
+0 * * * * CHAT_LOGS_BUCKET=your-bucket-name /path/to/Klaus/scripts/upload_claude_logs.sh >> /tmp/claude-log-upload.log 2>&1
+```
+
+### 17h. Set Up the Upload Task (Windows)
+
+1. Open **Task Scheduler** → **Create Basic Task**.
+2. Name: "Klaus Log Uploader"
+3. Trigger: Daily, repeat every 1 hour.
+4. Action: Start a program → `powershell.exe`
+5. Arguments: `-File C:\path\to\Klaus\scripts\upload_claude_logs.ps1`
+6. Set `CHAT_LOGS_BUCKET` as a system environment variable (Control Panel → System → Advanced → Environment Variables).
+
+### 17i. Backfill
+
+After the first successful upload run, drain the backlog manually:
+
+```bash
+# Run until you see "done": true in the output
+gcloud scheduler jobs run klaus-chat-ingest \
+  --project=${PROJECT_ID} \
+  --location=europe-west1
+
+# Check Cloud Logging for the response:
+gcloud logging read 'resource.type="cloud_run_revision" textPayload=~"chat_ingest"' \
+  --project=${PROJECT_ID} --limit=10 --format=json
+```
+
+**Cost note:** A months-long backfill embeds thousands of chunks + one Flash call per conversation. At personal scale (~hundreds of sessions) this is a one-time cost of a few dollars at most.
+
+### 17j. Verify
+
+After the first successful scheduler run:
+
+1. **Pinecone:** query your index for vectors with `source="claude_code"` and `kind="chat"`
+2. **Notion:** the Chat Logs database should have one row per conversation
+3. **Idempotency:** re-run the scheduler job — row count in Notion should not increase
+4. **Agent:** ask Klaus "What did I work on this week?" — he should query the Notion DB by Date
+5. **Agent:** ask Klaus "What did I decide about X in Claude Code?" — `search_chat_history` should return semantic hits
+6. **Default recall isolation:** ask Klaus about your gym schedule — confirm chat chunks do NOT appear in the result

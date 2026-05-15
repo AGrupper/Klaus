@@ -73,3 +73,22 @@ Use cases: searching notes, querying PARA databases, logging journal entries, cr
 
 Proactive scanning and Pinecone memory ingestion are deferred to a later phase.
 
+## §12 — Claude Code Chat-Log Ingestion
+
+**Goal:** Give Klaus real context about what the user works on by ingesting Claude Code conversation logs.
+
+**What it does:**
+- Parses structured JSONL session files from `~/.claude/projects/` on the user's machines
+- Pushes raw files to a GCS staging bucket via lightweight upload scripts (hourly cron)
+- A Cloud Run endpoint (`/cron/ingest-chats`, triggered daily at 04:00 Israel time) processes logs in bounded batches:
+  - Embeds conversation chunks → Pinecone (semantic search, kind="chat")
+  - Summarizes each session → Notion database (one row per conversation: title, date, project, 2-3 sentence summary, topic labels)
+- New agent tool: `search_chat_history(query, k, project?)` — scoped semantic search over chat chunks; excluded from default `recall` to avoid polluting curated memory
+
+**Design constraints:**
+- Cloud-only: no new local dependencies beyond the upload scripts + gcloud SDK
+- Idempotent: generation-token dedup on GCS, deterministic Pinecone IDs, Notion upsert keyed on Session ID
+- Bounded batches: ≤8 files / ≤45s per Cloud Run tick to respect 60s timeout; Firestore tracks progress
+- Security: upload SA has only `objectCreator` on the bucket — no AI keys on local machines
+- Subagent turns excluded (`isSidechain=true` filtered out)
+
