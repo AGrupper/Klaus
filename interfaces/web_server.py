@@ -359,3 +359,26 @@ async def cron_morning_briefing_tick(request: Request) -> JSONResponse:
 
     await _morning.handle_tick(_application.bot)
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/cron/ingest-chats")
+async def cron_ingest_chats(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler daily tick and run a bounded chat-log ingestion batch.
+
+    Schedule: 0 4 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Processes up to BATCH_MAX_FILES files within BATCH_TIME_BUDGET_SEC.
+    Re-run until the response shows done:true to drain the full backlog.
+
+    Returns:
+        JSONResponse: batch status dict with ok, processed, remaining, done.
+    """
+    await _verify_cron_request(request)
+
+    import asyncio as _asyncio
+    import core.chat_ingest as _ingest
+
+    loop = _asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _ingest.run_one_batch)
+    return JSONResponse(content=result)
