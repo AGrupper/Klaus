@@ -490,6 +490,43 @@ class TestCreatePage:
 
 
 # ------------------------------------------------------------------ #
+# TestPaginate                                                       #
+# ------------------------------------------------------------------ #
+
+class TestPaginate:
+    def test_truncated_when_max_pages_exhausted(self):
+        """_paginate returns truncated=True when _MAX_PAGES iterations all had has_more=True."""
+        from mcp_tools.notion_tool import _paginate, _MAX_PAGES
+        call_count = 0
+        def always_has_more(page_size=100, start_cursor=None):
+            nonlocal call_count
+            call_count += 1
+            return {"results": [{"id": f"r{call_count}"}], "has_more": True, "next_cursor": "cursor"}
+        results, truncated = _paginate(always_has_more)
+        assert call_count == _MAX_PAGES
+        assert truncated is True
+
+
+# ------------------------------------------------------------------ #
+# TestHeaders                                                        #
+# ------------------------------------------------------------------ #
+
+class TestHeaders:
+    def test_missing_token_returns_error_dict(self):
+        """Missing NOTION_API_TOKEN returns {"error": ...} via search(), not KeyError."""
+        import os
+        original = os.environ.pop("NOTION_API_TOKEN", None)
+        try:
+            from mcp_tools.notion_tool import search
+            result = search("test")
+            assert "error" in result
+            assert "NOTION_API_TOKEN" in result["error"]
+        finally:
+            if original is not None:
+                os.environ["NOTION_API_TOKEN"] = original
+
+
+# ------------------------------------------------------------------ #
 # TestAppendBlocks                                                   #
 # ------------------------------------------------------------------ #
 

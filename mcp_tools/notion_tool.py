@@ -26,6 +26,7 @@ _API_BASE = "https://api.notion.com/v1"
 _NOTION_VERSION = "2022-06-28"
 _MAX_PAGES = 3
 _MAX_RESULTS = 300
+_BLOCK_CHUNK = 100
 
 
 # ------------------------------------------------------------------ #
@@ -33,8 +34,11 @@ _MAX_RESULTS = 300
 # ------------------------------------------------------------------ #
 
 def _headers() -> dict:
+    token = os.environ.get("NOTION_API_TOKEN", "")
+    if not token:
+        raise requests.RequestException("NOTION_API_TOKEN is not set")
     return {
-        "Authorization": f"Bearer {os.environ['NOTION_API_TOKEN']}",
+        "Authorization": f"Bearer {token}",
         "Notion-Version": _NOTION_VERSION,
         "Content-Type": "application/json",
     }
@@ -250,7 +254,7 @@ def _paginate(fetch_fn, *args, page_size: int = 100, **kwargs) -> tuple[list, bo
         if not data.get("has_more") or len(results) >= _MAX_RESULTS:
             return results[:_MAX_RESULTS], len(results) > _MAX_RESULTS
         cursor = data.get("next_cursor")
-    return results[:_MAX_RESULTS], False
+    return results[:_MAX_RESULTS], True
 
 
 # ------------------------------------------------------------------ #
@@ -282,7 +286,7 @@ def search(query: str, filter_type: str | None = None) -> dict:
             }
             for r in data.get("results", [])
         ]
-        return {"results": results, "count": len(results), "query": query}
+        return {"results": results, "count": len(results), "query": query, "truncated": data.get("has_more", False)}
     except requests.RequestException as exc:
         return {"error": str(exc), "query": query}
 
@@ -424,7 +428,8 @@ def append_blocks(page_id: str, content: str) -> dict:
         blocks = _text_to_blocks(content)
         if not blocks:
             return {"error": "No content to append — empty input."}
-        _api_patch(f"blocks/{page_id}/children", {"children": blocks})
+        for i in range(0, len(blocks), _BLOCK_CHUNK):
+            _api_patch(f"blocks/{page_id}/children", {"children": blocks[i : i + _BLOCK_CHUNK]})
         return {
             "page_id": page_id,
             "appended": len(blocks),
