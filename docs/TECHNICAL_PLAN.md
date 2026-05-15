@@ -32,7 +32,7 @@ We will build the following functional blocks:
 * **Phase 10:** Morning briefing. ✓ Complete — Garmin-sync-anchored daily briefing via Telegram. State machine in Firestore (`morning_briefings/{date}`), polled every 10 min by Cloud Scheduler (`*/10 6-10 * * *` Asia/Jerusalem). Data sources: weather, calendar, Gmail, Garmin, TickTick tasks (real-time Open API, replaces Things 3 snapshot). Briefing injected into conversation history as assistant turn. Manual trigger via Smart Agent tool `run_morning_briefing`. Key modules: `core/morning_briefing.py`, `prompts/morning_briefing.md`. Cloud Scheduler job: `Klaus-morning-briefing-tick`.
 * **Phase 11:** Notion integration. ✓ Complete — `mcp_tools/notion_tool.py` (5 tools: search, get_page, query_database, create_page, append_blocks), wired in `core/tools.py`. Internal integration token (`NOTION_API_TOKEN`), no OAuth flow. Read + create/append access. Auth pattern: static token (like `READWISE_TOKEN`).
 
-## 5. Live Infrastructure (as of Phase 10)
+## 5. Live Infrastructure (as of Phase 11)
 * **Cloud Run service:** `Klaus-agent` — region `me-west1`, project `Klaus-agent`
 * **Firestore database:** `Klaus-firestore`
   * Collection `conversations` — per-user conversation history (Phase 6)

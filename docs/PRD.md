@@ -56,7 +56,7 @@ WhatsApp sending is always user-initiated (tap a link or copy-paste a group mess
 
 **Interactive:** Briefing written into Firestore conversation history so replies are natural follow-up turns. Structured event/task IDs stored in `morning_briefings/{date}` for tool use.
 
-## 8. Notion Integration (Phase 11)
+## 8. Notion Integration (Phase 11) ✓ Live
 
 **Access level:** Read + create/append (never edits or deletes existing content).
 
