@@ -302,11 +302,27 @@ def get_page(page_id: str) -> dict:
         or "error" + "page_id" on failure.
     """
     try:
-        page_data = _api_get(f"pages/{page_id}")
+        try:
+            page_data = _api_get(f"pages/{page_id}")
+        except requests.HTTPError as http_err:
+            if http_err.response is not None and http_err.response.status_code == 404:
+                # ID belongs to a database, not a page — fetch its metadata instead.
+                page_data = _api_get(f"databases/{page_id}")
+            else:
+                raise
+
         title = _extract_title(page_data)
         flat_props = _flatten_properties(page_data.get("properties", {}))
-        blocks, truncated = _paginate(_fetch_block_children, page_id)
-        text, children = _blocks_to_text(blocks)
+
+        if page_data.get("object") == "database":
+            # Databases have no block children; schema is the useful content.
+            text = "(database — use query_database to list its rows)"
+            children: list[dict] = []
+            truncated = False
+        else:
+            blocks, truncated = _paginate(_fetch_block_children, page_id)
+            text, children = _blocks_to_text(blocks)
+
         return {
             "id": page_id,
             "title": title,

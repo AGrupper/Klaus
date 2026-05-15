@@ -79,15 +79,16 @@ def main() -> None:
         results = result["results"]
         print(f"      Found {count} result(s).")
         if results:
-            # Try to surface the first result's title.
-            first = results[0]
-            title = (
-                first.get("title")
-                or first.get("properties", {}).get("title", {}).get("title", [{}])[0].get("plain_text", "")
-                or first.get("id", "<no title>")
-            )
-            print(f"      First result title: {title}")
-            first_page_id = first.get("id")
+            # Prefer a page-type result — get_page and create_page need a page ID.
+            first_page = next((r for r in results if r.get("type") == "page"), None)
+            if first_page is None:
+                page_search = notion_search(query="", filter_type="page")
+                first_page = next(iter(page_search.get("results", [])), None)
+            if first_page:
+                first_page_id = first_page.get("id")
+                print(f"      Using page: {first_page.get('title', first_page_id)}")
+            else:
+                print("      No page-type results found — tests 2 and 4 will skip.")
         print(f"  [{_result_label(True)}] notion_search")
         passed += 1
     except Exception as exc:
