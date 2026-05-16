@@ -482,7 +482,7 @@ def run_one_batch() -> dict:
                     store = _get_memory_store()
                     store.upsert_chat_chunks(user_id, chunks)
 
-                    summary, topics = summarize_conversation(conv)
+                    _title, summary, topics = summarize_conversation(conv)
 
                     from mcp_tools.notion_tool import build_ai_chat_properties, upsert_database_row
                     properties = build_ai_chat_properties(conv, summary, topics)

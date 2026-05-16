@@ -440,7 +440,7 @@ class TestRunOneBatchDedup:
              patch("core.chat_export_ingest._get_state", return_value=initial_state), \
              patch("core.chat_export_ingest._set_state"), \
              patch("core.chat_export_ingest._get_memory_store", return_value=mock_store), \
-             patch("core.chat_export_ingest.summarize_conversation", return_value=("summary", [])), \
+             patch("core.chat_export_ingest.summarize_conversation", return_value=("title", "summary", [])), \
              patch.dict(
                  sys.modules,
                  {
@@ -501,7 +501,7 @@ class TestRunOneBatchBatchLimit:
              patch("core.chat_export_ingest._get_state", return_value={}), \
              patch("core.chat_export_ingest._set_state"), \
              patch("core.chat_export_ingest._get_memory_store", return_value=mock_store), \
-             patch("core.chat_export_ingest.summarize_conversation", return_value=("summary", [])), \
+             patch("core.chat_export_ingest.summarize_conversation", return_value=("title", "summary", [])), \
              patch.dict(
                  sys.modules,
                  {
@@ -544,7 +544,7 @@ class TestRunOneBatchErrorIsolation:
              patch("core.chat_export_ingest._get_state", return_value={}), \
              patch("core.chat_export_ingest._set_state"), \
              patch("core.chat_export_ingest._get_memory_store", return_value=mock_store), \
-             patch("core.chat_export_ingest.summarize_conversation", return_value=("summary", [])), \
+             patch("core.chat_export_ingest.summarize_conversation", return_value=("title", "summary", [])), \
              patch.dict(
                  sys.modules,
                  {
