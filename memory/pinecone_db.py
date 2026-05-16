@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -150,6 +151,7 @@ class MemoryStore:
         for chunk in chunks:
             content = chunk["content"]
             vector = self._embed(content)
+            time.sleep(0.15)  # 150ms between embeds keeps us under Gemini quota (~400 RPM)
             meta = dict(chunk.get("metadata", {}))
             meta["user_id"] = str(user_id)
             meta.setdefault("kind", "chat")
