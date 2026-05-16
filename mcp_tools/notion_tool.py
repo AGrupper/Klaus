@@ -511,6 +511,68 @@ def build_chat_log_properties(
     }
 
 
+def build_ai_chat_properties(
+    conv: "object",
+    summary: str,
+    topics: list[str],
+) -> dict:
+    """Build a Notion properties dict for the "Klaus AI Chat Imports" database.
+
+    Args:
+        conv:    A ParsedConversation with session_id, title, source,
+                 started_at, ended_at, turns fields.
+        summary: 2-3 sentence summary from summarize_conversation.
+        topics:  List of topic labels from summarize_conversation.
+
+    Returns:
+        Notion-typed properties dict for upsert_database_row.
+    """
+    from datetime import datetime, timezone
+    try:
+        date_str = conv.started_at[:10] if conv.started_at else ""
+        datetime.fromisoformat(date_str)
+    except (ValueError, AttributeError):
+        date_str = datetime.now(tz=timezone.utc).date().isoformat()
+
+    try:
+        updated_str = conv.ended_at[:10] if conv.ended_at else ""
+        datetime.fromisoformat(updated_str)
+    except (ValueError, AttributeError):
+        updated_str = ""
+
+    summary_truncated = summary[:2000] if summary else ""
+    topics_clean = [t[:100] for t in (topics or [])]
+    source = getattr(conv, "source", "unknown")
+    message_count = len(getattr(conv, "turns", []))
+
+    return {
+        "Name": {
+            "title": [{"type": "text", "text": {"content": (conv.title or "Untitled")[:2000]}}]
+        },
+        "Date": {
+            "date": {"start": date_str} if date_str else None
+        },
+        "Source": {
+            "select": {"name": source[:100]} if source else None
+        },
+        "Summary": {
+            "rich_text": [{"type": "text", "text": {"content": summary_truncated}}]
+        },
+        "Topics": {
+            "multi_select": [{"name": t} for t in topics_clean]
+        },
+        "Message Count": {
+            "number": message_count
+        },
+        "Conversation ID": {
+            "rich_text": [{"type": "text", "text": {"content": conv.session_id or ""}}]
+        },
+        "Last Updated": {
+            "date": {"start": updated_str} if updated_str else None
+        },
+    }
+
+
 def update_page_properties(page_id: str, properties: dict) -> dict:
     """Update properties of an existing Notion page.
 

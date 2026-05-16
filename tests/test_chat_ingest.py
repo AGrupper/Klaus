@@ -19,7 +19,8 @@ from core.chat_ingest import (
     CHUNK_OVERLAP_CHARS,
     ParsedConversation,
     Turn,
-    _chunk_conversation,
+    chunk_conversation,
+    summarize_conversation,
     _decode_project_path,
     parse_claude_code_jsonl,
 )
@@ -365,7 +366,7 @@ class TestChunkingDeterministicIds:
             ended_at="",
             turns=[Turn(uuid="turn-xyz", role="user", text=_LONG_ENOUGH, timestamp="")],
         )
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         assert len(chunks) >= 1
         assert chunks[0]["id"] == "cc-sess-abc-turn-xyz-0"
 
@@ -381,7 +382,7 @@ class TestChunkingDeterministicIds:
             ended_at="",
             turns=[Turn(uuid="t1", role="assistant", text=long_text, timestamp="")],
         )
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         for i, chunk in enumerate(chunks):
             assert chunk["id"] == f"cc-s-t1-{i}"
 
@@ -403,7 +404,7 @@ class TestChunkingShortTurn:
             ended_at="",
             turns=[Turn(uuid="u1", role="user", text=text, timestamp="")],
         )
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         assert len(chunks) == 1
 
     def test_chunk_contains_prefix(self):
@@ -417,7 +418,7 @@ class TestChunkingShortTurn:
             ended_at="",
             turns=[Turn(uuid="u1", role="user", text="Hello there friend!", timestamp="")],
         )
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         assert chunks[0]["content"].startswith("[MyTitle] user: ")
 
 
@@ -441,7 +442,7 @@ class TestChunkingLongTurn:
     def test_long_turn_produces_multiple_chunks(self):
         """Turn whose prefixed text > CHUNK_MAX_CHARS → more than 1 chunk."""
         conv = self._make_long_conv(CHUNK_MAX_CHARS * 3)
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         assert len(chunks) > 1
 
     def test_overlap_between_consecutive_chunks(self):
@@ -450,7 +451,7 @@ class TestChunkingLongTurn:
         prefix_overhead = len("[T] assistant: ")
         text_length = CHUNK_MAX_CHARS * 2
         conv = self._make_long_conv(text_length)
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         assert len(chunks) >= 2
 
         # The tail of chunk[0] and the head of chunk[1] should overlap
@@ -461,7 +462,7 @@ class TestChunkingLongTurn:
     def test_no_content_lost_across_chunks(self):
         """The last chunk contains the end of the full prefixed string."""
         conv = self._make_long_conv(CHUNK_MAX_CHARS * 2)
-        chunks = _chunk_conversation(conv)
+        chunks = chunk_conversation(conv)
         prefix = "[T] assistant: "
         full_text = prefix + ("X" * CHUNK_MAX_CHARS * 2)
         # First chunk must start at position 0
@@ -621,7 +622,7 @@ class TestRunOneBatchBatchLimit:
              patch("core.chat_ingest._get_state", return_value={}), \
              patch("core.chat_ingest._set_state"), \
              patch("core.chat_ingest._get_memory_store", return_value=mock_store), \
-             patch("core.chat_ingest._summarize", return_value=("summary", [])), \
+             patch("core.chat_ingest.summarize_conversation", return_value=("Generated title.", "summary", [])), \
              patch.dict(
                  sys.modules,
                  {
@@ -681,7 +682,7 @@ class TestRunOneBatchErrorIsolation:
              patch("core.chat_ingest._get_state", return_value={}), \
              patch("core.chat_ingest._set_state"), \
              patch("core.chat_ingest._get_memory_store", return_value=mock_store), \
-             patch("core.chat_ingest._summarize", return_value=("summary", [])), \
+             patch("core.chat_ingest.summarize_conversation", return_value=("Generated title.", "summary", [])), \
              patch.dict(
                  sys.modules,
                  {
@@ -715,3 +716,87 @@ class TestRunOneBatchErrorIsolation:
         result = self._run_batch_with_blobs(blobs)
         assert result["ok"] is True
         assert result["processed"] == 0
+
+
+# ================================================================== #
+# 13. summarize_conversation — title extraction                      #
+# ================================================================== #
+
+class TestSummarizeTitle:
+    """Unit tests for summarize_conversation() title parsing and fallbacks."""
+
+    def _make_conv(self, title: str = "Original title") -> ParsedConversation:
+        return ParsedConversation(
+            session_id="sess-test",
+            title=title,
+            project="/proj",
+            machine_id="mac",
+            started_at="",
+            ended_at="",
+            turns=[Turn(uuid="u1", role="user", text=_LONG_ENOUGH, timestamp="")],
+        )
+
+    def _mock_llm_response(self, payload: dict) -> MagicMock:
+        mock_client = MagicMock()
+        mock_client.chat.return_value = {"text": json.dumps(payload), "tool_calls": [], "stop_reason": "stop"}
+        return mock_client
+
+    def test_returns_three_tuple_with_title(self):
+        """When Flash returns all three keys, summarize_conversation returns (title, summary, topics)."""
+        conv = self._make_conv()
+        payload = {
+            "title": "Debugged the ingestion pipeline and fixed Notion upsert.",
+            "summary": "Fixed a bug in the Notion upsert logic.",
+            "topics": ["notion", "pinecone"],
+        }
+        with patch("core.llm_client.LLMClient", return_value=self._mock_llm_response(payload)), \
+             patch.dict("os.environ", {"WORKER_AGENT_BACKEND": "gemini",
+                                       "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+                                       "WORKER_AGENT_API_KEY": "fake-key"}):
+            title, summary, topics = summarize_conversation(conv)
+
+        assert title == "Debugged the ingestion pipeline and fixed Notion upsert."
+        assert summary == "Fixed a bug in the Notion upsert logic."
+        assert topics == ["notion", "pinecone"]
+
+    def test_title_falls_back_to_conv_title_when_key_missing(self):
+        """When 'title' key is absent from the JSON response, conv.title is used."""
+        conv = self._make_conv(title="Original title")
+        payload = {
+            "summary": "Did some work.",
+            "topics": ["python"],
+        }
+        with patch("core.llm_client.LLMClient", return_value=self._mock_llm_response(payload)), \
+             patch.dict("os.environ", {"WORKER_AGENT_BACKEND": "gemini",
+                                       "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+                                       "WORKER_AGENT_API_KEY": "fake-key"}):
+            title, summary, topics = summarize_conversation(conv)
+
+        assert title == "Original title"
+        assert summary == "Did some work."
+
+    def test_title_falls_back_to_conv_title_when_empty_string(self):
+        """When 'title' is present but empty, conv.title is used."""
+        conv = self._make_conv(title="Fallback title")
+        payload = {"title": "   ", "summary": "Did some work.", "topics": []}
+        with patch("core.llm_client.LLMClient", return_value=self._mock_llm_response(payload)), \
+             patch.dict("os.environ", {"WORKER_AGENT_BACKEND": "gemini",
+                                       "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+                                       "WORKER_AGENT_API_KEY": "fake-key"}):
+            title, summary, _ = summarize_conversation(conv)
+
+        assert title == "Fallback title"
+
+    def test_exception_path_returns_original_title(self):
+        """When LLMClient.chat raises, the fallback tuple preserves conv.title."""
+        conv = self._make_conv(title="Exception fallback title")
+        mock_client = MagicMock()
+        mock_client.chat.side_effect = RuntimeError("network error")
+        with patch("core.llm_client.LLMClient", return_value=mock_client), \
+             patch.dict("os.environ", {"WORKER_AGENT_BACKEND": "gemini",
+                                       "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+                                       "WORKER_AGENT_API_KEY": "fake-key"}):
+            title, summary, topics = summarize_conversation(conv)
+
+        assert title == "Exception fallback title"
+        assert topics == []

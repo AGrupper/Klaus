@@ -382,3 +382,27 @@ async def cron_ingest_chats(request: Request) -> JSONResponse:
     loop = _asyncio.get_running_loop()
     result = await loop.run_in_executor(None, _ingest.run_one_batch)
     return JSONResponse(content=result)
+
+
+@app.post("/cron/ingest-chat-exports")
+async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler daily tick and run a bounded web-chat export ingestion batch.
+
+    Schedule: 30 4 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Processes up to CHAT_EXPORT_BATCH_MAX_CONVERSATIONS conversations within
+    CHAT_EXPORT_TIME_BUDGET_SEC from zips uploaded to chat-exports/ in GCS.
+    Re-run until the response shows done:true to drain the full backlog.
+
+    Returns:
+        JSONResponse: batch status dict with ok, processed, remaining, done.
+    """
+    await _verify_cron_request(request)
+
+    import asyncio as _asyncio
+    import core.chat_export_ingest as _export_ingest
+
+    loop = _asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, _export_ingest.run_one_batch)
+    return JSONResponse(content=result)

@@ -92,3 +92,24 @@ Proactive scanning and Pinecone memory ingestion are deferred to a later phase.
 - Security: upload SA has only `objectCreator` on the bucket — no AI keys on local machines
 - Subagent turns excluded (`isSidechain=true` filtered out)
 
+## §13 — Multi-Source AI Chat Ingestion (Gemini / Claude.ai / ChatGPT)
+
+**Goal:** Extend Klaus's RAG memory to include the user's actual AI conversations from Gemini, Claude.ai, and ChatGPT — the day-to-day chats that hold real context about projects, decisions, and life.
+
+**What it does:**
+- Imports export zips from all three web AI platforms into the same Pinecone index (`kind="chat"`) with a `source` discriminator, so `search_chat_history` covers all providers transparently
+- Writes one row per conversation to a new "Klaus AI Chat Imports" Notion database (Name, Date, Source, Summary, Topics, Message Count, Conversation ID, Last Updated)
+- Supports repeated re-imports without duplication (conversation-level dedup via Firestore)
+
+**Export formats:**
+- **Claude.ai:** Settings → Privacy → Export data → `conversations.json` (flat `chat_messages[]` with `text` + `sender`)
+- **ChatGPT:** Settings → Data controls → Export data → `conversations.json` (mapping tree, reconstructed linearly)
+- **Gemini:** Google Takeout → My Activity → Gemini Apps (JSON) → flat activity records, time-clustered into ~37 conversations
+
+**Design constraints:**
+- New focused module `core/chat_export_ingest.py` — Phase 12 pipeline untouched except light refactor to expose `chunk_conversation` / `summarize_conversation` as shared public API
+- Gemini records (no IDs) clustered by 30-min gap; `session_id = sha1(earliest_time)[:16]` — deterministic since activity log is immutable/append-only
+- Conversation-level dedup: `chat_export_ingest/state` in Firestore tracks `conv_id → update_marker`
+- Upload zips to GCS with `scripts/upload_chat_export.sh <provider> <zip>` (same bucket, new `chat-exports/` prefix)
+- Monthly TickTick reminder: "Export ChatGPT + Claude + Gemini chats → run `upload_chat_export.sh`"
+

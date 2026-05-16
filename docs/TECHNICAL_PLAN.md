@@ -83,4 +83,42 @@ POST /cron/ingest-chats → core.chat_ingest.run_one_batch()
 * **Cloud Scheduler jobs:**
   * `Klaus-proactive-alerts` — `30 21 * * *` Asia/Jerusalem (Phase 9)
   * `Klaus-morning-briefing-tick` — `*/10 6-10 * * *` Asia/Jerusalem (Phase 10)
+  * `Klaus-chat-ingest` — `0 4 * * *` Asia/Jerusalem (Phase 12)
+  * `Klaus-chat-export-ingest` — `30 4 * * *` Asia/Jerusalem (Phase 13)
+* **Firestore collections:**
+  * `chat_ingest/state` — Phase 12 blob-level dedup (`completed` map: blob_name → generation)
+  * `chat_export_ingest/state` — Phase 13 conversation-level dedup (`conversations` map: conv_id → update_marker; `completed_blobs` map: blob_name → generation)
 * **Secrets in Secret Manager:** `Klaus-anthropic-key`, `Klaus-gemini-key`, `Klaus-telegram-token`, `Klaus-telegram-webhook-secret`, `Klaus-google-oauth-token`, `Klaus-pinecone-key`, `Klaus-home-address`, `GARMIN_EMAIL`, `GARMIN_PASSWORD`, `READWISE_TOKEN`, `TICKTICK_CLIENT_ID`, `TICKTICK_CLIENT_SECRET`, `TICKTICK_ACCESS_TOKEN`, `TICKTICK_REFRESH_TOKEN`, `NOTION_API_TOKEN`
+
+## Phase 13 — Multi-Source AI Chat Export Ingestion
+
+**Data flow:**
+```
+~/Downloads/<export>.zip
+    ↓ scripts/upload_chat_export.sh <provider> <zip>
+gs://CHAT_LOGS_BUCKET/chat-exports/{chatgpt,claude_ai,gemini}/<file>.zip
+    ↓ Cloud Scheduler (daily 04:30 Asia/Jerusalem)
+POST /cron/ingest-chat-exports → core.chat_export_ingest.run_one_batch()
+    ↓ open zip in memory → locate JSON → dispatch by provider
+    ↓ parse_{claude_ai,chatgpt,gemini}_export → list[ParsedConversation]
+    ↓ conversation-level dedup (Firestore: chat_export_ingest/state)
+    ↓ chunk_conversation (1800-char windows, 200 overlap) — shared from Phase 12
+    ├── MemoryStore.upsert_chat_chunks → Pinecone (kind="chat", source=<provider>)
+    └── summarize_conversation (Flash) → notion_tool → "Klaus AI Chat Imports" DB
+```
+
+**New / changed components:**
+- `core/chat_export_ingest.py` — three parsers + bounded-batch runner
+- `core/chat_ingest.py` — light refactor: `chunk_conversation` / `summarize_conversation` now public; `ParsedConversation.source` field added; `_make_chunk` uses source-derived ID prefix map
+- `mcp_tools/notion_tool.py` — `build_ai_chat_properties` for the new DB
+- `scripts/upload_chat_export.sh` — uploads a zip to `gs://{CHAT_LOGS_BUCKET}/chat-exports/<provider>/`
+- `interfaces/web_server.py` — `/cron/ingest-chat-exports` route
+
+**Pinecone metadata per chunk:**
+- `kind="chat"`, `source=<claude_ai|chatgpt|gemini>`, `conversation_id`, `conversation_title`, `role`, `ts`
+- ID prefix map: `cc-` (claude_code), `cla-` (claude_ai), `gpt-` (chatgpt), `gem-` (gemini)
+
+**Gemini clustering:**
+- Activity log = flat records with `title` ("Prompted …"), `safeHtmlItem[0].html`, `time`
+- Sort ascending, cluster by >30-min gap → ~37 conversations from 255 records
+- `session_id = sha1(earliest_time)[:16]` — deterministic (activity log is immutable)

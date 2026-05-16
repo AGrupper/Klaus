@@ -968,3 +968,85 @@ After the first successful scheduler run:
 4. **Agent:** ask Klaus "What did I work on this week?" — he should query the Notion DB by Date
 5. **Agent:** ask Klaus "What did I decide about X in Claude Code?" — `search_chat_history` should return semantic hits
 6. **Default recall isolation:** ask Klaus about your gym schedule — confirm chat chunks do NOT appear in the result
+
+---
+
+## 18. Phase 13 — Multi-Source AI Chat Export Ingestion
+
+### 18a. Create the "Klaus AI Chat Imports" Notion Database
+
+Create a new database manually in Notion with these exact properties:
+
+| Property name    | Type        | Notes                        |
+|-----------------|-------------|------------------------------|
+| Name            | Title       | Conversation title           |
+| Date            | Date        | Conversation start date      |
+| Source          | Select      | Options: claude_ai, chatgpt, gemini |
+| Summary         | Rich text   | 2-3 sentence Flash summary   |
+| Topics          | Multi-select| Kebab-case labels            |
+| Message Count   | Number      | Total turns in conversation  |
+| Conversation ID | Rich text   | Upsert key — must be unique  |
+| Last Updated    | Date        | Conversation updated_at      |
+
+Share the database with your Notion integration token. Copy the database ID from the URL and set:
+- `NOTION_AI_CHAT_DB_ID=<id>` in `.env` (local) and `NOTION_AI_CHAT_DB_ID` GitHub secret (Cloud Run).
+
+### 18b. Add GitHub Secret
+
+In GitHub → Settings → Secrets and variables → Actions, add:
+
+```
+NOTION_AI_CHAT_DB_ID = <your new Notion DB ID>
+```
+
+Deploy to Cloud Run (push to main or trigger `workflow_dispatch`) — the deploy workflow now injects `NOTION_AI_CHAT_DB_ID` via `--set-env-vars`.
+
+### 18c. Create Cloud Scheduler Job
+
+```bash
+gcloud scheduler jobs create http klaus-chat-export-ingest \
+  --project=${PROJECT_ID} \
+  --location=europe-west1 \
+  --schedule="30 4 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="https://${CLOUD_RUN_URL}/cron/ingest-chat-exports" \
+  --http-method=POST \
+  --oidc-service-account-email=klaus-heartbeat@${PROJECT_ID}.iam.gserviceaccount.com \
+  --oidc-token-audience="https://${CLOUD_RUN_URL}"
+```
+
+### 18d. Upload Export Zips
+
+```bash
+# Claude.ai: Settings → Privacy → Export data
+./scripts/upload_chat_export.sh claude_ai ~/Downloads/claude-export-batch-0000.zip
+
+# Gemini: Google Takeout → My Activity → Gemini Apps → JSON
+./scripts/upload_chat_export.sh gemini ~/Downloads/takeout-YYYYMMDD.zip
+
+# ChatGPT: Settings → Data controls → Export data
+./scripts/upload_chat_export.sh chatgpt ~/Downloads/chatgpt-export.zip
+```
+
+### 18e. Backfill
+
+Trigger the scheduler job manually and run until `done: true`:
+
+```bash
+gcloud scheduler jobs run klaus-chat-export-ingest \
+  --project=${PROJECT_ID} \
+  --location=europe-west1
+```
+
+### 18f. Verify
+
+1. **Pinecone:** vector count rises; metadata shows `source` in `{claude_ai, chatgpt, gemini}`
+2. **Notion:** "Klaus AI Chat Imports" DB has rows (≈37 Gemini + 49+ Claude.ai + ChatGPT)
+3. **Idempotency:** re-run scheduler — row count does NOT increase
+4. **Agent:** ask Klaus `search_chat_history` about a topic only in a Gemini/ChatGPT chat — confirm it surfaces with correct `source`
+
+### 18g. Monthly Export Reminder
+
+Create a recurring monthly TickTick task: "Export ChatGPT + Claude + Gemini chats → run `upload_chat_export.sh`".
+
+Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.google.com → Schedule exports → Every 2 months).

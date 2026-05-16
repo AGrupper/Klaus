@@ -41,6 +41,14 @@ _COLLECTION = "chat_ingest"
 _STATE_DOC = "state"
 _GCS_PREFIX = "claude-code/"
 
+# Maps source name → short prefix used in Pinecone chunk IDs
+_SOURCE_PREFIX: dict[str, str] = {
+    "claude_code": "cc",
+    "claude_ai": "cla",
+    "chatgpt": "gpt",
+    "gemini": "gem",
+}
+
 # ------------------------------------------------------------------ #
 # Dataclasses                                                        #
 # ------------------------------------------------------------------ #
@@ -61,6 +69,7 @@ class ParsedConversation:
     machine_id: str       # "mac" or "pc", extracted from blob name prefix
     started_at: str
     ended_at: str
+    source: str = "claude_code"  # discriminator: claude_code, claude_ai, chatgpt, gemini
     turns: list[Turn] = field(default_factory=list)
 
 
@@ -268,7 +277,7 @@ def parse_claude_code_jsonl(
 # Chunking                                                           #
 # ------------------------------------------------------------------ #
 
-def _chunk_conversation(conv: ParsedConversation) -> list[dict]:
+def chunk_conversation(conv: ParsedConversation) -> list[dict]:
     """Slice conversation turns into embedding-ready chunks.
 
     Each chunk is prefixed with "[{title}] {role}: " so it carries context
@@ -309,13 +318,14 @@ def _make_chunk(
     chunk_index: int,
 ) -> dict:
     """Build a single chunk dict (without user_id — injected by caller)."""
+    id_prefix = _SOURCE_PREFIX.get(conv.source, "cc")
     return {
-        "id": f"cc-{conv.session_id}-{turn.uuid}-{chunk_index}",
+        "id": f"{id_prefix}-{conv.session_id}-{turn.uuid}-{chunk_index}",
         "content": content,
         "metadata": {
             # user_id is intentionally absent here; injected by run_one_batch
             "kind": "chat",
-            "source": "claude_code",
+            "source": conv.source,
             "machine_id": conv.machine_id,
             "project": conv.project,
             "conversation_id": conv.session_id,
@@ -330,14 +340,16 @@ def _make_chunk(
 # Summarisation                                                      #
 # ------------------------------------------------------------------ #
 
-def _summarize(conv: ParsedConversation) -> tuple[str, list[str]]:
+def summarize_conversation(conv: ParsedConversation) -> tuple[str, str, list[str]]:
     """Summarise a conversation via the Worker Agent LLM.
 
     Builds a role-prefixed transcript capped at ~12000 chars, calls the
     configured Flash model, and parses the JSON response.
 
     Returns:
-        (summary_str, topics_list) — deterministic fallback on any error.
+        (title_str, summary_str, topics_list) — deterministic fallback on any error.
+        On failure, title falls back to the original conv.title so callers can
+        always assign conv.title = title safely.
     """
     # Build transcript
     transcript_parts: list[str] = []
@@ -358,7 +370,7 @@ def _summarize(conv: ParsedConversation) -> tuple[str, list[str]]:
         logger.warning("chat_ingest: chat_summary.md prompt missing — using inline fallback")
         system_prompt = (
             "Summarise the following Claude Code conversation in JSON: "
-            '{"summary": "<one-paragraph summary>", "topics": ["<topic>", ...]}'
+            '{"title": "<one past-tense sentence>", "summary": "<one-paragraph summary>", "topics": ["<topic>", ...]}'
         )
 
     user_message = f"Conversation title: {conv.title}\n\n{transcript}"
@@ -384,10 +396,11 @@ def _summarize(conv: ParsedConversation) -> tuple[str, list[str]]:
             raw_text = raw_text.strip()
 
         parsed = json.loads(raw_text)
+        title = str(parsed.get("title", "")).strip()
         summary = str(parsed.get("summary", "")).strip()
         topics = [str(t) for t in parsed.get("topics", []) if t]
         if summary:
-            return summary, topics
+            return (title or conv.title, summary, topics)
     except Exception:
         logger.warning(
             "chat_ingest: summarization failed for session %s",
@@ -395,13 +408,13 @@ def _summarize(conv: ParsedConversation) -> tuple[str, list[str]]:
             exc_info=True,
         )
 
-    # Deterministic fallback
+    # Deterministic fallback — keep original title untouched
     fallback_summary = "No summary available"
     for turn in conv.turns:
         if turn.role == "assistant" and turn.text:
             fallback_summary = turn.text[:200]
             break
-    return fallback_summary, []
+    return conv.title, fallback_summary, []
 
 
 # ------------------------------------------------------------------ #
@@ -488,17 +501,18 @@ def run_one_batch() -> dict:
                 processed_count += 1
                 continue
 
+            # Summarise first so generated title flows into chunk prefixes
+            title, summary, topics = summarize_conversation(conv)
+            conv.title = title
+
             # Chunk and inject user_id into metadata
-            chunks = _chunk_conversation(conv)
+            chunks = chunk_conversation(conv)
             for chunk in chunks:
                 chunk["metadata"]["user_id"] = str(user_id)
 
             # Upsert chunks to Pinecone
             store = _get_memory_store()
             store.upsert_chat_chunks(user_id, chunks)
-
-            # Summarise and write to Notion
-            summary, topics = _summarize(conv)
 
             from mcp_tools.notion_tool import build_chat_log_properties, upsert_database_row
             properties = build_chat_log_properties(conv, summary, topics)
@@ -579,7 +593,7 @@ def _cli() -> None:
             print(f"Title: {conv.title}")
             print(f"Project: {conv.project}")
             print(f"Turns: {len(conv.turns)}")
-            chunks = _chunk_conversation(conv)
+            chunks = chunk_conversation(conv)
             print(f"Chunks: {len(chunks)}")
             print(f"First chunk: {chunks[0]['content'][:200] if chunks else 'n/a'}")
         return
