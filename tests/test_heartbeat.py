@@ -4,6 +4,15 @@ import os
 os.environ.setdefault("TELEGRAM_ALLOWED_USER_IDS", "123456")
 os.environ.setdefault("GCP_PROJECT_ID", "klaus-agent")
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+def _dt(hour, minute, isoweekday=2):
+    # 2026-05-18 is a Monday (isoweekday 1); offset to hit the requested weekday.
+    day = 17 + isoweekday
+    return datetime(2026, 5, day, hour, minute, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
 
 def test_signal_fields():
     from core.heartbeat import Signal, SEVERITY_CRITICAL
@@ -26,3 +35,22 @@ def test_heartbeat_config_defaults():
     assert d["weekly_digest_day"] == 1
     assert d["reping_interval_hours"] == 24
     assert d["quiet_start"] == "22:00"
+
+
+def test_in_quiet_hours_spans_midnight():
+    from core.heartbeat import _in_quiet_hours
+    cfg = {"quiet_start": "22:00", "quiet_end": "07:00", "timezone": "Asia/Jerusalem"}
+    assert _in_quiet_hours(cfg, _dt(23, 30)) is True
+    assert _in_quiet_hours(cfg, _dt(3, 0)) is True
+    assert _in_quiet_hours(cfg, _dt(12, 0)) is False
+
+
+def test_tiers_for_now():
+    from core.heartbeat import (_tiers_for_now, SEVERITY_CRITICAL,
+                                SEVERITY_WARNING, SEVERITY_FYI)
+    cfg = {"digest_hour": 9, "weekly_digest_day": 1, "timezone": "Asia/Jerusalem"}
+    assert _tiers_for_now(cfg, _dt(9, 5, isoweekday=1)) == {
+        SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI}
+    assert _tiers_for_now(cfg, _dt(9, 5, isoweekday=2)) == {
+        SEVERITY_CRITICAL, SEVERITY_WARNING}
+    assert _tiers_for_now(cfg, _dt(15, 0, isoweekday=2)) == {SEVERITY_CRITICAL}
