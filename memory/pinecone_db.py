@@ -151,7 +151,7 @@ class MemoryStore:
         for chunk in chunks:
             content = chunk["content"]
             vector = self._embed(content)
-            time.sleep(0.15)  # 150ms between embeds keeps us under Gemini quota (~400 RPM)
+            time.sleep(0.5)  # 500ms between embeds; Vertex AI has much higher RPM quota
             meta = dict(chunk.get("metadata", {}))
             meta["user_id"] = str(user_id)
             meta.setdefault("kind", "chat")
@@ -195,8 +195,6 @@ class MemoryStore:
     def _get_genai(self):
         if self._genai is None:
             from google import genai
-            # WHY: reuse the Worker Agent API key — same Gemini key already
-            # provisioned in both local .env and Cloud Run Secret Manager.
             api_key = os.environ["WORKER_AGENT_API_KEY"]
             self._genai = genai.Client(api_key=api_key)
         return self._genai
