@@ -196,3 +196,84 @@ def check_tokens() -> list[Signal]:
         ))
 
     return signals
+
+
+def check_degradation() -> list[Signal]:
+    """Warning-tier: fallback-rate climbing, Cloud Run 5xx spikes. (stub)"""
+    return []
+
+
+def check_deployment() -> list[Signal]:
+    """Deployment health: last deploy succeeded; live revision matches main. (stub)"""
+    return []
+
+
+def check_code() -> list[Signal]:
+    """Weekly FYI: docs drift, stale TODOs, repeated-fix clusters. (stub)"""
+    return []
+
+
+def _load_config() -> dict:
+    """Load heartbeat config from Firestore. Returns defaults on error."""
+    try:
+        from memory.firestore_db import HeartbeatConfigStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        store = HeartbeatConfigStore(project_id=project_id, database=database)
+        return store.get()
+    except Exception:
+        logger.warning("heartbeat: config load failed — using defaults", exc_info=True)
+        from memory.firestore_db import _HEARTBEAT_CONFIG_DEFAULTS
+        return dict(_HEARTBEAT_CONFIG_DEFAULTS)
+
+
+def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
+    """Run all checkers, then keep only signals whose severity is in `tiers`."""
+    raw: list[Signal] = []
+    for checker in (check_cron_health, check_tokens, check_degradation, check_deployment):
+        try:
+            raw.extend(checker())
+        except Exception:
+            logger.warning("heartbeat: checker %s crashed", checker.__name__, exc_info=True)
+    if weekly:
+        try:
+            raw.extend(check_code())
+        except Exception:
+            logger.warning("heartbeat: check_code crashed", exc_info=True)
+    return [s for s in raw if s.severity in tiers]
+
+
+async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
+    """Run one heartbeat tick. Returns the signals collected (for tests / dry-run)."""
+    now = now or datetime.now(_TZ)
+    config = _load_config()
+    if not config.get("enabled", True):
+        logger.info("heartbeat: disabled in config")
+        return []
+    tiers = _tiers_for_now(config, now)
+    signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
+    logger.info("heartbeat: %d signal(s) in tiers %s", len(signals), sorted(tiers))
+    # Delivery is wired in Task 14.
+    return signals
+
+
+def _cli() -> None:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+    parser = argparse.ArgumentParser(description="Klaus heartbeat smoke test")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Run all checkers, print signals; no send/write.")
+    args = parser.parse_args()
+    if args.dry_run:
+        signals = _collect_signals(
+            tiers={SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI}, weekly=True)
+        print(f"[dry-run] {len(signals)} signal(s):")
+        for s in signals:
+            print(f"  [{s.severity}] {s.title} — {s.detail} -> {s.remediation}")
+        return
+    print("Use --dry-run for local testing.")
+
+
+if __name__ == "__main__":
+    _cli()

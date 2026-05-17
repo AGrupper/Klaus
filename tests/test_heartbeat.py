@@ -77,3 +77,15 @@ def test_check_cron_health_flags_failure_streak(monkeypatch):
     })
     signals = heartbeat.check_cron_health()
     assert any(s.fingerprint == "cron:ingest-chats:failing" for s in signals)
+
+
+def test_collect_signals_filters_by_tier(monkeypatch):
+    from core import heartbeat
+    crit = heartbeat.Signal("x:y:z", heartbeat.SEVERITY_CRITICAL, "cron", "t", "d", "fix")
+    warn = heartbeat.Signal("a:b:c", heartbeat.SEVERITY_WARNING, "token", "t", "d", "fix")
+    monkeypatch.setattr(heartbeat, "check_cron_health", lambda: [crit])
+    monkeypatch.setattr(heartbeat, "check_tokens", lambda: [warn])
+    monkeypatch.setattr(heartbeat, "check_degradation", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_deployment", lambda: [])
+    signals = heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
+    assert crit in signals and warn not in signals
