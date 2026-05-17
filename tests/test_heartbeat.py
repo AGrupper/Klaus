@@ -126,6 +126,17 @@ def test_check_deployment_flags_failed_deploy(monkeypatch):
     assert any(s.severity == heartbeat.SEVERITY_CRITICAL for s in signals)
 
 
+def test_plain_text_fallback_groups_by_severity():
+    from core.heartbeat import (_plain_text_fallback, Signal,
+                                SEVERITY_CRITICAL, SEVERITY_WARNING)
+    msg = _plain_text_fallback([
+        Signal("a:b:c", SEVERITY_CRITICAL, "cron", "Cron down", "stale 40h", "Check scheduler."),
+        Signal("d:e:f", SEVERITY_WARNING, "token", "Token expiring", "3 days left", "Refresh it."),
+    ])
+    assert "Cron down" in msg and "Check scheduler." in msg
+    assert msg.index("Cron down") < msg.index("Token expiring")
+
+
 def test_incident_store_should_ping_logic():
     from memory.firestore_db import IncidentStore
     from datetime import datetime, timezone, timedelta
@@ -134,3 +145,29 @@ def test_incident_store_should_ping_logic():
     assert IncidentStore._should_ping(None, reping_interval_hours=24) is True
     assert IncidentStore._should_ping({"last_pinged": recent}, reping_interval_hours=24) is False
     assert IncidentStore._should_ping({"last_pinged": old}, reping_interval_hours=24) is True
+
+
+def test_run_tick_pings_new_critical(monkeypatch):
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_load_config", lambda: {
+        "enabled": True, "quiet_start": "22:00", "quiet_end": "07:00",
+        "timezone": "Asia/Jerusalem", "digest_hour": 9,
+        "weekly_digest_day": 1, "reping_interval_hours": 24})
+    crit = heartbeat.Signal("cron:x:stale", heartbeat.SEVERITY_CRITICAL,
+                            "cron", "t", "d", "fix")
+    monkeypatch.setattr(heartbeat, "_collect_signals", lambda **k: [crit])
+    monkeypatch.setattr(heartbeat, "_compose_message", lambda s: "composed")
+    monkeypatch.setattr(heartbeat, "_register_incidents",
+                        lambda crits, cfg: [crit])
+    monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
+    monkeypatch.setattr(heartbeat, "_drain_quiet_queue",
+                        lambda bot, now, cfg: None)
+    sent = []
+    async def _send(bot, text, **kw): sent.append(text)
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+    noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    asyncio.run(heartbeat.run_tick(object(), now=noon))
+    assert sent == ["composed"]

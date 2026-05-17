@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 _TZ = ZoneInfo("Asia/Jerusalem")
 
+# Lazy import so tests can monkeypatch before the actual call
+try:
+    from core.scheduled_message import send_and_inject
+except ImportError:
+    send_and_inject = None  # type: ignore[assignment]
+
 SEVERITY_CRITICAL = "critical"
 SEVERITY_WARNING = "warning"
 SEVERITY_FYI = "fyi"
@@ -374,6 +380,62 @@ def check_code() -> list[Signal]:
     return []
 
 
+_SEVERITY_ORDER = [SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI]
+_SEVERITY_HEADER = {
+    SEVERITY_CRITICAL: "CRITICAL",
+    SEVERITY_WARNING: "Warnings",
+    SEVERITY_FYI: "FYI",
+}
+
+
+def _plain_text_fallback(signals: list[Signal]) -> str:
+    """Deterministic grouped message used when the LLM composer is unavailable."""
+    lines: list[str] = []
+    for severity in _SEVERITY_ORDER:
+        group = [s for s in signals if s.severity == severity]
+        if not group:
+            continue
+        lines.append(f"[{_SEVERITY_HEADER[severity]}]")
+        for s in group:
+            lines.append(f"• {s.title} — {s.detail}")
+            lines.append(f"  → {s.remediation}")
+        lines.append("")
+    return "\n".join(lines).strip() or "Heartbeat: all systems nominal."
+
+
+def _compose_message(signals: list[Signal]) -> str:
+    """Compose the Telegram message via the worker LLM, with plain-text fallback."""
+    prompt_path = Path(__file__).parent.parent / "prompts" / "heartbeat.md"
+    try:
+        system_prompt = prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        return _plain_text_fallback(signals)
+
+    payload = json.dumps([{
+        "severity": s.severity, "area": s.area, "title": s.title,
+        "detail": s.detail, "remediation": s.remediation,
+    } for s in signals], ensure_ascii=False, indent=2)
+
+    try:
+        from core.llm_client import LLMClient
+        client = LLMClient(
+            backend=os.environ["WORKER_AGENT_BACKEND"],
+            model=os.environ["WORKER_AGENT_MODEL"],
+            api_key=os.environ["WORKER_AGENT_API_KEY"],
+        )
+        response = client.chat(
+            messages=[{"role": "user", "content": payload}],
+            system=system_prompt,
+        )
+        text = (response.get("text") or "").strip()
+        if text:
+            return text
+    except Exception:
+        logger.warning("heartbeat: LLM composition failed", exc_info=True)
+
+    return _plain_text_fallback(signals)
+
+
 def _load_config() -> dict:
     """Load heartbeat config from Firestore. Returns defaults on error."""
     try:
@@ -404,17 +466,123 @@ def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
     return [s for s in raw if s.severity in tiers]
 
 
+def _register_incidents(critical_signals: list[Signal], config: dict) -> list[Signal]:
+    """Record open incidents; return those that should trigger a ping."""
+    from memory.firestore_db import IncidentStore
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    reping = int(config.get("reping_interval_hours", 24))
+    to_ping: list[Signal] = []
+    try:
+        store = IncidentStore(project_id=project_id, database=database)
+        for signal in critical_signals:
+            should_ping = store.record_open(signal, reping_interval_hours=reping)
+            if should_ping:
+                to_ping.append(signal)
+    except Exception:
+        logger.warning("heartbeat: incident registration failed", exc_info=True)
+        to_ping = critical_signals
+    return to_ping
+
+
+def _resolve_absent(active_fingerprints: set) -> None:
+    """Resolve Firestore incidents that are no longer signalling."""
+    from memory.firestore_db import IncidentStore
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    try:
+        store = IncidentStore(project_id=project_id, database=database)
+        store.resolve_absent(active_fingerprints)
+    except Exception:
+        logger.warning("heartbeat: resolve_absent failed", exc_info=True)
+
+
+def _queue_signals(signals: list[Signal]) -> None:
+    """Append signals to the quiet-hours queue in Firestore."""
+    from memory.firestore_db import _make_firestore_client
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    try:
+        client = _make_firestore_client(project_id, database)
+        payload = [{"fingerprint": s.fingerprint, "severity": s.severity, "area": s.area,
+                    "title": s.title, "detail": s.detail, "remediation": s.remediation}
+                   for s in signals]
+        client.collection("heartbeat_queue").document("pending").set(
+            {"signals": payload}, merge=True)
+    except Exception:
+        logger.warning("heartbeat: _queue_signals failed", exc_info=True)
+
+
+def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
+    """If not in quiet hours, drain any queued signals from previous quiet period."""
+    if _in_quiet_hours(config, now):
+        return
+    from memory.firestore_db import _make_firestore_client
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    try:
+        client = _make_firestore_client(project_id, database)
+        doc_ref = client.collection("heartbeat_queue").document("pending")
+        snap = doc_ref.get()
+        if not snap.exists:
+            return
+        data = snap.to_dict() or {}
+        queued = data.get("signals", [])
+        if not queued:
+            doc_ref.delete()
+            return
+        signals = [Signal(**s) for s in queued]
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(
+            send_and_inject(bot, _compose_message(signals), inject_into_conversation=True)
+        )
+        doc_ref.delete()
+    except Exception:
+        logger.warning("heartbeat: drain_quiet_queue failed", exc_info=True)
+
+
 async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
-    """Run one heartbeat tick. Returns the signals collected (for tests / dry-run)."""
+    """Run one heartbeat tick. Returns the signals collected."""
     now = now or datetime.now(_TZ)
     config = _load_config()
     if not config.get("enabled", True):
         logger.info("heartbeat: disabled in config")
         return []
+
+    _drain_quiet_queue(bot, now, config)
+
     tiers = _tiers_for_now(config, now)
     signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
     logger.info("heartbeat: %d signal(s) in tiers %s", len(signals), sorted(tiers))
-    # Delivery is wired in Task 14.
+
+    active_fps = {s.fingerprint for s in signals}
+    critical = [s for s in signals if s.severity == SEVERITY_CRITICAL]
+    warnings = [s for s in signals if s.severity == SEVERITY_WARNING]
+    fiys = [s for s in signals if s.severity == SEVERITY_FYI]
+
+    to_ping = _register_incidents(critical, config)
+    if to_ping:
+        if not _in_quiet_hours(config, now):
+            await send_and_inject(bot, _compose_message(to_ping), inject_into_conversation=True)
+        else:
+            _queue_signals(to_ping)
+
+    if SEVERITY_WARNING in tiers and warnings:
+        await send_and_inject(bot, _compose_message(warnings), inject_into_conversation=True)
+
+    if SEVERITY_FYI in tiers and fiys:
+        await send_and_inject(bot, _compose_message(fiys), inject_into_conversation=True)
+
+    _resolve_absent(active_fps)
+
+    deadman_url = os.getenv("HEARTBEAT_DEADMAN_URL", "")
+    if deadman_url:
+        try:
+            import requests as _requests
+            _requests.get(deadman_url, timeout=10)
+        except Exception:
+            logger.warning("heartbeat: dead-man ping failed", exc_info=True)
+
     return signals
 
 
@@ -432,6 +600,9 @@ def _cli() -> None:
         print(f"[dry-run] {len(signals)} signal(s):")
         for s in signals:
             print(f"  [{s.severity}] {s.title} — {s.detail} -> {s.remediation}")
+        if signals:
+            print("\n[dry-run] Composed message:")
+            print(_compose_message(signals))
         return
     print("Use --dry-run for local testing.")
 
