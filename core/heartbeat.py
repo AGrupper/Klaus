@@ -198,9 +198,91 @@ def check_tokens() -> list[Signal]:
     return signals
 
 
+_FALLBACK_WARN_THRESHOLD = 10
+_CLOUD_RUN_5XX_WARN_THRESHOLD = 5
+
+
+def _read_fallback_count_today() -> int:
+    """Read today's Gemini->Haiku fallback count from Firestore heartbeat_metrics."""
+    from memory.firestore_db import _make_firestore_client
+    from datetime import date
+    project_id = os.environ["GCP_PROJECT_ID"]
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    client = _make_firestore_client(project_id, database)
+    today = date.today().isoformat()
+    snap = client.collection("heartbeat_metrics").document(today).get()
+    if not snap.exists:
+        return 0
+    return (snap.to_dict() or {}).get("fallback_count", 0)
+
+
+def _read_cloud_run_5xx() -> int:
+    """Query Cloud Monitoring for Cloud Run 5xx count in the last hour."""
+    from google.cloud import monitoring_v3
+    from google.protobuf.timestamp_pb2 import Timestamp
+    import time
+
+    project_id = os.environ["GCP_PROJECT_ID"]
+    client = monitoring_v3.MetricServiceClient()
+    project_name = f"projects/{project_id}"
+
+    now_sec = int(time.time())
+    interval = monitoring_v3.TimeInterval(
+        start_time=Timestamp(seconds=now_sec - 3600),
+        end_time=Timestamp(seconds=now_sec),
+    )
+    aggregation = monitoring_v3.Aggregation(
+        alignment_period={"seconds": 3600},
+        per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_SUM,
+    )
+    results = client.list_time_series(
+        request={
+            "name": project_name,
+            "filter": (
+                'metric.type="run.googleapis.com/request_count" '
+                'AND resource.labels.service_name="klaus-agent" '
+                'AND metric.labels.response_code_class="5xx"'
+            ),
+            "interval": interval,
+            "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+            "aggregation": aggregation,
+        }
+    )
+    total = 0
+    for series in results:
+        for point in series.points:
+            total += int(point.value.int64_value)
+    return total
+
+
 def check_degradation() -> list[Signal]:
-    """Warning-tier: fallback-rate climbing, Cloud Run 5xx spikes. (stub)"""
-    return []
+    """Warning-tier: fallback-rate climbing, Cloud Run 5xx spikes."""
+    signals: list[Signal] = []
+    try:
+        fallbacks = _read_fallback_count_today()
+        if fallbacks >= _FALLBACK_WARN_THRESHOLD:
+            signals.append(Signal(
+                fingerprint="degradation:fallback-rate",
+                severity=SEVERITY_WARNING, area="degradation",
+                title=f"Gemini->Haiku fallback fired {fallbacks}x today",
+                detail="Primary Smart Agent (Gemini 3) is erroring or rate-limited.",
+                remediation="Check Gemini quota / API key; review Cloud Run logs for LLMError.",
+            ))
+    except Exception:
+        logger.warning("heartbeat: fallback metric read failed", exc_info=True)
+    try:
+        errs = _read_cloud_run_5xx()
+        if errs >= _CLOUD_RUN_5XX_WARN_THRESHOLD:
+            signals.append(Signal(
+                fingerprint="degradation:cloud-run-5xx",
+                severity=SEVERITY_WARNING, area="degradation",
+                title=f"{errs} Cloud Run 5xx responses in the last hour",
+                detail="klaus-agent is returning server errors.",
+                remediation="Inspect Cloud Run logs for unhandled exceptions / OOM.",
+            ))
+    except Exception:
+        logger.warning("heartbeat: Cloud Monitoring read failed", exc_info=True)
+    return signals
 
 
 def check_deployment() -> list[Signal]:

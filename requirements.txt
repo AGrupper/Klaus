@@ -13,6 +13,7 @@ google-api-python-client>=2.140    # Gmail + Calendar service builders
 google-cloud-firestore>=2.18
 google-cloud-secret-manager>=2.20  # OAuth token persistence on Cloud Run
 google-cloud-storage>=2.18         # GCS: chat-log staging bucket (Phase 12)
+google-cloud-monitoring>=2.20      # Cloud Monitoring: heartbeat 5xx metrics
 
 # --- Vector memory (Pinecone: unstructured RAG) ---
 # NOTE: the legacy 'pinecone-client' package is deprecated; the new SDK is 'pinecone'.

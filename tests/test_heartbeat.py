@@ -105,3 +105,12 @@ def test_record_cron_run_ok_resets_failures(monkeypatch):
     assert captured["job_id"] == "ingest-chats"
     assert captured["last_ok"] is True
     assert captured["consecutive_failures"] == 0
+
+
+def test_check_degradation_flags_high_fallback(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_fallback_count_today", lambda: 25)
+    monkeypatch.setattr(heartbeat, "_read_cloud_run_5xx", lambda: 0)
+    signals = heartbeat.check_degradation()
+    assert any(s.fingerprint == "degradation:fallback-rate" for s in signals)
+    assert all(s.severity == heartbeat.SEVERITY_WARNING for s in signals)
