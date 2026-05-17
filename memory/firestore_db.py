@@ -353,6 +353,53 @@ class UserProfileStore:
         raise NotImplementedError("stub — Phase 5")
 
 
+_HEARTBEAT_CONFIG_DEFAULTS: dict = {
+    "enabled": True,
+    "quiet_start": "22:00",
+    "quiet_end": "07:00",
+    "timezone": "Asia/Jerusalem",
+    "digest_hour": 9,
+    "weekly_digest_day": 1,
+    "reping_interval_hours": 24,
+}
+
+
+class HeartbeatConfigStore:
+    """Read/write heartbeat scheduler config stored in Firestore.
+
+    Config doc lives at collection='config', document='heartbeat'.
+    If the document is absent, defaults are returned without writing them.
+    """
+
+    _COLLECTION = "config"
+    _DOCUMENT = "heartbeat"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return the heartbeat config, falling back to defaults for missing fields."""
+        try:
+            snap = self._doc_ref.get()
+            stored = snap.to_dict() or {} if snap.exists else {}
+        except GoogleAPICallError:
+            logger.warning("HeartbeatConfigStore.get() failed — using defaults")
+            stored = {}
+        return {**_HEARTBEAT_CONFIG_DEFAULTS, **stored}
+
+    def set(self, patch: dict) -> None:
+        """Merge `patch` into the stored config document (creates it if absent)."""
+        try:
+            self._doc_ref.set(
+                {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except GoogleAPICallError:
+            logger.error("HeartbeatConfigStore.set() failed")
+            raise
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
