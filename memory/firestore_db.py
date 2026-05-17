@@ -439,6 +439,83 @@ class HeartbeatConfigStore:
             raise
 
 
+class IncidentStore:
+    """Dedup and escalation tracking for heartbeat signals.
+
+    Firestore collection: heartbeat_incidents
+    Document id: signal fingerprint (colons are legal; slashes replaced with underscores).
+    """
+
+    _COLLECTION = "heartbeat_incidents"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    @staticmethod
+    def _should_ping(doc: dict | None, *, reping_interval_hours: int) -> bool:
+        """Return True if this incident should trigger a ping.
+
+        True when: doc is None (new incident) or last_pinged is older than reping_interval_hours.
+        """
+        if doc is None:
+            return True
+        last_pinged = doc.get("last_pinged")
+        if last_pinged is None:
+            return True
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        if last_pinged.tzinfo is None:
+            last_pinged = last_pinged.replace(tzinfo=timezone.utc)
+        return (now - last_pinged) >= timedelta(hours=reping_interval_hours)
+
+    def record_open(self, signal, *, reping_interval_hours: int) -> bool:
+        """Upsert an open incident. Returns True if a ping should be sent."""
+        from datetime import datetime, timezone
+        doc_id = signal.fingerprint.replace("/", "_")
+        doc_ref = self._col.document(doc_id)
+        try:
+            snap = doc_ref.get()
+            existing = snap.to_dict() if snap.exists else None
+        except Exception:
+            existing = None
+        should_ping = self._should_ping(existing, reping_interval_hours=reping_interval_hours)
+        now = datetime.now(timezone.utc)
+        payload: dict = {
+            "fingerprint": signal.fingerprint,
+            "severity": signal.severity,
+            "title": signal.title,
+            "status": "open",
+            "last_seen": now,
+        }
+        if existing is None:
+            payload["first_seen"] = now
+        if should_ping:
+            payload["last_pinged"] = now
+        try:
+            doc_ref.set(payload, merge=True)
+        except Exception:
+            logger.warning("IncidentStore.record_open failed for %s", signal.fingerprint, exc_info=True)
+        return should_ping
+
+    def resolve_absent(self, active_fingerprints: set) -> list[dict]:
+        """Mark resolved any open incidents whose fingerprint is not in active_fingerprints."""
+        from datetime import datetime, timezone
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        resolved = []
+        try:
+            snaps = self._col.where(filter=FieldFilter("status", "==", "open")).stream()
+            for snap in snaps:
+                data = snap.to_dict() or {}
+                if data.get("fingerprint") not in active_fingerprints:
+                    now = datetime.now(timezone.utc)
+                    snap.reference.set({"status": "resolved", "resolved_at": now}, merge=True)
+                    resolved.append(data)
+        except Exception:
+            logger.warning("IncidentStore.resolve_absent failed", exc_info=True)
+        return resolved
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 

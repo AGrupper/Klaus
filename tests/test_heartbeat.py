@@ -124,3 +124,13 @@ def test_check_deployment_flags_failed_deploy(monkeypatch):
     signals = heartbeat.check_deployment()
     assert any(s.fingerprint == "deployment:last-deploy-failed" for s in signals)
     assert any(s.severity == heartbeat.SEVERITY_CRITICAL for s in signals)
+
+
+def test_incident_store_should_ping_logic():
+    from memory.firestore_db import IncidentStore
+    from datetime import datetime, timezone, timedelta
+    recent = datetime.now(timezone.utc) - timedelta(hours=1)
+    old = datetime.now(timezone.utc) - timedelta(hours=30)
+    assert IncidentStore._should_ping(None, reping_interval_hours=24) is True
+    assert IncidentStore._should_ping({"last_pinged": recent}, reping_interval_hours=24) is False
+    assert IncidentStore._should_ping({"last_pinged": old}, reping_interval_hours=24) is True
