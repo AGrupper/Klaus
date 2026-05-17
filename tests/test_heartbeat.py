@@ -171,3 +171,15 @@ def test_run_tick_pings_new_critical(monkeypatch):
     noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
     asyncio.run(heartbeat.run_tick(object(), now=noon))
     assert sent == ["composed"]
+
+
+def test_cron_heartbeat_rejects_unauthenticated(monkeypatch):
+    # Import app first so load_dotenv(override=True) fires before we patch.
+    from fastapi.testclient import TestClient
+    from interfaces.web_server import app
+    monkeypatch.setenv("CRON_DEV_BYPASS", "false")
+    monkeypatch.delenv("CLOUD_RUN_URL", raising=False)
+    monkeypatch.delenv("CLOUD_SCHEDULER_SA_EMAIL", raising=False)
+    with TestClient(app) as client:
+        resp = client.post("/cron/heartbeat")
+    assert resp.status_code == 401

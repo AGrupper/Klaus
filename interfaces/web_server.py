@@ -429,3 +429,26 @@ async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
     except Exception:
         _log_cron_run("ingest-chat-exports", ok=False)
         raise
+
+
+@app.post("/cron/heartbeat")
+async def cron_heartbeat(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler hourly tick and run one heartbeat health check.
+
+    Schedule: 0 * * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    import core.heartbeat as _heartbeat
+    try:
+        await _heartbeat.run_tick(_application.bot)
+        _log_cron_run("heartbeat", ok=True)
+    except Exception:
+        _log_cron_run("heartbeat", ok=False)
+        raise
+    return JSONResponse(content={"ok": True})
