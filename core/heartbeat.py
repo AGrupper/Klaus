@@ -375,9 +375,103 @@ def check_deployment() -> list[Signal]:
     return signals
 
 
-def check_code() -> list[Signal]:
-    """Weekly FYI: docs drift, stale TODOs, repeated-fix clusters. (stub)"""
-    return []
+def check_code(repo_root: Path | None = None) -> list[Signal]:
+    """Weekly FYI: docs drift, stale TODOs, repeated-fix clusters."""
+    import subprocess
+    import re
+
+    signals: list[Signal] = []
+    root = repo_root or Path(__file__).parent.parent
+
+    # --- Docs drift: paths mentioned in CLAUDE.md text block vs disk ---
+    try:
+        claude_md = root / "CLAUDE.md"
+        if claude_md.exists():
+            content = claude_md.read_text(encoding="utf-8")
+            # Extract lines inside fenced ```text blocks
+            in_block = False
+            missing_paths: list[str] = []
+            for line in content.splitlines():
+                if line.strip().startswith("```text"):
+                    in_block = True
+                    continue
+                if in_block and line.strip().startswith("```"):
+                    in_block = False
+                    continue
+                if in_block:
+                    # Strip tree-drawing chars and extract a path-like token
+                    cleaned = re.sub(r"[│├└─ \t]+", "", line).strip()
+                    # Skip the root line (e.g. "Klaus/")
+                    if not cleaned or "/" not in cleaned and not cleaned.endswith(".py"):
+                        # Try as plain filename
+                        if cleaned and "." in cleaned:
+                            candidate = root / cleaned
+                            if not candidate.exists():
+                                missing_paths.append(cleaned)
+                    else:
+                        # Remove trailing comments
+                        path_part = cleaned.split("#")[0].strip()
+                        if path_part:
+                            candidate = root / path_part
+                            if not candidate.exists():
+                                missing_paths.append(path_part)
+            if missing_paths:
+                signals.append(Signal(
+                    fingerprint="code:docs-drift",
+                    severity=SEVERITY_FYI, area="code",
+                    title="CLAUDE.md references paths that don't exist",
+                    detail=f"{len(missing_paths)} missing: {', '.join(missing_paths[:3])}{'…' if len(missing_paths) > 3 else ''}",
+                    remediation="Update the directory tree in CLAUDE.md to match the current codebase.",
+                ))
+    except Exception:
+        logger.warning("heartbeat: docs-drift check failed", exc_info=True)
+
+    # --- Stale TODOs: grep core/mcp_tools/interfaces/memory ---
+    try:
+        result = subprocess.run(
+            ["grep", "-rn", "TODO\\|FIXME",
+             str(root / "core"), str(root / "mcp_tools"),
+             str(root / "interfaces"), str(root / "memory")],
+            capture_output=True, text=True, timeout=15,
+        )
+        count = len([l for l in result.stdout.splitlines() if l.strip()])
+        if count > 15:
+            examples = result.stdout.splitlines()[:3]
+            signals.append(Signal(
+                fingerprint="code:stale-todos",
+                severity=SEVERITY_FYI, area="code",
+                title=f"{count} TODO/FIXME comments in source",
+                detail="; ".join(e.split(":", 2)[-1].strip() for e in examples),
+                remediation="Review and resolve or file tickets for stale TODOs.",
+            ))
+    except Exception:
+        logger.warning("heartbeat: stale-todo check failed", exc_info=True)
+
+    # --- Repeated-fix clusters: git log ---
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "log", "--since=60 days ago", "--pretty=%s"],
+            capture_output=True, text=True, timeout=15,
+        )
+        scope_counts: dict[str, int] = {}
+        for line in result.stdout.splitlines():
+            m = re.match(r"fix\(([^)]+)\)", line.strip())
+            if m:
+                scope = m.group(1)
+                scope_counts[scope] = scope_counts.get(scope, 0) + 1
+        for scope, count in scope_counts.items():
+            if count >= 4:
+                signals.append(Signal(
+                    fingerprint=f"code:fix-cluster:{scope}",
+                    severity=SEVERITY_FYI, area="code",
+                    title=f"fix({scope}) appears {count}x in last 60 days",
+                    detail=f"Scope '{scope}' is a churn hotspot.",
+                    remediation=f"Investigate root cause of repeated fixes in '{scope}'.",
+                ))
+    except Exception:
+        logger.warning("heartbeat: fix-cluster check failed", exc_info=True)
+
+    return signals
 
 
 _SEVERITY_ORDER = [SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI]

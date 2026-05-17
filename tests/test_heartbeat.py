@@ -183,3 +183,21 @@ def test_cron_heartbeat_rejects_unauthenticated(monkeypatch):
     with TestClient(app) as client:
         resp = client.post("/cron/heartbeat")
     assert resp.status_code == 401
+
+
+def test_check_code_detects_drift_and_todos(tmp_path):
+    from core.heartbeat import check_code, SEVERITY_FYI
+
+    # Create a fake repo with a CLAUDE.md referencing a non-existent path
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text(
+        "some text\n```text\nKlaus/\n├── nonexistent_file.py\n```\nmore text\n"
+    )
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    src = core_dir / "foo.py"
+    src.write_text("# TODO: fix this\n# FIXME: and this\n")
+
+    signals = check_code(repo_root=tmp_path)
+    assert all(s.severity == SEVERITY_FYI for s in signals)
+    assert all(s.area == "code" for s in signals)
