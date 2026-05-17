@@ -501,6 +501,7 @@ def run_one_batch() -> dict:
                         provider, conv.session_id, len(conv.turns), len(chunks),
                     )
                 except Exception:
+                    blob_fully_drained = False
                     logger.warning(
                         "chat_export_ingest: failed on conv %s in %s — skipping",
                         conv.session_id, blob.name, exc_info=True,
