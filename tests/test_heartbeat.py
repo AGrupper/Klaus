@@ -89,3 +89,19 @@ def test_collect_signals_filters_by_tier(monkeypatch):
     monkeypatch.setattr(heartbeat, "check_deployment", lambda: [])
     signals = heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
     assert crit in signals and warn not in signals
+
+
+def test_record_cron_run_ok_resets_failures(monkeypatch):
+    import memory.firestore_db as fdb
+    captured = {}
+    class _Doc:
+        def set(self, payload, merge): captured.update(payload)
+    class _Col:
+        def document(self, _id): return _Doc()
+    class _Client:
+        def collection(self, _name): return _Col()
+    monkeypatch.setattr(fdb, "_make_firestore_client", lambda *a, **k: _Client())
+    fdb.record_cron_run("ingest-chats", ok=True)
+    assert captured["job_id"] == "ingest-chats"
+    assert captured["last_ok"] is True
+    assert captured["consecutive_failures"] == 0

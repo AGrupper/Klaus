@@ -40,6 +40,45 @@ def _make_firestore_client(project_id: str, database: str) -> firestore.Client:
     return firestore.Client(project=project_id, database=database)
 
 
+def record_cron_run(job_id: str, ok: bool) -> None:
+    """Write a liveness ledger entry to heartbeat_runs/{job_id}.
+
+    Called once per cron-endpoint invocation. On success, consecutive_failures
+    is reset to 0; on failure it is incremented. Never raises.
+    """
+    try:
+        from datetime import datetime, timezone
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        client = _make_firestore_client(project_id, database)
+        payload = {
+            "job_id": job_id,
+            "last_run_at": datetime.now(timezone.utc),
+            "last_ok": ok,
+        }
+        if ok:
+            payload["consecutive_failures"] = 0
+            payload["last_ok_at"] = datetime.now(timezone.utc)
+        else:
+            payload["consecutive_failures"] = firestore.Increment(1)
+        client.collection("heartbeat_runs").document(job_id).set(payload, merge=True)
+    except Exception:
+        logger.warning("record_cron_run(%s, ok=%s) failed", job_id, ok, exc_info=True)
+
+
+def increment_fallback_counter() -> None:
+    """Increment today's Gemini->Haiku fallback counter in heartbeat_metrics. Never raises."""
+    try:
+        from datetime import date
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        client = _make_firestore_client(project_id, database)
+        today = date.today().isoformat()
+        client.collection("heartbeat_metrics").document(today).set(
+            {"date": today, "fallback_count": firestore.Increment(1)}, merge=True)
+    except Exception:
+        logger.warning("increment_fallback_counter failed", exc_info=True)
+
 
 class RosterStore:
     """Manages the five_fingers_roster Firestore collection.
