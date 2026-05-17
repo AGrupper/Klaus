@@ -114,3 +114,13 @@ def test_check_degradation_flags_high_fallback(monkeypatch):
     signals = heartbeat.check_degradation()
     assert any(s.fingerprint == "degradation:fallback-rate" for s in signals)
     assert all(s.severity == heartbeat.SEVERITY_WARNING for s in signals)
+
+
+def test_check_deployment_flags_failed_deploy(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_latest_deploy_status",
+                        lambda: {"conclusion": "failure", "head_sha": "abc123def"})
+    monkeypatch.setattr(heartbeat, "_live_revision_sha", lambda: "abc123def")
+    signals = heartbeat.check_deployment()
+    assert any(s.fingerprint == "deployment:last-deploy-failed" for s in signals)
+    assert any(s.severity == heartbeat.SEVERITY_CRITICAL for s in signals)

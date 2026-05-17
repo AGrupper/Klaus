@@ -285,9 +285,88 @@ def check_degradation() -> list[Signal]:
     return signals
 
 
+def _latest_deploy_status() -> dict | None:
+    """Return the latest GitHub Actions deploy.yml run status, or None on error."""
+    import requests as _requests
+    repo = os.getenv("KLAUS_GITHUB_REPO", "")
+    token = os.getenv("KLAUS_GITHUB_TOKEN", "")
+    if not repo or not token:
+        logger.debug("heartbeat: KLAUS_GITHUB_REPO or KLAUS_GITHUB_TOKEN not set — skipping deploy check")
+        return None
+    url = f"https://api.github.com/repos/{repo}/actions/workflows/deploy.yml/runs?per_page=1"
+    try:
+        resp = _requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        runs = resp.json().get("workflow_runs", [])
+        if not runs:
+            return None
+        run = runs[0]
+        return {
+            "conclusion": run.get("conclusion"),
+            "status": run.get("status"),
+            "head_sha": run.get("head_sha", ""),
+        }
+    except Exception:
+        logger.warning("heartbeat: GitHub deploy status fetch failed", exc_info=True)
+        return None
+
+
+def _live_revision_sha() -> str | None:
+    """Return the commit SHA of the currently-serving Cloud Run revision, or None on error."""
+    try:
+        from google.cloud import run_v2
+        project_id = os.environ["GCP_PROJECT_ID"]
+        client = run_v2.ServicesClient()
+        service_name = f"projects/{project_id}/locations/me-west1/services/klaus-agent"
+        service = client.get_service(name=service_name)
+        traffic = service.traffic
+        if not traffic:
+            return None
+        serving_revision = traffic[0].revision
+        if not serving_revision:
+            return None
+        rev_client = run_v2.RevisionsClient()
+        revision = rev_client.get_revision(name=serving_revision)
+        image = revision.containers[0].image if revision.containers else ""
+        # Image tag format: region-docker.pkg.dev/project/repo/agent:{sha}
+        if ":" in image:
+            return image.rsplit(":", 1)[-1]
+        return None
+    except Exception:
+        logger.warning("heartbeat: Cloud Run revision check failed", exc_info=True)
+        return None
+
+
 def check_deployment() -> list[Signal]:
-    """Deployment health: last deploy succeeded; live revision matches main. (stub)"""
-    return []
+    """Deployment health: last deploy succeeded; live revision matches main."""
+    signals: list[Signal] = []
+    try:
+        deploy = _latest_deploy_status()
+        if deploy and deploy.get("conclusion") == "failure":
+            signals.append(Signal(
+                fingerprint="deployment:last-deploy-failed",
+                severity=SEVERITY_CRITICAL, area="deployment",
+                title="Last GitHub Actions deploy failed",
+                detail=f"Workflow run for {deploy.get('head_sha', '?')[:8]} concluded 'failure'.",
+                remediation="Open the Actions tab for the deploy.yml run and fix the failure.",
+            ))
+        live = _live_revision_sha()
+        head = (deploy or {}).get("head_sha")
+        if live and head and not head.startswith(live) and not live.startswith(head):
+            signals.append(Signal(
+                fingerprint="deployment:revision-behind",
+                severity=SEVERITY_WARNING, area="deployment",
+                title="Live Cloud Run revision is behind main",
+                detail=f"Live={live[:8]}, latest main={head[:8]}.",
+                remediation="Re-run the deploy workflow or push to main to trigger a deploy.",
+            ))
+    except Exception:
+        logger.warning("heartbeat: deployment check failed", exc_info=True)
+    return signals
 
 
 def check_code() -> list[Signal]:
