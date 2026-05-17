@@ -265,6 +265,11 @@ class AgentOrchestrator:
                 if self.smart_agent_fallback is not None:
                     try:
                         logger.info("Retrying with Smart Agent fallback…")
+                        try:
+                            from memory.firestore_db import increment_fallback_counter
+                            increment_fallback_counter()
+                        except Exception:
+                            logger.debug("fallback counter increment failed", exc_info=True)
                         response = self.smart_agent_fallback.chat(
                             current_messages,
                             system=smart_system,
