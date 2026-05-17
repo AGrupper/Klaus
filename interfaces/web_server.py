@@ -270,6 +270,15 @@ async def _verify_cron_request(request: Request) -> None:
         )
 
 
+def _log_cron_run(job_id: str, ok: bool) -> None:
+    """Best-effort liveness ledger write for a cron endpoint. Never raises."""
+    try:
+        from memory.firestore_db import record_cron_run
+        record_cron_run(job_id, ok)
+    except Exception:
+        logger.warning("Failed to record cron run for %s", job_id, exc_info=True)
+
+
 # ------------------------------------------------------------------ #
 # Five Fingers cron routes                                           #
 # ------------------------------------------------------------------ #
@@ -285,14 +294,16 @@ async def cron_five_fingers_morning(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-
     import core.five_fingers as _five_fingers
-
-    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-    await _five_fingers.run_morning_endpoint(_application.bot, today)
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        await _five_fingers.run_morning_endpoint(_application.bot, today)
+        _log_cron_run("five-fingers", ok=True)
+    except Exception:
+        _log_cron_run("five-fingers", ok=False)
+        raise
     return JSONResponse(content={"ok": True})
 
 
@@ -307,14 +318,16 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-
     import core.proactive_alerts as _proactive
-
-    tomorrow = (datetime.now(ZoneInfo("Asia/Jerusalem")) + timedelta(days=1)).date().isoformat()
-    await _proactive.run_proactive_alerts(_application.bot, tomorrow)
+    try:
+        tomorrow = (datetime.now(ZoneInfo("Asia/Jerusalem")) + timedelta(days=1)).date().isoformat()
+        await _proactive.run_proactive_alerts(_application.bot, tomorrow)
+        _log_cron_run("proactive-alerts", ok=True)
+    except Exception:
+        _log_cron_run("proactive-alerts", ok=False)
+        raise
     return JSONResponse(content={"ok": True})
 
 
@@ -329,14 +342,16 @@ async def cron_five_fingers_evening(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-
     import core.five_fingers as _five_fingers
-
-    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-    await _five_fingers.run_evening_endpoint(_application.bot, today)
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        await _five_fingers.run_evening_endpoint(_application.bot, today)
+        _log_cron_run("five-fingers", ok=True)
+    except Exception:
+        _log_cron_run("five-fingers", ok=False)
+        raise
     return JSONResponse(content={"ok": True})
 
 
@@ -351,13 +366,15 @@ async def cron_morning_briefing_tick(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-
     import core.morning_briefing as _morning
-
-    await _morning.handle_tick(_application.bot)
+    try:
+        await _morning.handle_tick(_application.bot)
+        _log_cron_run("morning-briefing", ok=True)
+    except Exception:
+        _log_cron_run("morning-briefing", ok=False)
+        raise
     return JSONResponse(content={"ok": True})
 
 
@@ -375,13 +392,16 @@ async def cron_ingest_chats(request: Request) -> JSONResponse:
         JSONResponse: batch status dict with ok, processed, remaining, done.
     """
     await _verify_cron_request(request)
-
     import asyncio as _asyncio
     import core.chat_ingest as _ingest
-
-    loop = _asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, _ingest.run_one_batch)
-    return JSONResponse(content=result)
+    try:
+        loop = _asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _ingest.run_one_batch)
+        _log_cron_run("ingest-chats", ok=True)
+        return JSONResponse(content=result)
+    except Exception:
+        _log_cron_run("ingest-chats", ok=False)
+        raise
 
 
 @app.post("/cron/ingest-chat-exports")
@@ -399,10 +419,13 @@ async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
         JSONResponse: batch status dict with ok, processed, remaining, done.
     """
     await _verify_cron_request(request)
-
     import asyncio as _asyncio
     import core.chat_export_ingest as _export_ingest
-
-    loop = _asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, _export_ingest.run_one_batch)
-    return JSONResponse(content=result)
+    try:
+        loop = _asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _export_ingest.run_one_batch)
+        _log_cron_run("ingest-chat-exports", ok=True)
+        return JSONResponse(content=result)
+    except Exception:
+        _log_cron_run("ingest-chat-exports", ok=False)
+        raise
