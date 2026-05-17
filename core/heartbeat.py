@@ -97,3 +97,102 @@ def _tiers_for_now(config: dict, now: datetime) -> set[str]:
         if local_now.isoweekday() == int(config.get("weekly_digest_day", 1)):
             tiers.add(SEVERITY_FYI)
     return tiers
+
+
+_CRON_MAX_STALENESS_HOURS = {
+    "morning-briefing": 26,
+    "proactive-alerts": 26,
+    "ingest-chats": 26,
+    "ingest-chat-exports": 26,
+}
+_CRON_FAILURE_STREAK_THRESHOLD = 3
+
+
+def _read_cron_ledger() -> dict:
+    """Return {job_id: doc_dict} from the Firestore heartbeat_runs collection."""
+    from memory.firestore_db import _make_firestore_client
+    project_id = os.environ["GCP_PROJECT_ID"]
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    client = _make_firestore_client(project_id, database)
+    out: dict = {}
+    for snap in client.collection("heartbeat_runs").stream():
+        out[snap.id] = snap.to_dict() or {}
+    return out
+
+
+def check_cron_health() -> list[Signal]:
+    """Critical-tier: each cron ran recently and is not in a failure streak."""
+    signals: list[Signal] = []
+    try:
+        ledger = _read_cron_ledger()
+    except Exception:
+        logger.warning("heartbeat: cron ledger read failed", exc_info=True)
+        return signals
+
+    now = datetime.now(timezone.utc)
+    for job_id, max_hours in _CRON_MAX_STALENESS_HOURS.items():
+        doc = ledger.get(job_id)
+        if doc is None:
+            signals.append(Signal(
+                fingerprint=f"cron:{job_id}:missing",
+                severity=SEVERITY_CRITICAL, area="cron",
+                title=f"{job_id} has never recorded a run",
+                detail="No heartbeat_runs ledger entry exists.",
+                remediation=f"Confirm the Cloud Scheduler job for {job_id} exists and is enabled.",
+            ))
+            continue
+        last = doc.get("last_run_at")
+        if last is not None:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            age_h = (now - last).total_seconds() / 3600
+            if age_h > max_hours:
+                signals.append(Signal(
+                    fingerprint=f"cron:{job_id}:stale",
+                    severity=SEVERITY_CRITICAL, area="cron",
+                    title=f"{job_id} has not run in {age_h:.0f}h",
+                    detail=f"Last run {last.isoformat()}; expected within {max_hours}h.",
+                    remediation=f"Check the Cloud Scheduler job for {job_id} and Cloud Run logs.",
+                ))
+
+    for job_id, doc in ledger.items():
+        if doc.get("consecutive_failures", 0) >= _CRON_FAILURE_STREAK_THRESHOLD:
+            signals.append(Signal(
+                fingerprint=f"cron:{job_id}:failing",
+                severity=SEVERITY_CRITICAL, area="cron",
+                title=f"{job_id} failed {doc['consecutive_failures']}x in a row",
+                detail=f"last_ok={doc.get('last_ok')}.",
+                remediation=f"Inspect Cloud Run logs for the {job_id} endpoint.",
+            ))
+    return signals
+
+
+def check_tokens() -> list[Signal]:
+    """Token/integration health: Google OAuth and TickTick OAuth refresh probes."""
+    signals: list[Signal] = []
+
+    try:
+        from core.auth_google import build_auth_manager_from_env
+        build_auth_manager_from_env().get_credentials()
+    except Exception as exc:
+        signals.append(Signal(
+            fingerprint="token:google:refresh-failed",
+            severity=SEVERITY_CRITICAL, area="token",
+            title="Google OAuth refresh failed",
+            detail=str(exc)[:200],
+            remediation="Re-run the Google OAuth bootstrap; refresh klaus-google-oauth-token.",
+        ))
+
+    try:
+        from mcp_tools.ticktick_auth import get_valid_access_token
+        get_valid_access_token()
+    except Exception as exc:
+        signals.append(Signal(
+            fingerprint="token:ticktick:refresh-failed",
+            severity=SEVERITY_CRITICAL, area="token",
+            title="TickTick OAuth refresh failed",
+            detail=str(exc)[:200],
+            remediation="Run scripts/ticktick_oauth_bootstrap.py to re-issue the token pair.",
+        ))
+
+    return signals

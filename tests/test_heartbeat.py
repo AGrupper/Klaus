@@ -54,3 +54,26 @@ def test_tiers_for_now():
     assert _tiers_for_now(cfg, _dt(9, 5, isoweekday=2)) == {
         SEVERITY_CRITICAL, SEVERITY_WARNING}
     assert _tiers_for_now(cfg, _dt(15, 0, isoweekday=2)) == {SEVERITY_CRITICAL}
+
+
+def test_check_cron_health_flags_stale(monkeypatch):
+    from core import heartbeat
+    from datetime import timezone, timedelta
+    stale = datetime.now(timezone.utc) - timedelta(hours=40)
+    monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
+        "morning-briefing": {"last_run_at": stale, "consecutive_failures": 0, "last_ok": True},
+    })
+    signals = heartbeat.check_cron_health()
+    assert any(s.fingerprint == "cron:morning-briefing:stale" for s in signals)
+    assert all(s.severity == heartbeat.SEVERITY_CRITICAL for s in signals)
+
+
+def test_check_cron_health_flags_failure_streak(monkeypatch):
+    from core import heartbeat
+    from datetime import timezone
+    fresh = datetime.now(timezone.utc)
+    monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
+        "ingest-chats": {"last_run_at": fresh, "consecutive_failures": 3, "last_ok": False},
+    })
+    signals = heartbeat.check_cron_health()
+    assert any(s.fingerprint == "cron:ingest-chats:failing" for s in signals)
