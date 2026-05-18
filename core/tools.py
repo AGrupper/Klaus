@@ -36,7 +36,15 @@ def _get_current_user_id() -> int:
 
 # Tools that Claude calls directly (not via delegate_to_worker).
 # The orchestrator uses this set to suppress spurious "unexpected direct call" warnings.
-SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({"remember", "recall", "run_morning_briefing", "search_chat_history"})
+SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
+    "remember",
+    "recall",
+    "run_morning_briefing",
+    "search_chat_history",
+    "list_own_files",
+    "read_own_source",
+    "search_own_source",
+})
 
 # ------------------------------------------------------------------ #
 # Tool schemas in Anthropic tool_use format.                         #
@@ -564,6 +572,73 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "list_own_files",
+        "description": (
+            "List Klaus's deployed source files. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Returns a sorted list of relative file paths from the project root. "
+            "Use when asked about project structure, what files exist, or to discover "
+            "what modules are available. Pass subdir to narrow to a specific directory "
+            "(e.g. 'mcp_tools', 'core', 'memory')."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subdir": {
+                    "type": "string",
+                    "description": "Optional relative subdirectory path (e.g. 'mcp_tools'). "
+                                   "When omitted, all project files are listed.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "read_own_source",
+        "description": (
+            "Read the contents of one of Klaus's own source files by relative path. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Use when asked how something works, to answer questions about implementation, "
+            "or to inspect a specific file. "
+            "Paths are relative to the project root (e.g. 'core/tools.py'). "
+            "Secrets and credentials are blocked and will return an error."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path from the project root (e.g. 'core/tools.py').",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "search_own_source",
+        "description": (
+            "Full-text search across Klaus's source files. "
+            "Call this directly — do NOT delegate to the worker. "
+            "Returns line-level matches: file path, line number, and the matching line. "
+            "Use when asked where a specific class, function, variable, or string appears "
+            "in the codebase. Case-insensitive substring match."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Substring to search for (case-insensitive).",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum matches to return (default 20).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
         "name": "delegate_to_worker",
         "description": (
             "Delegate a task to your worker agent (Gemini Flash) for tool execution "
@@ -599,7 +674,15 @@ TOOL_SCHEMAS: list[dict] = [
 # (memory tools require Claude's judgment; the worker must not call them).
 WORKER_TOOL_SCHEMAS: list[dict] = [
     s for s in TOOL_SCHEMAS
-    if s["name"] not in {"delegate_to_worker", "remember", "recall", "search_chat_history"}
+    if s["name"] not in {
+        "delegate_to_worker",
+        "remember",
+        "recall",
+        "search_chat_history",
+        "list_own_files",
+        "read_own_source",
+        "search_own_source",
+    }
 ]
 
 
@@ -618,6 +701,11 @@ from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
 from mcp_tools.garmin_tool import fetch_garmin_today    # noqa: E402
 from memory.firestore_db import RosterStore, AttendanceStore  # noqa: E402
 from mcp_tools.ticktick_tool import add_task as _ticktick_add_task  # noqa: E402
+from mcp_tools.self_inspect import (                                 # noqa: E402
+    list_own_files as _list_own_files,
+    read_own_source as _read_own_source,
+    search_own_source as _search_own_source,
+)
 from memory.pinecone_db import MemoryStore              # noqa: E402
 from mcp_tools.memory import MemoryTool                 # noqa: E402
 from mcp_tools.five_fingers.composer import normalize_phone  # noqa: E402
@@ -988,6 +1076,24 @@ def _handle_notion_append_blocks(page_id: str, content: str) -> str:
     return json.dumps(result)
 
 
+def _handle_list_own_files(subdir: str | None = None) -> str:
+    """List Klaus's source files, optionally filtered to a subdirectory."""
+    result = _list_own_files(subdir=subdir)
+    return json.dumps(result)
+
+
+def _handle_read_own_source(path: str) -> str:
+    """Return the contents of a source file, with denylist and traversal protection."""
+    result = _read_own_source(path=path)
+    return json.dumps(result)
+
+
+def _handle_search_own_source(query: str, max_results: int = 20) -> str:
+    """Full-text search across source files; returns line-level matches."""
+    result = _search_own_source(query=query, max_results=max_results)
+    return json.dumps(result)
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -1006,6 +1112,9 @@ _HANDLERS: dict[str, object] = {
     "remember":              lambda args: _handle_remember(**args),
     "recall":                lambda args: _handle_recall(**args),
     "search_chat_history":   lambda args: _handle_search_chat_history(**args),
+    "list_own_files":          lambda args: _handle_list_own_files(**args),
+    "read_own_source":         lambda args: _handle_read_own_source(**args),
+    "search_own_source":       lambda args: _handle_search_own_source(**args),
     "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
     "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
