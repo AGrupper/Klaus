@@ -122,3 +122,30 @@ POST /cron/ingest-chat-exports → core.chat_export_ingest.run_one_batch()
 - Activity log = flat records with `title` ("Prompted …"), `safeHtmlItem[0].html`, `time`
 - Sort ascending, cluster by >30-min gap → ~37 conversations from 255 records
 - `session_id = sha1(earliest_time)[:16]` — deterministic (activity log is immutable)
+
+## LLM Strategy — Per-Purpose Model Map
+
+Added Phase 14. This table is the authoritative reference for which model handles
+each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table.
+
+| Purpose | Backend | Model | Env Vars | Notes |
+|---------|---------|-------|----------|-------|
+| Smart Agent (brain) | gemini | gemini-3-flash-preview | SMART_AGENT_BACKEND / MODEL / API_KEY | Orchestration, judgment, crafting responses |
+| Worker Agent (hands) | gemini | gemini-2.5-flash | WORKER_AGENT_BACKEND / MODEL / API_KEY | Tool execution, data gathering, structured JSON |
+| Smart Agent fallback | anthropic | claude-haiku-4-5 | SMART_AGENT_FALLBACK_BACKEND / MODEL / API_KEY | Activated inline on LLMError from brain |
+| Tick-brain | openai (Groq-compat) | qwen3-32b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error |
+| Embeddings | gemini | gemini-embedding-2 | (uses WORKER_AGENT_API_KEY) | AI Studio only — NOT Vertex AI |
+
+### Model Selection Rationale
+
+- **Gemini 3 Flash** as brain: lower cost than Claude at scale, native tool-use, Google ecosystem
+- **Gemini 2.5 Flash** as worker: fastest structured JSON output, shared API key with brain
+- **Claude Haiku** as fallback: diversity hedge — different provider means different failure modes
+- **Groq/Qwen3-32B** for tick-brain: free tier, 0.5s latency, does not train on data, OpenAI-compatible
+- **gemini-embedding-2** for embeddings: available via AI Studio (NOT Vertex AI — embedding model is AI Studio only)
+
+### Cost Model
+
+Measure everything, cap nothing (explicit user preference). Cost is recorded per call via
+`LLMUsageStore` (Phase 14) and surfaced in `get_self_status` (Phase 16).
+Free models (Groq) return cost=0.0 by design — see `core/pricing.py::compute_cost()`.
