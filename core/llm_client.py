@@ -21,6 +21,7 @@ Unified response envelope:
     "text":       str | None,         # final text response (None if only tool calls)
     "tool_calls": list[dict],         # [{"name": str, "id": str, "input": dict}, ...]
     "stop_reason": str,               # "end_turn" | "tool_use" | "max_tokens"
+    "usage":      dict,               # {"in_tokens": int, "out_tokens": int}
   }
 """
 from __future__ import annotations
@@ -49,26 +50,30 @@ class LLMClient:
 
     SUPPORTED_BACKENDS = ("anthropic", "gemini", "openai")
 
-    def __init__(self, backend: str, model: str, api_key: str) -> None:
+    def __init__(self, backend: str, model: str, api_key: str,
+                 base_url: str | None = None) -> None:
         """Initialise the client for a specific backend + model.
 
         Args:
-            backend: One of "anthropic", "gemini", "openai".
-            model: Provider-specific model ID (e.g. "claude-opus-4-5-20251101").
-            api_key: API credential for the chosen backend.
+            backend:  One of "anthropic", "gemini", "openai".
+            model:    Provider-specific model ID (e.g. "claude-opus-4-5-20251101").
+            api_key:  API credential for the chosen backend.
+            base_url: Optional URL override for OpenAI-compatible endpoints (e.g. Groq).
+                      Ignored for anthropic/gemini backends.
 
         Raises:
             ValueError: If backend is not one of SUPPORTED_BACKENDS.
         """
         self.backend = backend
         self.model = model
+        self.base_url = base_url
 
         if backend == "anthropic":
             self._impl: _BaseBackend = _AnthropicBackend(model, api_key)
         elif backend == "gemini":
             self._impl = _GeminiBackend(model, api_key)
         elif backend == "openai":
-            self._impl = _OpenAIBackend(model, api_key)
+            self._impl = _OpenAIBackend(model, api_key, base_url=base_url)
         else:
             raise ValueError(
                 f"Unsupported backend '{backend}'. "
@@ -76,7 +81,8 @@ class LLMClient:
             )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
-             tools: list[dict] | None = None) -> dict:
+             tools: list[dict] | None = None,
+             purpose: str = "") -> dict:
         """Send a multi-turn conversation and return a unified response.
 
         Args:
@@ -84,15 +90,41 @@ class LLMClient:
             system:   System prompt string (injected by each backend as appropriate).
             tools:    Tool schemas in Anthropic tool_use format. Each backend
                       converts internally to its own wire format.
+            purpose:  Caller label for usage metering (e.g. "smart", "worker", "tick").
+                      Stored in LLMUsageStore — has no effect on the LLM call itself.
 
         Returns:
-            Unified envelope: {"text", "tool_calls", "stop_reason"}
+            Unified envelope: {"text", "tool_calls", "stop_reason", "usage"}
         """
         logger.debug(
-            "chat backend=%s model=%s messages=%d tools=%d",
-            self.backend, self.model, len(messages), len(tools or []),
+            "chat backend=%s model=%s messages=%d tools=%d purpose=%s",
+            self.backend, self.model, len(messages), len(tools or []), purpose,
         )
-        return self._impl.chat(messages, system=system, tools=tools)
+        result = self._impl.chat(messages, system=system, tools=tools)
+
+        # --- Cost metering (never raises) ---
+        try:
+            usage = result.get("usage") or {}
+            in_tok  = usage.get("in_tokens", 0) or 0
+            out_tok = usage.get("out_tokens", 0) or 0
+            from core.pricing import compute_cost
+            cost = compute_cost(self.model, in_tok, out_tok)
+            import os
+            project_id = os.getenv("GCP_PROJECT_ID", "")
+            if project_id:
+                database = os.getenv("FIRESTORE_DATABASE", "(default)")
+                from memory.firestore_db import LLMUsageStore
+                LLMUsageStore(project_id, database).record(
+                    model=self.model,
+                    purpose=purpose,
+                    in_tokens=in_tok,
+                    out_tokens=out_tok,
+                    cost=cost,
+                )
+        except Exception:
+            logger.debug("LLM usage metering failed (non-fatal)", exc_info=True)
+
+        return result
 
 
 # ------------------------------------------------------------------ #
@@ -162,6 +194,10 @@ class _AnthropicBackend(_BaseBackend):
             "text": text,
             "tool_calls": tool_calls,
             "stop_reason": response.stop_reason,
+            "usage": {
+                "in_tokens":  response.usage.input_tokens,
+                "out_tokens": response.usage.output_tokens,
+            },
         }
 
 
@@ -195,6 +231,7 @@ class _GeminiBackend(_BaseBackend):
         gemini_tools = self._convert_tools(tools) if tools else None
 
         config_kwargs: dict[str, Any] = {}
+        config_kwargs["max_output_tokens"] = MAX_TOKENS
         if system:
             config_kwargs["system_instruction"] = system
         if gemini_tools:
@@ -236,7 +273,15 @@ class _GeminiBackend(_BaseBackend):
                     })
 
         stop = "tool_use" if tool_calls else "end_turn"
-        return {"text": text, "tool_calls": tool_calls, "stop_reason": stop}
+        usage_meta = getattr(response, "usage_metadata", None)
+        in_tokens  = getattr(usage_meta, "prompt_token_count", 0) or 0
+        out_tokens = getattr(usage_meta, "candidates_token_count", 0) or 0
+        return {
+            "text": text,
+            "tool_calls": tool_calls,
+            "stop_reason": stop,
+            "usage": {"in_tokens": in_tokens, "out_tokens": out_tokens},
+        }
 
     def _convert_messages(self, messages: list[dict]) -> list:
         """Convert Anthropic-format messages to google-genai Content objects."""
@@ -352,15 +397,16 @@ class _GeminiBackend(_BaseBackend):
 class _OpenAIBackend(_BaseBackend):
     """OpenAI chat completions API.
 
-    Also works with OpenAI-compatible endpoints (self-hosted models like
-    Hermes) by setting a custom base_url via the OPENAI_BASE_URL env var.
+    Also works with OpenAI-compatible endpoints (e.g. Groq) by passing a
+    custom base_url as a constructor param.
     """
 
-    def __init__(self, model: str, api_key: str) -> None:
-        import os
+    def __init__(self, model: str, api_key: str,
+                 base_url: str | None = None) -> None:
         from openai import OpenAI  # lazy import
         self.model = model
-        base_url = os.getenv("OPENAI_BASE_URL")  # None → uses api.openai.com
+        # WHY: base_url is now a constructor param so each caller (main brain vs tick-brain)
+        # can target different endpoints without mutating global env vars.
         self.client = OpenAI(api_key=api_key, base_url=base_url)
 
     def chat(self, messages: list[dict], *, system: str | None = None,
@@ -373,6 +419,7 @@ class _OpenAIBackend(_BaseBackend):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": openai_messages,
+            "max_tokens": MAX_TOKENS,
         }
         if openai_tools:
             kwargs["tools"] = openai_tools
@@ -402,7 +449,16 @@ class _OpenAIBackend(_BaseBackend):
                 })
 
         stop_reason = "tool_use" if tool_calls else "end_turn"
-        return {"text": text, "tool_calls": tool_calls, "stop_reason": stop_reason}
+        usage = response.usage
+        return {
+            "text": text,
+            "tool_calls": tool_calls,
+            "stop_reason": stop_reason,
+            "usage": {
+                "in_tokens":  getattr(usage, "prompt_tokens", 0) or 0,
+                "out_tokens": getattr(usage, "completion_tokens", 0) or 0,
+            },
+        }
 
     def _convert_messages(self, messages: list[dict], *,
                           system: str | None) -> list[dict]:
