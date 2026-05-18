@@ -75,7 +75,7 @@ def _compute_schema_hash(root: Path) -> str:
         fragments.extend(routes)
 
     combined = "\n".join(fragments)
-    return hashlib.sha1(combined.encode()).hexdigest()
+    return hashlib.sha1(combined.encode(), usedforsecurity=False).hexdigest()
 
 
 # ---------------------------------------------------------------------------

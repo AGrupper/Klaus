@@ -497,7 +497,7 @@ def check_code(repo_root: Path | None = None) -> list[Signal]:
                 web_text = web_file.read_text(encoding="utf-8")
                 routes = sorted(_re_sha.findall(r'"/cron/[^"]*"', web_text))
                 fragments.extend(routes)
-            fresh_sha = _hashlib.sha1("\n".join(fragments).encode()).hexdigest()
+            fresh_sha = _hashlib.sha1("\n".join(fragments).encode(), usedforsecurity=False).hexdigest()
 
             if stored_sha and stored_sha != fresh_sha:
                 signals.append(Signal(

@@ -34,7 +34,7 @@ from core.llm_client import LLMClient, LLMError
 from core import tools as tool_registry
 from memory.firestore_db import SelfStateStore
 
-load_dotenv()
+load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
