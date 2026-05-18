@@ -516,6 +516,88 @@ class IncidentStore:
         return resolved
 
 
+class LLMUsageStore:
+    """Per-day LLM usage accounting stored in Firestore.
+
+    Collection: llm_usage
+    Document ID: YYYY-MM-DD (one doc per day)
+
+    Each doc accumulates atomic counters for every call recorded that day.
+    Numeric fields use firestore.Increment so concurrent calls are safe.
+
+    Schema (all fields are firestore.Increment targets):
+        total_in_tokens:   int   — sum of input tokens across all calls
+        total_out_tokens:  int   — sum of output tokens across all calls
+        total_cost_usd:    float — sum of compute_cost() results
+        call_count:        int   — total number of calls
+        {purpose}_calls:   int   — per-purpose call counter (e.g. "smart_calls", "worker_calls")
+    """
+
+    _COLLECTION = "llm_usage"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+
+    def record(self, model: str, purpose: str, in_tokens: int,
+               out_tokens: int, cost: float) -> None:
+        """Increment today's usage doc. Never raises."""
+        try:
+            from datetime import date
+            today = date.today().isoformat()
+            doc_ref = self._client.collection(self._COLLECTION).document(today)
+            purpose_key = f"{purpose}_calls" if purpose else "unknown_calls"
+            doc_ref.set(
+                {
+                    "date": today,
+                    "total_in_tokens":  firestore.Increment(in_tokens),
+                    "total_out_tokens": firestore.Increment(out_tokens),
+                    "total_cost_usd":   firestore.Increment(cost),
+                    "call_count":       firestore.Increment(1),
+                    purpose_key:        firestore.Increment(1),
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.warning("LLMUsageStore.record() failed", exc_info=True)
+
+    def summary(self, period: str = "today") -> dict:
+        """Return usage summary for 'today' or 'month'. Returns {} on error."""
+        try:
+            from datetime import date
+            today = date.today()
+
+            if period == "today":
+                snap = self._client.collection(self._COLLECTION).document(
+                    today.isoformat()
+                ).get()
+                return snap.to_dict() or {} if snap.exists else {}
+
+            if period == "month":
+                prefix = today.strftime("%Y-%m-")
+                # Query docs where date starts with current year-month
+                from google.cloud.firestore_v1.base_query import FieldFilter
+                snaps = self._client.collection(self._COLLECTION).where(
+                    filter=FieldFilter("date", ">=", prefix + "01")
+                ).where(
+                    filter=FieldFilter("date", "<=", prefix + "31")
+                ).stream()
+                agg: dict = {"call_count": 0, "total_cost_usd": 0.0,
+                             "total_in_tokens": 0, "total_out_tokens": 0}
+                for snap in snaps:
+                    d = snap.to_dict() or {}
+                    agg["call_count"]       += d.get("call_count", 0)
+                    agg["total_cost_usd"]   += d.get("total_cost_usd", 0.0)
+                    agg["total_in_tokens"]  += d.get("total_in_tokens", 0)
+                    agg["total_out_tokens"] += d.get("total_out_tokens", 0)
+                return agg
+
+            logger.warning("LLMUsageStore.summary: unknown period '%s'", period)
+            return {}
+        except Exception:
+            logger.warning("LLMUsageStore.summary() failed", exc_info=True)
+            return {}
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
