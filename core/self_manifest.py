@@ -198,6 +198,7 @@ def _load_tool_data_fallback() -> list[dict]:
     direct = {
         "remember", "recall", "run_morning_briefing", "search_chat_history",
         "list_own_files", "read_own_source", "search_own_source",
+        "get_self_status",
     }
     tools = [
         ("list_calendar_events",        "List all calendar events within a given date/time window."),
@@ -227,6 +228,7 @@ def _load_tool_data_fallback() -> list[dict]:
         ("list_own_files",              "List Klaus's deployed source files."),
         ("read_own_source",             "Read the contents of one of Klaus's own source files by relative path."),
         ("search_own_source",           "Full-text search across Klaus's source files."),
+        ("get_self_status",             "Return today's cost, message count, container uptime, and heartbeat status."),
     ]
     return [
         {
