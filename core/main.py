@@ -1,16 +1,16 @@
 """Agent orchestrator — dual-model coordination logic.
 
-Claude (Smart Agent) receives every user message, makes all judgment calls,
-and crafts every JARVIS-style response. Gemini Flash (Worker Agent) executes
-tools and gathers data on Claude's behalf via two delegation paths:
+Gemini 3 Flash (Smart Agent) receives every user message, makes all judgment
+calls, and crafts every response. Gemini 2.5 Flash (Worker Agent) executes
+tools and gathers data on the Smart Agent's behalf via two delegation paths:
 
   Path A — Delegate + Review:
-    Claude delegates via delegate_to_worker (respond_directly=false)
-    → Flash executes tools → result returned to Claude → Claude responds.
+    Smart Agent delegates via delegate_to_worker (respond_directly=false)
+    → Worker executes tools → result returned to Smart Agent → Smart Agent responds.
 
-  Path B — Flash Solo:
-    Claude delegates via delegate_to_worker (respond_directly=true)
-    → Flash handles the request end-to-end → response goes directly to user.
+  Path B — Worker Solo:
+    Smart Agent delegates via delegate_to_worker (respond_directly=true)
+    → Worker handles the request end-to-end → response goes directly to user.
 
 Conversation history storage is pluggable via the ConversationStore protocol:
   - InMemoryConversationStore: default for local dev (no persistence).
@@ -225,26 +225,26 @@ class AgentOrchestrator:
         self.conversation_manager.append(user_id, "user", user_message)
         messages = self.conversation_manager.get(user_id)
 
-        # Run Claude's orchestration loop.
+        # Run the Smart Agent orchestration loop.
         response_text = self._run_smart_loop(
             messages, smart_system, worker_system
         )
 
-        # Persist Claude's final text response.
+        # Persist the Smart Agent's final text response.
         self.conversation_manager.append(user_id, "assistant", response_text)
         return response_text
 
     # ------------------------------------------------------------------ #
-    # Smart Agent loop (Claude)                                          #
+    # Smart Agent loop (Gemini 3 Flash)                                   #
     # ------------------------------------------------------------------ #
 
     def _run_smart_loop(self, messages: list[dict], smart_system: str,
                         worker_system: str) -> str:
-        """Run Claude's tool-use loop until it produces a final text response.
+        """Run the Smart Agent tool-use loop until it produces a final text response.
 
-        Claude may call delegate_to_worker one or more times. Each call is
+        The Smart Agent may call delegate_to_worker one or more times. Each call is
         intercepted here and routed to _run_worker_loop(). Tool results are
-        fed back to Claude so it can reason and respond.
+        fed back to the Smart Agent so it can reason and respond.
         """
         # Work on a local copy so the conversation manager's history is not
         # polluted with intermediate tool_use / tool_result messages.
@@ -293,7 +293,7 @@ class AgentOrchestrator:
             tool_calls = response["tool_calls"]
             response_text = response["text"]
 
-            # No tool calls → Claude has produced its final response.
+            # No tool calls → Smart Agent has produced its final response.
             if not tool_calls:
                 return response_text or ""
 
@@ -327,12 +327,12 @@ class AgentOrchestrator:
                     worker_response = self._run_worker_loop(task, worker_system)
 
                     if respond_directly:
-                        # Path B: Flash solo — return immediately, no Claude review.
+                        # Path B: Flash solo — return immediately, no Smart Agent review.
                         logger.info("Path B delegation: returning Flash response directly.")
                         return worker_response
 
-                    # Path A: feed Flash's result back to Claude for review + crafting.
-                    logger.info("Path A delegation: returning Flash result to Claude.")
+                    # Path A: feed Flash's result back to the Smart Agent for review + crafting.
+                    logger.info("Path A delegation: returning Flash result to the Smart Agent.")
                     tool_results.append({
                         "type": "tool_result",
                         "tool_use_id": tool_id,
@@ -340,12 +340,12 @@ class AgentOrchestrator:
                     })
 
                 else:
-                    # WHY: remember/recall are always called directly by Claude —
-                    # they require Claude's judgment and must not go via the worker.
+                    # WHY: remember/recall are always called directly by the Smart Agent —
+                    # they require the Smart Agent's judgment and must not go via the worker.
                     # Any other direct tool call is unexpected; log a warning.
                     if tool_name not in tool_registry.SMART_AGENT_DIRECT_TOOLS:
                         logger.warning(
-                            "Claude called tool '%s' directly (expected delegation).", tool_name
+                            "Smart Agent called tool '%s' directly (expected delegation).", tool_name
                         )
                     try:
                         result = tool_registry.dispatch(tool_name, tool_args)
@@ -359,7 +359,7 @@ class AgentOrchestrator:
 
             # Append all tool results as a single user turn.
             # WHY: Anthropic's API allows multiple tool_result blocks in one user message;
-            # grouping them avoids unnecessary turn-counting against Claude's context.
+            # grouping them avoids unnecessary turn-counting against the Smart Agent's context.
             if tool_results:
                 current_messages.append({"role": "user", "content": tool_results})
 
@@ -380,11 +380,11 @@ class AgentOrchestrator:
         """Run Gemini Flash on a delegated task, managing its own tool-use loop.
 
         Args:
-            task: Natural language instruction from Claude.
+            task: Natural language instruction from the Smart Agent.
             worker_system: Rendered worker system prompt with today's date.
 
         Returns:
-            Flash's final text response (fed back to Claude, or returned directly).
+            Flash's final text response (fed back to the Smart Agent, or returned directly).
         """
         # WHY: Flash starts with a fresh single-message conversation — it only needs
         # the delegated task context, not Amit's full conversation history.
