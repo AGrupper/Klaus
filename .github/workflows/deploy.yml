@@ -43,6 +43,9 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
 
+      - name: Generate SELF.md capability manifest
+        run: python core/self_manifest.py
+
       - name: Build Docker image
         run: docker build -t "$IMAGE" .
 
