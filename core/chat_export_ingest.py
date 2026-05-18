@@ -377,8 +377,22 @@ def _locate_json(zip_file: zipfile.ZipFile, provider: str) -> bytes | None:
         if target is None:
             target = next((n for n in names if n.endswith("MyActivity.json")), None)
     else:
-        # claude_ai and chatgpt both use conversations.json
-        target = next((n for n in names if n.endswith("conversations.json")), None)
+        # claude_ai and chatgpt: single conversations.json (legacy) or split files (new)
+        # Use exact basename match to avoid picking up shared_conversations.json etc.
+        target = next((n for n in names if n.split("/")[-1] == "conversations.json"), None)
+        if target is None and provider == "chatgpt":
+            # New multi-file format: conversations-000.json, conversations-001.json, …
+            parts = sorted(
+                n for n in names
+                if n.endswith(".json") and n.split("/")[-1].startswith("conversations-")
+            )
+            if parts:
+                combined: list = []
+                for part in parts:
+                    chunk = json.loads(zip_file.read(part))
+                    if isinstance(chunk, list):
+                        combined.extend(chunk)
+                return json.dumps(combined).encode() if combined else None
 
     if target is None:
         return None
