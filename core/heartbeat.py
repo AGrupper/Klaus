@@ -635,6 +635,46 @@ def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
         logger.warning("heartbeat: drain_quiet_queue failed", exc_info=True)
 
 
+def _run_tick_brain_pass(signals: list[Signal], *, weekly: bool) -> str | None:
+    """Run the tick-brain over collected signals. Returns an insight string or None.
+
+    Gate: only runs when signals exist or it is a weekly digest tick.
+    On any error (import, LLMError, parse failure), returns None without raising.
+    """
+    if not signals and not weekly:
+        return None  # quiet tick — skip, 0 cost
+
+    try:
+        from core.tick_brain import TickBrain
+        brain = TickBrain()
+    except Exception as exc:
+        # TICK_BRAIN_API_KEY not set in this env, or import error — skip gracefully
+        logger.debug("tick-brain: skipped (init failed: %s)", exc)
+        return None
+
+    signal_summary = "\n".join(
+        f"- [{s.severity.upper()}] {s.area}: {s.title} — {s.detail}"
+        for s in signals
+    ) or "(no active signals)"
+
+    prompt = (
+        f"Heartbeat tick — {'weekly digest' if weekly else 'regular tick'}.\n"
+        f"Active signals:\n{signal_summary}\n\n"
+        "Is there a pattern here, something the checklist can't see, or an action worth taking?"
+    )
+    try:
+        result = brain.think(prompt)
+    except Exception as exc:
+        logger.debug("tick-brain: think() failed: %s", exc)
+        return None
+
+    if result.get("should_act") and result.get("draft"):
+        return result["draft"]
+    if result.get("reason") and result["reason"] not in ("parse_failure", "llm_error"):
+        return result["reason"]
+    return None
+
+
 async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
     """Run one heartbeat tick. Returns the signals collected."""
     now = now or datetime.now(_TZ)
@@ -649,6 +689,13 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
     signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
     logger.info("heartbeat: %d signal(s) in tiers %s", len(signals), sorted(tiers))
 
+    # Tick-brain reasoning pass — interprets signals, spots patterns.
+    # Gate: only when signals exist or weekly digest. Non-blocking.
+    is_weekly = SEVERITY_FYI in tiers
+    tick_insight = _run_tick_brain_pass(signals, weekly=is_weekly)
+    if tick_insight:
+        logger.info("tick-brain insight: %s", tick_insight)
+
     active_fps = {s.fingerprint for s in signals}
     critical = [s for s in signals if s.severity == SEVERITY_CRITICAL]
     warnings = [s for s in signals if s.severity == SEVERITY_WARNING]
@@ -656,8 +703,11 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
 
     to_ping = _register_incidents(critical, config)
     if to_ping:
+        msg = _compose_message(to_ping)
+        if tick_insight:
+            msg = f"{msg}\n\n_Insight: {tick_insight}_"
         if not _in_quiet_hours(config, now):
-            await send_and_inject(bot, _compose_message(to_ping), inject_into_conversation=True)
+            await send_and_inject(bot, msg, inject_into_conversation=True)
         else:
             _queue_signals(to_ping)
 
@@ -665,7 +715,10 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
         await send_and_inject(bot, _compose_message(warnings), inject_into_conversation=True)
 
     if SEVERITY_FYI in tiers and fiys:
-        await send_and_inject(bot, _compose_message(fiys), inject_into_conversation=True)
+        fyi_msg = _compose_message(fiys)
+        if tick_insight and not to_ping and not warnings:
+            fyi_msg = f"{fyi_msg}\n\n_Insight: {tick_insight}_"
+        await send_and_inject(bot, fyi_msg, inject_into_conversation=True)
 
     _resolve_absent(active_fps)
 
