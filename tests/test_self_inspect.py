@@ -202,7 +202,10 @@ class TestSearchOwnSource:
 
     def test_nonexistent_query_returns_empty(self):
         mod = _import_module()
-        result = mod.search_own_source("nonexistent_symbol_xyz_nothing_123")
+        # Build the absent query at runtime to avoid the literal appearing in source
+        # so the search never finds itself in this test file.
+        absent = bytes.fromhex("5a5151515f4e4f545f494e5f534f555243455f5a5151").decode()
+        result = mod.search_own_source(absent)
         assert "matches" in result
         assert result["matches"] == [], f"Expected empty list: {result['matches']}"
         assert result["total"] == 0
