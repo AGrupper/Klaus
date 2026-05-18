@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 
 from core.llm_client import LLMClient, LLMError
 from core import tools as tool_registry
+from memory.firestore_db import SelfStateStore
 
 load_dotenv()
 
@@ -200,6 +201,20 @@ class AgentOrchestrator:
 
         self.conversation_manager = build_conversation_store_from_env()
 
+        # Load SELF.md content once at startup for stable prompt injection.
+        # Per D-03: injected into smart_system only; stable content is placed
+        # before dynamic content ({today_date}) for Gemini prompt caching.
+        self._self_md_content = _load_self_md()
+
+        # Bootstrap self_state in Firestore on first startup (D-04).
+        # If the config/self_state doc doesn't exist, seed it with identity_summary
+        # from SELF.md intro paragraph. Never blocks startup on failure.
+        self._self_state_store = _build_self_state_store()
+        if self._self_state_store is not None:
+            self._self_state_store.bootstrap_if_empty(
+                identity_summary=_extract_intro_paragraph(self._self_md_content)
+            )
+
     def handle_message(self, user_message: str, user_id: int) -> str:
         """Process one user message through the full dual-model pipeline.
 
@@ -216,9 +231,29 @@ class AgentOrchestrator:
         # gets its own thread from the pool.
         tool_registry.set_current_user_id(user_id)
 
-        # Inject today's date in Israel time so the agent has accurate temporal context.
+        # Assemble the smart_system prompt with stable content first, then dynamic.
+        # Stable-first ordering enables Gemini prompt caching on the shared prefix.
+        # Per D-03: SELF.md injected into smart_system only (not worker).
         today_label = _today_israel()
-        smart_system = self._smart_prompt_template.replace("{today_date}", today_label)
+
+        # Build self_state snippet — omit blank fields per D-05.
+        self_state_snippet = ""
+        if self._self_state_store is not None:
+            state = self._self_state_store.get()
+            non_empty = {k: v for k, v in state.items()
+                         if k not in ("updated_at", "bootstrapped_at") and v}
+            if non_empty:
+                lines = ["**Self-state:**"]
+                for key, value in non_empty.items():
+                    lines.append(f"- {key}: {value}")
+                self_state_snippet = "\n".join(lines)
+
+        smart_system = (
+            self._smart_prompt_template
+            .replace("{self_md}", self._self_md_content)      # stable — benefits from cache
+            .replace("{self_state}", self_state_snippet)       # volatile — after stable
+            .replace("{today_date}", today_label)              # dynamic — always last
+        )
         worker_system = self._worker_prompt_template.replace("{today_date}", today_label)
 
         # Persist the incoming message and get the full history for this session.
@@ -460,6 +495,72 @@ def _load_prompt(relative_path: str) -> str:
             "Ensure you are running from the project root."
         )
     return path.read_text(encoding="utf-8").strip()
+
+
+def _load_self_md() -> str:
+    """Read docs/SELF.md from disk. Returns empty string if file absent.
+
+    Called once at startup; the result is stored on the orchestrator and
+    injected into every smart_system prompt without further file I/O.
+    """
+    root = Path(__file__).resolve().parent.parent
+    self_md_path = root / "docs" / "SELF.md"
+    try:
+        return self_md_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning("SELF.md not found at %s — self-knowledge injection disabled", self_md_path)
+        return ""
+
+
+def _extract_intro_paragraph(self_md_content: str) -> str:
+    """Extract the first non-empty paragraph from SELF.md for use as identity_summary.
+
+    Skips the front-matter block (--- ... ---), the H1 heading, the sha comment,
+    and the generated-by note. Returns the first paragraph of substantive prose.
+    Returns a default string if no paragraph is found.
+    """
+    lines = self_md_content.splitlines()
+    in_front_matter = False
+    past_front_matter = False
+    paragraph_lines: list[str] = []
+    collecting = False
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped == "---" and not past_front_matter:
+            in_front_matter = not in_front_matter
+            if not in_front_matter:
+                past_front_matter = True
+            continue
+        if in_front_matter:
+            continue
+        # Skip headings, comments, blockquotes, empty lines before paragraph starts
+        if stripped.startswith("#") or stripped.startswith("<!--") or stripped.startswith(">"):
+            continue
+        if not stripped and not collecting:
+            continue
+        if stripped and not collecting:
+            collecting = True
+        if collecting:
+            if not stripped:
+                break  # End of first paragraph
+            paragraph_lines.append(line)
+
+    result = " ".join(paragraph_lines).strip()
+    return result or "Klaus is a personal AI agent deployed on Cloud Run."
+
+
+def _build_self_state_store() -> SelfStateStore | None:
+    """Build a SelfStateStore from environment variables.
+
+    Returns None if GCP_PROJECT_ID is not set (e.g. local dev without env).
+    """
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if not project_id:
+        logger.warning("GCP_PROJECT_ID not set — SelfStateStore disabled")
+        return None
+    database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+    return SelfStateStore(project_id=project_id, database=database)
 
 
 def _today_israel() -> str:
