@@ -50,6 +50,12 @@
 
 **Requirements:** SELF-01, SELF-02, SELF-03, SELF-04, SELF-05
 
+**Plans:** 2 plans
+
+Plans:
+- [ ] 15-01-PLAN.md — Create mcp_tools/self_inspect.py with list_own_files, read_own_source, search_own_source
+- [ ] 15-02-PLAN.md — Register 3 tools in core/tools.py (all 5 sites) + update prompts/smart_agent.md
+
 **Key files:**
 - `mcp_tools/self_inspect.py` (NEW) — `list_own_files`, `read_own_source`, `search_own_source`
 - `core/tools.py` — register 3 tools at all 5 edit sites (TOOL_SCHEMAS, _HANDLERS, handler functions, SMART_AGENT_DIRECT_TOOLS, WORKER exclusion)
@@ -150,4 +156,4 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-18 — initial creation*
+*Last updated: 2026-05-18 — Phase 15 plans created (2 plans)*
