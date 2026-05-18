@@ -598,6 +598,76 @@ class LLMUsageStore:
             return {}
 
 
+class SelfStateStore:
+    """Persistent self-model state stored in Firestore.
+
+    Singleton document at collection='config', document='self_state'.
+    Fields: identity_summary (str), current_focus (str), recent_context (str),
+            mood (str), updated_at (timestamp), bootstrapped_at (timestamp).
+
+    Phase 16: only identity_summary is populated (seeded from SELF.md intro paragraph
+    on first startup). current_focus, recent_context, mood are empty strings until
+    Phase 17 run_reflection() populates them.
+    """
+
+    _COLLECTION = "config"
+    _DOCUMENT = "self_state"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return the self_state document. Returns {} on any error — never raises.
+
+        This is intentionally broader than HeartbeatConfigStore.get() because
+        SelfStateStore is injected into every prompt; a failure must never crash
+        a conversation.
+        """
+        try:
+            snap = self._doc_ref.get()
+            return snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("SelfStateStore.get() failed — returning empty", exc_info=True)
+            return {}
+
+    def set(self, patch: dict) -> None:
+        """Merge patch into the self_state document. Raises on failure (caller decides).
+
+        Always appends updated_at SERVER_TIMESTAMP.
+        """
+        try:
+            self._doc_ref.set(
+                {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("SelfStateStore.set() failed", exc_info=True)
+            raise
+
+    def bootstrap_if_empty(self, identity_summary: str) -> None:
+        """Seed config/self_state with identity_summary if the document does not exist.
+
+        Safe to call on every startup — only writes when the document is absent.
+        Never raises (startup must not fail due to Firestore unavailability).
+        """
+        try:
+            snap = self._doc_ref.get()
+            if snap.exists:
+                return
+            self._doc_ref.set({
+                "identity_summary": identity_summary,
+                "current_focus": "",
+                "recent_context": "",
+                "mood": "",
+                "bootstrapped_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+            logger.info("SelfStateStore: bootstrapped config/self_state")
+        except Exception:
+            logger.warning("SelfStateStore.bootstrap_if_empty() failed — skipping", exc_info=True)
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
