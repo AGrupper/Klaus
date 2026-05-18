@@ -2,28 +2,31 @@
 
 ## Current Position
 
-Phase: 14 — Foundation: Cost Metering, Tick-Brain & LLM Strategy
-Plan: Not yet created (run `/gsd-plan-phase 14`)
-Status: Milestone initialized, ready to plan Phase 14
-Last activity: 2026-05-18 — Milestone v2.0 Consciousness & Autonomy started
+Phase: 15 — Codebase Self-Knowledge
+Plan: Not yet started
+Status: Phase 14 complete ✓ — ready to plan Phase 15
+Last activity: 2026-05-18 — Phase 14 Foundation executed and verified (5/5 plans, 15/15 requirements)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md` (updated 2026-05-18)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 14 — Cost metering foundation + tick-brain
+**Current focus:** Phase 15 — Codebase self-knowledge (list_own_files, read_own_source, search_own_source)
 
 ## Accumulated Context
 
 ### Architecture decisions carried forward
 
-- Brain: `gemini-3-flash-preview` (NOT Claude — stale comments being fixed in Phase 14)
+- Brain: `gemini-3-flash-preview` — stale Claude/JARVIS comments fixed in Phase 14
 - Worker: `gemini-2.5-flash`
 - Fallback: `claude-haiku-4-5` (inline try/except in `core/main.py:260–291`)
-- `_OpenAIBackend` already wired in `llm_client.py` — Groq needs only a `base_url` param
+- Tick-brain: `qwen3-32b` via Groq (OpenAI-compat) — `core/tick_brain.py`, Gemini fallback
+- `_OpenAIBackend` accepts `base_url` param (Phase 14) — no longer reads `OPENAI_BASE_URL` from env
 - Embeddings: `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase "Klaus" (`0x6B`) — uppercase K causes silent 404s
+- LLM costs metered via `LLMUsageStore` → Firestore `llm_usage/{date}` after every `LLMClient.chat()` call
+- `compute_cost()` in `core/pricing.py` — 4 priced models; free/unknown return 0.0
 
 ### Key line references (verified against live codebase — may drift)
 

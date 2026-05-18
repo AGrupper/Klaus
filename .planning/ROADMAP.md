@@ -19,7 +19,7 @@
 
 ---
 
-## Phase 14 — Foundation: Cost Metering, Tick-Brain & LLM Strategy
+## Phase 14 — Foundation: Cost Metering, Tick-Brain & LLM Strategy ✓ Complete 2026-05-18
 
 **Goal:** Every LLM call is measured; the free tick-brain component exists and already upgrades the heartbeat; the model map is documented and stale naming fixed. Caps nothing.
 
