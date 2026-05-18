@@ -471,6 +471,49 @@ def check_code(repo_root: Path | None = None) -> list[Signal]:
     except Exception:
         logger.warning("heartbeat: fix-cluster check failed", exc_info=True)
 
+    # --- SELF.md SHA staleness: embedded hash vs fresh tool-schema hash ---
+    try:
+        import hashlib as _hashlib
+        import re as _re_sha
+
+        self_md = root / "docs" / "SELF.md"
+        if self_md.exists():
+            content = self_md.read_text(encoding="utf-8")
+
+            # Extract the embedded SHA from the <!-- sha: <hex> --> comment line.
+            sha_match = _re_sha.search(r"<!--\s*sha:\s*([0-9a-f]{40})\s*-->", content)
+            stored_sha = sha_match.group(1) if sha_match else None
+
+            # Recompute SHA using the same algorithm as core/self_manifest._compute_schema_hash.
+            # Must stay in sync with self_manifest.py — if one changes, update the other.
+            fragments: list[str] = []
+            tools_file = root / "core" / "tools.py"
+            if tools_file.exists():
+                tools_text = tools_file.read_text(encoding="utf-8")
+                names = sorted(_re_sha.findall(r'"name":\s*"([^"]+)"', tools_text))
+                fragments.extend(names)
+            web_file = root / "interfaces" / "web_server.py"
+            if web_file.exists():
+                web_text = web_file.read_text(encoding="utf-8")
+                routes = sorted(_re_sha.findall(r'"/cron/[^"]*"', web_text))
+                fragments.extend(routes)
+            fresh_sha = _hashlib.sha1("\n".join(fragments).encode()).hexdigest()
+
+            if stored_sha and stored_sha != fresh_sha:
+                signals.append(Signal(
+                    fingerprint="code:self-md-stale",
+                    severity=SEVERITY_FYI,
+                    area="code",
+                    title="SELF.md SHA is stale — tool schemas or cron routes may have changed",
+                    detail=f"stored={stored_sha[:8]} fresh={fresh_sha[:8]}",
+                    remediation=(
+                        "Run 'python core/self_manifest.py' or redeploy "
+                        "(deploy.yml regenerates SELF.md before docker build)."
+                    ),
+                ))
+    except Exception:
+        logger.warning("heartbeat: self-md-sha check failed", exc_info=True)
+
     return signals
 
 
