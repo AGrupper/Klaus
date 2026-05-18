@@ -36,11 +36,12 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 - ✓ Notion integration (5 tools) — Phase 11
 - ✓ Claude Code chat-log ingestion → Pinecone + Notion — Phase 12
 - ✓ Multi-source AI chat export ingestion (Claude.ai, ChatGPT, Gemini) — Phase 13
+- ✓ Every LLM call is cost-metered and stored (Phase 14)
+- ✓ Free tick-brain component exists and upgrades the heartbeat (Phase 14)
 
 ### Active
 
-- [ ] Every LLM call is cost-metered and stored (Phase 14)
-- [ ] Free tick-brain component exists and upgrades the heartbeat (Phase 14)
+- [ ] Klaus can read and search his own deployed source files (Phase 15)
 - [ ] Klaus can read and search his own deployed source files (Phase 15)
 - [ ] SELF.md manifest auto-generated; injected into every conversation (Phase 16)
 - [ ] `get_self_status` tool returns uptime, cost, heartbeat status (Phase 16)
@@ -58,7 +59,7 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 ## Context
 
 - **Stack:** Python 3.11+, Cloud Run, Firestore, Pinecone, FastAPI, Telegram Bot API
-- **Brain model:** `gemini-3-flash-preview` (NOT Claude — stale comments exist and are fixed in Phase 14)
+- **Brain model:** `gemini-3-flash-preview` — stale JARVIS/Claude comments fixed in Phase 14
 - **Worker model:** `gemini-2.5-flash`
 - **Fallback:** `claude-haiku-4-5` (Anthropic, triggered only on brain failure)
 - **Embeddings:** `gemini-embedding-2` via AI Studio (NOT Vertex — AI Studio only)
@@ -79,8 +80,8 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
 | Gemini 3 Flash as brain (not Claude) | Lower cost, better tool use at scale | ✓ Good |
-| Groq/Qwen3-32B for tick-brain | Free tier, fast, doesn't train on data, OpenAI-compat | — Pending |
-| No spend cap | "I want him to be able to do whatever he wants" — explicit user choice | — Pending |
+| Groq/Qwen3-32B for tick-brain | Free tier, fast, doesn't train on data, OpenAI-compat | ✓ Implemented Phase 14 |
+| No spend cap | "I want him to be able to do whatever he wants" — explicit user choice | ✓ Implemented Phase 14 |
 | Outbound Telegram-only | Clean scope; email send is a fast-follow | ✓ Good |
 | `kind="self"` in Pinecone | Journal entries need their own namespace distinct from facts/chat | — Pending |
 | Tick every 20 min, 7-21 | ≈42 ticks/day; balances proactivity with quiet hours | — Pending |
