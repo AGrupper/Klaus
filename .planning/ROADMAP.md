@@ -44,17 +44,17 @@
 
 ---
 
-## Phase 15 — Codebase Self-Knowledge
+## Phase 15 — Codebase Self-Knowledge ✓ Complete 2026-05-18
 
 **Goal:** Klaus can read and search his own source at conversation time — genuine, always-current codebase self-knowledge.
 
 **Requirements:** SELF-01, SELF-02, SELF-03, SELF-04, SELF-05
 
-**Plans:** 2 plans
+**Plans:** 2/2 complete
 
 Plans:
-- [ ] 15-01-PLAN.md — Create mcp_tools/self_inspect.py with list_own_files, read_own_source, search_own_source
-- [ ] 15-02-PLAN.md — Register 3 tools in core/tools.py (all 5 sites) + update prompts/smart_agent.md
+- [x] 15-01-PLAN.md — Create mcp_tools/self_inspect.py with list_own_files, read_own_source, search_own_source
+- [x] 15-02-PLAN.md — Register 3 tools in core/tools.py (all 5 sites) + update prompts/smart_agent.md
 
 **Key files:**
 - `mcp_tools/self_inspect.py` (NEW) — `list_own_files`, `read_own_source`, `search_own_source`
@@ -156,4 +156,4 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-18 — Phase 15 plans created (2 plans)*
+*Last updated: 2026-05-18 — Phase 15 complete (2/2 plans, SELF-01–05 verified)*

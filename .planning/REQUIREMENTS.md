@@ -30,11 +30,11 @@
 
 ### Codebase Self-Knowledge (Phase 15)
 
-- [ ] **SELF-01**: `list_own_files(subdir=None)` tool lists Klaus's deployed source files
-- [ ] **SELF-02**: `read_own_source(path)` tool returns file contents; rejects path traversal and a secret denylist (`.env*`, `*secret*`, `*credential*`, `*token*`, OAuth JSON)
-- [ ] **SELF-03**: `search_own_source(query)` tool full-text searches across source
-- [ ] **SELF-04**: All three self-inspect tools registered in `core/tools.py` (TOOL_SCHEMAS, _HANDLERS, SMART_AGENT_DIRECT_TOOLS, handler functions, WORKER exclusion)
-- [ ] **SELF-05**: `prompts/smart_agent.md` tells Klaus he can inspect his own source
+- [x] **SELF-01**: `list_own_files(subdir=None)` tool lists Klaus's deployed source files
+- [x] **SELF-02**: `read_own_source(path)` tool returns file contents; rejects path traversal and a secret denylist (`.env*`, `*secret*`, `*credential*`, `*token*`, OAuth JSON)
+- [x] **SELF-03**: `search_own_source(query)` tool full-text searches across source
+- [x] **SELF-04**: All three self-inspect tools registered in `core/tools.py` (TOOL_SCHEMAS, _HANDLERS, SMART_AGENT_DIRECT_TOOLS, handler functions, WORKER exclusion)
+- [x] **SELF-05**: `prompts/smart_agent.md` tells Klaus he can inspect his own source
 
 ### Self-Model & State Awareness (Phase 16)
 
@@ -99,11 +99,11 @@
 | LLM-02 | Phase 14 | Pending |
 | LLM-03 | Phase 14 | Pending |
 | LLM-04 | Phase 14 | Pending |
-| SELF-01 | Phase 15 | Pending |
-| SELF-02 | Phase 15 | Pending |
-| SELF-03 | Phase 15 | Pending |
-| SELF-04 | Phase 15 | Pending |
-| SELF-05 | Phase 15 | Pending |
+| SELF-01 | Phase 15 | Complete ✓ 2026-05-18 |
+| SELF-02 | Phase 15 | Complete ✓ 2026-05-18 |
+| SELF-03 | Phase 15 | Complete ✓ 2026-05-18 |
+| SELF-04 | Phase 15 | Complete ✓ 2026-05-18 |
+| SELF-05 | Phase 15 | Complete ✓ 2026-05-18 |
 | MODEL-01 | Phase 16 | Pending |
 | MODEL-02 | Phase 16 | Pending |
 | MODEL-03 | Phase 16 | Pending |

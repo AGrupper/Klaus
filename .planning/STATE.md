@@ -2,17 +2,17 @@
 
 ## Current Position
 
-Phase: 15 — Codebase Self-Knowledge
+Phase: 16 — Self-Model & State Awareness
 Plan: Not yet started
-Status: Phase 14 complete ✓ — ready to plan Phase 15
-Last activity: 2026-05-18 — Phase 14 Foundation executed and verified (5/5 plans, 15/15 requirements)
+Status: Phase 15 complete ✓ — ready to plan Phase 16
+Last activity: 2026-05-18 — Phase 15 Codebase Self-Knowledge executed and verified (2/2 plans, 5/5 requirements)
 
 ## Project Reference
 
 See: `.planning/PROJECT.md` (updated 2026-05-18)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 15 — Codebase self-knowledge (list_own_files, read_own_source, search_own_source)
+**Current focus:** Phase 16 — Self-Model & State Awareness (self-manifest, SelfStateStore, get_self_status)
 
 ## Accumulated Context
 
@@ -41,11 +41,13 @@ See: `.planning/PROJECT.md` (updated 2026-05-18)
 - `core/main.py:219–222` — per-message prompt render step
 - `core/main.py:241` — `AgentOrchestrator._run_smart_loop`
 - `core/main.py:260–291` — inline Gemini→Haiku fallback (reference shape for tick-brain chain)
-- `core/tools.py:39` — `SMART_AGENT_DIRECT_TOOLS` frozenset (currently 4 members)
-- `core/tools.py:45–596` — `TOOL_SCHEMAS`
-- `core/tools.py:600–603` — `WORKER_TOOL_SCHEMAS`
+- `core/tools.py:39` — `SMART_AGENT_DIRECT_TOOLS` frozenset (now 7 members — includes self-inspect)
+- `core/tools.py:45–596+` — `TOOL_SCHEMAS` (3 new self-inspect schemas appended)
+- `core/tools.py:600–603` — `WORKER_TOOL_SCHEMAS` (excludes all 7 direct tools)
 - `core/tools.py:633` — lazy-singleton tool pattern
-- `core/tools.py:995–1020` — `_HANDLERS` dict
+- `core/tools.py:995–1020+` — `_HANDLERS` dict (3 new self-inspect lambdas)
+- `mcp_tools/self_inspect.py` — `list_own_files`, `read_own_source`, `search_own_source` (Phase 15)
+- `tests/test_self_inspect.py` — 35 tests, all green
 - `core/heartbeat.py:378` — `check_code()`
 - `core/heartbeat.py:500` — `_compose_message()`
 - `interfaces/web_server.py:227` — `_verify_cron_request` (OIDC auth)
