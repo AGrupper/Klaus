@@ -77,10 +77,10 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 16-01-PLAN.md — core/self_manifest.py (generate_manifest + _compute_schema_hash) + docs/SELF.md generation + memory/firestore_db.py SelfStateStore
-- [ ] 16-02-PLAN.md — core/main.py SELF.md + self_state prompt injection + prompts/smart_agent.md placeholders
-- [ ] 16-03-PLAN.md — core/tools.py get_self_status direct tool (all 5 registration sites)
-- [ ] 16-04-PLAN.md — core/heartbeat.py SELF.md SHA staleness check + .github/workflows/deploy.yml CI generation step
+- [x] 16-01-PLAN.md — core/self_manifest.py (generate_manifest + _compute_schema_hash) + docs/SELF.md generation + memory/firestore_db.py SelfStateStore
+- [x] 16-02-PLAN.md — core/main.py SELF.md + self_state prompt injection + prompts/smart_agent.md placeholders
+- [x] 16-03-PLAN.md — core/tools.py get_self_status direct tool (all 5 registration sites)
+- [x] 16-04-PLAN.md — core/heartbeat.py SELF.md SHA staleness check + .github/workflows/deploy.yml CI generation step
 
 **Key files:**
 - `core/self_manifest.py` (NEW) — `generate_manifest()` introspects tools + cron routes + channels + models → renders `docs/SELF.md` with git SHA
@@ -164,4 +164,4 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-18 — Phase 16 planned (4 plans, MODEL-01–06 covered)*
+*Last updated: 2026-05-19 — Phase 16 complete (4/4 plans, MODEL-01–06 verified, human UAT passed)*

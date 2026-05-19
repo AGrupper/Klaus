@@ -39,10 +39,12 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 - ✓ Every LLM call is cost-metered and stored (Phase 14)
 - ✓ Free tick-brain component exists and upgrades the heartbeat (Phase 14)
 - ✓ Klaus can read and search his own deployed source files — `list_own_files`, `read_own_source`, `search_own_source` brain-direct tools with secret denylist (Phase 15)
+- ✓ SELF.md manifest auto-generated; injected into every conversation (Phase 16)
+- ✓ `get_self_status` tool returns uptime, cost, heartbeat status (Phase 16)
+- ✓ SelfStateStore persists identity state across 6h conversation resets (Phase 16)
+- ✓ Heartbeat weekly SHA check flags stale SELF.md; CI regenerates on every deploy (Phase 16)
 
 ### Active
-- [ ] SELF.md manifest auto-generated; injected into every conversation (Phase 16)
-- [ ] `get_self_status` tool returns uptime, cost, heartbeat status (Phase 16)
 - [ ] Daily reflection cron writes journal entries + updates self-state (Phase 17)
 - [ ] Autonomous tick engine fires every 20 min, 7-21, with judgment + repeat-suppression (Phase 18)
 - [ ] Judgment eval harness scores tick-brain on labeled fixtures (Phase 18)

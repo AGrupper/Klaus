@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 phase: 16-self-model-state-awareness
 source: [16-VERIFICATION.md]
 started: 2026-05-18T22:15:00+03:00

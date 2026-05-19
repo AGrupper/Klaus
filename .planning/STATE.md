@@ -2,17 +2,17 @@
 
 ## Current Position
 
-Phase: 16 — Self-Model & State Awareness
-Plan: Not yet started
-Status: Context gathered — ready to plan Phase 16
-Last activity: 2026-05-18 — Phase 16 context discussion completed (4/4 areas, CONTEXT.md written)
+Phase: 17 — Reflection & Journal
+Plans: pending planning
+Status: Phase 16 complete — ready to plan Phase 17
+Last activity: 2026-05-19 — Phase 16 complete (4/4 plans, MODEL-01–06 verified, human UAT passed)
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-18)
+See: `.planning/PROJECT.md` (updated 2026-05-19)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 16 — Self-Model & State Awareness (self-manifest, SelfStateStore, get_self_status)
+**Current focus:** Phase 17 — Reflection & Journal (daily reflection cron → journal → self-state evolution loop)
 
 ## Accumulated Context
 
