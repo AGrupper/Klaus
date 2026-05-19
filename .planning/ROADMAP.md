@@ -98,19 +98,19 @@ Plans:
 
 ---
 
-## Phase 17 — Reflection & Journal
+## Phase 17 — Reflection & Journal ✓ Complete 2026-05-19
 
 **Goal:** Klaus reviews each day and keeps a journal — the loop that makes the self-model persistent and evolving rather than static.
 
 **Requirements:** JOUR-01, JOUR-02, JOUR-03, JOUR-04, JOUR-05, JOUR-06
 
-**Plans:** 4 plans
+**Plans:** 4/4 complete
 
 Plans:
-- [ ] 17-01-PLAN.md — Wave 0 test scaffold (tests/test_reflection.py) + JournalStore (firestore_db.py) + "self" kind & remember_self (pinecone_db.py)
-- [ ] 17-02-PLAN.md — core/reflection.py run_reflection() orchestrator + prompts/reflection.md (gather, two-tier LLM, JSON parse, D-13 fallback, 3 write targets)
-- [ ] 17-03-PLAN.md — /cron/reflect route (web_server.py) + heartbeat staleness entry + docs/SELF.md cron table
-- [ ] 17-04-PLAN.md — recall kind param (memory.py + tools.py) + get_self_status journal field + {journal_digest} injection (main.py + smart_agent.md)
+- [x] 17-01-PLAN.md — Wave 0 test scaffold (tests/test_reflection.py) + JournalStore (firestore_db.py) + "self" kind & remember_self (pinecone_db.py)
+- [x] 17-02-PLAN.md — core/reflection.py run_reflection() orchestrator + prompts/reflection.md (gather, two-tier LLM, JSON parse, D-13 fallback, 3 write targets)
+- [x] 17-03-PLAN.md — /cron/reflect route (web_server.py) + heartbeat staleness entry + docs/SELF.md cron table
+- [x] 17-04-PLAN.md — recall kind param (memory.py + tools.py) + get_self_status journal field + {journal_digest} injection (main.py + smart_agent.md)
 
 **Waves:** W1 = {17-01}; W2 = {17-02}; W3 = {17-03, 17-04} (parallel — no file overlap)
 
@@ -178,4 +178,4 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-19 — Phase 17 planned (4 plans, 3 waves, JOUR-01–06 mapped)*
+*Last updated: 2026-05-19 — Phase 17 complete (Reflection & Journal shipped, JOUR-01–06 verified)*

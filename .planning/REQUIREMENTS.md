@@ -47,12 +47,12 @@
 
 ### Reflection & Journal (Phase 17)
 
-- [ ] **JOUR-01**: `run_reflection()` gathers the day (conversation history, message count, LLM cost, heartbeat, calendar) and produces a journal entry + updated self_state fields
-- [ ] **JOUR-02**: `JournalStore` writes `journal/{date}` docs in Firestore
-- [ ] **JOUR-03**: Each journal entry is upserted to Pinecone with `kind="self"`
-- [ ] **JOUR-04**: `kind="self"` added to `_VALID_KINDS` in `memory/pinecone_db.py`; self-recall requires explicit `kinds=["self"]`
-- [ ] **JOUR-05**: `/cron/reflect` route added to `interfaces/web_server.py` with OIDC auth; Cloud Scheduler runs it daily ~22:00
-- [ ] **JOUR-06**: Per-message prompt assembly injects a digest of the last ~3 journal entries
+- [x] **JOUR-01**: `run_reflection()` gathers the day (conversation history, message count, LLM cost, heartbeat, calendar) and produces a journal entry + updated self_state fields
+- [x] **JOUR-02**: `JournalStore` writes `journal/{date}` docs in Firestore
+- [x] **JOUR-03**: Each journal entry is upserted to Pinecone with `kind="self"`
+- [x] **JOUR-04**: `kind="self"` added to `_VALID_KINDS` in `memory/pinecone_db.py`; self-recall requires explicit `kinds=["self"]`
+- [x] **JOUR-05**: `/cron/reflect` route added to `interfaces/web_server.py` with OIDC auth; Cloud Scheduler runs it daily ~22:00
+- [x] **JOUR-06**: Per-message prompt assembly injects a digest of the last ~3 journal entries
 
 ### Autonomous Engine (Phase 18)
 
@@ -110,12 +110,12 @@
 | MODEL-04 | Phase 16 | Pending |
 | MODEL-05 | Phase 16 | Pending |
 | MODEL-06 | Phase 16 | Pending |
-| JOUR-01 | Phase 17 | Pending |
-| JOUR-02 | Phase 17 | Pending |
-| JOUR-03 | Phase 17 | Pending |
-| JOUR-04 | Phase 17 | Pending |
-| JOUR-05 | Phase 17 | Pending |
-| JOUR-06 | Phase 17 | Pending |
+| JOUR-01 | Phase 17 | Complete ✓ 2026-05-19 |
+| JOUR-02 | Phase 17 | Complete ✓ 2026-05-19 |
+| JOUR-03 | Phase 17 | Complete ✓ 2026-05-19 |
+| JOUR-04 | Phase 17 | Complete ✓ 2026-05-19 |
+| JOUR-05 | Phase 17 | Complete ✓ 2026-05-19 |
+| JOUR-06 | Phase 17 | Complete ✓ 2026-05-19 |
 | AUTO-01 | Phase 18 | Pending |
 | AUTO-02 | Phase 18 | Pending |
 | AUTO-03 | Phase 18 | Pending |
@@ -135,4 +135,4 @@
 
 ---
 *Requirements defined: 2026-05-18*
-*Last updated: 2026-05-18 — initial definition*
+*Last updated: 2026-05-19 — Phase 17 complete (JOUR-01–06 verified)*
