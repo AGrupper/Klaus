@@ -81,14 +81,27 @@ def _install_firestore_mock() -> None:
         sys.modules.setdefault("google_auth_oauthlib", MagicMock())
         sys.modules.setdefault("google_auth_oauthlib.flow", MagicMock())
 
-        # googleapiclient — imported at module level by core/tools.py
-        sys.modules.setdefault("googleapiclient", MagicMock())
-        sys.modules.setdefault("googleapiclient.errors", MagicMock())
-        sys.modules.setdefault("googleapiclient.discovery", MagicMock())
-
         dotenv_mod = MagicMock()
         dotenv_mod.load_dotenv = MagicMock()
         sys.modules.setdefault("dotenv", dotenv_mod)
+
+    # These stubs must always be installed unconditionally — other test files
+    # (e.g. test_llm_usage_store) install google.cloud.firestore without
+    # all of google.auth.* or googleapiclient, so the guard above gets skipped
+    # and test_journal_digest_assembly's deferred core.main import fails.
+    # core/auth_google.py requires all of the stubs below at import time.
+    sys.modules.setdefault("google.auth", MagicMock())
+    sys.modules.setdefault("google.auth.exceptions", MagicMock())
+    sys.modules.setdefault("google.auth.transport", MagicMock())
+    sys.modules.setdefault("google.auth.transport.requests", MagicMock())
+    sys.modules.setdefault("google.oauth2", MagicMock())
+    sys.modules.setdefault("google.oauth2.credentials", MagicMock())
+    sys.modules.setdefault("google.oauth2.service_account", MagicMock())
+    sys.modules.setdefault("google_auth_oauthlib", MagicMock())
+    sys.modules.setdefault("google_auth_oauthlib.flow", MagicMock())
+    sys.modules.setdefault("googleapiclient", MagicMock())
+    sys.modules.setdefault("googleapiclient.errors", MagicMock())
+    sys.modules.setdefault("googleapiclient.discovery", MagicMock())
 
     # Force re-import of firestore_db so it picks up the mock
     for key in list(sys.modules.keys()):
