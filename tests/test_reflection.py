@@ -480,16 +480,25 @@ def test_run_reflection_writes_entry():
 
     mock_journal.set.side_effect = _capture_set
 
+    # Track SelfStateStore calls
+    ss_set_calls: list = []
+    mock_ss = MagicMock()
+    # Simulate 2 prior entries in recent_context so the rolling window is exercisable
+    prior_rc = json.dumps(["[2026-05-17] ctx A", "[2026-05-18] ctx B"])
+    mock_ss.get.return_value = {"recent_context": prior_rc}
+    mock_ss.set.side_effect = lambda patch_dict: ss_set_calls.append(patch_dict)
+
+    mock_mem = MagicMock()
+    mock_mem.remember_self.return_value = "self-2026-05-19"
+
     with _mock_gather_sources():
         # Patch JournalStore at its source module (deferred import in run_reflection)
         with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
             # Patch _brain_reflect to return the LLM result directly
             with patch("core.reflection._brain_reflect", return_value=valid_llm_result):
                 # Patch Pinecone and SelfStateStore to avoid external calls
-                with patch("memory.pinecone_db.MemoryStore") as mock_mem_cls:
-                    mock_mem_cls.return_value.remember_self.return_value = "self-2026-05-19"
-                    with patch("memory.firestore_db.SelfStateStore") as mock_ss_cls:
-                        mock_ss_cls.return_value.get.return_value = {}
+                with patch("memory.pinecone_db.MemoryStore", return_value=mock_mem):
+                    with patch("memory.firestore_db.SelfStateStore", return_value=mock_ss):
                         run_reflection("2026-05-19")
 
     assert len(written_entries) == 1, "JournalStore.set must be called exactly once"
@@ -508,6 +517,29 @@ def test_run_reflection_writes_entry():
     assert "calendar_event_count" in entry, "entry must have calendar_event_count"
     assert "tasks_completed" in entry, "entry must have tasks_completed"
     assert "heartbeat_ok" in entry, "entry must have heartbeat_ok"
+
+    # Task 3: verify remember_self was called (Pinecone write target 2)
+    mock_mem.remember_self.assert_called_once()
+    remember_kwargs = mock_mem.remember_self.call_args
+    assert remember_kwargs is not None, "remember_self must be called"
+
+    # Task 3: verify SelfStateStore.set was called (write target 3)
+    assert len(ss_set_calls) == 1, "SelfStateStore.set must be called once"
+    ss_patch = ss_set_calls[0]
+    assert "current_focus" in ss_patch, "SelfStateStore patch must include current_focus"
+    assert "mood" in ss_patch, "SelfStateStore patch must include mood"
+    assert "recent_context" in ss_patch, "SelfStateStore patch must include recent_context"
+
+    # Task 3: rolling 3-day window — started with 2 prior, after adding today's → still ≤3
+    rc_stored = json.loads(ss_patch["recent_context"])
+    assert isinstance(rc_stored, list), "recent_context must be a JSON list"
+    assert len(rc_stored) <= 3, (
+        f"recent_context rolling window must be at most 3 entries, got {len(rc_stored)}"
+    )
+    # Today's entry must be the newest (last) item
+    assert "2026-05-19" in rc_stored[-1], (
+        "The latest recent_context entry must contain today's date"
+    )
 
 
 # ---------------------------------------------------------------------------
