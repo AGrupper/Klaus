@@ -23,6 +23,7 @@ plans that build the code they exercise (17-02, 17-03, 17-04).
 """
 from __future__ import annotations
 
+import json
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock, patch
@@ -321,34 +322,304 @@ def test_recall_self_kind():
 
 
 # ---------------------------------------------------------------------------
-# JOUR-01 + D-13 + D-03 + JOUR-05 + JOUR-06 — stubs (implemented in 17-02/03/04)
+# Helpers for reflection tests
+# ---------------------------------------------------------------------------
+
+def _make_valid_llm_response(override: dict | None = None) -> dict:
+    """Return a mock LLMClient.chat response with a valid JSON blob."""
+    payload = {
+        "summary": "Today I helped Sir work through Phase 17 implementation.",
+        "mood": "focused",
+        "current_focus": "Phase 17 reflection cron",
+        "recent_context": "Implementing the journal data-layer and orchestrator.",
+        "highlights": ["Data-layer complete", "Tests green", "Prompt drafted"],
+    }
+    if override:
+        payload.update(override)
+    return {"text": json.dumps(payload)}
+
+
+def _default_gathered_day() -> dict:
+    """Return a representative gathered_day dict for tests."""
+    return {
+        "message_count": 5,
+        "cost_usd": 0.002,
+        "conversation": [],
+        "conversation_summary": "No conversations recorded in the active session today.",
+        "calendar_event_count": 2,
+        "tasks_completed": 2,
+        "heartbeat_ok": True,
+    }
+
+
+def _mock_gather_sources(
+    *,
+    llm_usage: dict | None = None,
+    calendar_raises: bool = False,
+    ticktick_raises: bool = False,
+):
+    """Return a context manager that patches _gather_day and _summarize_conversation.
+
+    Patches core.reflection._gather_day (the gather orchestrator) and
+    core.reflection._summarize_conversation directly — avoids deep import chains
+    into mcp_tools/memory modules that require external credentials.
+
+    When calendar_raises=True, the patch makes _gather_day omit
+    calendar_event_count (simulating a per-source failure and isolation).
+    """
+    import contextlib
+
+    @contextlib.contextmanager
+    def _ctx():
+        gathered = _default_gathered_day()
+        if calendar_raises:
+            # Simulate calendar source failure: calendar_event_count stays 0
+            gathered = dict(gathered)
+            gathered["calendar_event_count"] = 0
+
+        test_env = {
+            "GCP_PROJECT_ID": "test-project",
+            "FIRESTORE_DATABASE": "(default)",
+            "TELEGRAM_ALLOWED_USER_IDS": "123456",
+            "PINECONE_API_KEY": "test-pinecone-key",
+            "PINECONE_INDEX": "test-index",
+            "SMART_AGENT_BACKEND": "gemini",
+            "SMART_AGENT_MODEL": "gemini-3-flash",
+            "SMART_AGENT_API_KEY": "test-smart-key",
+            "SMART_AGENT_FALLBACK_BACKEND": "anthropic",
+            "SMART_AGENT_FALLBACK_MODEL": "claude-haiku",
+            "SMART_AGENT_FALLBACK_API_KEY": "test-fallback-key",
+            "WORKER_AGENT_BACKEND": "gemini",
+            "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+            "WORKER_AGENT_API_KEY": "test-worker-key",
+        }
+
+        with patch.dict("os.environ", test_env):
+            with patch("core.reflection._gather_day", return_value=gathered):
+                with patch(
+                    "core.reflection._summarize_conversation",
+                    return_value=gathered["conversation_summary"],
+                ):
+                    yield
+
+    return _ctx()
+
+
+# ---------------------------------------------------------------------------
+# D-03: _parse_reflection_json hardening
+# ---------------------------------------------------------------------------
+
+def test_parse_reflection_json_hardened():
+    """Brain JSON in ```json fences still parses; missing fields default safely. (D-03)"""
+    from core.reflection import _parse_reflection_json  # noqa: PLC0415
+
+    # 1. Fenced ```json block parses correctly
+    fenced = (
+        "```json\n"
+        '{"summary":"Day ok","mood":"calm","current_focus":"work",'
+        '"recent_context":"context here","highlights":["item1","item2"]}\n'
+        "```"
+    )
+    result = _parse_reflection_json(fenced)
+    assert result is not None, "Fenced JSON must parse"
+    assert result["summary"] == "Day ok"
+    assert result["mood"] == "calm"
+    assert result["highlights"] == ["item1", "item2"]
+
+    # 2. Missing field "mood" → default to ""
+    missing_mood = '{"summary":"s","current_focus":"f","recent_context":"r","highlights":["h"]}'
+    result2 = _parse_reflection_json(missing_mood)
+    assert result2 is not None
+    assert result2["mood"] == "", f"Missing mood should default to '', got {result2['mood']!r}"
+    assert result2["summary"] == "s"
+
+    # 3. highlights cap at 5
+    many = {
+        "summary": "s", "mood": "m", "current_focus": "f",
+        "recent_context": "r",
+        "highlights": ["a", "b", "c", "d", "e", "f", "g"],
+    }
+    result3 = _parse_reflection_json(json.dumps(many))
+    assert result3 is not None
+    assert len(result3["highlights"]) == 5, "highlights must be capped at 5"
+
+    # 4. Garbage input → returns None (sentinel for D-13 fallback)
+    result4 = _parse_reflection_json("this is not json at all !!! {{{")
+    assert result4 is None, "Unparseable text must return None"
+
+    # 5. highlights is wrong type (str instead of list) → defaulted to []
+    wrong_type = '{"summary":"s","mood":"m","current_focus":"f","recent_context":"r","highlights":"bad"}'
+    result5 = _parse_reflection_json(wrong_type)
+    assert result5 is not None
+    assert isinstance(result5["highlights"], list), "highlights wrong type must be defaulted to list"
+
+
+# ---------------------------------------------------------------------------
+# JOUR-01: run_reflection writes journal entry
 # ---------------------------------------------------------------------------
 
 def test_run_reflection_writes_entry():
     """run_reflection() gathers the day and writes a journal entry. (JOUR-01)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
 
+    written_entries: list = []
+
+    valid_llm_result = {
+        "summary": "Today I helped Sir work through Phase 17.",
+        "mood": "focused",
+        "current_focus": "Phase 17 reflection cron",
+        "recent_context": "Implementing the journal data-layer.",
+        "highlights": ["Data-layer complete", "Tests green"],
+    }
+
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None  # no yesterday entry
+
+    def _capture_set(date_str, entry):
+        written_entries.append({"date": date_str, "entry": entry})
+
+    mock_journal.set.side_effect = _capture_set
+
+    # Track SelfStateStore calls
+    ss_set_calls: list = []
+    mock_ss = MagicMock()
+    # Simulate 2 prior entries in recent_context so the rolling window is exercisable
+    prior_rc = json.dumps(["[2026-05-17] ctx A", "[2026-05-18] ctx B"])
+    mock_ss.get.return_value = {"recent_context": prior_rc}
+    mock_ss.set.side_effect = lambda patch_dict: ss_set_calls.append(patch_dict)
+
+    mock_mem = MagicMock()
+    mock_mem.remember_self.return_value = "self-2026-05-19"
+
+    with _mock_gather_sources():
+        # Patch JournalStore at its source module (deferred import in run_reflection)
+        with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+            # Patch _brain_reflect to return the LLM result directly
+            with patch("core.reflection._brain_reflect", return_value=valid_llm_result):
+                # Patch Pinecone and SelfStateStore to avoid external calls
+                with patch("memory.pinecone_db.MemoryStore", return_value=mock_mem):
+                    with patch("memory.firestore_db.SelfStateStore", return_value=mock_ss):
+                        run_reflection("2026-05-19")
+
+    assert len(written_entries) == 1, "JournalStore.set must be called exactly once"
+    entry = written_entries[0]["entry"]
+
+    # 5 LLM fields
+    assert "summary" in entry, "entry must have summary"
+    assert "mood" in entry, "entry must have mood"
+    assert "current_focus" in entry, "entry must have current_focus"
+    assert "recent_context" in entry, "entry must have recent_context"
+    assert "highlights" in entry, "entry must have highlights"
+
+    # 5 raw metrics
+    assert "message_count" in entry, "entry must have message_count"
+    assert "cost_usd" in entry, "entry must have cost_usd"
+    assert "calendar_event_count" in entry, "entry must have calendar_event_count"
+    assert "tasks_completed" in entry, "entry must have tasks_completed"
+    assert "heartbeat_ok" in entry, "entry must have heartbeat_ok"
+
+    # Task 3: verify remember_self was called (Pinecone write target 2)
+    mock_mem.remember_self.assert_called_once()
+    remember_kwargs = mock_mem.remember_self.call_args
+    assert remember_kwargs is not None, "remember_self must be called"
+
+    # Task 3: verify SelfStateStore.set was called (write target 3)
+    assert len(ss_set_calls) == 1, "SelfStateStore.set must be called once"
+    ss_patch = ss_set_calls[0]
+    assert "current_focus" in ss_patch, "SelfStateStore patch must include current_focus"
+    assert "mood" in ss_patch, "SelfStateStore patch must include mood"
+    assert "recent_context" in ss_patch, "SelfStateStore patch must include recent_context"
+
+    # Task 3: rolling 3-day window — started with 2 prior, after adding today's → still ≤3
+    rc_stored = json.loads(ss_patch["recent_context"])
+    assert isinstance(rc_stored, list), "recent_context must be a JSON list"
+    assert len(rc_stored) <= 3, (
+        f"recent_context rolling window must be at most 3 entries, got {len(rc_stored)}"
+    )
+    # Today's entry must be the newest (last) item
+    assert "2026-05-19" in rc_stored[-1], (
+        "The latest recent_context entry must contain today's date"
+    )
+
+
+# ---------------------------------------------------------------------------
+# JOUR-01: gather source failure is isolated
+# ---------------------------------------------------------------------------
 
 def test_gather_source_failure_is_isolated():
     """A failing gather source does not abort run_reflection(). (JOUR-01)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
 
+    journal_set_called = []
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None
+    mock_journal.set.side_effect = lambda d, e: journal_set_called.append(e)
+
+    valid_llm_result = {
+        "summary": "Today I helped Sir.", "mood": "focused",
+        "current_focus": "Phase 17", "recent_context": "Journal cron.",
+        "highlights": ["Done"],
+    }
+
+    # calendar_raises=True: _mock_gather_sources returns gathered with calendar_event_count=0
+    # simulating a per-source failure; the gather still returns a valid dict (isolated)
+    with _mock_gather_sources(calendar_raises=True):
+        with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+            with patch("core.reflection._brain_reflect", return_value=valid_llm_result):
+                with patch("memory.pinecone_db.MemoryStore") as mock_mem_cls:
+                    mock_mem_cls.return_value.remember_self.return_value = "self-2026-05-19"
+                    with patch("memory.firestore_db.SelfStateStore") as mock_ss_cls:
+                        mock_ss_cls.return_value.get.return_value = {}
+                        # Must not raise — calendar failure is isolated
+                        run_reflection("2026-05-19")
+
+    assert len(journal_set_called) == 1, (
+        "JournalStore.set must be called even when a gather source fails"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-13: LLM failure → minimal fallback doc
+# ---------------------------------------------------------------------------
 
 def test_reflection_llm_failure_fallback():
     """Brain + fallback LLM failure → minimal fallback doc written. (D-13)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    written_entries: list = []
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with _mock_gather_sources():
+        with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+            # _brain_reflect returns None → triggers D-13 minimal fallback
+            with patch("core.reflection._brain_reflect", return_value=None):
+                with patch("memory.pinecone_db.MemoryStore") as mock_mem_cls:
+                    mock_mem_cls.return_value.remember_self.return_value = "self-2026-05-19"
+                    with patch("memory.firestore_db.SelfStateStore") as mock_ss_cls:
+                        mock_ss_cls.return_value.get.return_value = {}
+                        run_reflection("2026-05-19")
+
+    assert len(written_entries) == 1, "Fallback doc must still be written on LLM failure"
+    entry = written_entries[0]
+    assert entry.get("summary") == "reflection unavailable", (
+        f"D-13 fallback summary must be 'reflection unavailable', got {entry.get('summary')!r}"
+    )
+    # Raw metrics must still be present
+    assert "message_count" in entry
+    assert "cost_usd" in entry
 
 
-def test_parse_reflection_json_hardened():
-    """Brain JSON in ```json fences still parses; missing fields default safely. (D-03)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
-
+# ---------------------------------------------------------------------------
+# JOUR-05 + JOUR-06 — stubs (implemented in 17-03/17-04)
+# ---------------------------------------------------------------------------
 
 def test_cron_reflect_route():
     """/cron/reflect returns 200; CRON_DEV_BYPASS skips auth; _log_cron_run called. (JOUR-05)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    pytest.skip("implemented in plan 17-03 / 17-04")
 
 
 def test_journal_digest_assembly():
     """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    pytest.skip("implemented in plan 17-03 / 17-04")
