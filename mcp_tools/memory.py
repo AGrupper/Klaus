@@ -46,19 +46,22 @@ class MemoryTool:
             "confirmation": f"Saved {kind}: {preview}",
         }
 
-    def recall(self, user_id: int, query: str, k: int = 5) -> dict:
+    def recall(self, user_id: int, query: str, k: int = 5,
+               kinds: list[str] | None = None) -> dict:
         """Search long-term memory and return matches.
 
         Args:
             user_id: Only return memories for this user.
             query:   Natural language search query.
             k:       Number of results (default 5, max 10).
+            kinds:   Optional list of memory kinds to restrict search.
+                     None defaults to ["fact", "chunk"] (default recall behavior).
 
         Returns:
             {"matches": [...], "count": int} or {"error": str, "query": str}
         """
         try:
-            matches = self._store.recall(user_id, query, k)
+            matches = self._store.recall(user_id, query, k, kinds=kinds)
         except Exception as exc:
             logger.error("MemoryTool.recall failed: %s", exc)
             return {"error": str(exc), "query": query}

@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 
 from core.llm_client import LLMClient, LLMError
 from core import tools as tool_registry
-from memory.firestore_db import SelfStateStore
+from memory.firestore_db import SelfStateStore, JournalStore
 
 load_dotenv(override=True)
 
@@ -215,6 +215,8 @@ class AgentOrchestrator:
                 identity_summary=_extract_intro_paragraph(self._self_md_content)
             )
 
+        self._journal_store = _build_journal_store()
+
     def handle_message(self, user_message: str, user_id: int) -> str:
         """Process one user message through the full dual-model pipeline.
 
@@ -248,10 +250,27 @@ class AgentOrchestrator:
                     lines.append(f"- {key}: {value}")
                 self_state_snippet = "\n".join(lines)
 
+        # Build journal_digest — last ~3 entries, newest-first, one line each.
+        # Omit the block entirely when empty (D-15 empty-state rule).
+        journal_digest = ""
+        if self._journal_store is not None:
+            entries = self._journal_store.get_recent(3)        # newest-first
+            if entries:
+                lines = ["**Recent journal:**"]
+                for e in entries:
+                    line = f"- {e.get('date','')} (mood: {e.get('mood','')}): {e.get('summary','')}"
+                    highlights = e.get("highlights") or []
+                    if highlights:
+                        line += f" | {highlights[0]}"
+                    lines.append(line)
+                journal_digest = "\n".join(lines)
+            # else: leave "" — empty-state rule omits the block entirely
+
         smart_system = (
             self._smart_prompt_template
             .replace("{self_md}", self._self_md_content)      # stable — benefits from cache
             .replace("{self_state}", self_state_snippet)       # volatile — after stable
+            .replace("{journal_digest}", journal_digest)       # Phase 17 — smart-only (D-15)
             .replace("{today_date}", today_label)              # dynamic — always last
         )
         worker_system = self._worker_prompt_template.replace("{today_date}", today_label)
@@ -561,6 +580,19 @@ def _build_self_state_store() -> SelfStateStore | None:
         return None
     database = os.environ.get("FIRESTORE_DATABASE", "(default)")
     return SelfStateStore(project_id=project_id, database=database)
+
+
+def _build_journal_store() -> JournalStore | None:
+    """Build a JournalStore from environment variables.
+
+    Returns None if GCP_PROJECT_ID is not set (e.g. local dev without env).
+    """
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if not project_id:
+        logger.warning("GCP_PROJECT_ID not set — JournalStore disabled")
+        return None
+    database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+    return JournalStore(project_id=project_id, database=database)
 
 
 def _today_israel() -> str:

@@ -36,7 +36,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _install_firestore_mock() -> None:
-    """Install mock google.cloud.firestore into sys.modules if not already present."""
+    """Install mock google.cloud.firestore and related stubs into sys.modules.
+
+    Also stubs googleapiclient and google-auth-oauthlib so that core.tools and
+    core.main can be imported without real Google API libraries being installed.
+    """
     if "google.cloud.firestore" not in sys.modules:
         google_mod = sys.modules.setdefault("google", MagicMock())
         google_cloud_mod = sys.modules.setdefault("google.cloud", MagicMock())
@@ -70,6 +74,17 @@ def _install_firestore_mock() -> None:
 
         sys.modules.setdefault("google.oauth2", MagicMock())
         sys.modules.setdefault("google.oauth2.service_account", MagicMock())
+        sys.modules.setdefault("google.oauth2.credentials", MagicMock())
+        sys.modules.setdefault("google.auth.exceptions", MagicMock())
+        sys.modules.setdefault("google.auth.transport", MagicMock())
+        sys.modules.setdefault("google.auth.transport.requests", MagicMock())
+        sys.modules.setdefault("google_auth_oauthlib", MagicMock())
+        sys.modules.setdefault("google_auth_oauthlib.flow", MagicMock())
+
+        # googleapiclient — imported at module level by core/tools.py
+        sys.modules.setdefault("googleapiclient", MagicMock())
+        sys.modules.setdefault("googleapiclient.errors", MagicMock())
+        sys.modules.setdefault("googleapiclient.discovery", MagicMock())
 
         dotenv_mod = MagicMock()
         dotenv_mod.load_dotenv = MagicMock()
@@ -284,7 +299,9 @@ def test_remember_self_deterministic_id():
 
 def test_recall_self_kind():
     """'self' is in _VALID_KINDS; recall(kinds=['self']) filters on ['self'];
-    recall() with no kinds arg still defaults to ['fact','chunk']."""
+    recall() with no kinds arg still defaults to ['fact','chunk'].
+    Also verifies the tool-layer path: _handle_recall(kind='self') forwards
+    kinds=['self'] to MemoryTool.recall; no kind passes kinds=None."""
     # 1. "self" is in _VALID_KINDS
     assert "self" in pinecone_db._VALID_KINDS, (
         "'self' must be in _VALID_KINDS (D-06)"
@@ -318,6 +335,34 @@ def test_recall_self_kind():
     passed_filter2 = call_kwargs2.get("filter", {})
     assert passed_filter2.get("kind", {}).get("$in") == ["fact", "chunk"], (
         "Default recall() must still filter on ['fact', 'chunk'] — D-08 unchanged"
+    )
+
+    # 4. Tool-layer: MemoryTool.recall now accepts kinds= and forwards it to
+    #    MemoryStore.recall. Verify the agent-facing wrapper works end-to-end.
+    from mcp_tools.memory import MemoryTool  # noqa: PLC0415
+
+    mock_store = MagicMock()
+    mock_store.recall.return_value = []
+    tool = MemoryTool(memory_store=mock_store)
+
+    # kind="self" path → MemoryTool.recall(kinds=["self"]) → store.recall(kinds=["self"])
+    tool.recall(user_id=123456, query="journal entry", k=3, kinds=["self"])
+    mock_store.recall.assert_called_once()
+    store_call = mock_store.recall.call_args
+    assert store_call.kwargs.get("kinds") == ["self"] or (
+        len(store_call.args) >= 4 and store_call.args[3] == ["self"]
+    ), (
+        "MemoryTool.recall(kinds=['self']) must forward kinds=['self'] to MemoryStore.recall"
+    )
+
+    mock_store.recall.reset_mock()
+    # default path (kinds=None) → store.recall(kinds=None)
+    tool.recall(user_id=123456, query="something")
+    store_call2 = mock_store.recall.call_args
+    assert store_call2.kwargs.get("kinds") is None or (
+        len(store_call2.args) < 4
+    ), (
+        "MemoryTool.recall() with no kinds must pass kinds=None to MemoryStore.recall"
     )
 
 
@@ -697,5 +742,107 @@ def test_cron_reflect_route():
 
 
 def test_journal_digest_assembly():
-    """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)"""
-    pytest.skip("implemented in plan 17-03 / 17-04")
+    """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)
+
+    Verifies:
+    1. get_recent(3) with 3 entries → journal_digest contains one line per entry
+       in "- {date} (mood: {mood}): {summary}" format, plus top highlight.
+    2. get_recent(3) returns [] → journal_digest == "" (block omitted).
+    3. Worker prompt template does NOT contain {journal_digest} placeholder (D-15 smart-only).
+    """
+    from core.main import AgentOrchestrator  # noqa: PLC0415
+
+    three_entries = [
+        {
+            "date": "2026-05-19",
+            "mood": "focused",
+            "summary": "Completed Phase 17 data-layer.",
+            "highlights": ["Tests green", "Journal wired"],
+        },
+        {
+            "date": "2026-05-18",
+            "mood": "productive",
+            "summary": "Implemented reflection orchestrator.",
+            "highlights": ["Brain call working"],
+        },
+        {
+            "date": "2026-05-17",
+            "mood": "calm",
+            "summary": "Set up cron route.",
+            "highlights": [],
+        },
+    ]
+
+    mock_journal_store = MagicMock()
+    mock_journal_store.get_recent.return_value = three_entries
+
+    _orch_env = {
+        "SMART_AGENT_BACKEND": "gemini",
+        "SMART_AGENT_MODEL": "gemini-3-flash",
+        "SMART_AGENT_API_KEY": "test-smart-key",
+        "WORKER_AGENT_BACKEND": "gemini",
+        "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+        "WORKER_AGENT_API_KEY": "test-worker-key",
+    }
+
+    # --- Build orchestrator with mocked stores ------------------------------- #
+    with patch.dict("os.environ", _orch_env):
+        with patch("core.main._build_self_state_store", return_value=None):
+            with patch("core.main._build_journal_store", return_value=mock_journal_store):
+                with patch("core.main._load_self_md", return_value=""):
+                    orch = AgentOrchestrator()
+
+    # Introspect the handle_message render step by patching the LLM calls
+    # so they return immediately without making real API calls.
+    captured: dict = {}
+
+    def _fake_run_smart_loop(messages, smart_system, worker_system):
+        captured["smart_system"] = smart_system
+        captured["worker_system"] = worker_system
+        return "ok"
+
+    with patch.object(orch, "_run_smart_loop", side_effect=_fake_run_smart_loop):
+        with patch.object(orch.conversation_manager, "append"):
+            with patch.object(orch.conversation_manager, "get", return_value=[]):
+                orch.handle_message("hello", 123456)
+
+    assert "smart_system" in captured, "handle_message must call _run_smart_loop"
+    smart_sys = captured["smart_system"]
+    worker_sys = captured["worker_system"]
+
+    # 1. smart_system must contain each journal line
+    for entry in three_entries:
+        expected_fragment = f"(mood: {entry['mood']}): {entry['summary']}"
+        assert expected_fragment in smart_sys, (
+            f"smart_system must contain journal line for {entry['date']}: "
+            f"{expected_fragment!r} not found"
+        )
+
+    # First entry's top highlight must appear
+    assert "Tests green" in smart_sys, (
+        "Top highlight of first entry must appear in smart_system journal digest"
+    )
+
+    # 2. Empty journal → journal_digest == "" → no "**Recent journal:**" header
+    mock_journal_store.get_recent.return_value = []
+    captured.clear()
+
+    with patch.object(orch, "_run_smart_loop", side_effect=_fake_run_smart_loop):
+        with patch.object(orch.conversation_manager, "append"):
+            with patch.object(orch.conversation_manager, "get", return_value=[]):
+                orch.handle_message("hello", 123456)
+
+    assert "**Recent journal:**" not in captured.get("smart_system", ""), (
+        "Empty journal must omit the digest block entirely"
+    )
+    # The {journal_digest} placeholder must be replaced (not left as literal text)
+    assert "{journal_digest}" not in captured.get("smart_system", ""), (
+        "{journal_digest} placeholder must be replaced, not left as literal text"
+    )
+
+    # 3. Worker prompt must NOT contain {journal_digest} (D-15 smart-only)
+    worker_template_path = "prompts/worker_agent.md"
+    worker_template = open(worker_template_path).read()
+    assert "journal_digest" not in worker_template, (
+        "prompts/worker_agent.md must NOT contain journal_digest (D-15 smart-only)"
+    )
