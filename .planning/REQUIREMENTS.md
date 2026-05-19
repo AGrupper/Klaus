@@ -7,26 +7,26 @@
 
 ### Cost Metering (Phase 14)
 
-- [ ] **COST-01**: Every LLM call records model, purpose, input tokens, output tokens, and computed cost
-- [ ] **COST-02**: `LLMUsageStore` stores daily and monthly usage in Firestore (`llm_usage/{YYYY-MM-DD}`)
-- [ ] **COST-03**: `compute_cost()` returns 0.0 (never raises) for unpriced/free models
-- [ ] **COST-04**: `LLMClient.chat()` accepts an optional `purpose` param and meters automatically
-- [ ] **COST-05**: All three backends (Anthropic, Gemini, OpenAI) surface token usage in their response envelope
+- [x] **COST-01**: Every LLM call records model, purpose, input tokens, output tokens, and computed cost
+- [x] **COST-02**: `LLMUsageStore` stores daily and monthly usage in Firestore (`llm_usage/{YYYY-MM-DD}`)
+- [x] **COST-03**: `compute_cost()` returns 0.0 (never raises) for unpriced/free models
+- [x] **COST-04**: `LLMClient.chat()` accepts an optional `purpose` param and meters automatically
+- [x] **COST-05**: All three backends (Anthropic, Gemini, OpenAI) surface token usage in their response envelope
 
 ### Tick-Brain (Phase 14)
 
-- [ ] **TICK-01**: `core/tick_brain.py` wraps a free Groq/Qwen3-32B LLM client for always-on reasoning
-- [ ] **TICK-02**: Tick-brain falls back to Gemini 3 Flash on Groq `LLMError` or rate-limit
-- [ ] **TICK-03**: Parse failures in structured tick-brain output default to safe mode (`should_act=False`)
-- [ ] **TICK-04**: Tick-brain model is fully config-driven via `TICK_BRAIN_*` env vars
-- [ ] **TICK-05**: Heartbeat gains a tick-brain reasoning pass over raw health signals (gated: only runs when signals present or weekly digest)
+- [x] **TICK-01**: `core/tick_brain.py` wraps a free Groq/Qwen3-32B LLM client for always-on reasoning
+- [x] **TICK-02**: Tick-brain falls back to Gemini 3 Flash on Groq `LLMError` or rate-limit
+- [x] **TICK-03**: Parse failures in structured tick-brain output default to safe mode (`should_act=False`)
+- [x] **TICK-04**: Tick-brain model is fully config-driven via `TICK_BRAIN_*` env vars
+- [x] **TICK-05**: Heartbeat gains a tick-brain reasoning pass over raw health signals (gated: only runs when signals present or weekly digest)
 
 ### LLM Strategy (Phase 14)
 
-- [ ] **LLM-01**: Stale "Claude"/"JARVIS-style" comments in `core/main.py` are corrected
-- [ ] **LLM-02**: LLM-per-purpose map (tick-brain, brain, worker, fallback, embeddings) documented in `docs/TECHNICAL_PLAN.md`
-- [ ] **LLM-03**: `max_tokens` / `max_output_tokens` cap is normalized across all three backends
-- [ ] **LLM-04**: `_OpenAIBackend` accepts a `base_url` param so Groq can be targeted without mutating the global env var
+- [x] **LLM-01**: Stale "Claude"/"JARVIS-style" comments in `core/main.py` are corrected
+- [x] **LLM-02**: LLM-per-purpose map (tick-brain, brain, worker, fallback, embeddings) documented in `docs/TECHNICAL_PLAN.md`
+- [x] **LLM-03**: `max_tokens` / `max_output_tokens` cap is normalized across all three backends
+- [x] **LLM-04**: `_OpenAIBackend` accepts a `base_url` param so Groq can be targeted without mutating the global env var
 
 ### Codebase Self-Knowledge (Phase 15)
 
@@ -38,12 +38,12 @@
 
 ### Self-Model & State Awareness (Phase 16)
 
-- [ ] **MODEL-01**: `generate_manifest()` auto-generates `docs/SELF.md` by introspecting tool schemas, cron routes, outbound channels, model map, memory stores — including a git SHA/content hash for staleness detection
-- [ ] **MODEL-02**: `docs/SELF.md` covers every tool, every cron (all 9 including new ones), outbound channels, memory layers, and honest current limits
-- [ ] **MODEL-03**: `SelfStateStore` persists `identity_summary`, `current_focus`, `recent_context`, `mood`, `updated_at` in Firestore `config/self_state`
-- [ ] **MODEL-04**: Per-message prompt assembly in `core/main.py` injects SELF.md digest (stable) + self_state (volatile) at the render step, stable-content-first for prompt cache
-- [ ] **MODEL-05**: `get_self_status` direct tool returns uptime, today's message count, today/month cost, latest heartbeat status (degrades gracefully when journal absent)
-- [ ] **MODEL-06**: Heartbeat `check_code()` flags stale `SELF.md` by comparing embedded SHA against current repo state (weekly FYI tier)
+- [x] **MODEL-01**: `generate_manifest()` auto-generates `docs/SELF.md` by introspecting tool schemas, cron routes, outbound channels, model map, memory stores — including a git SHA/content hash for staleness detection
+- [x] **MODEL-02**: `docs/SELF.md` covers every tool, every cron (all 9 including new ones), outbound channels, memory layers, and honest current limits
+- [x] **MODEL-03**: `SelfStateStore` persists `identity_summary`, `current_focus`, `recent_context`, `mood`, `updated_at` in Firestore `config/self_state`
+- [x] **MODEL-04**: Per-message prompt assembly in `core/main.py` injects SELF.md digest (stable) + self_state (volatile) at the render step, stable-content-first for prompt cache
+- [x] **MODEL-05**: `get_self_status` direct tool returns uptime, today's message count, today/month cost, latest heartbeat status (degrades gracefully when journal absent)
+- [x] **MODEL-06**: Heartbeat `check_code()` flags stale `SELF.md` by comparing embedded SHA against current repo state (weekly FYI tier)
 
 ### Reflection & Journal (Phase 17)
 
@@ -69,7 +69,7 @@
 ### Infrastructure & Docs (Cross-cutting)
 
 - [ ] **INFRA-01**: `docs/DEPLOYMENT.md` documents all 9 Cloud Scheduler jobs (existing 7 + reflect + autonomous-tick), new Groq secret, and the Five Fingers duplicate job-id quirk
-- [ ] **INFRA-02**: Groq API key stored in GCP Secret Manager
+- [x] **INFRA-02**: Groq API key stored in GCP Secret Manager
 
 ## Out of Scope
 
@@ -85,31 +85,31 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COST-01 | Phase 14 | Pending |
-| COST-02 | Phase 14 | Pending |
-| COST-03 | Phase 14 | Pending |
-| COST-04 | Phase 14 | Pending |
-| COST-05 | Phase 14 | Pending |
-| TICK-01 | Phase 14 | Pending |
-| TICK-02 | Phase 14 | Pending |
-| TICK-03 | Phase 14 | Pending |
-| TICK-04 | Phase 14 | Pending |
-| TICK-05 | Phase 14 | Pending |
-| LLM-01 | Phase 14 | Pending |
-| LLM-02 | Phase 14 | Pending |
-| LLM-03 | Phase 14 | Pending |
-| LLM-04 | Phase 14 | Pending |
+| COST-01 | Phase 14 | Complete ✓ 2026-05-18 |
+| COST-02 | Phase 14 | Complete ✓ 2026-05-18 |
+| COST-03 | Phase 14 | Complete ✓ 2026-05-18 |
+| COST-04 | Phase 14 | Complete ✓ 2026-05-18 |
+| COST-05 | Phase 14 | Complete ✓ 2026-05-18 |
+| TICK-01 | Phase 14 | Complete ✓ 2026-05-18 |
+| TICK-02 | Phase 14 | Complete ✓ 2026-05-18 |
+| TICK-03 | Phase 14 | Complete ✓ 2026-05-18 |
+| TICK-04 | Phase 14 | Complete ✓ 2026-05-18 |
+| TICK-05 | Phase 14 | Complete ✓ 2026-05-18 |
+| LLM-01 | Phase 14 | Complete ✓ 2026-05-18 |
+| LLM-02 | Phase 14 | Complete ✓ 2026-05-18 |
+| LLM-03 | Phase 14 | Complete ✓ 2026-05-18 |
+| LLM-04 | Phase 14 | Complete ✓ 2026-05-18 |
 | SELF-01 | Phase 15 | Complete ✓ 2026-05-18 |
 | SELF-02 | Phase 15 | Complete ✓ 2026-05-18 |
 | SELF-03 | Phase 15 | Complete ✓ 2026-05-18 |
 | SELF-04 | Phase 15 | Complete ✓ 2026-05-18 |
 | SELF-05 | Phase 15 | Complete ✓ 2026-05-18 |
-| MODEL-01 | Phase 16 | Pending |
-| MODEL-02 | Phase 16 | Pending |
-| MODEL-03 | Phase 16 | Pending |
-| MODEL-04 | Phase 16 | Pending |
-| MODEL-05 | Phase 16 | Pending |
-| MODEL-06 | Phase 16 | Pending |
+| MODEL-01 | Phase 16 | Complete ✓ 2026-05-18 |
+| MODEL-02 | Phase 16 | Complete ✓ 2026-05-18 |
+| MODEL-03 | Phase 16 | Complete ✓ 2026-05-18 |
+| MODEL-04 | Phase 16 | Complete ✓ 2026-05-18 |
+| MODEL-05 | Phase 16 | Complete ✓ 2026-05-18 |
+| MODEL-06 | Phase 16 | Complete ✓ 2026-05-18 |
 | JOUR-01 | Phase 17 | Complete ✓ 2026-05-19 |
 | JOUR-02 | Phase 17 | Complete ✓ 2026-05-19 |
 | JOUR-03 | Phase 17 | Complete ✓ 2026-05-19 |
@@ -126,7 +126,7 @@
 | AUTO-08 | Phase 18 | Pending |
 | AUTO-09 | Phase 18 | Pending |
 | INFRA-01 | Phase 18 | Pending |
-| INFRA-02 | Phase 14 | Pending |
+| INFRA-02 | Phase 14 | Complete ✓ 2026-05-18 |
 
 **Coverage:**
 - v2.0 requirements: 41 total
@@ -135,4 +135,4 @@
 
 ---
 *Requirements defined: 2026-05-18*
-*Last updated: 2026-05-19 — Phase 17 complete (JOUR-01–06 verified)*
+*Last updated: 2026-05-19 — Phase 17 complete; backfilled Phase 14 & 16 completion markers*

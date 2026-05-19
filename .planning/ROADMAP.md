@@ -68,13 +68,13 @@ Plans:
 
 ---
 
-## Phase 16 — Self-Model & State Awareness
+## Phase 16 — Self-Model & State Awareness ✓ Complete 2026-05-18
 
 **Goal:** A detailed, doubt-free manifest of everything Klaus is and can do, injected into every conversation — plus a persistent self-state that survives the 6h conversation reset.
 
 **Requirements:** MODEL-01, MODEL-02, MODEL-03, MODEL-04, MODEL-05, MODEL-06
 
-**Plans:** 4 plans
+**Plans:** 4/4 complete
 
 Plans:
 - [x] 16-01-PLAN.md — core/self_manifest.py (generate_manifest + _compute_schema_hash) + docs/SELF.md generation + memory/firestore_db.py SelfStateStore
