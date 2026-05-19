@@ -651,7 +651,7 @@ def _queue_signals(signals: list[Signal]) -> None:
         logger.warning("heartbeat: _queue_signals failed", exc_info=True)
 
 
-def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
+async def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
     """If not in quiet hours, drain any queued signals from previous quiet period."""
     if _in_quiet_hours(config, now):
         return
@@ -670,10 +670,7 @@ def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
             doc_ref.delete()
             return
         signals = [Signal(**s) for s in queued]
-        import asyncio
-        asyncio.get_event_loop().run_until_complete(
-            send_and_inject(bot, _compose_message(signals), inject_into_conversation=True)
-        )
+        await send_and_inject(bot, _compose_message(signals), inject_into_conversation=True)
         doc_ref.delete()
     except Exception:
         logger.warning("heartbeat: drain_quiet_queue failed", exc_info=True)
@@ -727,7 +724,7 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
         logger.info("heartbeat: disabled in config")
         return []
 
-    _drain_quiet_queue(bot, now, config)
+    await _drain_quiet_queue(bot, now, config)
 
     tiers = _tiers_for_now(config, now)
     signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)

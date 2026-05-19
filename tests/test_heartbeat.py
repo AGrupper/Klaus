@@ -163,8 +163,8 @@ def test_run_tick_pings_new_critical(monkeypatch):
     monkeypatch.setattr(heartbeat, "_register_incidents",
                         lambda crits, cfg: [crit])
     monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
-    monkeypatch.setattr(heartbeat, "_drain_quiet_queue",
-                        lambda bot, now, cfg: None)
+    async def _noop_drain(bot, now, cfg): pass
+    monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
     sent = []
     async def _send(bot, text, **kw): sent.append(text)
     monkeypatch.setattr(heartbeat, "send_and_inject", _send)

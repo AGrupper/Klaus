@@ -436,7 +436,7 @@ def run_reflection(target_date: str) -> None:
     try:
         from memory.pinecone_db import MemoryStore
         pinecone_api_key = os.environ["PINECONE_API_KEY"]
-        pinecone_index = os.environ.get("PINECONE_INDEX", "klausai")
+        pinecone_index = os.environ.get("PINECONE_INDEX_NAME", "klaus-memory")
         mem_store = MemoryStore(api_key=pinecone_api_key, index_name=pinecone_index)
         content_parts = [entry.get("summary", "")]
         for h in entry.get("highlights", []):
