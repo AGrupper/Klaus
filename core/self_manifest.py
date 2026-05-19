@@ -333,8 +333,9 @@ def _render_manifest(root: Path, sha: str) -> str:
         "| Five Fingers evening | Wed/Sun `18:15 UTC` (21:15 IDT) | `/cron/five-fingers` |",
         "| Chat ingest | `0 1 * * *` (04:00 IDT) | `/cron/chat-ingest` |",
         "| Chat export ingest | `30 1 * * *` (04:30 IDT) | `/cron/chat-export-ingest` |",
+        "| Daily reflection | `0 22 * * *` (22:00 IDT) | `/cron/reflect` |",
         "",
-        "<!-- TODO Phase 17: /cron/reflect; Phase 18: /cron/autonomous-tick -->",
+        "<!-- TODO Phase 18: /cron/autonomous-tick -->",
         "",
     ]
 
@@ -383,13 +384,9 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
         "- **Outbound messages:** Telegram-only. No email send. No WhatsApp autonomous outbound.",
         "- **Gmail is read-only** — Klaus cannot send emails via any tool.",
-        (
-            "- **Pinecone valid `kind` values:** `fact`, `chunk`, `chat`. "
-            "(`self` is NOT valid until Phase 17.)"
-        ),
+        "- **Pinecone valid `kind` values:** `fact`, `chunk`, `chat`, `self`. (`self` = Klaus's own journal entries.)",
         "- **Max tool iterations per conversation:** 8 (`MAX_TOOL_ITERATIONS` in `core/main.py`)",
         "- **Conversation context reset:** every ~6 hours (Cloud Run container lifecycle)",
-        "- **Reflection and journal:** not yet implemented (Phase 17)",
         "- **Autonomous proactive outreach:** not yet implemented (Phase 18)",
         "",
     ]
