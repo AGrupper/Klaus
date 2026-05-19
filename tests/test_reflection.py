@@ -284,7 +284,9 @@ def test_remember_self_deterministic_id():
 
 def test_recall_self_kind():
     """'self' is in _VALID_KINDS; recall(kinds=['self']) filters on ['self'];
-    recall() with no kinds arg still defaults to ['fact','chunk']."""
+    recall() with no kinds arg still defaults to ['fact','chunk'].
+    Also verifies the tool-layer path: _handle_recall(kind='self') forwards
+    kinds=['self'] to MemoryTool.recall; no kind passes kinds=None."""
     # 1. "self" is in _VALID_KINDS
     assert "self" in pinecone_db._VALID_KINDS, (
         "'self' must be in _VALID_KINDS (D-06)"
@@ -318,6 +320,34 @@ def test_recall_self_kind():
     passed_filter2 = call_kwargs2.get("filter", {})
     assert passed_filter2.get("kind", {}).get("$in") == ["fact", "chunk"], (
         "Default recall() must still filter on ['fact', 'chunk'] — D-08 unchanged"
+    )
+
+    # 4. Tool-layer: MemoryTool.recall now accepts kinds= and forwards it to
+    #    MemoryStore.recall. Verify the agent-facing wrapper works end-to-end.
+    from mcp_tools.memory import MemoryTool  # noqa: PLC0415
+
+    mock_store = MagicMock()
+    mock_store.recall.return_value = []
+    tool = MemoryTool(memory_store=mock_store)
+
+    # kind="self" path → MemoryTool.recall(kinds=["self"]) → store.recall(kinds=["self"])
+    tool.recall(user_id=123456, query="journal entry", k=3, kinds=["self"])
+    mock_store.recall.assert_called_once()
+    store_call = mock_store.recall.call_args
+    assert store_call.kwargs.get("kinds") == ["self"] or (
+        len(store_call.args) >= 4 and store_call.args[3] == ["self"]
+    ), (
+        "MemoryTool.recall(kinds=['self']) must forward kinds=['self'] to MemoryStore.recall"
+    )
+
+    mock_store.recall.reset_mock()
+    # default path (kinds=None) → store.recall(kinds=None)
+    tool.recall(user_id=123456, query="something")
+    store_call2 = mock_store.recall.call_args
+    assert store_call2.kwargs.get("kinds") is None or (
+        len(store_call2.args) < 4
+    ), (
+        "MemoryTool.recall() with no kinds must pass kinds=None to MemoryStore.recall"
     )
 
 

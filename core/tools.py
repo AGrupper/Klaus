@@ -254,6 +254,15 @@ TOOL_SCHEMAS: list[dict] = [
                     "type": "integer",
                     "description": "Number of results to return (default 5, max 10).",
                 },
+                "kind": {
+                    "type": "string",
+                    "enum": ["fact", "chunk", "self"],
+                    "description": (
+                        "Optional. Restrict recall to one memory kind. "
+                        "'self' searches Klaus's own journal entries. "
+                        "Omit for the default fact+chunk search."
+                    ),
+                },
             },
             "required": ["query"],
         },
@@ -901,9 +910,10 @@ def _handle_remember(content: str, kind: str) -> str:
     return json.dumps(result)
 
 
-def _handle_recall(query: str, k: int = 5) -> str:
+def _handle_recall(query: str, k: int = 5, kind: str | None = None) -> str:
     """Delegate to MemoryTool.recall and serialise the result."""
-    result = _get_memory_tool().recall(_get_current_user_id(), query, k)
+    kinds = [kind] if kind else None   # None → recall() default ["fact","chunk"]
+    result = _get_memory_tool().recall(_get_current_user_id(), query, k, kinds=kinds)
     return json.dumps(result)
 
 
