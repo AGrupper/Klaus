@@ -3,12 +3,13 @@
 Stores durable facts and contextual chunks about the user as vector
 embeddings (Gemini gemini-embedding-2 truncated to 768-dim) for semantic search.
 
-Three kinds of memory:
+Four kinds of memory:
   "fact"  — short atomic statement ("Amit's gym is Mon/Wed/Fri").
   "chunk" — longer contextual passage (a story, evolving situation).
   "chat"  — ingested Claude Code chat-log chunk (Phase 12+).
+  "self"  — journal/self-memory entry written by the reflection cron (Phase 17).
 
-All three are stored in the same serverless index, distinguished by the
+All four are stored in the same serverless index, distinguished by the
 "kind" metadata field. `recall` queries fact/chunk by default and returns
 results ranked by semantic similarity.
 
@@ -26,7 +27,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 CONTENT_MAX_CHARS = 2000
-_VALID_KINDS = frozenset({"fact", "chunk", "chat"})
+_VALID_KINDS = frozenset({"fact", "chunk", "chat", "self"})  # D-06: "self" added Phase 17
 
 
 class MemoryStore:
@@ -128,6 +129,44 @@ class MemoryStore:
             }
             for m in result.matches
         ]
+
+    def remember_self(self, user_id: int, date_str: str, content: str) -> str:
+        """Upsert a journal entry with a deterministic vector ID (self-{date}).
+
+        A re-run for the same date overwrites the existing vector — no
+        duplicates (D-07/D-12). Truncates content over CONTENT_MAX_CHARS
+        rather than raising (Pitfall 2 — unlike remember() which raises).
+
+        metadata.user_id is set to str(user_id), identical to remember()'s
+        format, so recall()'s $eq user filter isolates journal vectors per
+        owner (Security Domain: cross-user leak mitigation).
+
+        Args:
+            user_id:  Telegram user ID (scopes the vector to one user).
+            date_str: YYYY-MM-DD date string — forms the deterministic vector
+                      ID ``self-{date_str}``.
+            content:  Text to embed (typically summary + highlights). Truncated
+                      to CONTENT_MAX_CHARS if longer.
+
+        Returns:
+            The deterministic Pinecone vector ID ``self-{date_str}``.
+        """
+        if len(content) > CONTENT_MAX_CHARS:
+            content = content[:CONTENT_MAX_CHARS]
+        vector = self._embed(content)
+        vector_id = f"self-{date_str}"
+        ts = datetime.now(tz=timezone.utc).isoformat()
+        self._get_index().upsert(vectors=[{
+            "id": vector_id,
+            "values": vector,
+            "metadata": {
+                "user_id": str(user_id),
+                "kind": "self",
+                "content": content,
+                "ts": ts,
+            },
+        }])
+        return vector_id
 
     def upsert_chat_chunks(self, user_id: int, chunks: list[dict]) -> int:
         """Embed and upsert a batch of chat chunks to Pinecone.
