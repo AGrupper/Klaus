@@ -1165,8 +1165,27 @@ def _handle_get_self_status() -> str:
     # --- Timestamp ---
     result["status_at"] = datetime.now(timezone.utc).isoformat()
 
-    # --- Journal (Phase 17 — not yet implemented) ---
-    result["journal"] = None  # Phase 17 will populate
+    # --- Journal (Phase 17) ---
+    try:
+        project_id = _os.environ.get("GCP_PROJECT_ID")
+        if project_id:
+            database = _os.environ.get("FIRESTORE_DATABASE", "(default)")
+            from memory.firestore_db import JournalStore
+            recent = JournalStore(project_id=project_id, database=database).get_recent(1)
+            if recent:
+                j = recent[0]
+                result["journal"] = {
+                    "date": j.get("date"),
+                    "summary": j.get("summary"),
+                    "mood": j.get("mood"),
+                }
+            else:
+                result["journal"] = None
+        else:
+            result["journal"] = None
+    except Exception as exc:
+        result["journal"] = None
+        result["journal_error"] = str(exc)
 
     return json.dumps(result)
 
