@@ -727,5 +727,97 @@ def test_cron_reflect_route():
 
 
 def test_journal_digest_assembly():
-    """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)"""
-    pytest.skip("implemented in plan 17-03 / 17-04")
+    """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)
+
+    Verifies:
+    1. get_recent(3) with 3 entries → journal_digest contains one line per entry
+       in "- {date} (mood: {mood}): {summary}" format, plus top highlight.
+    2. get_recent(3) returns [] → journal_digest == "" (block omitted).
+    3. Worker prompt template does NOT contain {journal_digest} placeholder (D-15 smart-only).
+    """
+    from core.main import AgentOrchestrator  # noqa: PLC0415
+
+    three_entries = [
+        {
+            "date": "2026-05-19",
+            "mood": "focused",
+            "summary": "Completed Phase 17 data-layer.",
+            "highlights": ["Tests green", "Journal wired"],
+        },
+        {
+            "date": "2026-05-18",
+            "mood": "productive",
+            "summary": "Implemented reflection orchestrator.",
+            "highlights": ["Brain call working"],
+        },
+        {
+            "date": "2026-05-17",
+            "mood": "calm",
+            "summary": "Set up cron route.",
+            "highlights": [],
+        },
+    ]
+
+    mock_journal_store = MagicMock()
+    mock_journal_store.get_recent.return_value = three_entries
+
+    # --- Build orchestrator with mocked stores ------------------------------- #
+    with patch("core.main._build_self_state_store", return_value=None):
+        with patch("core.main._build_journal_store", return_value=mock_journal_store):
+            with patch("core.main._load_self_md", return_value=""):
+                orch = AgentOrchestrator()
+
+    # Introspect the handle_message render step by patching the LLM calls
+    # so they return immediately without making real API calls.
+    captured: dict = {}
+
+    def _fake_run_smart_loop(messages, smart_system, worker_system):
+        captured["smart_system"] = smart_system
+        captured["worker_system"] = worker_system
+        return "ok"
+
+    with patch.object(orch, "_run_smart_loop", side_effect=_fake_run_smart_loop):
+        with patch.object(orch.conversation_manager, "append"):
+            with patch.object(orch.conversation_manager, "get", return_value=[]):
+                orch.handle_message("hello", 123456)
+
+    assert "smart_system" in captured, "handle_message must call _run_smart_loop"
+    smart_sys = captured["smart_system"]
+    worker_sys = captured["worker_system"]
+
+    # 1. smart_system must contain each journal line
+    for entry in three_entries:
+        expected_fragment = f"(mood: {entry['mood']}): {entry['summary']}"
+        assert expected_fragment in smart_sys, (
+            f"smart_system must contain journal line for {entry['date']}: "
+            f"{expected_fragment!r} not found"
+        )
+
+    # First entry's top highlight must appear
+    assert "Tests green" in smart_sys, (
+        "Top highlight of first entry must appear in smart_system journal digest"
+    )
+
+    # 2. Empty journal → journal_digest == "" → no "**Recent journal:**" header
+    mock_journal_store.get_recent.return_value = []
+    captured.clear()
+
+    with patch.object(orch, "_run_smart_loop", side_effect=_fake_run_smart_loop):
+        with patch.object(orch.conversation_manager, "append"):
+            with patch.object(orch.conversation_manager, "get", return_value=[]):
+                orch.handle_message("hello", 123456)
+
+    assert "**Recent journal:**" not in captured.get("smart_system", ""), (
+        "Empty journal must omit the digest block entirely"
+    )
+    # The {journal_digest} placeholder must be replaced (not left as literal text)
+    assert "{journal_digest}" not in captured.get("smart_system", ""), (
+        "{journal_digest} placeholder must be replaced, not left as literal text"
+    )
+
+    # 3. Worker prompt must NOT contain {journal_digest} (D-15 smart-only)
+    worker_template_path = "prompts/worker_agent.md"
+    worker_template = open(worker_template_path).read()
+    assert "journal_digest" not in worker_template, (
+        "prompts/worker_agent.md must NOT contain journal_digest (D-15 smart-only)"
+    )
