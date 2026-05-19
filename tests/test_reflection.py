@@ -23,6 +23,7 @@ plans that build the code they exercise (17-02, 17-03, 17-04).
 """
 from __future__ import annotations
 
+import json
 import sys
 from types import ModuleType
 from unittest.mock import MagicMock, patch
@@ -321,34 +322,260 @@ def test_recall_self_kind():
 
 
 # ---------------------------------------------------------------------------
-# JOUR-01 + D-13 + D-03 + JOUR-05 + JOUR-06 — stubs (implemented in 17-02/03/04)
+# Helpers for reflection tests
+# ---------------------------------------------------------------------------
+
+def _make_valid_llm_response(override: dict | None = None) -> dict:
+    """Return a mock LLMClient.chat response with a valid JSON blob."""
+    payload = {
+        "summary": "Today I helped Sir work through Phase 17 implementation.",
+        "mood": "focused",
+        "current_focus": "Phase 17 reflection cron",
+        "recent_context": "Implementing the journal data-layer and orchestrator.",
+        "highlights": ["Data-layer complete", "Tests green", "Prompt drafted"],
+    }
+    if override:
+        payload.update(override)
+    return {"text": json.dumps(payload)}
+
+
+def _mock_gather_sources(
+    *,
+    llm_usage: dict | None = None,
+    calendar_raises: bool = False,
+    ticktick_raises: bool = False,
+):
+    """Return a context manager stack that patches all five gather sources."""
+    import contextlib
+
+    usage_data = llm_usage or {"smart_calls": 5, "total_cost_usd": 0.002}
+
+    @contextlib.contextmanager
+    def _ctx():
+        patches = []
+
+        # LLMUsageStore.summary
+        p1 = patch(
+            "core.reflection.LLMUsageStore",
+            autospec=False,
+        )
+        mock_usage_cls = p1.start()
+        mock_usage_cls.return_value.summary.return_value = usage_data
+        patches.append(p1)
+
+        # FirestoreConversationStore.get → [] (stale window, default)
+        p2 = patch("core.reflection.FirestoreConversationStore")
+        mock_conv_cls = p2.start()
+        mock_conv_cls.return_value.get.return_value = []
+        patches.append(p2)
+
+        # GoogleCalendarManager.list_events
+        p3 = patch("core.reflection.GoogleCalendarManager")
+        mock_cal_cls = p3.start()
+        if calendar_raises:
+            mock_cal_cls.return_value.list_events.side_effect = RuntimeError("calendar down")
+        else:
+            mock_cal_cls.return_value.list_events.return_value = [
+                {"summary": "Meeting"}, {"summary": "Gym"}
+            ]
+        patches.append(p3)
+
+        # get_today_tasks
+        p4 = patch("core.reflection.get_today_tasks")
+        mock_tasks = p4.start()
+        if ticktick_raises:
+            mock_tasks.side_effect = RuntimeError("ticktick down")
+        else:
+            mock_tasks.return_value = {"today": [{"title": "Task A"}, {"title": "Task B"}]}
+        patches.append(p4)
+
+        # _read_cron_ledger
+        p5 = patch("core.reflection._read_cron_ledger")
+        mock_ledger = p5.start()
+        mock_ledger.return_value = {"reflect": {"ok": True}}
+        patches.append(p5)
+
+        try:
+            yield
+        finally:
+            for p in reversed(patches):
+                p.stop()
+
+    return _ctx()
+
+
+# ---------------------------------------------------------------------------
+# D-03: _parse_reflection_json hardening
+# ---------------------------------------------------------------------------
+
+def test_parse_reflection_json_hardened():
+    """Brain JSON in ```json fences still parses; missing fields default safely. (D-03)"""
+    from core.reflection import _parse_reflection_json  # noqa: PLC0415
+
+    # 1. Fenced ```json block parses correctly
+    fenced = (
+        "```json\n"
+        '{"summary":"Day ok","mood":"calm","current_focus":"work",'
+        '"recent_context":"context here","highlights":["item1","item2"]}\n'
+        "```"
+    )
+    result = _parse_reflection_json(fenced)
+    assert result is not None, "Fenced JSON must parse"
+    assert result["summary"] == "Day ok"
+    assert result["mood"] == "calm"
+    assert result["highlights"] == ["item1", "item2"]
+
+    # 2. Missing field "mood" → default to ""
+    missing_mood = '{"summary":"s","current_focus":"f","recent_context":"r","highlights":["h"]}'
+    result2 = _parse_reflection_json(missing_mood)
+    assert result2 is not None
+    assert result2["mood"] == "", f"Missing mood should default to '', got {result2['mood']!r}"
+    assert result2["summary"] == "s"
+
+    # 3. highlights cap at 5
+    many = {
+        "summary": "s", "mood": "m", "current_focus": "f",
+        "recent_context": "r",
+        "highlights": ["a", "b", "c", "d", "e", "f", "g"],
+    }
+    result3 = _parse_reflection_json(json.dumps(many))
+    assert result3 is not None
+    assert len(result3["highlights"]) == 5, "highlights must be capped at 5"
+
+    # 4. Garbage input → returns None (sentinel for D-13 fallback)
+    result4 = _parse_reflection_json("this is not json at all !!! {{{")
+    assert result4 is None, "Unparseable text must return None"
+
+    # 5. highlights is wrong type (str instead of list) → defaulted to []
+    wrong_type = '{"summary":"s","mood":"m","current_focus":"f","recent_context":"r","highlights":"bad"}'
+    result5 = _parse_reflection_json(wrong_type)
+    assert result5 is not None
+    assert isinstance(result5["highlights"], list), "highlights wrong type must be defaulted to list"
+
+
+# ---------------------------------------------------------------------------
+# JOUR-01: run_reflection writes journal entry
 # ---------------------------------------------------------------------------
 
 def test_run_reflection_writes_entry():
     """run_reflection() gathers the day and writes a journal entry. (JOUR-01)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
 
+    written_entries: list = []
+
+    with _mock_gather_sources():
+        with patch("core.reflection.JournalStore") as mock_journal_cls:
+            mock_journal = MagicMock()
+            mock_journal_cls.return_value = mock_journal
+            mock_journal.get.return_value = None  # no yesterday entry
+
+            with patch("core.reflection.LLMClient") as mock_llm_cls:
+                mock_client = MagicMock()
+                mock_llm_cls.return_value = mock_client
+                mock_client.chat.return_value = _make_valid_llm_response()
+
+                def _capture_set(date_str, entry):
+                    written_entries.append({"date": date_str, "entry": entry})
+
+                mock_journal.set.side_effect = _capture_set
+
+                run_reflection("2026-05-19")
+
+    assert len(written_entries) == 1, "JournalStore.set must be called exactly once"
+    entry = written_entries[0]["entry"]
+
+    # 5 LLM fields
+    assert "summary" in entry, "entry must have summary"
+    assert "mood" in entry, "entry must have mood"
+    assert "current_focus" in entry, "entry must have current_focus"
+    assert "recent_context" in entry, "entry must have recent_context"
+    assert "highlights" in entry, "entry must have highlights"
+
+    # 5 raw metrics
+    assert "message_count" in entry, "entry must have message_count"
+    assert "cost_usd" in entry, "entry must have cost_usd"
+    assert "calendar_event_count" in entry, "entry must have calendar_event_count"
+    assert "tasks_completed" in entry, "entry must have tasks_completed"
+    assert "heartbeat_ok" in entry, "entry must have heartbeat_ok"
+
+
+# ---------------------------------------------------------------------------
+# JOUR-01: gather source failure is isolated
+# ---------------------------------------------------------------------------
 
 def test_gather_source_failure_is_isolated():
     """A failing gather source does not abort run_reflection(). (JOUR-01)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
 
+    journal_set_called = []
+
+    # calendar raises, but run must still complete
+    with _mock_gather_sources(calendar_raises=True):
+        with patch("core.reflection.JournalStore") as mock_journal_cls:
+            mock_journal = MagicMock()
+            mock_journal_cls.return_value = mock_journal
+            mock_journal.get.return_value = None
+
+            with patch("core.reflection.LLMClient") as mock_llm_cls:
+                mock_client = MagicMock()
+                mock_llm_cls.return_value = mock_client
+                mock_client.chat.return_value = _make_valid_llm_response()
+
+                mock_journal.set.side_effect = lambda d, e: journal_set_called.append(e)
+
+                # Must not raise — calendar failure is isolated
+                run_reflection("2026-05-19")
+
+    assert len(journal_set_called) == 1, (
+        "JournalStore.set must be called even when a gather source fails"
+    )
+
+
+# ---------------------------------------------------------------------------
+# D-13: LLM failure → minimal fallback doc
+# ---------------------------------------------------------------------------
 
 def test_reflection_llm_failure_fallback():
     """Brain + fallback LLM failure → minimal fallback doc written. (D-13)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    written_entries: list = []
+
+    with _mock_gather_sources():
+        with patch("core.reflection.JournalStore") as mock_journal_cls:
+            mock_journal = MagicMock()
+            mock_journal_cls.return_value = mock_journal
+            mock_journal.get.return_value = None
+
+            with patch("core.reflection.LLMClient") as mock_llm_cls:
+                # Both brain and fallback raise
+                mock_client = MagicMock()
+                mock_llm_cls.return_value = mock_client
+                mock_client.chat.side_effect = RuntimeError("LLM completely down")
+
+                mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+                run_reflection("2026-05-19")
+
+    assert len(written_entries) == 1, "Fallback doc must still be written on LLM failure"
+    entry = written_entries[0]
+    assert entry.get("summary") == "reflection unavailable", (
+        f"D-13 fallback summary must be 'reflection unavailable', got {entry.get('summary')!r}"
+    )
+    # Raw metrics must still be present
+    assert "message_count" in entry
+    assert "cost_usd" in entry
 
 
-def test_parse_reflection_json_hardened():
-    """Brain JSON in ```json fences still parses; missing fields default safely. (D-03)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
-
+# ---------------------------------------------------------------------------
+# JOUR-05 + JOUR-06 — stubs (implemented in 17-03/17-04)
+# ---------------------------------------------------------------------------
 
 def test_cron_reflect_route():
     """/cron/reflect returns 200; CRON_DEV_BYPASS skips auth; _log_cron_run called. (JOUR-05)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    pytest.skip("implemented in plan 17-03 / 17-04")
 
 
 def test_journal_digest_assembly():
     """{journal_digest} assembled from get_recent(3); empty when no entries. (JOUR-06)"""
-    pytest.skip("implemented in plan 17-02 / 17-03 / 17-04")
+    pytest.skip("implemented in plan 17-03 / 17-04")
