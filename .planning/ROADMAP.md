@@ -104,13 +104,27 @@ Plans:
 
 **Requirements:** JOUR-01, JOUR-02, JOUR-03, JOUR-04, JOUR-05, JOUR-06
 
+**Plans:** 4 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Wave 0 test scaffold (tests/test_reflection.py) + JournalStore (firestore_db.py) + "self" kind & remember_self (pinecone_db.py)
+- [ ] 17-02-PLAN.md — core/reflection.py run_reflection() orchestrator + prompts/reflection.md (gather, two-tier LLM, JSON parse, D-13 fallback, 3 write targets)
+- [ ] 17-03-PLAN.md — /cron/reflect route (web_server.py) + heartbeat staleness entry + docs/SELF.md cron table
+- [ ] 17-04-PLAN.md — recall kind param (memory.py + tools.py) + get_self_status journal field + {journal_digest} injection (main.py + smart_agent.md)
+
+**Waves:** W1 = {17-01}; W2 = {17-02}; W3 = {17-03, 17-04} (parallel — no file overlap)
+
 **Key files:**
-- `core/reflection.py` (NEW) — `run_reflection()`: gather day → one main-brain call → journal entry + self_state update
-- `prompts/reflection.md` (NEW) — reflection system prompt
+- `core/reflection.py` (NEW) — `run_reflection()`: gather day → worker summary + brain reflection call → journal entry + self_state update
+- `prompts/reflection.md` (NEW) — first-person reflection system prompt
 - `memory/firestore_db.py` — new `JournalStore` class (`journal/{date}` docs)
-- `memory/pinecone_db.py` — add `"self"` to `_VALID_KINDS`
+- `memory/pinecone_db.py` — add `"self"` to `_VALID_KINDS` + `remember_self()` deterministic-id upsert
 - `interfaces/web_server.py` — new `/cron/reflect` route with OIDC auth
+- `core/heartbeat.py` — `"reflect"` entry in `_CRON_MAX_STALENESS_HOURS`
+- `mcp_tools/memory.py` — `MemoryTool.recall` gains a `kinds` param
+- `core/tools.py` — `recall` `kind` param + `get_self_status` journal field
 - `core/main.py` — inject last ~3 journal entries digest at per-message render step
+- `prompts/smart_agent.md` — `{journal_digest}` placeholder
 
 **Success criteria:**
 1. `POST /cron/reflect` with `CRON_DEV_BYPASS=true` → `journal/{today}` doc created in Firestore
@@ -164,4 +178,4 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-19 — Phase 16 complete (4/4 plans, MODEL-01–06 verified, human UAT passed)*
+*Last updated: 2026-05-19 — Phase 17 planned (4 plans, 3 waves, JOUR-01–06 mapped)*
