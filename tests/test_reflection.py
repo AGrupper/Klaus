@@ -619,48 +619,35 @@ def test_cron_reflect_route():
     """/cron/reflect returns 200; CRON_DEV_BYPASS skips auth; _log_cron_run called. (JOUR-05)"""
     import os
     import sys
-    from unittest.mock import AsyncMock, MagicMock, patch
+    from unittest.mock import MagicMock, patch
 
-    # --- Stub all heavy web_server transitive dependencies BEFORE importing ----
-    # These must be set before 'import interfaces.web_server' so they win at
-    # Python's first import of each module.  We do NOT remove them between tests
-    # because they don't conflict with the Firestore mock already installed by
-    # _install_firestore_mock() above (that mock covers google.cloud.firestore,
-    # this section covers google.auth / telegram / core.main).
-
-    # Re-mock google.auth as a proper module tree so that auth_google.py's
-    # `from google.auth.exceptions import ...` succeeds without a real package.
-    google_auth_mock = MagicMock()
-    google_auth_mock.exceptions = MagicMock()
-    google_auth_mock.exceptions.GoogleAuthError = Exception
-    google_auth_mock.exceptions.RefreshError = Exception
-    sys.modules["google.auth"] = google_auth_mock
-    sys.modules["google.auth.exceptions"] = google_auth_mock.exceptions
-    sys.modules["google.auth.transport"] = MagicMock()
-    sys.modules["google.auth.transport.requests"] = MagicMock()
-    sys.modules["google.oauth2"] = MagicMock()
-    sys.modules["google.oauth2.id_token"] = MagicMock()
-    sys.modules["google.oauth2.service_account"] = MagicMock()
-
-    # Telegram
-    for mod in [
-        "telegram",
-        "telegram.ext",
-        "telegram.error",
-    ]:
-        sys.modules.setdefault(mod, MagicMock())
-
-    # core.main — heavy orchestrator; stub it out
-    sys.modules["core.main"] = MagicMock()
-    sys.modules["interfaces._router"] = MagicMock()
-
-    # Drop any cached web_server import so our fresh stubs apply
+    # web_server has these top-level imports that need stubs:
+    #   telegram, telegram.ext, telegram.error
+    #   core.main (pulls AgentOrchestrator which needs google.auth)
+    #   core.auth_google (imports google.auth.exceptions at module level)
+    #   interfaces._router
+    # We use patch.dict(sys.modules) so all stubs are automatically restored
+    # after the block — this prevents stub leakage that would break subsequent
+    # tests in other test files (e.g. test_heartbeat.py).
+    telegram_stub = MagicMock(name="telegram")
+    stubs = {
+        "telegram": sys.modules.get("telegram", telegram_stub),
+        "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
+        "telegram.error": sys.modules.get("telegram.error", MagicMock()),
+        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.main": MagicMock(name="core.main"),
+        "interfaces._router": MagicMock(name="interfaces._router"),
+        # Also remove cached web_server so it re-imports with our stubs active
+        "interfaces.web_server": None,  # will be removed by patch.dict sentinel
+    }
+    # patch.dict does not remove keys set to None, so remove web_server explicitly
     for key in list(sys.modules.keys()):
         if "interfaces.web_server" in key or key == "interfaces.web_server":
             del sys.modules[key]
 
-    # --- Build mocks that the route will call ----------------------------
-    run_reflection_mock = MagicMock()  # synchronous, called via run_in_executor
+    stubs_without_ws = {k: v for k, v in stubs.items() if k != "interfaces.web_server"}
+
+    run_reflection_mock = MagicMock(name="run_reflection")
     log_cron_run_calls: list = []
 
     def _fake_log_cron_run(job_id: str, ok: bool) -> None:
@@ -676,21 +663,19 @@ def test_cron_reflect_route():
         "PINECONE_INDEX": "fake-index",
     }
 
-    # core.reflection module stub — the route does a lazy `import core.reflection`
-    reflection_mod = MagicMock()
-    reflection_mod.run_reflection = run_reflection_mock
-    sys.modules["core.reflection"] = reflection_mod
-
-    with patch.dict(os.environ, env_patch):
+    with patch.dict(sys.modules, stubs_without_ws):
         import interfaces.web_server as ws  # noqa: PLC0415
-
-        # Patch _log_cron_run on the imported module so our spy intercepts calls
-        ws._log_cron_run = _fake_log_cron_run  # type: ignore[attr-defined]
-
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
-        client = TestClient(ws.app, raise_server_exceptions=True)
-        response = client.post("/cron/reflect")
+        # core.reflection is already cached from earlier tests; patch its
+        # run_reflection attribute directly so the route's lazy
+        # `import core.reflection as _reflection` gets the patched attribute
+        # regardless of which module object sys.modules holds.
+        with patch.dict(os.environ, env_patch):
+            with patch("core.reflection.run_reflection", run_reflection_mock):
+                ws._log_cron_run = _fake_log_cron_run  # type: ignore[attr-defined]
+                client = TestClient(ws.app, raise_server_exceptions=True)
+                response = client.post("/cron/reflect")
 
     assert response.status_code == 200, (
         f"Expected 200, got {response.status_code}: {response.text}"
