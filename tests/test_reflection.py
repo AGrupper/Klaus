@@ -36,7 +36,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _install_firestore_mock() -> None:
-    """Install mock google.cloud.firestore into sys.modules if not already present."""
+    """Install mock google.cloud.firestore and related stubs into sys.modules.
+
+    Also stubs googleapiclient and google-auth-oauthlib so that core.tools and
+    core.main can be imported without real Google API libraries being installed.
+    """
     if "google.cloud.firestore" not in sys.modules:
         google_mod = sys.modules.setdefault("google", MagicMock())
         google_cloud_mod = sys.modules.setdefault("google.cloud", MagicMock())
@@ -70,6 +74,17 @@ def _install_firestore_mock() -> None:
 
         sys.modules.setdefault("google.oauth2", MagicMock())
         sys.modules.setdefault("google.oauth2.service_account", MagicMock())
+        sys.modules.setdefault("google.oauth2.credentials", MagicMock())
+        sys.modules.setdefault("google.auth.exceptions", MagicMock())
+        sys.modules.setdefault("google.auth.transport", MagicMock())
+        sys.modules.setdefault("google.auth.transport.requests", MagicMock())
+        sys.modules.setdefault("google_auth_oauthlib", MagicMock())
+        sys.modules.setdefault("google_auth_oauthlib.flow", MagicMock())
+
+        # googleapiclient — imported at module level by core/tools.py
+        sys.modules.setdefault("googleapiclient", MagicMock())
+        sys.modules.setdefault("googleapiclient.errors", MagicMock())
+        sys.modules.setdefault("googleapiclient.discovery", MagicMock())
 
         dotenv_mod = MagicMock()
         dotenv_mod.load_dotenv = MagicMock()
@@ -761,11 +776,21 @@ def test_journal_digest_assembly():
     mock_journal_store = MagicMock()
     mock_journal_store.get_recent.return_value = three_entries
 
+    _orch_env = {
+        "SMART_AGENT_BACKEND": "gemini",
+        "SMART_AGENT_MODEL": "gemini-3-flash",
+        "SMART_AGENT_API_KEY": "test-smart-key",
+        "WORKER_AGENT_BACKEND": "gemini",
+        "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+        "WORKER_AGENT_API_KEY": "test-worker-key",
+    }
+
     # --- Build orchestrator with mocked stores ------------------------------- #
-    with patch("core.main._build_self_state_store", return_value=None):
-        with patch("core.main._build_journal_store", return_value=mock_journal_store):
-            with patch("core.main._load_self_md", return_value=""):
-                orch = AgentOrchestrator()
+    with patch.dict("os.environ", _orch_env):
+        with patch("core.main._build_self_state_store", return_value=None):
+            with patch("core.main._build_journal_store", return_value=mock_journal_store):
+                with patch("core.main._load_self_md", return_value=""):
+                    orch = AgentOrchestrator()
 
     # Introspect the handle_message render step by patching the LLM calls
     # so they return immediately without making real API calls.
