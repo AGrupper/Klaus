@@ -617,7 +617,98 @@ def test_reflection_llm_failure_fallback():
 
 def test_cron_reflect_route():
     """/cron/reflect returns 200; CRON_DEV_BYPASS skips auth; _log_cron_run called. (JOUR-05)"""
-    pytest.skip("implemented in plan 17-03 / 17-04")
+    import os
+    import sys
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    # --- Stub all heavy web_server transitive dependencies BEFORE importing ----
+    # These must be set before 'import interfaces.web_server' so they win at
+    # Python's first import of each module.  We do NOT remove them between tests
+    # because they don't conflict with the Firestore mock already installed by
+    # _install_firestore_mock() above (that mock covers google.cloud.firestore,
+    # this section covers google.auth / telegram / core.main).
+
+    # Re-mock google.auth as a proper module tree so that auth_google.py's
+    # `from google.auth.exceptions import ...` succeeds without a real package.
+    google_auth_mock = MagicMock()
+    google_auth_mock.exceptions = MagicMock()
+    google_auth_mock.exceptions.GoogleAuthError = Exception
+    google_auth_mock.exceptions.RefreshError = Exception
+    sys.modules["google.auth"] = google_auth_mock
+    sys.modules["google.auth.exceptions"] = google_auth_mock.exceptions
+    sys.modules["google.auth.transport"] = MagicMock()
+    sys.modules["google.auth.transport.requests"] = MagicMock()
+    sys.modules["google.oauth2"] = MagicMock()
+    sys.modules["google.oauth2.id_token"] = MagicMock()
+    sys.modules["google.oauth2.service_account"] = MagicMock()
+
+    # Telegram
+    for mod in [
+        "telegram",
+        "telegram.ext",
+        "telegram.error",
+    ]:
+        sys.modules.setdefault(mod, MagicMock())
+
+    # core.main — heavy orchestrator; stub it out
+    sys.modules["core.main"] = MagicMock()
+    sys.modules["interfaces._router"] = MagicMock()
+
+    # Drop any cached web_server import so our fresh stubs apply
+    for key in list(sys.modules.keys()):
+        if "interfaces.web_server" in key or key == "interfaces.web_server":
+            del sys.modules[key]
+
+    # --- Build mocks that the route will call ----------------------------
+    run_reflection_mock = MagicMock()  # synchronous, called via run_in_executor
+    log_cron_run_calls: list = []
+
+    def _fake_log_cron_run(job_id: str, ok: bool) -> None:
+        log_cron_run_calls.append({"job_id": job_id, "ok": ok})
+
+    env_patch = {
+        "CRON_DEV_BYPASS": "true",
+        "GCP_PROJECT_ID": "test-project",
+        "FIRESTORE_DATABASE": "(default)",
+        "TELEGRAM_BOT_TOKEN": "1234:fake",
+        "TELEGRAM_ALLOWED_USER_IDS": "123456",
+        "PINECONE_API_KEY": "fake",
+        "PINECONE_INDEX": "fake-index",
+    }
+
+    # core.reflection module stub — the route does a lazy `import core.reflection`
+    reflection_mod = MagicMock()
+    reflection_mod.run_reflection = run_reflection_mock
+    sys.modules["core.reflection"] = reflection_mod
+
+    with patch.dict(os.environ, env_patch):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        # Patch _log_cron_run on the imported module so our spy intercepts calls
+        ws._log_cron_run = _fake_log_cron_run  # type: ignore[attr-defined]
+
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        client = TestClient(ws.app, raise_server_exceptions=True)
+        response = client.post("/cron/reflect")
+
+    assert response.status_code == 200, (
+        f"Expected 200, got {response.status_code}: {response.text}"
+    )
+    assert response.json() == {"ok": True}, f"Unexpected body: {response.json()}"
+
+    # run_reflection must have been called once (via run_in_executor)
+    run_reflection_mock.assert_called_once()
+    call_args = run_reflection_mock.call_args
+    date_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("target_date")
+    assert date_arg is not None, "run_reflection must be called with a date argument"
+
+    # _log_cron_run("reflect", ok=True) must be recorded
+    reflect_logs = [c for c in log_cron_run_calls if c["job_id"] == "reflect"]
+    assert reflect_logs, "_log_cron_run('reflect', ...) must be called"
+    assert reflect_logs[-1]["ok"] is True, (
+        f"_log_cron_run must be called with ok=True on success, got {reflect_logs}"
+    )
 
 
 def test_journal_digest_assembly():
