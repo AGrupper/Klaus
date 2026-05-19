@@ -331,6 +331,30 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/cron/reflect")
+async def cron_reflect(request: Request) -> JSONResponse:
+    """Daily reflection — gather the day, write a journal entry, evolve self_state.
+
+    Schedule: 0 22 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+    import asyncio as _asyncio
+    import core.reflection as _reflection
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        loop = _asyncio.get_running_loop()
+        await loop.run_in_executor(None, _reflection.run_reflection, today)
+        _log_cron_run("reflect", ok=True)
+    except Exception:
+        _log_cron_run("reflect", ok=False)
+        raise
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/cron/five-fingers-evening")
 async def cron_five_fingers_evening(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler evening tick and run the Five Fingers evening flow.
