@@ -668,6 +668,99 @@ class SelfStateStore:
             logger.warning("SelfStateStore.bootstrap_if_empty() failed — skipping", exc_info=True)
 
 
+class JournalStore:
+    """Daily reflection journal stored in Firestore.
+
+    Collection: journal
+    Document ID: YYYY-MM-DD (Asia/Jerusalem calendar date).
+
+    Each doc stores the 5 LLM reflection fields (summary, mood,
+    current_focus, recent_context, highlights) plus the raw gathered
+    metrics for auditability (message_count, cost_usd,
+    calendar_event_count, tasks_completed, heartbeat_ok).
+
+    Unlike SelfStateStore.set (which uses merge=True to patch), JournalStore.set
+    uses .set() WITHOUT merge=True — each reflection run overwrites the whole doc
+    so a re-run with fewer fields leaves no stale keys (D-12 idempotency).
+    """
+
+    _COLLECTION = "journal"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def get(self, date_str: str) -> dict | None:
+        """Return the journal doc for a date, or None. Never raises.
+
+        Args:
+            date_str: YYYY-MM-DD date key (Asia/Jerusalem calendar date).
+
+        Returns:
+            Dict with all stored fields plus ``date`` == date_str, or None
+            if no entry exists for that date or if Firestore is unreachable.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            data["date"] = snap.id
+            return data
+        except Exception:
+            logger.warning("JournalStore.get(%r) failed", date_str, exc_info=True)
+            return None
+
+    def set(self, date_str: str, entry: dict) -> None:
+        """Overwrite the journal doc for a date. Raises on failure (caller decides).
+
+        Uses .set() WITHOUT merge=True so a re-run for the same date replaces
+        the entire document — no stale keys from an earlier run survive (D-12).
+        Always appends ``date`` and ``updated_at`` SERVER_TIMESTAMP.
+
+        Args:
+            date_str: YYYY-MM-DD date key.
+            entry:    Full journal entry dict (5 LLM fields + 5 raw metrics).
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+        """
+        try:
+            self._col.document(date_str).set(
+                {**entry, "date": date_str, "updated_at": firestore.SERVER_TIMESTAMP}
+            )
+        except Exception:
+            logger.error("JournalStore.set(%r) failed", date_str, exc_info=True)
+            raise
+
+    def get_recent(self, n: int) -> list[dict]:
+        """Return the most-recent n journal docs, newest-first. Returns [] on error.
+
+        Uses stream() + Python sort rather than a Firestore order_by query —
+        single-user, low-volume collection (< a few thousand docs lifetime),
+        so no composite index is needed. Same approach as LLMUsageStore.summary.
+
+        Args:
+            n: Maximum number of entries to return.
+
+        Returns:
+            List of journal dicts (each with a ``date`` field), sorted by date
+            descending, at most n elements. Empty list on any Firestore error.
+        """
+        try:
+            snaps = list(self._col.stream())
+        except Exception:
+            logger.warning("JournalStore.get_recent failed", exc_info=True)
+            return []
+        results = []
+        for snap in snaps:
+            data = snap.to_dict() or {}
+            data["date"] = snap.id
+            results.append(data)
+        results.sort(key=lambda d: d.get("date", ""), reverse=True)
+        return results[:n]
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
