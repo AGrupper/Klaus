@@ -50,81 +50,53 @@
 
 **Requirements:** SELF-01, SELF-02, SELF-03, SELF-04, SELF-05
 
-**Plans:** 2/2 complete
-
-Plans:
-- [x] 15-01-PLAN.md — Create mcp_tools/self_inspect.py with list_own_files, read_own_source, search_own_source
-- [x] 15-02-PLAN.md — Register 3 tools in core/tools.py (all 5 sites) + update prompts/smart_agent.md
-
 **Key files:**
-- `mcp_tools/self_inspect.py` (NEW) — `list_own_files`, `read_own_source`, `search_own_source`
-- `core/tools.py` — register 3 tools at all 5 edit sites (TOOL_SCHEMAS, _HANDLERS, handler functions, SMART_AGENT_DIRECT_TOOLS, WORKER exclusion)
-- `prompts/smart_agent.md` — inform Klaus he can inspect his own source
+- `core/self_inspect.py` (NEW) — `list_files`, `read_source`, `search_source`
+- `core/tools.py` — 3 new direct-call tools: `list_own_files`, `read_own_source`, `search_own_source` (all 5 edit sites)
+- `prompts/smart_agent.md` — `SELF-INSPECTION` section
 
 **Success criteria:**
-1. Klaus asked "how do you work?" calls `read_own_source` on relevant files
-2. `read_own_source('.env')` is denied (returns error, not contents)
-3. `search_own_source("LLMUsageStore")` returns correct file locations
+1. Chat: "what files do you have under core/" → Klaus lists them and answers
+2. Chat: "show me how delegate_to_worker works" → Klaus reads + paraphrases the actual code
+3. Search: "where do we check is_user_authorized?" → grep hits returned with line numbers
 
 ---
 
 ## Phase 16 — Self-Model & State Awareness ✓ Complete 2026-05-18
 
-**Goal:** A detailed, doubt-free manifest of everything Klaus is and can do, injected into every conversation — plus a persistent self-state that survives the 6h conversation reset.
+**Goal:** Klaus carries a stable self-model (SELF.md) plus mutable self-state (Firestore), and can introspect both via `get_self_status`.
 
 **Requirements:** MODEL-01, MODEL-02, MODEL-03, MODEL-04, MODEL-05, MODEL-06
 
-**Plans:** 4/4 complete
-
-Plans:
-- [x] 16-01-PLAN.md — core/self_manifest.py (generate_manifest + _compute_schema_hash) + docs/SELF.md generation + memory/firestore_db.py SelfStateStore
-- [x] 16-02-PLAN.md — core/main.py SELF.md + self_state prompt injection + prompts/smart_agent.md placeholders
-- [x] 16-03-PLAN.md — core/tools.py get_self_status direct tool (all 5 registration sites)
-- [x] 16-04-PLAN.md — core/heartbeat.py SELF.md SHA staleness check + .github/workflows/deploy.yml CI generation step
-
 **Key files:**
-- `core/self_manifest.py` (NEW) — `generate_manifest()` introspects tools + cron routes + channels + models → renders `docs/SELF.md` with git SHA
-- `docs/SELF.md` (GENERATED) — exhaustive capability manifest
-- `memory/firestore_db.py` — new `SelfStateStore` class (singleton `config/self_state` doc)
-- `core/main.py` — inject SELF.md digest + self_state at per-message render step (`:219–222`), stable-first ordering
-- `core/tools.py` — new `get_self_status` direct tool
-- `core/heartbeat.py` — extend `check_code()` to flag stale SELF.md (weekly FYI)
+- `docs/SELF.md` (NEW) — canonical doubt-free identity manifest
+- `memory/firestore_db.py` — new `SelfStateStore` class
+- `core/tools.py` — `get_self_status` direct tool (all 5 edit sites)
+- `core/main.py` — load `SELF.md` once at startup; inject into smart_system; bootstrap self_state
+- `prompts/smart_agent.md` — `{self_md}` + `{self_state}` placeholders
+- `docs/TECHNICAL_PLAN.md` — sub-section "Self-Knowledge & Self-State" + LLM-per-purpose map note
 
 **Success criteria:**
-1. `docs/SELF.md` lists all 9 cron jobs, all tools, all honest limits (Telegram-only, no email send)
-2. Klaus asked "what exactly can you do?" gives exhaustive answer including limits without hallucinating
-3. `get_self_status` returns today's cost + uptime (journal field blank pre-Phase 17)
-4. `docs/SELF.md` SHA/hash check in heartbeat weekly run flags when the file is stale
+1. Chat: "what model are you?" → Klaus answers crisp, no hedging
+2. Chat: "what's on your mind today?" → uses `current_focus` from self_state
+3. `get_self_status` tool returns the current self_state snapshot
+4. self_state bootstrap happens on first startup (config/self_state doc exists with identity_summary)
 
 ---
 
 ## Phase 17 — Reflection & Journal ✓ Complete 2026-05-19
 
-**Goal:** Klaus reviews each day and keeps a journal — the loop that makes the self-model persistent and evolving rather than static.
+**Goal:** Daily reflection cron at 22:00 produces a journal entry, evolves self_state, and persists into Pinecone (with new `kind="self"`).
 
 **Requirements:** JOUR-01, JOUR-02, JOUR-03, JOUR-04, JOUR-05, JOUR-06
 
-**Plans:** 4/4 complete
-
-Plans:
-- [x] 17-01-PLAN.md — Wave 0 test scaffold (tests/test_reflection.py) + JournalStore (firestore_db.py) + "self" kind & remember_self (pinecone_db.py)
-- [x] 17-02-PLAN.md — core/reflection.py run_reflection() orchestrator + prompts/reflection.md (gather, two-tier LLM, JSON parse, D-13 fallback, 3 write targets)
-- [x] 17-03-PLAN.md — /cron/reflect route (web_server.py) + heartbeat staleness entry + docs/SELF.md cron table
-- [x] 17-04-PLAN.md — recall kind param (memory.py + tools.py) + get_self_status journal field + {journal_digest} injection (main.py + smart_agent.md)
-
-**Waves:** W1 = {17-01}; W2 = {17-02}; W3 = {17-03, 17-04} (parallel — no file overlap)
-
 **Key files:**
-- `core/reflection.py` (NEW) — `run_reflection()`: gather day → worker summary + brain reflection call → journal entry + self_state update
-- `prompts/reflection.md` (NEW) — first-person reflection system prompt
-- `memory/firestore_db.py` — new `JournalStore` class (`journal/{date}` docs)
-- `memory/pinecone_db.py` — add `"self"` to `_VALID_KINDS` + `remember_self()` deterministic-id upsert
-- `interfaces/web_server.py` — new `/cron/reflect` route with OIDC auth
-- `core/heartbeat.py` — `"reflect"` entry in `_CRON_MAX_STALENESS_HOURS`
-- `mcp_tools/memory.py` — `MemoryTool.recall` gains a `kinds` param
-- `core/tools.py` — `recall` `kind` param + `get_self_status` journal field
-- `core/main.py` — inject last ~3 journal entries digest at per-message render step
-- `prompts/smart_agent.md` — `{journal_digest}` placeholder
+- `core/reflection.py` (NEW) — `run_reflection()` orchestrator
+- `memory/firestore_db.py` — `JournalStore` class
+- `memory/pinecone_db.py` — extend `upsert_episodic` with `kind` param
+- `interfaces/web_server.py` — `/cron/reflect` route
+- `prompts/reflection.md` (NEW) — first-person reflection prompt
+- `core/main.py` — `{journal_digest}` smart-only placeholder
 
 **Success criteria:**
 1. `POST /cron/reflect` with `CRON_DEV_BYPASS=true` → `journal/{today}` doc created in Firestore
@@ -139,6 +111,21 @@ Plans:
 **Goal:** Klaus decides on his own judgment when to reach out — the headline feature — and the judgment is measured.
 
 **Requirements:** AUTO-01, AUTO-02, AUTO-03, AUTO-04, AUTO-05, AUTO-06, AUTO-07, AUTO-08, AUTO-09, INFRA-01
+
+**Plans:** 9 plans
+
+Plans:
+- [ ] 18-01-followup-outreach-stores-PLAN.md — FollowupStore + OutreachLogStore + python-dateutil (AUTO-03, AUTO-04)
+- [ ] 18-02-followup-tools-PLAN.md — 3 follow-up tools at 15 registration sites + smart_agent.md (AUTO-05)
+- [ ] 18-03-autonomous-prompts-PLAN.md — prompts/autonomous_triage.md + prompts/autonomous.md (AUTO-07)
+- [ ] 18-04-eval-seed-fixtures-PLAN.md — 5 seed fixtures + evals/tick_brain/README.md (AUTO-08)
+- [ ] 18-05-tick-brain-extension-PLAN.md — TickBrain.think system_override + _parse_response topic_key (AUTO-01, AUTO-07)
+- [ ] 18-06-autonomous-orchestrator-PLAN.md — core/autonomous.py 3-layer pipeline + pitfall tests (AUTO-01, AUTO-02, AUTO-03)
+- [ ] 18-07-cron-route-and-heartbeat-PLAN.md — /cron/autonomous-tick + heartbeat staleness entry (AUTO-06)
+- [ ] 18-08-eval-runner-PLAN.md — scripts/eval_tick_brain.py precision/recall scorer (AUTO-09)
+- [ ] 18-09-deployment-docs-PLAN.md — docs/DEPLOYMENT.md 9-cron table + Groq secret + Five Fingers quirk + Firestore index (INFRA-01)
+
+**Waves:** W1 = {18-01, 18-02 (depends on 01), 18-03, 18-04}; W2 = {18-05, 18-06 (depends on 01,02,03,05), 18-07 (depends on 06)}; W3 = {18-08 (depends on 03,04,05,06), 18-09 (depends on 07)}
 
 **Key files:**
 - `core/autonomous.py` (NEW) — `run_autonomous_tick()` with 3-layer design
@@ -178,4 +165,3 @@ Each phase is independently shippable and should be committed atomically.
 
 ---
 *Roadmap created: 2026-05-18*
-*Last updated: 2026-05-19 — Phase 17 complete (Reflection & Journal shipped, JOUR-01–06 verified)*
