@@ -103,6 +103,14 @@ TOOL_SCHEMAS: list[dict] = [
                         "buffer even for workouts."
                     ),
                 },
+                "is_workout": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional boolean. Set to true if the event represents a physical workout or run "
+                        "that requires travel buffers and pre-workout prep blocks. Pass false to suppress "
+                        "them for standard meetings/events. If omitted, uses the automatic keyword heuristic."
+                    ),
+                },
             },
             "required": ["summary", "start_iso", "end_iso"],
         },
@@ -843,6 +851,7 @@ def _handle_create_calendar_event(
     end_iso: str,
     description: str = "",
     travel_minutes_each_way: int | None = None,
+    is_workout: bool | None = None,
 ) -> str:
     """Delegate to GoogleCalendarManager.create_event and serialise the result."""
     result = _get_calendar_tool().create_event(
@@ -851,6 +860,7 @@ def _handle_create_calendar_event(
         end_iso=end_iso,
         description=description,
         travel_minutes_each_way=travel_minutes_each_way,
+        is_workout=is_workout,
     )
     return json.dumps(result)
 

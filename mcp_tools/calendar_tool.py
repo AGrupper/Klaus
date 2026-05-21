@@ -219,13 +219,14 @@ class GoogleCalendarManager:
         end_iso: str,
         description: str = "",
         travel_minutes_each_way: int | None = None,
+        is_workout: bool | None = None,
     ) -> dict:
         """Create a calendar event, automatically applying travel buffers and
         workout prep blocks per the user's personal routines.
 
         Workflow
         --------
-        1. Detect whether the event is a workout via WORKOUT_KEYWORDS.
+        1. Detect whether the event is a workout via WORKOUT_KEYWORDS (if is_workout is None).
         2. Determine travel time: use the explicit argument if supplied,
            otherwise default to 15 min for workouts and 0 for everything else.
         3. Expand the event window by `travel` minutes on each side.
@@ -244,6 +245,8 @@ class GoogleCalendarManager:
                                       Pass 0 to suppress buffering even for
                                       workouts.  If None, defaults to 15 for
                                       workouts and 0 otherwise.
+            is_workout:               Whether the event is a workout. If None,
+                                      dynamic keyword matching is used.
 
         Returns:
             A dict containing:
@@ -265,7 +268,8 @@ class GoogleCalendarManager:
         # -------------------------------------------------------------- #
         # Step 1 — Determine whether this is a workout and set travel.   #
         # -------------------------------------------------------------- #
-        is_workout = any(kw in summary.lower() for kw in WORKOUT_KEYWORDS)
+        if is_workout is None:
+            is_workout = any(kw in summary.lower() for kw in WORKOUT_KEYWORDS)
         if is_workout and summary.lower().startswith("get ready"):
             is_workout = False
 

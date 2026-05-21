@@ -142,6 +142,46 @@ def test_calendar_manager_get_ready_no_workout():
     assert mock_service.events().insert.call_count == 2
 
 
+def test_calendar_manager_is_workout_explicit_overrides():
+    from mcp_tools.calendar_tool import GoogleCalendarManager
+    mock_auth = MagicMock()
+    mock_service = MagicMock()
+    mock_auth.calendar_service.return_value = mock_service
+
+    # Mock service.events().insert().execute()
+    mock_execute = MagicMock(return_value={"id": "dummy-event-id"})
+    mock_insert = MagicMock()
+    mock_insert.execute = mock_execute
+    mock_service.events().insert.return_value = mock_insert
+
+    manager = GoogleCalendarManager(mock_auth)
+
+    # 1. Test is_workout=True explicitly on a non-workout keyword summary (e.g. "Tennis Session")
+    result_true = manager.create_event(
+        summary="Tennis Session",
+        start_iso="2026-05-22T08:00:00+03:00",
+        end_iso="2026-05-22T09:00:00+03:00",
+        is_workout=True
+    )
+    assert "error" not in result_true
+    assert result_true["event_id"] == "dummy-event-id"
+    assert result_true["get_ready_event_id"] == "dummy-event-id"
+    assert mock_service.events().insert.call_count == 2
+
+    # 2. Test is_workout=False explicitly on a workout keyword summary (e.g. "Long Run with Brother")
+    mock_service.events().insert.reset_mock()
+    result_false = manager.create_event(
+        summary="Long Run with Brother",
+        start_iso="2026-05-22T08:00:00+03:00",
+        end_iso="2026-05-22T09:00:00+03:00",
+        is_workout=False
+    )
+    assert "error" not in result_false
+    assert result_false["event_id"] == "dummy-event-id"
+    assert "get_ready_event_id" not in result_false
+    assert mock_service.events().insert.call_count == 1
+
+
 def test_gemini_backend_thought_signature():
     # Construct with dummy model and key
     backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
