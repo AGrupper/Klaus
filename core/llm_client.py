@@ -255,11 +255,17 @@ class _GeminiBackend(_BaseBackend):
                 status_code=getattr(exc, "code", None),
             ) from exc
 
+        import base64
         text: str | None = None
         tool_calls: list[dict] = []
+        thought_sig: bytes | None = None
 
         if response.candidates:
             for part in response.candidates[0].content.parts:
+                # Capture thought_signature if present on the part
+                if hasattr(part, "thought_signature") and part.thought_signature:
+                    thought_sig = part.thought_signature
+
                 # Check for text
                 if hasattr(part, "text") and part.text:
                     text = part.text
@@ -270,6 +276,7 @@ class _GeminiBackend(_BaseBackend):
                         "name": fc.name,
                         "id": fc.name,  # WHY: Gemini has no call IDs; name is unique per turn
                         "input": dict(fc.args),
+                        "thought_signature": base64.b64encode(part.thought_signature).decode("utf-8") if getattr(part, "thought_signature", None) else None
                     })
 
         stop = "tool_use" if tool_calls else "end_turn"
@@ -281,11 +288,13 @@ class _GeminiBackend(_BaseBackend):
             "tool_calls": tool_calls,
             "stop_reason": stop,
             "usage": {"in_tokens": in_tokens, "out_tokens": out_tokens},
+            "thought_signature": base64.b64encode(thought_sig).decode("utf-8") if thought_sig else None
         }
 
     def _convert_messages(self, messages: list[dict]) -> list:
         """Convert Anthropic-format messages to google-genai Content objects."""
         from google.genai import types
+        import base64
 
         contents = []
         for msg in messages:
@@ -304,10 +313,19 @@ class _GeminiBackend(_BaseBackend):
                 block_type = block.get("type")
 
                 if block_type == "text":
-                    parts.append(types.Part(text=block["text"]))
+                    thought_sig_b64 = block.get("thought_signature")
+                    thought_sig_bytes = base64.b64decode(thought_sig_b64) if thought_sig_b64 else None
+                    if thought_sig_bytes:
+                        parts.append(
+                            types.Part(
+                                text=block["text"],
+                                thought_signature=thought_sig_bytes,
+                            )
+                        )
+                    else:
+                        parts.append(types.Part(text=block["text"]))
 
                 elif block_type == "image":
-                    import base64
                     img_data = block["source"]["data"]
                     if isinstance(img_data, str):
                         img_bytes = base64.b64decode(img_data)
@@ -323,12 +341,25 @@ class _GeminiBackend(_BaseBackend):
                 elif block_type == "tool_use":
                     # WHY: Gemini represents outgoing function calls as a Part with
                     # a FunctionCall sub-object, matched by name on the return trip.
-                    parts.append(
-                        types.Part.from_function_call(
-                            name=block["name"],
-                            args=block["input"],
+                    thought_sig_b64 = block.get("thought_signature")
+                    thought_sig_bytes = base64.b64decode(thought_sig_b64) if thought_sig_b64 else None
+                    if thought_sig_bytes:
+                        parts.append(
+                            types.Part(
+                                function_call=types.FunctionCall(
+                                    name=block["name"],
+                                    args=block["input"],
+                                ),
+                                thought_signature=thought_sig_bytes,
+                            )
                         )
-                    )
+                    else:
+                        parts.append(
+                            types.Part.from_function_call(
+                                name=block["name"],
+                                args=block["input"],
+                            )
+                        )
 
                 elif block_type == "tool_result":
                     # WHY: tool_use_id here is the function name (since we use the

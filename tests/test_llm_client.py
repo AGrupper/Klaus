@@ -140,3 +140,54 @@ def test_calendar_manager_get_ready_no_workout():
 
     # Verify that insert was called TWICE (for main event and the prep event)
     assert mock_service.events().insert.call_count == 2
+
+
+def test_gemini_backend_thought_signature():
+    # Construct with dummy model and key
+    backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+
+    # 1. Test text message with thought_signature
+    messages_with_signature = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Hello, I am about to run a tool.",
+                    "thought_signature": "ZW5jcnlwdGVkX3NpZ25hdHVyZQ=="  # base64 for "encrypted_signature"
+                }
+            ]
+        }
+    ]
+
+    gemini_contents = backend._convert_messages(messages_with_signature)
+    assert len(gemini_contents) == 1
+    assert gemini_contents[0].role == "model"
+    assert len(gemini_contents[0].parts) == 1
+    assert gemini_contents[0].parts[0].text == "Hello, I am about to run a tool."
+    assert gemini_contents[0].parts[0].thought_signature == b"encrypted_signature"
+
+    # 2. Test tool_use message with thought_signature
+    messages_with_tool_sig = [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "list_calendar_events",
+                    "name": "list_calendar_events",
+                    "input": {},
+                    "thought_signature": "ZW5jcnlwdGVkX3NpZ25hdHVyZQ=="
+                }
+            ]
+        }
+    ]
+
+    gemini_contents_tool = backend._convert_messages(messages_with_tool_sig)
+    assert len(gemini_contents_tool) == 1
+    assert gemini_contents_tool[0].role == "model"
+    assert len(gemini_contents_tool[0].parts) == 1
+    assert gemini_contents_tool[0].parts[0].function_call is not None
+    assert gemini_contents_tool[0].parts[0].function_call.name == "list_calendar_events"
+    assert gemini_contents_tool[0].parts[0].thought_signature == b"encrypted_signature"
+

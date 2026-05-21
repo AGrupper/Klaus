@@ -403,14 +403,20 @@ class AgentOrchestrator:
             # intermediate text) before the corresponding tool_result messages.
             assistant_content: list[dict] = []
             if response_text:
-                assistant_content.append({"type": "text", "text": response_text})
+                text_block = {"type": "text", "text": response_text}
+                if response.get("thought_signature"):
+                    text_block["thought_signature"] = response["thought_signature"]
+                assistant_content.append(text_block)
             for tc in tool_calls:
-                assistant_content.append({
+                tc_block = {
                     "type": "tool_use",
                     "id": tc["id"],
                     "name": tc["name"],
                     "input": tc["input"],
-                })
+                }
+                if tc.get("thought_signature"):
+                    tc_block["thought_signature"] = tc["thought_signature"]
+                assistant_content.append(tc_block)
             current_messages.append({"role": "assistant", "content": assistant_content})
 
             # Process each tool call and collect results.
