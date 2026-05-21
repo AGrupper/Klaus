@@ -306,6 +306,20 @@ class _GeminiBackend(_BaseBackend):
                 if block_type == "text":
                     parts.append(types.Part(text=block["text"]))
 
+                elif block_type == "image":
+                    import base64
+                    img_data = block["source"]["data"]
+                    if isinstance(img_data, str):
+                        img_bytes = base64.b64decode(img_data)
+                    else:
+                        img_bytes = img_data
+                    parts.append(
+                        types.Part.from_bytes(
+                            data=img_bytes,
+                            mime_type=block["source"]["media_type"],
+                        )
+                    )
+
                 elif block_type == "tool_use":
                     # WHY: Gemini represents outgoing function calls as a Part with
                     # a FunctionCall sub-object, matched by name on the return trip.
@@ -476,14 +490,36 @@ class _OpenAIBackend(_BaseBackend):
                 openai_msgs.append({"role": role, "content": content})
                 continue
 
-            # Content is a list of typed blocks — may contain tool_use or tool_result.
+            # Content is a list of typed blocks — may contain tool_use, tool_result, text, or image.
+            # We accumulate consecutive text and image blocks in a single message's content list to support OpenAI's multimodal format.
+            content_list = []
+            has_media = False
             for block in content:
                 block_type = block.get("type")
 
                 if block_type == "text":
-                    openai_msgs.append({"role": role, "content": block["text"]})
+                    content_list.append({"type": "text", "text": block["text"]})
+
+                elif block_type == "image":
+                    has_media = True
+                    img_data = block["source"]["data"]
+                    media_type = block["source"]["media_type"]
+                    content_list.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{media_type};base64,{img_data}"
+                        }
+                    })
 
                 elif block_type == "tool_use":
+                    if content_list:
+                        if has_media:
+                            openai_msgs.append({"role": role, "content": content_list})
+                        else:
+                            openai_msgs.append({"role": role, "content": content_list if len(content_list) > 1 else content_list[0]["text"]})
+                        content_list = []
+                        has_media = False
+
                     # WHY: OpenAI expects tool calls as a separate message field,
                     # not inside the content array.
                     openai_msgs.append({
@@ -500,6 +536,14 @@ class _OpenAIBackend(_BaseBackend):
                     })
 
                 elif block_type == "tool_result":
+                    if content_list:
+                        if has_media:
+                            openai_msgs.append({"role": role, "content": content_list})
+                        else:
+                            openai_msgs.append({"role": role, "content": content_list if len(content_list) > 1 else content_list[0]["text"]})
+                        content_list = []
+                        has_media = False
+
                     # WHY: OpenAI tool results use role="tool" (not "user") and
                     # reference tool_call_id to match the originating call.
                     openai_msgs.append({
@@ -507,6 +551,12 @@ class _OpenAIBackend(_BaseBackend):
                         "tool_call_id": block["tool_use_id"],
                         "content": str(block.get("content", "")),
                     })
+
+            if content_list:
+                if has_media:
+                    openai_msgs.append({"role": role, "content": content_list})
+                else:
+                    openai_msgs.append({"role": role, "content": content_list if len(content_list) > 1 else content_list[0]["text"]})
 
         return openai_msgs
 

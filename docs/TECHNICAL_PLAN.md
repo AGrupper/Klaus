@@ -31,7 +31,11 @@ We will build the following functional blocks:
 * **Phase 9:** Proactive evening alerts. ✓ Complete — nightly Cloud Scheduler job (`30 21 * * *` Asia/Jerusalem) scans tomorrow's calendar and detects weather conflicts, overloaded days, and travel-time violations. Template-based detection (zero LLM cost on quiet days); Smart Agent composes message when alerts exist. `core/proactive_alerts.py` refactored to use `core/scheduled_message.py` (shared Telegram send + Firestore conversation injection). Cloud Scheduler job: `Klaus-proactive-alerts`.
 * **Phase 10:** Morning briefing. ✓ Complete — Garmin-sync-anchored daily briefing via Telegram. State machine in Firestore (`morning_briefings/{date}`), polled every 10 min by Cloud Scheduler (`*/10 6-10 * * *` Asia/Jerusalem). Data sources: weather, calendar, Gmail, Garmin, TickTick tasks (real-time Open API, replaces Things 3 snapshot). Briefing injected into conversation history as assistant turn. Manual trigger via Smart Agent tool `run_morning_briefing`. Key modules: `core/morning_briefing.py`, `prompts/morning_briefing.md`. Cloud Scheduler job: `Klaus-morning-briefing-tick`.
 * **Phase 11:** Notion integration. ✓ Complete — `mcp_tools/notion_tool.py` (5 tools: search, get_page, query_database, create_page, append_blocks), wired in `core/tools.py`. Internal integration token (`NOTION_API_TOKEN`), no OAuth flow. Read + create/append access. Auth pattern: static token (like `READWISE_TOKEN`).
-* **Phase 12:** Claude Code chat-log ingestion. `core/chat_ingest.py` (parser, chunker, summarizer, batch controller), `prompts/chat_summary.md`, `scripts/upload_claude_logs.{sh,ps1}`. Daily cron at 04:00 Asia/Jerusalem (`/cron/ingest-chats`). Embeds chunks → Pinecone (`kind="chat"`), summarizes sessions → Notion chat-log DB. New tool: `search_chat_history`. Firestore `chat_ingest/state` tracks dedup progress.
+* **Phase 12:** Claude Code chat-log ingestion. ✓ Complete — `core/chat_ingest.py` (parser, chunker, summarizer, batch controller), daily cron at 04:00 Asia/Jerusalem (`/cron/ingest-chats`). Embeds chunks → Pinecone (`kind="chat"`), summarizes sessions → Notion chat-log DB.
+* **Phase 13:** Multi-Source AI Chat Export Ingestion. ✓ Complete — `core/chat_export_ingest.py`, daily cron at 04:30 Asia/Jerusalem (`/cron/ingest-chat-exports`). Ingests ChatGPT, Claude.ai, and Gemini Takeout zips.
+* **Phase 14:** LLM Strategy & Cost Metering. ✓ Complete — Model strategy mapping, dual-model configuration (Gemini brain + DeepSeek worker), usage metering and storage in Firestore (`LLMUsageStore`).
+* **Phase 15:** Multimodal Telegram Photo Support & Get Ready buffer fix. ✓ Complete — `interfaces/_router.py` (caption extraction + photo download), `core/main.py` (in-memory base64 injection), `core/llm_client.py` (native Gemini/OpenAI vision part conversion), and `mcp_tools/calendar_tool.py` (suppress workout travel for `"Get Ready"` events).
+
 
 ## Phase 12 — Claude Code Chat-Log Ingestion
 
@@ -149,3 +153,36 @@ each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table
 Measure everything, cap nothing (explicit user preference). Cost is recorded per call via
 `LLMUsageStore` (Phase 14) and surfaced in `get_self_status` (Phase 16).
 Free models (Groq) return cost=0.0 by design — see `core/pricing.py::compute_cost()`.
+
+## Phase 15 — Multimodal Telegram Photo Support & Get Ready Buffer Fix
+
+### Telegram Photo Vision Ingestion
+To keep conversational context rich while maintaining a lean state layer:
+1. **Telegram Ingestion**:
+   - `telegram_bot.py` is configured with `(filters.TEXT | filters.PHOTO)` in its message handler.
+   - `interfaces/_router.py` downloads the highest resolution file from the Telegram photo array using asynchronous file fetching and stores the byte array in memory.
+   - The caption (`update.message.caption`) serves as the text prompt, fallback to empty string if no caption is provided.
+2. **Dynamic Memory Injections**:
+   - `core/main.py` handles the downstream payload. The orchestrator accepts optional `photo_bytes` and `photo_mime_type`.
+   - At loop execution in `_run_smart_loop()`, we deep-copy the persistent message array.
+   - The photo bytes are encoded to base64 and inserted as an Anthropic-canonical `image` block inside the final `user` turn:
+     ```python
+     {
+         "type": "image",
+         "source": {
+             "type": "base64",
+             "media_type": photo_mime_type,
+             "data": photo_base64,
+         }
+     }
+     ```
+   - By executing a deep copy and only injecting the image block in memory, we avoid storing massive base64 strings in Firestore conversation history, saving substantial read/write overhead and token cost.
+3. **LLM Wire-Format Conversions**:
+   - `core/llm_client.py`'s `_GeminiBackend` catches `image` blocks and compiles them via the `google-genai` SDK using `types.Part.from_bytes(data=img_bytes, mime_type=block["source"]["media_type"])`.
+   - `_OpenAIBackend` accumulates consecutive text and image blocks and maps them into standard OpenAI multimodal list schemas using standard data URIs (`data:{media_type};base64,{img_data}`).
+
+### Get Ready Buffer Recursion Break
+1. **Tool-Level Suppression**:
+   - `mcp_tools/calendar_tool.py`'s `create_event()` intercept checks if the event summary starts with `"Get Ready"` (case-insensitive). If so, it disables `is_workout`, preventing the scheduler from creating nested pre-workout travel/prep buffers.
+2. **Smart Prompt Instruction**:
+   - `prompts/smart_agent.md` clarifies that `"Get Ready"` buffers are automatically generated at the tool-level, explicitly forbidding the Smart Agent from creating travel or preparation blocks manually.

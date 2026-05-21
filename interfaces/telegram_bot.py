@@ -103,7 +103,7 @@ class TelegramBot:
         app.add_handler(CommandHandler("start", self._on_start))
         app.add_handler(CommandHandler("reset", self._on_reset))
         app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message)
+            MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND, self._on_message)
         )
 
         logger.info("Klaus Telegram bot starting (long-poll mode)...")

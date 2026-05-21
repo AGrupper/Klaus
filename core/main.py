@@ -218,12 +218,20 @@ class AgentOrchestrator:
 
         self._journal_store = _build_journal_store()
 
-    def handle_message(self, user_message: str, user_id: int) -> str:
+    def handle_message(
+        self,
+        user_message: str,
+        user_id: int,
+        photo_bytes: bytes | None = None,
+        photo_mime_type: str | None = None,
+    ) -> str:
         """Process one user message through the full dual-model pipeline.
 
         Args:
-            user_message: Raw text from the user interface.
-            user_id: Unique identifier for the user (Telegram ID or similar).
+            user_message:    Raw text from the user interface.
+            user_id:         Unique identifier for the user (Telegram ID or similar).
+            photo_bytes:     Optional raw bytes of an attached photo.
+            photo_mime_type: Optional MIME type of an attached photo.
 
         Returns:
             The agent's final response string, ready to send to the user.
@@ -281,9 +289,20 @@ class AgentOrchestrator:
         messages = self.conversation_manager.get(user_id)
 
         # Run the Smart Agent orchestration loop.
-        response_text = self._run_smart_loop(
-            messages, smart_system, worker_system
-        )
+        if photo_bytes is not None:
+            response_text = self._run_smart_loop(
+                messages,
+                smart_system,
+                worker_system,
+                photo_bytes=photo_bytes,
+                photo_mime_type=photo_mime_type,
+            )
+        else:
+            response_text = self._run_smart_loop(
+                messages,
+                smart_system,
+                worker_system,
+            )
 
         # Persist the Smart Agent's final text response.
         self.conversation_manager.append(user_id, "assistant", response_text)
@@ -293,17 +312,44 @@ class AgentOrchestrator:
     # Smart Agent loop (Gemini 3 Flash)                                   #
     # ------------------------------------------------------------------ #
 
-    def _run_smart_loop(self, messages: list[dict], smart_system: str,
-                        worker_system: str) -> str:
+    def _run_smart_loop(
+        self,
+        messages: list[dict],
+        smart_system: str,
+        worker_system: str,
+        photo_bytes: bytes | None = None,
+        photo_mime_type: str | None = None,
+    ) -> str:
         """Run the Smart Agent tool-use loop until it produces a final text response.
 
         The Smart Agent may call delegate_to_worker one or more times. Each call is
         intercepted here and routed to _run_worker_loop(). Tool results are
         fed back to the Smart Agent so it can reason and respond.
         """
-        # Work on a local copy so the conversation manager's history is not
-        # polluted with intermediate tool_use / tool_result messages.
-        current_messages = list(messages)
+        # Work on a local deep copy so the conversation manager's history is not
+        # polluted with intermediate tool_use / tool_result messages or large image data.
+        import copy
+        current_messages = copy.deepcopy(messages)
+
+        # Inject the photo bytes as base64 into the last user message block if present.
+        if photo_bytes and photo_mime_type and current_messages:
+            last_msg = current_messages[-1]
+            if last_msg.get("role") == "user":
+                import base64
+                photo_base64 = base64.b64encode(photo_bytes).decode("utf-8")
+                user_content = last_msg.get("content")
+                if isinstance(user_content, str):
+                    last_msg["content"] = [
+                        {"type": "text", "text": user_content},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": photo_mime_type,
+                                "data": photo_base64,
+                            }
+                        }
+                    ]
 
         for iteration in range(MAX_TOOL_ITERATIONS):
             try:

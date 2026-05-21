@@ -266,6 +266,8 @@ class GoogleCalendarManager:
         # Step 1 — Determine whether this is a workout and set travel.   #
         # -------------------------------------------------------------- #
         is_workout = any(kw in summary.lower() for kw in WORKOUT_KEYWORDS)
+        if is_workout and summary.lower().startswith("get ready"):
+            is_workout = False
 
         if travel_minutes_each_way is not None:
             travel = travel_minutes_each_way

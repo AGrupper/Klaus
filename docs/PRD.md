@@ -113,3 +113,16 @@ Proactive scanning and Pinecone memory ingestion are deferred to a later phase.
 - Upload zips to GCS with `scripts/upload_chat_export.sh <provider> <zip>` (same bucket, new `chat-exports/` prefix)
 - Monthly TickTick reminder: "Export ChatGPT + Claude + Gemini chats → run `upload_chat_export.sh`"
 
+## §14 — Multimodal Telegram Photo Support & Get Ready Buffer Fix
+
+**Goal:** Enable Klaus to receive photo messages with captions on Telegram and process them with visual reasoning, and resolve a bug causing duplicate calendar travel/prep blocks.
+
+**What it does:**
+- **Telegram Photo Support:** 
+  - Subscribes the Telegram MessageHandler to `(filters.TEXT | filters.PHOTO)`.
+  - Downloads the highest-resolution photo from the update, reads its caption as the text prompt, and passes the photo bytes and MIME type down the routing layer.
+  - Dynamically deep-copies conversation history at runtime and injects an Anthropic-standard `image` block containing base64 data into the last user turn. This prevents database storage bloat in Firestore while permitting the LLM backend to perform vision reasoning.
+  - The Gemini (`google-genai` SDK) and OpenAI client backends parse the image block into their native SDK equivalents (`types.Part.from_bytes` and data URIs respectively).
+- **Get Ready Buffer Fix:**
+  - The Google Calendar tool skips workout classification if the event's summary starts with `"Get Ready"` (case-insensitive). This breaks the infinite recursion bug where "Get Ready" blocks generated new travel/prep blocks recursively.
+  - Updated the Smart Agent system prompt (`prompts/smart_agent.md`) to explicitly clarify that `"Get Ready"` blocks are automatically created by the tool and must not be created manually by Klaus.

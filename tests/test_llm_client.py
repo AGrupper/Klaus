@@ -1,0 +1,142 @@
+"""Unit tests for llm_client backends (Gemini and OpenAI) image block support."""
+import pytest
+from unittest.mock import MagicMock, patch
+from core.llm_client import _GeminiBackend, _OpenAIBackend
+
+
+def test_gemini_backend_convert_messages():
+    # Construct with dummy model and key
+    backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+
+    # 1. Test standard text messages conversion
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"}
+    ]
+    gemini_contents = backend._convert_messages(messages)
+    assert len(gemini_contents) == 2
+    assert gemini_contents[0].role == "user"
+    assert gemini_contents[0].parts[0].text == "hello"
+    assert gemini_contents[1].role == "model"
+    assert gemini_contents[1].parts[0].text == "hi"
+
+    # 2. Test multimodal (text + image) messages conversion
+    messages_with_image = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this image?"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "ZmFrZS1pbWFnZS1kYXRh"  # "fake-image-data"
+                    }
+                }
+            ]
+        }
+    ]
+
+    gemini_contents = backend._convert_messages(messages_with_image)
+
+    assert len(gemini_contents) == 1
+    assert gemini_contents[0].role == "user"
+    assert len(gemini_contents[0].parts) == 2
+    assert gemini_contents[0].parts[0].text == "What is this image?"
+    
+    inline_data = gemini_contents[0].parts[1].inline_data
+    assert inline_data is not None
+    assert inline_data.mime_type == "image/jpeg"
+    assert inline_data.data == b"fake-image-data"
+
+
+def test_openai_backend_convert_messages():
+    backend = _OpenAIBackend("gpt-4o", "fake-api-key")
+
+    # 1. Test text-only conversion
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"}
+    ]
+    openai_msgs = backend._convert_messages(messages, system="You are Klaus")
+    assert len(openai_msgs) == 3
+    assert openai_msgs[0] == {"role": "system", "content": "You are Klaus"}
+    assert openai_msgs[1] == {"role": "user", "content": "hello"}
+    assert openai_msgs[2] == {"role": "assistant", "content": "hi"}
+
+    # 2. Test multimodal (text + image) conversion
+    messages_with_image = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "What is this?"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "ZmFrZS1pbWFnZS1kYXRh"
+                    }
+                }
+            ]
+        }
+    ]
+    openai_msgs = backend._convert_messages(messages_with_image, system=None)
+    assert len(openai_msgs) == 1
+    assert openai_msgs[0]["role"] == "user"
+    assert len(openai_msgs[0]["content"]) == 2
+    assert openai_msgs[0]["content"][0] == {"type": "text", "text": "What is this?"}
+    assert openai_msgs[0]["content"][1] == {
+        "type": "image_url",
+        "image_url": {
+            "url": "data:image/jpeg;base64,ZmFrZS1pbWFnZS1kYXRh"
+        }
+    }
+
+
+def test_calendar_manager_get_ready_no_workout():
+    from mcp_tools.calendar_tool import GoogleCalendarManager
+    mock_auth = MagicMock()
+    mock_service = MagicMock()
+    mock_auth.calendar_service.return_value = mock_service
+
+    # Mock service.events().insert().execute()
+    mock_execute = MagicMock(return_value={"id": "dummy-event-id"})
+    mock_insert = MagicMock()
+    mock_insert.execute = mock_execute
+    mock_service.events().insert.return_value = mock_insert
+
+    manager = GoogleCalendarManager(mock_auth)
+
+    # Test a summary that has workout keyword 'run' but starts with 'Get Ready'
+    # It should not trigger is_workout!
+    result = manager.create_event(
+        summary="Get Ready: Long Run with Brother",
+        start_iso="2026-05-22T08:00:00+03:00",
+        end_iso="2026-05-22T09:00:00+03:00"
+    )
+
+    assert "error" not in result
+    assert result["event_id"] == "dummy-event-id"
+    # It should NOT have created a get_ready_event_id because is_workout was False!
+    assert "get_ready_event_id" not in result
+
+    # Verify that insert was only called ONCE (for the main event, not the prep event)
+    assert mock_service.events().insert.call_count == 1
+
+    # Now test a regular workout event: 'Long Run with Brother'
+    mock_service.events().insert.reset_mock()
+    result_workout = manager.create_event(
+        summary="Long Run with Brother",
+        start_iso="2026-05-22T08:00:00+03:00",
+        end_iso="2026-05-22T09:00:00+03:00"
+    )
+
+    assert "error" not in result_workout
+    assert result_workout["event_id"] == "dummy-event-id"
+    # It SHOULD have created a get_ready_event_id because is_workout was True!
+    assert result_workout["get_ready_event_id"] == "dummy-event-id"
+
+    # Verify that insert was called TWICE (for main event and the prep event)
+    assert mock_service.events().insert.call_count == 2
