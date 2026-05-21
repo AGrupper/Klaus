@@ -180,6 +180,7 @@ To keep conversational context rich while maintaining a lean state layer:
 3. **LLM Wire-Format Conversions**:
    - `core/llm_client.py`'s `_GeminiBackend` catches `image` blocks and compiles them via the `google-genai` SDK using `types.Part.from_bytes(data=img_bytes, mime_type=block["source"]["media_type"])`.
    - `_OpenAIBackend` accumulates consecutive text and image blocks and maps them into standard OpenAI multimodal list schemas using standard data URIs (`data:{media_type};base64,{img_data}`).
+   - **Gemini Thinking Signature Preservation**: To prevent `400 INVALID_ARGUMENT` failures under Gemini thinking models (such as `gemini-3.5-flash`), `_GeminiBackend.chat()` extracts the model's `thought_signature` reasoning state from the response candidate parts, base64-encodes it, and passes it through the unified envelope. The orchestrator preserves this signature on its intermediate `text` and `tool_use` content blocks inside the conversation history, allowing `_convert_messages()` to reconstruct and bind the decoded `thought_signature` bytes back to native `types.Part` objects on the subsequent tool-response turn.
 
 ### Get Ready Buffer Recursion Break
 1. **Tool-Level Suppression**:
