@@ -69,7 +69,11 @@ def _has_practice_today(today: str) -> bool:
     except Exception:
         logger.warning("Five Fingers: calendar fetch failed", exc_info=True)
         return False
-    return any("practice" in (e.get("summary") or "").lower() for e in events)
+        
+    return any(
+        any(k in (e.get("summary") or "").lower() for k in ["practice", "five fingers", "אימון"])
+        for e in events
+    )
 
 
 def _build_stores():

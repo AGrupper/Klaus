@@ -234,6 +234,9 @@ class MemoryStore:
     def _get_genai(self):
         if self._genai is None:
             from google import genai
-            api_key = os.environ["WORKER_AGENT_API_KEY"]
+            # WHY SMART_AGENT_API_KEY: embeddings use Gemini (Google AI Studio).
+            # The worker key is now DeepSeek, so we source the Gemini key
+            # from the smart agent (which is still a Google model).
+            api_key = os.environ["SMART_AGENT_API_KEY"]
             self._genai = genai.Client(api_key=api_key)
         return self._genai

@@ -13,10 +13,14 @@ logger = logging.getLogger(__name__)
 # USD per 1 million tokens.
 # Prices sourced from provider pricing pages as of 2026-05.
 MODEL_PRICING: dict[str, dict[str, float]] = {
-    "gemini-3-flash-preview":    {"input": 0.075, "output": 0.30},
-    "gemini-2.5-flash":          {"input": 0.075, "output": 0.30},
+    # Current roster
+    "gemini-3.5-flash":          {"input": 0.40,  "output": 1.50},
+    "deepseek-v4-flash":         {"input": 0.11,  "output": 0.22},
     "claude-haiku-4-5":          {"input": 0.80,  "output": 4.00},
     "claude-haiku-4-5-20251001": {"input": 0.80,  "output": 4.00},
+    # Legacy models (kept for in-flight log accuracy)
+    "gemini-3-flash-preview":    {"input": 0.075, "output": 0.30},
+    "gemini-2.5-flash":          {"input": 0.075, "output": 0.30},
     # Free models (Groq / open-weight) intentionally absent → 0.0 by design.
     # Unknown models → 0.0 + log once.
 }

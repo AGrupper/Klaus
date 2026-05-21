@@ -8,9 +8,9 @@
     * Pinecone (Free Tier) for unstructured memory/RAG.
 
 ## 2. Model Architecture
-* **Smart Agent (brain):** Gemini 3 Flash Preview (`gemini-3-flash-preview`) — complex reasoning, tool orchestration, conversation. Fallback: Claude Haiku 4.5 (`claude-haiku-4-5`).
-* **Worker Agent (hands):** Gemini 2.5 Flash (`gemini-2.5-flash`) — fast structured JSON output, data fetching, routing.
-* Both backends are abstracted in `core/llm_client.py`; swappable via env vars (`SMART_AGENT_BACKEND`, `SMART_AGENT_MODEL`, etc.).
+* **Smart Agent (brain):** Gemini 3.5 Flash (`gemini-3.5-flash`) — complex reasoning, tool orchestration, conversation. Fallback: Claude Haiku 4.5 (`claude-haiku-4-5`).
+* **Worker Agent (hands):** DeepSeek V4 Flash (`deepseek-v4-flash`) via `openai` backend pointing to `https://api.deepseek.com/v1` — fast structured JSON output, data fetching, routing.
+* Both backends are abstracted in `core/llm_client.py`; swappable via env vars (`SMART_AGENT_BACKEND`, `SMART_AGENT_MODEL`, `WORKER_AGENT_BASE_URL`, etc.).
 
 ## 3. Tool Development Plan (Custom MCPs)
 We will build the following functional blocks:
@@ -130,16 +130,16 @@ each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table
 
 | Purpose | Backend | Model | Env Vars | Notes |
 |---------|---------|-------|----------|-------|
-| Smart Agent (brain) | gemini | gemini-3-flash-preview | SMART_AGENT_BACKEND / MODEL / API_KEY | Orchestration, judgment, crafting responses |
-| Worker Agent (hands) | gemini | gemini-2.5-flash | WORKER_AGENT_BACKEND / MODEL / API_KEY | Tool execution, data gathering, structured JSON |
+| Smart Agent (brain) | gemini | gemini-3.5-flash | SMART_AGENT_BACKEND / MODEL / API_KEY | Orchestration, judgment, crafting responses |
+| Worker Agent (hands) | openai (DeepSeek-compat) | deepseek-v4-flash | WORKER_AGENT_BACKEND / MODEL / API_KEY / BASE_URL | Tool execution, data gathering, structured JSON; base_url=https://api.deepseek.com/v1 |
 | Smart Agent fallback | anthropic | claude-haiku-4-5 | SMART_AGENT_FALLBACK_BACKEND / MODEL / API_KEY | Activated inline on LLMError from brain |
 | Tick-brain | openai (Groq-compat) | qwen3-32b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error |
-| Embeddings | gemini | gemini-embedding-2 | (uses WORKER_AGENT_API_KEY) | AI Studio only — NOT Vertex AI |
+| Embeddings | gemini | gemini-embedding-2 | (uses SMART_AGENT_API_KEY) | AI Studio only — NOT Vertex AI; decoupled from worker key |
 
 ### Model Selection Rationale
 
-- **Gemini 3 Flash** as brain: lower cost than Claude at scale, native tool-use, Google ecosystem
-- **Gemini 2.5 Flash** as worker: fastest structured JSON output, shared API key with brain
+- **Gemini 3.5 Flash** as brain: frontier reasoning at low cost, native tool-use, Google ecosystem
+- **DeepSeek V4 Flash** as worker: $0.11/$0.22 per 1M tokens — 3× cheaper than Gemini Flash, excellent structured JSON, OpenAI-compatible API
 - **Claude Haiku** as fallback: diversity hedge — different provider means different failure modes
 - **Groq/Qwen3-32B** for tick-brain: free tier, 0.5s latency, does not train on data, OpenAI-compatible
 - **gemini-embedding-2** for embeddings: available via AI Studio (NOT Vertex AI — embedding model is AI Studio only)

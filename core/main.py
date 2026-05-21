@@ -1,7 +1,7 @@
 """Agent orchestrator — dual-model coordination logic.
 
-Gemini 3 Flash (Smart Agent) receives every user message, makes all judgment
-calls, and crafts every response. Gemini 2.5 Flash (Worker Agent) executes
+Gemini 3.5 Flash (Smart Agent) receives every user message, makes all judgment
+calls, and crafts every response. DeepSeek V4 Flash (Worker Agent) executes
 tools and gathers data on the Smart Agent's behalf via two delegation paths:
 
   Path A — Delegate + Review:
@@ -153,9 +153,9 @@ def build_conversation_store_from_env() -> ConversationStore:
 class AgentOrchestrator:
     """Coordinates Smart Agent and Worker Agent with optional fallback.
 
-    The Smart Agent (primary: Gemini 3 Flash, fallback: Claude Haiku) receives
+    The Smart Agent (primary: Gemini 3.5 Flash, fallback: Claude Haiku) receives
     every user message, makes judgment calls, and crafts responses.
-    The Worker Agent (Gemini 2.5 Flash) executes tools on the Smart Agent's behalf.
+    The Worker Agent (DeepSeek V4 Flash) executes tools on the Smart Agent's behalf.
 
     If the primary Smart Agent's API returns an error (e.g. overload, outage),
     the orchestrator automatically retries the request using the fallback model.
@@ -177,6 +177,7 @@ class AgentOrchestrator:
             backend=os.environ["WORKER_AGENT_BACKEND"],
             model=os.environ["WORKER_AGENT_MODEL"],
             api_key=os.environ["WORKER_AGENT_API_KEY"],
+            base_url=os.environ.get("WORKER_AGENT_BASE_URL"),
         )
 
         # WHY: fallback Smart Agent is optional — if the env vars are not set,

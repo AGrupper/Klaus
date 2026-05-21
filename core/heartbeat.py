@@ -572,6 +572,7 @@ def _compose_message(signals: list[Signal]) -> str:
             backend=os.environ["WORKER_AGENT_BACKEND"],
             model=os.environ["WORKER_AGENT_MODEL"],
             api_key=os.environ["WORKER_AGENT_API_KEY"],
+            base_url=os.environ.get("WORKER_AGENT_BASE_URL"),
         )
         response = client.chat(
             messages=[{"role": "user", "content": payload}],
