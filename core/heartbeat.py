@@ -114,6 +114,11 @@ _CRON_MAX_STALENESS_HOURS = {
 }
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 
+# Batch-processing crons that should NOT alert when their backlog is fully
+# drained (backlog_done=True in the heartbeat_runs ledger).  When the backlog
+# is empty the cron has nothing to do, so not running is expected — not a fault.
+_CRON_BACKLOG_AWARE: set[str] = {"ingest-chats", "ingest-chat-exports"}
+
 
 def _read_cron_ledger() -> dict:
     """Return {job_id: doc_dict} from the Firestore heartbeat_runs collection."""
@@ -148,6 +153,13 @@ def check_cron_health() -> list[Signal]:
                 remediation=f"Confirm the Cloud Scheduler job for {job_id} exists and is enabled.",
             ))
             continue
+
+        # Backlog-aware jobs: skip staleness check when the backlog is drained.
+        # The pipeline finished all available work; it will resume and clear
+        # the flag automatically when new files appear.
+        if job_id in _CRON_BACKLOG_AWARE and doc.get("backlog_done") is True:
+            continue
+
         last = doc.get("last_run_at")
         if last is not None:
             if last.tzinfo is None:

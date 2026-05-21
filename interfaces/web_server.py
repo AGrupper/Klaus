@@ -270,11 +270,11 @@ async def _verify_cron_request(request: Request) -> None:
         )
 
 
-def _log_cron_run(job_id: str, ok: bool) -> None:
+def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) -> None:
     """Best-effort liveness ledger write for a cron endpoint. Never raises."""
     try:
         from memory.firestore_db import record_cron_run
-        record_cron_run(job_id, ok)
+        record_cron_run(job_id, ok, backlog_done=backlog_done)
     except Exception:
         logger.warning("Failed to record cron run for %s", job_id, exc_info=True)
 
@@ -421,7 +421,7 @@ async def cron_ingest_chats(request: Request) -> JSONResponse:
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _ingest.run_one_batch)
-        _log_cron_run("ingest-chats", ok=True)
+        _log_cron_run("ingest-chats", ok=True, backlog_done=result.get("done"))
         return JSONResponse(content=result)
     except Exception:
         _log_cron_run("ingest-chats", ok=False)
@@ -448,7 +448,7 @@ async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _export_ingest.run_one_batch)
-        _log_cron_run("ingest-chat-exports", ok=True)
+        _log_cron_run("ingest-chat-exports", ok=True, backlog_done=result.get("done"))
         return JSONResponse(content=result)
     except Exception:
         _log_cron_run("ingest-chat-exports", ok=False)

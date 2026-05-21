@@ -40,11 +40,21 @@ def _make_firestore_client(project_id: str, database: str) -> firestore.Client:
     return firestore.Client(project=project_id, database=database)
 
 
-def record_cron_run(job_id: str, ok: bool) -> None:
+def record_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) -> None:
     """Write a liveness ledger entry to heartbeat_runs/{job_id}.
 
     Called once per cron-endpoint invocation. On success, consecutive_failures
     is reset to 0; on failure it is incremented. Never raises.
+
+    Args:
+        job_id:       Stable identifier for the cron job (e.g. "ingest-chats").
+        ok:           True if the endpoint succeeded, False on exception.
+        backlog_done: For batch-processing pipelines: True when the backlog is
+                      fully drained (no remaining work), False when items were
+                      processed but more remain. None for non-batch crons.
+                      When True, the heartbeat suppresses staleness alerts — the
+                      pipeline has nothing to do and doesn't need to run again
+                      until new work appears.
     """
     try:
         from datetime import datetime, timezone
@@ -61,6 +71,8 @@ def record_cron_run(job_id: str, ok: bool) -> None:
             payload["last_ok_at"] = datetime.now(timezone.utc)
         else:
             payload["consecutive_failures"] = firestore.Increment(1)
+        if backlog_done is not None:
+            payload["backlog_done"] = backlog_done
         client.collection("heartbeat_runs").document(job_id).set(payload, merge=True)
     except Exception:
         logger.warning("record_cron_run(%s, ok=%s) failed", job_id, ok, exc_info=True)

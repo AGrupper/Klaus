@@ -385,6 +385,9 @@ def build_auth_manager_from_env() -> GoogleAuthManager:
 
 def _smoke_test() -> int:
     """Authenticate and print the active Gmail address. Exit code 0 on success."""
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+    
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
