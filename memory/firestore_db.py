@@ -958,6 +958,203 @@ class FollowupStore:
             raise
 
 
+class OutreachLogStore:
+    """Per-day record of autonomous outreach sends for repeat-suppression context.
+
+    Schema (collection: ``outreach_log/{YYYY-MM-DD}``):
+        date: str                   # YYYY-MM-DD (also the doc id)
+        entries: list[dict]         # each entry = {topic_key, time, draft, final, tick_index}
+        updated_at: SERVER_TIMESTAMP  # doc-level only — set by append(), NOT inside entries
+
+    D-07 — `topic_key` comes from the tick-brain JSON output.
+    D-09 — daily reset: each new date key is a fresh document; no cross-day carryover.
+    D-10 — written only after `send_and_inject` succeeds (caller responsibility).
+
+    Reads (`get_today`, `topics_today`) never raise — they return `[]` on
+    Firestore error so the next tick can keep ticking. Writes (`append`)
+    re-raise after logging so the caller can decide whether to abort.
+
+    Phase 18 — AUTO-03.
+
+    NOTE 2 — DO NOT include ``firestore.SERVER_TIMESTAMP`` (or any other
+    sentinel value) inside the ``entry`` dict you pass to ``append()``.
+    ``ArrayUnion`` compares list elements by deep equality, and each
+    ``SERVER_TIMESTAMP`` sentinel is a freshly allocated object — so two
+    ticks emitting the "same" entry with embedded sentinels would NOT
+    de-duplicate, defeating the atomic-append-without-duplicates semantic.
+    Keep ``updated_at`` at the document level (handled inside ``append``)
+    and use static ISO strings (``"time": "HH:MM"``) inside entries.
+    """
+
+    _COLLECTION = "outreach_log"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            database:   Firestore database name (defaults to "(default)").
+        """
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def append(self, date_str: str, entry: dict) -> None:
+        """Atomically append `entry` to today's outreach_log doc.
+
+        Uses ``firestore.ArrayUnion([entry])`` with ``merge=True`` so
+        concurrent ticks cannot clobber each other and so the doc is
+        created on the first call of the day without a separate `set`.
+
+        Args:
+            date_str: YYYY-MM-DD (Israel-time calendar date — same key the
+                autonomous tick uses for the current day's outreach context).
+            entry:    Per-send record. Recommended shape:
+                ``{"topic_key": str, "time": "HH:MM", "draft": str,
+                   "final": str, "tick_index": int}``
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+
+        NOTE 2 — ``entry`` MUST NOT contain ``firestore.SERVER_TIMESTAMP``
+        sentinels. ArrayUnion's deep-equality comparison treats each sentinel
+        object as distinct, which breaks the atomic-append-without-duplicates
+        semantic that the autonomous engine relies on for repeat-suppression.
+        Use static ISO strings (e.g. ``"time": "14:20"``) inside entries.
+        The doc-level ``updated_at`` set below is the only place
+        SERVER_TIMESTAMP appears.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "entries": firestore.ArrayUnion([entry]),
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("OutreachLogStore.append(%r) failed", date_str, exc_info=True)
+            raise
+
+    def get_today(self, date_str: str) -> list[dict]:
+        """Return today's `entries` list. Never raises.
+
+        Args:
+            date_str: YYYY-MM-DD calendar date.
+
+        Returns:
+            The list of entry dicts. Empty list when the doc does not exist
+            OR when Firestore is unreachable.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return []
+            data = snap.to_dict() or {}
+            return list(data.get("entries") or [])
+        except Exception:
+            logger.warning("OutreachLogStore.get_today(%r) failed", date_str, exc_info=True)
+            return []
+
+    def topics_today(self, date_str: str) -> list[str]:
+        """Return today's list of `topic_key` strings, in append order. Never raises.
+
+        Used by the tick-brain triage prompt (D-06: informative
+        repeat-suppression — Klaus is *told* what was already raised today
+        but is not blocked from re-raising).
+
+        Args:
+            date_str: YYYY-MM-DD calendar date.
+
+        Returns:
+            List of `topic_key` strings. Empty list when the doc does not exist.
+            Entries without a `topic_key` field are skipped silently.
+        """
+        entries = self.get_today(date_str)
+        return [str(e.get("topic_key", "")) for e in entries if e.get("topic_key")]
+
+
+class TickLogStore:
+    """Per-tick snapshot writer — supports retroactive eval-fixture labeling.
+
+    Schema (collection: ``tick_logs/{YYYY-MM-DD}/ticks/{HH:MM}``):
+        captured_at: str           # ISO-8601 UTC — when this tick was logged
+        situation_snapshot: dict   # gather_situation output (with 'empty' stripped)
+        decision_trail: dict       # run_autonomous_tick decision dict
+
+    Best-effort writes: **never raises**. This matches Plan 06's contract
+    that ``_write_tick_log`` must never abort the tick. Used downstream by
+    the retroactive-labeling workflow documented in
+    ``evals/tick_brain/README.md`` (Plan 04) — over a week of live ticks,
+    ~25 snapshots become labeled fixtures for the judgment eval (D-21).
+
+    Phase 18 — D-21 (Claude's discretion: per-tick logging for eval fixture growth).
+
+    NOTE 1 — added in Plan 01 (rather than calling ``_make_firestore_client``
+    directly from Plan 06's ``_write_tick_log``) to keep the
+    JournalStore/SelfStateStore/FollowupStore/OutreachLogStore
+    wrapper-class pattern consistent across stores. Plan 06's executor
+    should ``from memory.firestore_db import TickLogStore`` and call
+    ``TickLogStore(project_id, database).write(...)`` rather than reach
+    into the private ``_make_firestore_client`` helper.
+    """
+
+    _COLLECTION = "tick_logs"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            database:   Firestore database name (defaults to "(default)").
+        """
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def write(self, date_str: str, tick_time: str,
+              situation: dict, decision: dict) -> None:
+        """Write one tick's snapshot. Best-effort — swallows all exceptions.
+
+        Writes to ``tick_logs/{date_str}/ticks/{tick_time}`` so each day's
+        ticks live under a single top-level date doc (cheap retention prune
+        in the future — drop the whole date doc).
+
+        Args:
+            date_str:  YYYY-MM-DD (Israel time) — top-level doc id under tick_logs.
+            tick_time: HH:MM (Israel time) — sub-collection doc id under ticks/.
+            situation: ``gather_situation()`` output (Plan 06). The ``empty``
+                flag is stripped before persistence — it's transient
+                bookkeeping, not part of the eval fixture.
+            decision:  ``run_autonomous_tick()`` decision trail dict (Plan 06).
+
+        Returns:
+            None always. Errors are logged at WARNING and swallowed so the
+            calling tick can continue. **This is the only store method in
+            this module that does not re-raise on write failure** — matches
+            Plan 06's "_write_tick_log never raises" contract.
+        """
+        # Inline import keeps the class loadable when google.cloud.firestore
+        # is mocked at sys.modules level (test pattern). Same convention as
+        # FollowupStore.add.
+        from datetime import datetime, timezone
+
+        try:
+            (self._col
+                .document(date_str)
+                .collection("ticks")
+                .document(tick_time)
+                .set({
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                    "situation_snapshot": {
+                        k: v for k, v in situation.items() if k != "empty"
+                    },
+                    "decision_trail": decision,
+                }))
+        except Exception:
+            logger.warning(
+                "TickLogStore.write(%r, %r) failed (non-fatal)",
+                date_str, tick_time, exc_info=True,
+            )
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
