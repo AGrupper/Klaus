@@ -99,31 +99,46 @@ class TickBrain:
             self._fallback_model  = None
 
     def think(self, prompt: str,
-              tools: list[dict] | None = None) -> dict:
+              tools: list[dict] | None = None,
+              system_override: str | None = None) -> dict:
         """Run a judgment pass over the given prompt.
 
         Args:
             prompt: A plain-text description of the situation to evaluate.
             tools:  Optional tool schemas (passed through to LLMClient; usually None for tick).
+            system_override: When set, replaces _TICK_SYSTEM_PROMPT for this call
+                (e.g., autonomous tick passes prompts/autonomous_triage.md).
+                Also flips purpose from 'tick' to 'tick_autonomous' for cost
+                metering granularity (Phase 18 D-04).
+
+        Purpose-string layering (WARNING 1 — preserves Phase 14 INFRA-02 visibility):
+            override=None  -> primary 'tick',            fallback 'tick_fallback'
+            override=...   -> primary 'tick_autonomous', fallback 'tick_autonomous_fallback'
 
         Returns:
             A dict with:
                 should_act (bool):  Whether the situation warrants action.
                 reason     (str):   One-sentence explanation.
                 draft      (str):   Optional message draft (only when should_act=True).
+                topic_key  (str):   Optional outreach category slug (autonomous path; D-07).
 
             On any failure, returns safe mode: {should_act: False, reason: <failure_type>}.
         """
         messages = [{"role": "user", "content": prompt}]
+        active_system = system_override if system_override is not None else _TICK_SYSTEM_PROMPT
+        # WARNING 1 fix — layered purpose strings keep 'tick_fallback' visible
+        # in LLMUsageStore for Phase 14 INFRA-02 heartbeat-fallback-rate metrics.
+        primary_purpose = "tick_autonomous" if system_override is not None else "tick"
+        fallback_purpose = primary_purpose + "_fallback"
 
         # Try primary (Groq).
         response = None
         try:
             response = self._client.chat(
                 messages,
-                system=_TICK_SYSTEM_PROMPT,
+                system=active_system,
                 tools=tools,
-                purpose="tick",
+                purpose=primary_purpose,
             )
         except LLMError as exc:
             logger.warning(
@@ -141,9 +156,9 @@ class TickBrain:
                 logger.info("tick-brain: retrying with fallback (%s)", self._fallback_model)
                 response = self._fallback_client.chat(
                     messages,
-                    system=_TICK_SYSTEM_PROMPT,
+                    system=active_system,
                     tools=tools,
-                    purpose="tick_fallback",
+                    purpose=fallback_purpose,
                 )
             except LLMError as exc:
                 logger.error("tick-brain: fallback also failed: %s", exc)
@@ -183,4 +198,9 @@ class TickBrain:
         }
         if "draft" in data and data["draft"]:
             result["draft"] = str(data["draft"])
+        # D-07 — pass through topic_key for autonomous tick repeat-suppression.
+        # Falsy values (empty string, None) treated as missing; downstream
+        # (core/autonomous.py) synthesises a fallback slug when absent.
+        if "topic_key" in data and data["topic_key"]:
+            result["topic_key"] = str(data["topic_key"])
         return result
