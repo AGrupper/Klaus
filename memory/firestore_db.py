@@ -773,6 +773,191 @@ class JournalStore:
         return results[:n]
 
 
+class FollowupStore:
+    """Persists scheduled follow-ups for Klaus's self-managed check-backs.
+
+    Schema (collection: ``followups/{id}``):
+        id: str                # doc-id (uuid4 hex)
+        due_at: str            # ISO-8601 UTC — when the follow-up fires
+        note: str              # human-readable reminder text
+        created_at: str        # ISO-8601 UTC — when scheduled
+        status: str            # 'pending' | 'done' | 'cancelled'
+        defer_count: int       # incremented each time Klaus defers; force-fire at >=3
+        origin: str            # 'user_chat' (user asked) | 'klaus_self' (Klaus scheduled himself)
+
+    Reads (`list_due`, `list_pending`) never raise — they return `[]` on
+    Firestore error so the autonomous tick (Plan 06) can keep running even
+    when Firestore is briefly unreachable. Writes (`add`, `mark_done`,
+    `cancel`, `defer`) re-raise after logging so the caller can decide.
+
+    Phase 18 — AUTO-04, D-12/D-13/D-14/D-15.
+    """
+
+    _COLLECTION = "followups"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            database:   Firestore database name (defaults to "(default)").
+        """
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def add(self, due_at: str, note: str, origin: str = "user_chat") -> dict:
+        """Insert a new pending follow-up.
+
+        Args:
+            due_at: ISO-8601 UTC timestamp string. Caller is responsible for
+                converting NL inputs to ISO via `dateutil.parser` (see Plan 02).
+            note:   Human-readable reminder text.
+            origin: 'user_chat' (user asked Klaus to remind them) or
+                'klaus_self' (Klaus scheduled this himself mid-conversation).
+
+        Returns:
+            ``{"id": <uuid4 hex>, "due_at": <due_at>}`` so the caller can echo
+            confirmation back to the user.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+        """
+        # Inline imports keep the class loadable when running unit tests that
+        # mock google.cloud.firestore at the sys.modules level — matches
+        # JournalStore/SelfStateStore convention in this module.
+        import uuid
+        from datetime import datetime, timezone
+
+        fid = uuid.uuid4().hex
+        doc = {
+            "id": fid,
+            "due_at": due_at,
+            "note": note,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "pending",
+            "defer_count": 0,
+            "origin": origin,
+        }
+        try:
+            self._col.document(fid).set(doc)
+        except Exception:
+            logger.error("FollowupStore.add failed (note=%r)", note, exc_info=True)
+            raise
+        return {"id": fid, "due_at": due_at}
+
+    def list_due(self, now_iso: str) -> list[dict]:
+        """Return pending follow-ups whose `due_at <= now_iso`. Never raises.
+
+        Used by `run_autonomous_tick` (Plan 06) every 20 min to detect
+        follow-ups that should fire on this tick.
+
+        NOTE: Firestore requires a composite index on (status, due_at) for
+        this query — to be created on first deploy (documented in Plan 09
+        DEPLOYMENT.md, §Firestore Composite Indexes).
+
+        Args:
+            now_iso: Current time as an ISO-8601 UTC string.
+
+        Returns:
+            List of follow-up dicts. Empty list if no docs match or Firestore
+            is unreachable.
+        """
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        try:
+            snaps = (
+                self._col
+                .where(filter=FieldFilter("status", "==", "pending"))
+                .where(filter=FieldFilter("due_at", "<=", now_iso))
+                .stream()
+            )
+            return [s.to_dict() for s in snaps]
+        except Exception:
+            logger.warning("FollowupStore.list_due failed", exc_info=True)
+            return []
+
+    def list_pending(self) -> list[dict]:
+        """Return all status='pending' follow-ups regardless of due_at. Never raises.
+
+        Used by the `list_followups` direct tool (Plan 02) so Klaus can show
+        the user every outstanding check-back, not just the ones due now.
+
+        Returns:
+            List of follow-up dicts. Empty list on Firestore error.
+        """
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        try:
+            snaps = (
+                self._col
+                .where(filter=FieldFilter("status", "==", "pending"))
+                .stream()
+            )
+            return [s.to_dict() for s in snaps]
+        except Exception:
+            logger.warning("FollowupStore.list_pending failed", exc_info=True)
+            return []
+
+    def mark_done(self, fid: str) -> None:
+        """Mark a follow-up complete. Raises on Firestore error.
+
+        Args:
+            fid: Follow-up document ID (uuid4 hex).
+        """
+        try:
+            self._col.document(fid).update({"status": "done"})
+        except Exception:
+            logger.error("FollowupStore.mark_done(%r) failed", fid, exc_info=True)
+            raise
+
+    def cancel(self, fid: str) -> bool:
+        """Cancel a follow-up. Idempotent — re-cancelling a cancelled doc still returns True.
+
+        Args:
+            fid: Follow-up document ID.
+
+        Returns:
+            True if the doc exists (and has been transitioned to 'cancelled');
+            False only if the doc does not exist. Re-cancelling an already-
+            cancelled doc returns True (D-15: cancel is idempotent).
+
+        Raises:
+            Exception: On any non-existence Firestore error (logged + re-raised).
+        """
+        try:
+            snap = self._col.document(fid).get()
+            if not snap.exists:
+                return False
+            self._col.document(fid).update({"status": "cancelled"})
+            return True
+        except Exception:
+            logger.error("FollowupStore.cancel(%r) failed", fid, exc_info=True)
+            raise
+
+    def defer(self, fid: str, new_due_at: str) -> None:
+        """Push the follow-up's `due_at` forward and increment `defer_count`.
+
+        D-14: After `defer_count >= 3` the orchestrator force-fires on the
+        next due tick — Klaus can't punt forever. Incrementing atomically
+        via `firestore.Increment(1)` so concurrent ticks don't clobber each
+        other.
+
+        Args:
+            fid:        Follow-up document ID.
+            new_due_at: New ISO-8601 UTC `due_at` timestamp.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+        """
+        try:
+            self._col.document(fid).update({
+                "due_at": new_due_at,
+                "defer_count": firestore.Increment(1),
+            })
+        except Exception:
+            logger.error("FollowupStore.defer(%r) failed", fid, exc_info=True)
+            raise
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
