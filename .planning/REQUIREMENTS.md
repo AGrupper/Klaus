@@ -58,8 +58,8 @@
 
 - [ ] **AUTO-01**: `run_autonomous_tick()` implements the 3-layer design: Layer 0 (free context gather), Layer 1 (tick-brain judgment), Layer 2 (main-brain composition, only on escalation)
 - [ ] **AUTO-02**: `gather_situation()` fetches calendar, TickTick, unread email count, follow-ups, hours-since-contact, recent journal, and today's outreach log
-- [ ] **AUTO-03**: Repeat-suppression: `outreach_log/{date}` records every escalated send; tick-brain is informed of what was already raised today
-- [ ] **AUTO-04**: `FollowupStore` stores scheduled follow-ups (`followups` collection: `{due_at, note, created_at, done}`)
+- [x] **AUTO-03**: Repeat-suppression: `outreach_log/{date}` records every escalated send; tick-brain is informed of what was already raised today (store-layer complete Phase 18-01; wiring in Phase 18-06)
+- [x] **AUTO-04**: `FollowupStore` stores scheduled follow-ups (`followups` collection: `{due_at, note, created_at, done}`)
 - [ ] **AUTO-05**: `schedule_followup(when, note)` direct tool lets Klaus schedule his own check-backs mid-conversation
 - [ ] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *`
 - [ ] **AUTO-07**: `prompts/autonomous_triage.md` (tick-brain) and `prompts/autonomous.md` (main-brain) created with wide-latitude framing
@@ -118,8 +118,8 @@
 | JOUR-06 | Phase 17 | Complete ✓ 2026-05-19 |
 | AUTO-01 | Phase 18 | Pending |
 | AUTO-02 | Phase 18 | Pending |
-| AUTO-03 | Phase 18 | Pending |
-| AUTO-04 | Phase 18 | Pending |
+| AUTO-03 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-01: store-layer) |
+| AUTO-04 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-01) |
 | AUTO-05 | Phase 18 | Pending |
 | AUTO-06 | Phase 18 | Pending |
 | AUTO-07 | Phase 18 | Pending |
