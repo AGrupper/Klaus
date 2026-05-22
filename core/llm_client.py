@@ -540,6 +540,47 @@ class _OpenAIBackend(_BaseBackend):
                 openai_msgs.append(openai_msg)
                 continue
 
+            if role == "assistant":
+                text_blocks = []
+                image_blocks = []
+                tool_calls = []
+                for block in content:
+                    block_type = block.get("type")
+                    if block_type == "text":
+                        text_blocks.append(block["text"])
+                    elif block_type == "image":
+                        img_data = block["source"]["data"]
+                        media_type = block["source"]["media_type"]
+                        image_blocks.append({
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media_type};base64,{img_data}"
+                            }
+                        })
+                    elif block_type == "tool_use":
+                        tool_calls.append({
+                            "id": block["id"],
+                            "type": "function",
+                            "function": {
+                                "name": block["name"],
+                                "arguments": json.dumps(block["input"]),
+                            },
+                        })
+                
+                openai_content = None
+                if image_blocks:
+                    openai_content = [{"type": "text", "text": t} for t in text_blocks] + image_blocks
+                elif text_blocks:
+                    openai_content = "\n".join(text_blocks)
+                
+                openai_msg = {"role": "assistant", "content": openai_content}
+                if tool_calls:
+                    openai_msg["tool_calls"] = tool_calls
+                if reasoning_content:
+                    openai_msg["reasoning_content"] = reasoning_content
+                openai_msgs.append(openai_msg)
+                continue
+
             # Content is a list of typed blocks — may contain tool_use, tool_result, text, or image.
             # We accumulate consecutive text and image blocks in a single message's content list to support OpenAI's multimodal format.
             content_list = []
@@ -569,10 +610,6 @@ class _OpenAIBackend(_BaseBackend):
                         else:
                             openai_msg["content"] = content_list if len(content_list) > 1 else content_list[0]["text"]
                         
-                        if role == "assistant" and reasoning_content:
-                            openai_msg["reasoning_content"] = reasoning_content
-                            reasoning_content = None  # Avoid adding it multiple times
-                        
                         openai_msgs.append(openai_msg)
                         content_list = []
                         has_media = False
@@ -591,9 +628,6 @@ class _OpenAIBackend(_BaseBackend):
                             },
                         }],
                     }
-                    if reasoning_content:
-                        tool_msg["reasoning_content"] = reasoning_content
-                        reasoning_content = None
                     openai_msgs.append(tool_msg)
 
                 elif block_type == "tool_result":
@@ -603,10 +637,6 @@ class _OpenAIBackend(_BaseBackend):
                             openai_msg["content"] = content_list
                         else:
                             openai_msg["content"] = content_list if len(content_list) > 1 else content_list[0]["text"]
-                        
-                        if role == "assistant" and reasoning_content:
-                            openai_msg["reasoning_content"] = reasoning_content
-                            reasoning_content = None
                         
                         openai_msgs.append(openai_msg)
                         content_list = []
@@ -626,10 +656,6 @@ class _OpenAIBackend(_BaseBackend):
                     openai_msg["content"] = content_list
                 else:
                     openai_msg["content"] = content_list if len(content_list) > 1 else content_list[0]["text"]
-                
-                if role == "assistant" and reasoning_content:
-                    openai_msg["reasoning_content"] = reasoning_content
-                    reasoning_content = None
                 
                 openai_msgs.append(openai_msg)
 

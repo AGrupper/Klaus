@@ -126,16 +126,12 @@ def test_openai_backend_convert_messages_with_reasoning_content():
         }
     ]
     openai_msgs = backend._convert_messages(messages_with_tools, system=None)
-    assert len(openai_msgs) == 3
+    assert len(openai_msgs) == 2
     assert openai_msgs[0] == {"role": "user", "content": "run tool"}
     assert openai_msgs[1] == {
         "role": "assistant",
         "content": "I will run the tool now.",
-        "reasoning_content": "let's run a tool"
-    }
-    assert openai_msgs[2] == {
-        "role": "assistant",
-        "content": None,
+        "reasoning_content": "let's run a tool",
         "tool_calls": [{
             "id": "call_123",
             "type": "function",
