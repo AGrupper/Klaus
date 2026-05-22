@@ -32,6 +32,7 @@ uvicorn[standard]>=0.30            # ASGI server for FastAPI
 
 # --- Runtime utilities ---
 python-dotenv>=1.0
+python-dateutil>=2.8.2             # NL datetime parse for schedule_followup (D-12)
 requests>=2.32
 tzdata>=2024.1                     # Timezone database for zoneinfo (needed on Linux/Cloud Run)
 
