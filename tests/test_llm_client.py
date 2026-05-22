@@ -95,6 +95,58 @@ def test_openai_backend_convert_messages():
     }
 
 
+def test_openai_backend_convert_messages_with_reasoning_content():
+    backend = _OpenAIBackend("gpt-4o", "fake-api-key")
+
+    # 1. Test simple text message with reasoning_content
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi", "reasoning_content": "thinking..."}
+    ]
+    openai_msgs = backend._convert_messages(messages, system=None)
+    assert len(openai_msgs) == 2
+    assert openai_msgs[0] == {"role": "user", "content": "hello"}
+    assert openai_msgs[1] == {"role": "assistant", "content": "hi", "reasoning_content": "thinking..."}
+
+    # 2. Test assistant message with tool calls and reasoning_content
+    messages_with_tools = [
+        {"role": "user", "content": "run tool"},
+        {
+            "role": "assistant",
+            "reasoning_content": "let's run a tool",
+            "content": [
+                {"type": "text", "text": "I will run the tool now."},
+                {
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "recall",
+                    "input": {"query": "test"}
+                }
+            ]
+        }
+    ]
+    openai_msgs = backend._convert_messages(messages_with_tools, system=None)
+    assert len(openai_msgs) == 3
+    assert openai_msgs[0] == {"role": "user", "content": "run tool"}
+    assert openai_msgs[1] == {
+        "role": "assistant",
+        "content": "I will run the tool now.",
+        "reasoning_content": "let's run a tool"
+    }
+    assert openai_msgs[2] == {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "call_123",
+            "type": "function",
+            "function": {
+                "name": "recall",
+                "arguments": '{"query": "test"}'
+            }
+        }]
+    }
+
+
 def test_calendar_manager_get_ready_no_workout():
     from mcp_tools.calendar_tool import GoogleCalendarManager
     mock_auth = MagicMock()

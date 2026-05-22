@@ -434,7 +434,11 @@ class AgentOrchestrator:
                 if tc.get("thought_signature"):
                     tc_block["thought_signature"] = tc["thought_signature"]
                 assistant_content.append(tc_block)
-            current_messages.append({"role": "assistant", "content": assistant_content})
+            
+            assistant_msg = {"role": "assistant", "content": assistant_content}
+            if response.get("reasoning_content"):
+                assistant_msg["reasoning_content"] = response["reasoning_content"]
+            current_messages.append(assistant_msg)
 
             # Process each tool call and collect results.
             tool_results: list[dict] = []
@@ -543,7 +547,11 @@ class AgentOrchestrator:
                     "name": tc["name"],
                     "input": tc["input"],
                 })
-            worker_messages.append({"role": "assistant", "content": worker_assistant_content})
+            
+            worker_assistant_msg = {"role": "assistant", "content": worker_assistant_content}
+            if response.get("reasoning_content"):
+                worker_assistant_msg["reasoning_content"] = response["reasoning_content"]
+            worker_messages.append(worker_assistant_msg)
 
             # Execute tools and collect results.
             worker_tool_results: list[dict] = []
