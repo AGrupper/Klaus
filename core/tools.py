@@ -45,6 +45,10 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "read_own_source",
     "search_own_source",
     "get_self_status",
+    # Phase 18 — self-scheduled follow-ups (D-15 / AUTO-05)
+    "schedule_followup",
+    "list_followups",
+    "cancel_followup",
 })
 
 # ------------------------------------------------------------------ #
@@ -673,6 +677,43 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "schedule_followup",
+        "description": (
+            "Schedule a self-managed check-back. You will be reminded at the chosen "
+            "time and may polish, send, or defer at that point. `when` accepts ISO 8601 "
+            "('2026-05-21T15:00:00+00:00') or natural language ('tomorrow 3pm', 'next monday 10am'). "
+            "Call this directly — do NOT delegate to the worker."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "when": {"type": "string", "description": "ISO 8601 or natural-language datetime."},
+                "note": {"type": "string", "description": "Reminder text — what is this check-back about."},
+            },
+            "required": ["when", "note"],
+        },
+    },
+    {
+        "name": "list_followups",
+        "description": (
+            "List your pending self-scheduled check-backs. Returns id, due_at, note, defer_count "
+            "for each. Cancelled and done follow-ups are excluded. Call directly — no worker delegation."
+        ),
+        "input_schema": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "cancel_followup",
+        "description": (
+            "Cancel a previously scheduled follow-up by id. Idempotent — calling on an already-"
+            "cancelled or already-done follow-up is safe. Returns {ok: bool}. Call directly."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "Follow-up id from list_followups."}},
+            "required": ["id"],
+        },
+    },
+    {
         "name": "delegate_to_worker",
         "description": (
             "Delegate a task to your worker agent (Gemini Flash) for tool execution "
@@ -717,6 +758,10 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "read_own_source",
         "search_own_source",
         "get_self_status",
+        # Phase 18 — self-scheduled follow-ups (brain-direct only)
+        "schedule_followup",
+        "list_followups",
+        "cancel_followup",
     }
 ]
 
@@ -1201,6 +1246,94 @@ def _handle_get_self_status() -> str:
 
 
 # ------------------------------------------------------------------ #
+# Phase 18 — self-scheduled follow-ups (AUTO-05, D-12/D-15).         #
+# ------------------------------------------------------------------ #
+
+def _handle_schedule_followup(when: str, note: str) -> str:
+    """Schedule a self-managed follow-up. ISO 8601 preferred; falls back to
+    dateutil for natural-language strings (D-12).
+
+    WARNING 7 fix — ImportError is caught explicitly. If Plan 01's
+    requirements.txt update did not deploy (Cloud Run on a stale image, or
+    a dev env without `python-dateutil` synced), the
+    `from dateutil import parser` statement raises ModuleNotFoundError.
+    Without catching it here, the chat surfaces a 500. With the catch, the
+    user gets a structured `could_not_parse_when` error and Klaus's next
+    turn can re-frame.
+
+    Args:
+        when: ISO 8601 (e.g. "2026-05-21T15:00:00+00:00") OR natural-language
+            string (e.g. "tomorrow 3pm", "next monday 10am").
+        note: Reminder text — what the check-back is about.
+
+    Returns:
+        JSON string. On success: ``{"id": <uuid hex>, "due_at": <ISO 8601 UTC>}``.
+        On parse failure: ``{"error": "could_not_parse_when: ..."}``.
+    """
+    from datetime import datetime, timezone as _tz
+
+    try:
+        due_dt = datetime.fromisoformat(when)
+    except (ValueError, TypeError):
+        try:
+            from dateutil import parser as _dt_parser
+            due_dt = _dt_parser.parse(when)
+        except (ImportError, ValueError, TypeError, OverflowError) as exc:
+            return json.dumps({"error": f"could_not_parse_when: {exc}"})
+
+    if due_dt.tzinfo is None:
+        due_dt = due_dt.replace(tzinfo=_tz.utc)
+    due_iso = due_dt.astimezone(_tz.utc).isoformat()
+
+    from memory.firestore_db import FollowupStore
+    store = FollowupStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    result = store.add(due_at=due_iso, note=note, origin="klaus_self")
+    return json.dumps(result)
+
+
+def _handle_list_followups() -> str:
+    """Return pending follow-ups, stripped of internal fields.
+
+    Only `id`, `due_at`, `note`, `defer_count` are exposed — `created_at`,
+    `status`, and `origin` stay internal to FollowupStore.
+    """
+    from memory.firestore_db import FollowupStore
+    store = FollowupStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    pending = store.list_pending()
+    stripped = [
+        {
+            "id": p.get("id", ""),
+            "due_at": p.get("due_at", ""),
+            "note": p.get("note", ""),
+            "defer_count": int(p.get("defer_count", 0)),
+        }
+        for p in pending
+    ]
+    return json.dumps(stripped)
+
+
+def _handle_cancel_followup(id: str) -> str:
+    """Cancel a follow-up by id. Idempotent (D-15).
+
+    Returns ``{"ok": True}`` whenever the doc exists (even if already
+    cancelled). Returns ``{"ok": False}`` only when the id does not exist.
+    """
+    from memory.firestore_db import FollowupStore
+    store = FollowupStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    ok = store.cancel(id)
+    return json.dumps({"ok": bool(ok)})
+
+
+# ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
 
@@ -1222,6 +1355,9 @@ _HANDLERS: dict[str, object] = {
     "read_own_source":         lambda args: _handle_read_own_source(**args),
     "search_own_source":       lambda args: _handle_search_own_source(**args),
     "get_self_status":         lambda args: _handle_get_self_status(),
+    "schedule_followup":       lambda args: _handle_schedule_followup(**args),
+    "list_followups":          lambda args: _handle_list_followups(),
+    "cancel_followup":         lambda args: _handle_cancel_followup(**args),
     "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
     "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
