@@ -218,33 +218,21 @@ class AgentOrchestrator:
 
         self._journal_store = _build_journal_store()
 
-    def handle_message(
-        self,
-        user_message: str,
-        user_id: int,
-        photo_bytes: bytes | None = None,
-        photo_mime_type: str | None = None,
-    ) -> str:
-        """Process one user message through the full dual-model pipeline.
+    def render_smart_system(self, template: str) -> str:
+        """Render a smart_system template by substituting all standard placeholders.
 
-        Args:
-            user_message:    Raw text from the user interface.
-            user_id:         Unique identifier for the user (Telegram ID or similar).
-            photo_bytes:     Optional raw bytes of an attached photo.
-            photo_mime_type: Optional MIME type of an attached photo.
+        Resolves: ``{self_md}``, ``{self_state}``, ``{journal_digest}``, ``{today_date}``.
+        Empty stores (None) substitute empty strings — NOT literal placeholders.
 
-        Returns:
-            The agent's final response string, ready to send to the user.
+        Used by:
+          - ``handle_message`` (per-message chat path)
+          - ``core/autonomous.py:_compose_layer2`` (per-tick autonomous path) — Plan 18-06
+
+        Stable content (``self_md``) is placed before dynamic content for Gemini
+        prompt caching.
         """
-        # WHY: memory tools (remember/recall) need the user_id but the tool
-        # dispatch signature does not pass it. A thread-local is safe here
-        # because handle_message always runs in asyncio.to_thread — each call
-        # gets its own thread from the pool.
-        tool_registry.set_current_user_id(user_id)
-
         # Assemble the smart_system prompt with stable content first, then dynamic.
         # Stable-first ordering enables Gemini prompt caching on the shared prefix.
-        # Per D-03: SELF.md injected into smart_system only (not worker).
         today_label = _today_israel()
 
         # Build self_state snippet — omit blank fields per D-05.
@@ -275,14 +263,41 @@ class AgentOrchestrator:
                 journal_digest = "\n".join(lines)
             # else: leave "" — empty-state rule omits the block entirely
 
-        smart_system = (
-            self._smart_prompt_template
+        return (
+            template
             .replace("{self_md}", self._self_md_content)      # stable — benefits from cache
             .replace("{self_state}", self_state_snippet)       # volatile — after stable
             .replace("{journal_digest}", journal_digest)       # Phase 17 — smart-only (D-15)
             .replace("{today_date}", today_label)              # dynamic — always last
         )
-        worker_system = self._worker_prompt_template.replace("{today_date}", today_label)
+
+    def handle_message(
+        self,
+        user_message: str,
+        user_id: int,
+        photo_bytes: bytes | None = None,
+        photo_mime_type: str | None = None,
+    ) -> str:
+        """Process one user message through the full dual-model pipeline.
+
+        Args:
+            user_message:    Raw text from the user interface.
+            user_id:         Unique identifier for the user (Telegram ID or similar).
+            photo_bytes:     Optional raw bytes of an attached photo.
+            photo_mime_type: Optional MIME type of an attached photo.
+
+        Returns:
+            The agent's final response string, ready to send to the user.
+        """
+        # WHY: memory tools (remember/recall) need the user_id but the tool
+        # dispatch signature does not pass it. A thread-local is safe here
+        # because handle_message always runs in asyncio.to_thread — each call
+        # gets its own thread from the pool.
+        tool_registry.set_current_user_id(user_id)
+
+        # Per D-03: SELF.md injected into smart_system only (not worker).
+        smart_system = self.render_smart_system(self._smart_prompt_template)
+        worker_system = self._worker_prompt_template.replace("{today_date}", _today_israel())
 
         # Persist the incoming message and get the full history for this session.
         self.conversation_manager.append(user_id, "user", user_message)
