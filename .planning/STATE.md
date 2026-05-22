@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-22T20:24:16.000Z"
-last_activity: 2026-05-22 -- Phase 18 Plan 01 executed — FollowupStore + OutreachLogStore + TickLogStore stores live; python-dateutil pinned
+last_updated: "2026-05-22T20:33:30.000Z"
+last_activity: 2026-05-22 -- Phase 18 Plan 02 executed — 3 follow-up tools registered at 15 sites + smart_agent.md SELF-SCHEDULED FOLLOW-UPS section; AUTO-05 complete
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 24
-  completed_plans: 16
-  percent: 66
+  completed_plans: 17
+  percent: 70
 ---
 
 # State — Klaus
@@ -18,10 +18,10 @@ progress:
 ## Current Position
 
 Phase: 18 — The Autonomous Engine (Capstone)
-Plans: 9 (Wave 1: 01 ✓, 02, 03, 04 · Wave 2: 05, 06, 07 · Wave 3: 08, 09)
-Status: Plan 01 complete; next up Plan 02 (followup-tools)
-Resume file: `.planning/phases/18-autonomous-engine/18-02-followup-tools-PLAN.md`
-Last activity: 2026-05-22 -- Plan 18-01 executed (4 commits: 5a808b2 RED, bf6fd38 GREEN, 7a4895c RED, 884eb1a GREEN; 21 tests pass; AUTO-03 + AUTO-04 mechanisms in place)
+Plans: 9 (Wave 1: 01 ✓, 02 ✓, 03, 04 · Wave 2: 05, 06, 07 · Wave 3: 08, 09)
+Status: Plan 02 complete; next up Plan 03 (autonomous-prompts)
+Resume file: `.planning/phases/18-autonomous-engine/18-03-autonomous-prompts-PLAN.md`
+Last activity: 2026-05-22 -- Plan 18-02 executed (2 commits: efec62d RED, b99b3f1 GREEN; 13 TestFollowupTools tests pass; 16 grep hits in core/tools.py; AUTO-05 complete)
 
 ## Project Reference
 
@@ -43,6 +43,8 @@ See: `.planning/PROJECT.md` (updated 2026-05-19)
 - All GCP/Pinecone names lowercase "Klaus" (`0x6B`) — uppercase K causes silent 404s
 - LLM costs metered via `LLMUsageStore` → Firestore `llm_usage/{date}` after every `LLMClient.chat()` call
 - `compute_cost()` in `core/pricing.py` — 4 priced models; free/unknown return 0.0
+- Phase 18: `SMART_AGENT_DIRECT_TOOLS` additions follow insertion order (not alphabetical) — preserves git blame; matches Phase 15/16 convention
+- Phase 18: `_handle_schedule_followup` catches `ImportError` alongside `ValueError`/`TypeError`/`OverflowError` so stale Cloud Run images without `python-dateutil` return structured `could_not_parse_when` errors instead of 500
 
 ### Key line references (verified against live codebase — may drift)
 
@@ -57,11 +59,11 @@ See: `.planning/PROJECT.md` (updated 2026-05-19)
 - `core/main.py:219–222` — per-message prompt render step
 - `core/main.py:241` — `AgentOrchestrator._run_smart_loop`
 - `core/main.py:260–291` — inline Gemini→Haiku fallback (reference shape for tick-brain chain)
-- `core/tools.py:39` — `SMART_AGENT_DIRECT_TOOLS` frozenset (now 7 members — includes self-inspect)
-- `core/tools.py:45–596+` — `TOOL_SCHEMAS` (3 new self-inspect schemas appended)
-- `core/tools.py:600–603` — `WORKER_TOOL_SCHEMAS` (excludes all 7 direct tools)
-- `core/tools.py:633` — lazy-singleton tool pattern
-- `core/tools.py:995–1020+` — `_HANDLERS` dict (3 new self-inspect lambdas)
+- `core/tools.py:39-52` — `SMART_AGENT_DIRECT_TOOLS` frozenset (now 11 members — 8 prior + 3 Phase 18 follow-up tools at lines 49-51)
+- `core/tools.py:54–740+` — `TOOL_SCHEMAS` (3 new follow-up schemas at lines 678-715)
+- `core/tools.py:758-770` — `WORKER_TOOL_SCHEMAS` exclusion (excludes all 11 direct tools incl. 3 follow-up tools)
+- `core/tools.py:1252-1331` — Phase 18 `_handle_schedule_followup` / `_handle_list_followups` / `_handle_cancel_followup` (ImportError caught at line 1281)
+- `core/tools.py:1340–1370+` — `_HANDLERS` dict (3 new follow-up lambdas at lines 1358-1360)
 - `mcp_tools/self_inspect.py` — `list_own_files`, `read_own_source`, `search_own_source` (Phase 15)
 - `tests/test_self_inspect.py` — 35 tests, all green
 - `core/heartbeat.py:378` — `check_code()`
