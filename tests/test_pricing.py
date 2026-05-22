@@ -3,7 +3,7 @@ from core.pricing import compute_cost, MODEL_PRICING
 
 
 def test_model_pricing_has_four_entries():
-    assert len(MODEL_PRICING) == 4
+    assert len(MODEL_PRICING) == 6
 
 
 def test_gemini_3_flash_preview_known_price():

@@ -1241,6 +1241,38 @@ def get_all_schemas() -> list[dict]:
     return TOOL_SCHEMAS
 
 
+def get_smart_schemas(user_message: str | None = None) -> list[dict]:
+    """Return tool schemas for the smart agent (delegate_to_worker + SMART_AGENT_DIRECT_TOOLS)."""
+    exclude_self_inspect = True
+    if user_message:
+        msg_lower = user_message.lower()
+        keywords = {
+            "source", "code", "file", "grep", "search source", "implementation",
+            "class", "function", "module", "github", "repo", "git", ".py", ".md",
+            "denylist", "status", "uptime", "cost", "heartbeat", "health", "usage",
+            "קוד", "קובץ", "סטטוס", "הסבר", "מערכת", "שגיאה"
+        }
+        if any(kw in msg_lower for kw in keywords):
+            exclude_self_inspect = False
+    else:
+        # Default to including them if no message is passed (e.g. general setup / tests)
+        exclude_self_inspect = False
+
+    return [
+        s for s in TOOL_SCHEMAS
+        if (
+            (s["name"] in SMART_AGENT_DIRECT_TOOLS or s["name"] == "delegate_to_worker")
+            and not (exclude_self_inspect and s["name"] in {
+                "list_own_files",
+                "read_own_source",
+                "search_own_source",
+                "get_self_status"
+            })
+        )
+    ]
+
+
+
 def get_worker_schemas() -> list[dict]:
     """Return tool schemas for the worker agent (excludes delegate_to_worker)."""
     return WORKER_TOOL_SCHEMAS

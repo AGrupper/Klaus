@@ -12,50 +12,83 @@ import importlib
 
 
 def _install_firestore_mock():
-    """Install mock google.cloud.firestore into sys.modules if not already present."""
-    if "google.cloud.firestore" not in sys.modules:
-        # Build the mock hierarchy
-        google_mod = sys.modules.setdefault("google", MagicMock())
-        google_cloud_mod = sys.modules.setdefault("google.cloud", MagicMock())
-        firestore_mock = MagicMock()
+    """Install mock google.cloud.firestore into sys.modules."""
+    # 1. Try to import existing real google modules to preserve their PEP 420 namespace paths
+    try:
+        import google
+        import google.cloud
+        google_mod = sys.modules["google"]
+        google_cloud_mod = sys.modules["google.cloud"]
+    except ImportError:
+        # Fallback if they do not exist
+        if "google" not in sys.modules or isinstance(sys.modules["google"], MagicMock):
+            google_mod = ModuleType("google")
+            google_mod.__path__ = []
+            sys.modules["google"] = google_mod
+        else:
+            google_mod = sys.modules["google"]
 
-        # firestore.Increment must return a distinguishable sentinel
-        class _Increment:
-            def __init__(self, value):
-                self.value = value
-            def __repr__(self):
-                return f"Increment({self.value!r})"
+        if "google.cloud" not in sys.modules or isinstance(sys.modules["google.cloud"], MagicMock):
+            google_cloud_mod = ModuleType("google.cloud")
+            google_cloud_mod.__path__ = []
+            sys.modules["google.cloud"] = google_cloud_mod
+            setattr(google_mod, "cloud", google_cloud_mod)
+        else:
+            google_cloud_mod = sys.modules["google.cloud"]
 
-        firestore_mock.Increment = _Increment
-        firestore_mock.SERVER_TIMESTAMP = object()
-        firestore_mock.ArrayUnion = MagicMock()
+    firestore_mock = MagicMock()
 
-        sys.modules["google.cloud.firestore"] = firestore_mock
-        google_cloud_mod.firestore = firestore_mock
-        google_mod.cloud = google_cloud_mod
+    # firestore.Increment must return a distinguishable sentinel
+    class _Increment:
+        def __init__(self, value):
+            self.value = value
+        def __repr__(self):
+            return f"Increment({self.value!r})"
 
-        # Also stub google.api_core.exceptions
-        api_core = sys.modules.setdefault("google.api_core", MagicMock())
-        exc_mod = MagicMock()
-        exc_mod.GoogleAPICallError = Exception
-        sys.modules["google.api_core.exceptions"] = exc_mod
-        api_core.exceptions = exc_mod
+    firestore_mock.Increment = _Increment
+    firestore_mock.SERVER_TIMESTAMP = object()
+    firestore_mock.ArrayUnion = MagicMock()
 
-        # google.cloud.firestore_v1.base_query
-        fv1 = sys.modules.setdefault("google.cloud.firestore_v1", MagicMock())
-        bq = MagicMock()
-        bq.FieldFilter = MagicMock()
-        sys.modules["google.cloud.firestore_v1.base_query"] = bq
-        fv1.base_query = bq
+    sys.modules["google.cloud.firestore"] = firestore_mock
+    google_cloud_mod.firestore = firestore_mock
 
-        # google.oauth2 (used in _make_firestore_client when FIRESTORE_CREDENTIALS set)
-        sys.modules.setdefault("google.oauth2", MagicMock())
-        sys.modules.setdefault("google.oauth2.service_account", MagicMock())
+    # Also stub google.api_core.exceptions if needed
+    try:
+        import google.api_core.exceptions
+    except ImportError:
+        pass
+    exc_mod = sys.modules.get("google.api_core.exceptions", MagicMock())
+    exc_mod.GoogleAPICallError = Exception
+    sys.modules["google.api_core.exceptions"] = exc_mod
+    if "google.api_core" in sys.modules:
+        sys.modules["google.api_core"].exceptions = exc_mod
 
-        # dotenv
-        dotenv_mod = MagicMock()
-        dotenv_mod.load_dotenv = MagicMock()
-        sys.modules.setdefault("dotenv", dotenv_mod)
+    # google.cloud.firestore_v1.base_query
+    try:
+        import google.cloud.firestore_v1.base_query
+    except ImportError:
+        pass
+    bq = sys.modules.get("google.cloud.firestore_v1.base_query", MagicMock())
+    bq.FieldFilter = MagicMock()
+    sys.modules["google.cloud.firestore_v1.base_query"] = bq
+    if "google.cloud.firestore_v1" in sys.modules:
+        sys.modules["google.cloud.firestore_v1"].base_query = bq
+
+    # google.oauth2 (used in _make_firestore_client when FIRESTORE_CREDENTIALS set)
+    try:
+        import google.oauth2
+        import google.oauth2.service_account
+    except ImportError:
+        pass
+    if "google.oauth2" not in sys.modules:
+        sys.modules["google.oauth2"] = MagicMock()
+    if "google.oauth2.service_account" not in sys.modules:
+        sys.modules["google.oauth2.service_account"] = MagicMock()
+
+    # dotenv
+    dotenv_mod = MagicMock()
+    dotenv_mod.load_dotenv = MagicMock()
+    sys.modules.setdefault("dotenv", dotenv_mod)
 
     # Force re-import of firestore_db so it picks up the mocks
     for key in list(sys.modules.keys()):
@@ -71,6 +104,20 @@ from memory.firestore_db import (  # noqa: E402
     _make_firestore_client,
     _HEARTBEAT_CONFIG_DEFAULTS,
 )
+
+import pytest
+
+@pytest.fixture(autouse=True)
+def setup_firestore_mock():
+    _install_firestore_mock()
+    import sys
+    import importlib
+    import memory.firestore_db
+    importlib.reload(memory.firestore_db)
+    global LLMUsageStore, _make_firestore_client, _HEARTBEAT_CONFIG_DEFAULTS
+    LLMUsageStore = memory.firestore_db.LLMUsageStore
+    _make_firestore_client = memory.firestore_db._make_firestore_client
+    _HEARTBEAT_CONFIG_DEFAULTS = memory.firestore_db._HEARTBEAT_CONFIG_DEFAULTS
 
 
 def _make_mock_client():

@@ -155,10 +155,24 @@ class _AnthropicBackend(_BaseBackend):
              tools: list[dict] | None = None) -> dict:
         import anthropic
 
+        # Strip thought_signature from messages to prevent Anthropic validation errors on fallback
+        clean_messages = []
+        for msg in messages:
+            role = msg["role"]
+            content = msg["content"]
+            if isinstance(content, str):
+                clean_messages.append({"role": role, "content": content})
+            else:
+                clean_content = []
+                for block in content:
+                    clean_block = {k: v for k, v in block.items() if k != "thought_signature"}
+                    clean_content.append(clean_block)
+                clean_messages.append({"role": role, "content": clean_content})
+
         kwargs: dict[str, Any] = {
             "model": self.model,
             "max_tokens": MAX_TOKENS,
-            "messages": messages,
+            "messages": clean_messages,
         }
         if system:
             kwargs["system"] = system
@@ -262,15 +276,17 @@ class _GeminiBackend(_BaseBackend):
 
         if response.candidates:
             for part in response.candidates[0].content.parts:
-                # Capture thought_signature if present on the part
+                # Capture thought_signature if present and not a function call part
+                is_fc = hasattr(part, "function_call") and part.function_call is not None and part.function_call.name
                 if hasattr(part, "thought_signature") and part.thought_signature:
-                    thought_sig = part.thought_signature
+                    if not is_fc:
+                        thought_sig = part.thought_signature
 
                 # Check for text
                 if hasattr(part, "text") and part.text:
                     text = part.text
                 # Check for function call
-                if hasattr(part, "function_call") and part.function_call is not None and part.function_call.name:
+                if is_fc:
                     fc = part.function_call
                     tool_calls.append({
                         "name": fc.name,

@@ -351,12 +351,28 @@ class AgentOrchestrator:
                         }
                     ]
 
+        # Extract last user message to see if we should include self-inspect schemas
+        last_user_text = ""
+        if messages:
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        last_user_text = content
+                    elif isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                last_user_text = block.get("text", "")
+                    break
+
+        smart_tools = tool_registry.get_smart_schemas(user_message=last_user_text)
+
         for iteration in range(MAX_TOOL_ITERATIONS):
             try:
                 response = self.smart_agent.chat(
                     current_messages,
                     system=smart_system,
-                    tools=tool_registry.get_all_schemas(),
+                    tools=smart_tools,
                 )
             except LLMError as exc:
                 logger.warning(
@@ -374,10 +390,11 @@ class AgentOrchestrator:
                         response = self.smart_agent_fallback.chat(
                             current_messages,
                             system=smart_system,
-                            tools=tool_registry.get_all_schemas(),
+                            tools=smart_tools,
                         )
                     except LLMError as fallback_exc:
                         logger.error(
+
                             "Smart agent FALLBACK also failed (iter %d): %s",
                             iteration, fallback_exc,
                         )
