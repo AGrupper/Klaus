@@ -42,6 +42,11 @@ from interfaces._router import MessageRouter, parse_allowed_user_ids
 # case, which causes confusing "wrong token" failures in local dev.
 load_dotenv(override=True)
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
+
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #

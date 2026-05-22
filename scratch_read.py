@@ -9,10 +9,10 @@ if doc.exists:
     data = doc.to_dict()
     print("Conversation found!")
     messages = data.get("messages", [])
-    for idx in range(18, 27):
-        m = messages[idx]
-        print(f"\n--- MESSAGE {idx} ---")
+    print(f"Total messages: {len(messages)}")
+    for idx, m in enumerate(messages[-10:]):
+        print(f"\n--- MESSAGE {len(messages) - 10 + idx} ---")
         print(f"Role: {m.get('role')}")
         content = m.get('content')
         print(f"Type: {type(content)}")
-        print(f"Representation: {repr(content)}")
+        print(f"Content: {content}")

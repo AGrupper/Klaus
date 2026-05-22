@@ -398,9 +398,6 @@ class _GeminiBackend(_BaseBackend):
 
         declarations = []
         for tool in tools:
-            # The delegate_to_worker meta-tool is orchestrator-level; never sent to Flash.
-            if tool["name"] == "delegate_to_worker":
-                continue
             declarations.append(
                 types.FunctionDeclaration(
                     name=tool["name"],

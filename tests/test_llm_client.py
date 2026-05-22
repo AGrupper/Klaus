@@ -231,3 +231,37 @@ def test_gemini_backend_thought_signature():
     assert gemini_contents_tool[0].parts[0].function_call.name == "list_calendar_events"
     assert gemini_contents_tool[0].parts[0].thought_signature == b"encrypted_signature"
 
+
+def test_gemini_backend_convert_tools():
+    backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+    tools = [
+        {
+            "name": "delegate_to_worker",
+            "description": "Delegate a task to the worker agent",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "task": {"type": "string", "description": "The task to delegate"}
+                },
+                "required": ["task"]
+            }
+        },
+        {
+            "name": "recall",
+            "description": "Recall long-term memories",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Query string"}
+                },
+                "required": ["query"]
+            }
+        }
+    ]
+    converted = backend._convert_tools(tools)
+    assert len(converted) == 1
+    declarations = converted[0].function_declarations
+    names = [d.name for d in declarations]
+    assert "delegate_to_worker" in names
+    assert "recall" in names
+
