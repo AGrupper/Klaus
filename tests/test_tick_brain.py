@@ -252,5 +252,156 @@ class TestTickBrainThink(unittest.TestCase):
         self.assertEqual(result["draft"], "2 tasks overdue!")
 
 
+class TestSystemOverrideAndTopicKey(unittest.TestCase):
+    """Plan 18-05 — system_override kwarg + topic_key passthrough + layered purpose strings.
+
+    Covers AUTO-01 (Layer 1 accepts autonomous_triage.md as system prompt) and
+    AUTO-07 (topic_key field flows through parser for outreach_log dedup).
+
+    WARNING 1 regression guard: fallback purpose must remain 'tick_fallback' when
+    no system_override is set, so Phase 14 INFRA-02 fallback-rate visibility is
+    preserved. With override set, fallback becomes 'tick_autonomous_fallback'.
+    """
+
+    def _make_brain(self, primary_response=None, primary_raises=None,
+                    fallback_response=None, fallback_raises=None,
+                    has_fallback=True):
+        """Build a TickBrain with mocked _client and _fallback_client (same shape as TestTickBrainThink)."""
+        from core.tick_brain import TickBrain
+
+        brain = object.__new__(TickBrain)
+
+        primary = MagicMock()
+        if primary_raises:
+            primary.chat.side_effect = primary_raises
+        else:
+            primary.chat.return_value = primary_response or {
+                "text": '{"should_act": false, "reason": "ok"}',
+                "tool_calls": [],
+                "stop_reason": "end_turn",
+                "usage": {"in_tokens": 10, "out_tokens": 5},
+            }
+        brain._client = primary
+
+        if has_fallback:
+            fallback = MagicMock()
+            if fallback_raises:
+                fallback.chat.side_effect = fallback_raises
+            else:
+                fallback.chat.return_value = fallback_response or {
+                    "text": '{"should_act": false, "reason": "fallback_ok"}',
+                    "tool_calls": [],
+                    "stop_reason": "end_turn",
+                    "usage": {"in_tokens": 10, "out_tokens": 5},
+                }
+            brain._fallback_client = fallback
+            brain._fallback_model = "gemini-3-flash"
+        else:
+            brain._fallback_client = None
+            brain._fallback_model = None
+
+        brain._model = "qwen3-32b"
+        return brain
+
+    # ---- think() signature: system_override kwarg ----
+
+    def test_think_default_uses_tick_system_prompt_and_purpose_tick(self):
+        """Test 1: no system_override → system=_TICK_SYSTEM_PROMPT, purpose='tick' (backward-compat)."""
+        from core.tick_brain import _TICK_SYSTEM_PROMPT
+        brain = self._make_brain()
+        brain.think("test")
+        kwargs = brain._client.chat.call_args.kwargs
+        self.assertEqual(kwargs["system"], _TICK_SYSTEM_PROMPT)
+        self.assertEqual(kwargs["purpose"], "tick")
+
+    def test_think_with_override_uses_custom_system_and_purpose_autonomous(self):
+        """Test 2: system_override set → system=<override>, purpose='tick_autonomous'."""
+        brain = self._make_brain()
+        brain.think("test", system_override="custom system prompt")
+        kwargs = brain._client.chat.call_args.kwargs
+        self.assertEqual(kwargs["system"], "custom system prompt")
+        self.assertEqual(kwargs["purpose"], "tick_autonomous")
+
+    def test_fallback_purpose_preserves_tick_fallback_when_no_override(self):
+        """Test 3 + 6 (WARNING 1 regression guard): fallback purpose must remain 'tick_fallback'
+        when no system_override is set, so INFRA-02 fallback-rate visibility is preserved.
+        """
+        from core.llm_client import LLMError
+        from core.tick_brain import _TICK_SYSTEM_PROMPT
+        brain = self._make_brain(
+            primary_raises=LLMError("boom", backend="openai"),
+        )
+        brain.think("test")  # no system_override
+        kwargs = brain._fallback_client.chat.call_args.kwargs
+        self.assertEqual(
+            kwargs["purpose"], "tick_fallback",
+            f"WARNING 1 regression: fallback purpose changed to {kwargs['purpose']!r}"
+        )
+        # Active system carries through (should be the default).
+        self.assertEqual(kwargs["system"], _TICK_SYSTEM_PROMPT)
+
+    def test_fallback_purpose_is_autonomous_when_override_set(self):
+        """Test 4: fallback purpose 'tick_autonomous_fallback' when system_override is set."""
+        from core.llm_client import LLMError
+        brain = self._make_brain(
+            primary_raises=LLMError("boom", backend="openai"),
+        )
+        brain.think("test", system_override="custom")
+        kwargs = brain._fallback_client.chat.call_args.kwargs
+        self.assertEqual(kwargs["purpose"], "tick_autonomous_fallback")
+
+    def test_fallback_receives_same_system_as_primary(self):
+        """Test 5: active_system value carries through to fallback when primary fails."""
+        from core.llm_client import LLMError
+        brain = self._make_brain(
+            primary_raises=LLMError("boom", backend="openai"),
+        )
+        brain.think("test", system_override="autonomous triage prompt body")
+        kwargs = brain._fallback_client.chat.call_args.kwargs
+        self.assertEqual(kwargs["system"], "autonomous triage prompt body")
+
+    # ---- _parse_response: topic_key passthrough ----
+
+    def test_topic_key_passthrough_when_present(self):
+        """Test 7: topic_key flows through when LLM JSON contains it."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": true, "reason": "x", "draft": "y", "topic_key": "overdue:maya"}'
+        )
+        self.assertEqual(result["topic_key"], "overdue:maya")
+        self.assertEqual(result["draft"], "y")
+        self.assertTrue(result["should_act"])
+
+    def test_topic_key_absent_when_missing_from_json(self):
+        """Test 8: missing topic_key → result dict has no topic_key key."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response('{"should_act": true, "reason": "x"}')
+        self.assertNotIn("topic_key", result)
+
+    def test_topic_key_absent_when_empty_string(self):
+        """Test 9: empty-string topic_key treated as missing (falsy guard)."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": true, "reason": "x", "topic_key": ""}'
+        )
+        self.assertNotIn("topic_key", result)
+
+    def test_topic_key_absent_from_parse_failure_safe_mode(self):
+        """Test 10: safe-mode return (parse failure) unchanged — no topic_key key."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response("not json")
+        self.assertFalse(result["should_act"])
+        self.assertEqual(result["reason"], "parse_failure")
+        self.assertNotIn("topic_key", result)
+
+    def test_topic_key_coerces_non_string_to_string(self):
+        """Test 11: non-string topic_key coerced via str() (defensive parsing)."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": true, "reason": "x", "topic_key": 123}'
+        )
+        self.assertEqual(result["topic_key"], "123")
+
+
 if __name__ == "__main__":
     unittest.main()
