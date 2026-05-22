@@ -1,0 +1,30 @@
+{
+  "id": "0001-overdue-task",
+  "captured_at": "2026-05-21T14:20:00+03:00",
+  "situation_snapshot": {
+    "calendar": [
+      {"summary": "Workout — Upper Body", "start": "2026-05-21T18:00:00+03:00", "end": "2026-05-21T19:15:00+03:00"}
+    ],
+    "ticktick_overdue": [
+      {"id": "tk_123", "title": "Reply to Maya about the design review", "due_at": "2026-05-20T17:00:00+03:00"}
+    ],
+    "unread_email_count": 3,
+    "due_followups": [],
+    "hours_since_contact": 4.5,
+    "recent_journal_digest": "Yesterday I helped Sir prep the weekly review. He mentioned the Maya reply was on his mind.",
+    "self_state": {"current_focus": "weekly review wrap-up", "mood": "focused"},
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-05-21T14:20:00+03:00",
+      "now_local": "14:20 Asia/Jerusalem",
+      "tick_index": 22,
+      "tick_total": 43,
+      "last_tick_at": "2026-05-21T14:00:00+03:00"
+    }
+  },
+  "trigger_type": "overdue",
+  "ground_truth": {
+    "should_speak": true,
+    "topic_key_pattern": "^overdue:.*"
+  }
+}

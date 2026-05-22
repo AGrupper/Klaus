@@ -1,0 +1,26 @@
+{
+  "id": "0004-long-silence",
+  "captured_at": "2026-05-21T19:20:00+03:00",
+  "situation_snapshot": {
+    "calendar": [],
+    "ticktick_overdue": [],
+    "unread_email_count": 1,
+    "due_followups": [],
+    "hours_since_contact": 11.5,
+    "recent_journal_digest": "This morning Sir said he was heading into a heavy deep-work block. I've been quiet since.",
+    "self_state": {"current_focus": "deep-work day", "mood": "patient"},
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-05-21T19:20:00+03:00",
+      "now_local": "19:20 Asia/Jerusalem",
+      "tick_index": 38,
+      "tick_total": 43,
+      "last_tick_at": "2026-05-21T19:00:00+03:00"
+    }
+  },
+  "trigger_type": "silence",
+  "ground_truth": {
+    "should_speak": true,
+    "topic_key_pattern": "^silence:.*"
+  }
+}

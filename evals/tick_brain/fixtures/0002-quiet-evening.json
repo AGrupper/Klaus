@@ -1,0 +1,25 @@
+{
+  "id": "0002-quiet-evening",
+  "captured_at": "2026-05-21T20:40:00+03:00",
+  "situation_snapshot": {
+    "calendar": [],
+    "ticktick_overdue": [],
+    "unread_email_count": 0,
+    "due_followups": [],
+    "hours_since_contact": 0.5,
+    "recent_journal_digest": "Today was quiet. Sir wrapped early and the day stayed clean.",
+    "self_state": {"current_focus": "rest", "mood": "calm"},
+    "today_outreach_log": ["pattern:eod-check"],
+    "now_context": {
+      "now_iso": "2026-05-21T20:40:00+03:00",
+      "now_local": "20:40 Asia/Jerusalem",
+      "tick_index": 42,
+      "tick_total": 43,
+      "last_tick_at": "2026-05-21T20:20:00+03:00"
+    }
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false
+  }
+}

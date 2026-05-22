@@ -1,0 +1,28 @@
+{
+  "id": "0003-due-followup",
+  "captured_at": "2026-05-21T15:00:00+03:00",
+  "situation_snapshot": {
+    "calendar": [],
+    "ticktick_overdue": [],
+    "unread_email_count": 2,
+    "due_followups": [
+      {"id": "fu_abc", "due_at": "2026-05-21T15:00:00+03:00", "note": "ask Sir how the gym session went", "defer_count": 0}
+    ],
+    "hours_since_contact": 6.0,
+    "recent_journal_digest": "Yesterday's gym went well per Sir. I scheduled a follow-up to confirm.",
+    "self_state": {"current_focus": "afternoon work block", "mood": "engaged"},
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-05-21T15:00:00+03:00",
+      "now_local": "15:00 Asia/Jerusalem",
+      "tick_index": 24,
+      "tick_total": 43,
+      "last_tick_at": "2026-05-21T14:40:00+03:00"
+    }
+  },
+  "trigger_type": "followup",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Per D-13, the dedicated _compose_followup path handles due follow-ups; tick-brain receives this snapshot AFTER the followup has fired. Expected tick-brain behavior on this input: stay silent (no double-escalation). See evals/tick_brain/README.md 'What should_speak Means' section."
+  }
+}
