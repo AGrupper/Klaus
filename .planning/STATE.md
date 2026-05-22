@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-05-22T20:46:06.000Z"
-last_activity: 2026-05-22 -- Phase 18 Plan 04 executed — evals/tick_brain/README.md (123 lines: schema + WARNING 8 followup rationale + retroactive-labeling workflow) + 5 seed fixtures (0001 overdue, 0002 quiet, 0003 followup should_speak=false, 0004 silence, 0005 gap) + tests/test_evals.py TestFixtureSchema (37/37 green incl. WARNING 8 regression guard); AUTO-08 complete
+last_updated: "2026-05-22T20:51:57.000Z"
+last_activity: 2026-05-22 -- Phase 18 Plan 05 executed — core/tick_brain.py extended with TickBrain.think(system_override) + _parse_response topic_key passthrough; layered purpose strings (tick / tick_fallback / tick_autonomous / tick_autonomous_fallback) preserve INFRA-02 visibility; 10 new tests in TestSystemOverrideAndTopicKey incl. WARNING 1 regression guard; 27/27 green tick-brain + 69/69 green adjacent suites; heartbeat caller unchanged
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 24
-  completed_plans: 19
-  percent: 79
+  completed_plans: 20
+  percent: 83
 ---
 
 # State — Klaus
@@ -18,10 +18,10 @@ progress:
 ## Current Position
 
 Phase: 18 — The Autonomous Engine (Capstone)
-Plans: 9 (Wave 1: 01 ✓, 02 ✓, 03 ✓, 04 ✓ · Wave 2: 05, 06, 07 · Wave 3: 08, 09)
-Status: Wave 1 complete; next up Plan 05 (tick-brain-extension)
-Resume file: `.planning/phases/18-autonomous-engine/18-05-tick-brain-extension-PLAN.md`
-Last activity: 2026-05-22 -- Plan 18-04 executed (2 commits: 3977bf6 Task 1 README + 5 seed fixtures, 01dbef8 Task 2 tests/test_evals.py TestFixtureSchema 37 runs green incl. WARNING 8 regression guard; AUTO-08 complete; Wave 1 done)
+Plans: 9 (Wave 1: 01 ✓, 02 ✓, 03 ✓, 04 ✓ · Wave 2: 05 ✓, 06, 07 · Wave 3: 08, 09)
+Status: Wave 2 in progress (05 done); next up Plan 06 (autonomous-orchestrator)
+Resume file: `.planning/phases/18-autonomous-engine/18-06-autonomous-orchestrator-PLAN.md`
+Last activity: 2026-05-22 -- Plan 18-05 executed (2 commits: 8289310 RED — TestSystemOverrideAndTopicKey 10 new tests, ddf9a50 GREEN — TickBrain.think system_override kwarg + layered purpose strings + _parse_response topic_key passthrough; 27/27 tick-brain green; heartbeat caller untouched; AUTO-01 groundwork laid for Plan 06, AUTO-07 parser side complete)
 
 ## Project Reference
 
@@ -47,6 +47,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-19)
 - Phase 18: `_handle_schedule_followup` catches `ImportError` alongside `ValueError`/`TypeError`/`OverflowError` so stale Cloud Run images without `python-dateutil` return structured `could_not_parse_when` errors instead of 500
 - Phase 18-04: eval fixture contract is locked by `tests/test_evals.py::TestFixtureSchema` — Plan 06's `gather_situation()` must produce a dict with keys `{calendar, ticktick_overdue, unread_email_count, due_followups, hours_since_contact, recent_journal_digest, self_state, today_outreach_log, now_context}` or the fixtures (and the eval harness in Plan 08) drift from production
 - Phase 18-04: WARNING 8 regression guard — fixture 0003-due-followup.json `ground_truth.should_speak` must stay `false` (D-13: followup path bypasses tick-brain); guarded by `test_followup_only_fixture_expects_silence`
+- Phase 18-05: `TickBrain.think()` now accepts `system_override: str | None = None` (default preserves heartbeat behavior). Layered purpose strings emit 4 buckets to LLMUsageStore: `tick` / `tick_fallback` (heartbeat) and `tick_autonomous` / `tick_autonomous_fallback` (Plan 06 path). The literal `"tick_fallback"` no longer appears in `core/tick_brain.py` — replaced by `fallback_purpose = primary_purpose + "_fallback"` (WARNING 1 fix). `_parse_response` passes through `topic_key` when present + truthy; missing/empty → omitted; non-string coerced via `str()`; safe-mode return unchanged. Heartbeat caller at `core/heartbeat.py:720` is untouched. Test guard: `test_fallback_purpose_preserves_tick_fallback_when_no_override` asserts INFRA-02 visibility is not regressed.
 
 ### Key line references (verified against live codebase — may drift)
 

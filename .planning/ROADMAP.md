@@ -119,7 +119,7 @@ Plans:
 - [x] 18-02-followup-tools-PLAN.md — 3 follow-up tools at 15 registration sites + smart_agent.md (AUTO-05) ✓ 2026-05-22
 - [x] 18-03-autonomous-prompts-PLAN.md — prompts/autonomous_triage.md + prompts/autonomous.md (AUTO-07) ✓ 2026-05-22
 - [x] 18-04-eval-seed-fixtures-PLAN.md — 5 seed fixtures + evals/tick_brain/README.md (AUTO-08) ✓ 2026-05-22
-- [ ] 18-05-tick-brain-extension-PLAN.md — TickBrain.think system_override + _parse_response topic_key (AUTO-01, AUTO-07)
+- [x] 18-05-tick-brain-extension-PLAN.md — TickBrain.think system_override + _parse_response topic_key (AUTO-01, AUTO-07) ✓ 2026-05-22
 - [ ] 18-06-autonomous-orchestrator-PLAN.md — core/autonomous.py 3-layer pipeline + pitfall tests (AUTO-01, AUTO-02, AUTO-03)
 - [ ] 18-07-cron-route-and-heartbeat-PLAN.md — /cron/autonomous-tick + heartbeat staleness entry (AUTO-06)
 - [ ] 18-08-eval-runner-PLAN.md — scripts/eval_tick_brain.py precision/recall scorer (AUTO-09)
