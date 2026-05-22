@@ -63,7 +63,7 @@
 - [x] **AUTO-05**: `schedule_followup(when, note)` direct tool lets Klaus schedule his own check-backs mid-conversation
 - [ ] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *`
 - [x] **AUTO-07**: `prompts/autonomous_triage.md` (tick-brain) and `prompts/autonomous.md` (main-brain) created with wide-latitude framing
-- [ ] **AUTO-08**: Judgment eval harness: `evals/tick_brain/` with ~20–30 labeled `SituationSnapshot` fixtures
+- [x] **AUTO-08**: Judgment eval harness: `evals/tick_brain/` with ~20–30 labeled `SituationSnapshot` fixtures (5 seed fixtures shipped Plan 18-04; 20–30 target grown retroactively from `tick_logs` per D-21)
 - [ ] **AUTO-09**: `scripts/eval_tick_brain.py` scores a candidate model against fixtures (precision/recall on "should speak")
 
 ### Infrastructure & Docs (Cross-cutting)
@@ -123,7 +123,7 @@
 | AUTO-05 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-02) |
 | AUTO-06 | Phase 18 | Pending |
 | AUTO-07 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-03) |
-| AUTO-08 | Phase 18 | Pending |
+| AUTO-08 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-04: 5 seed fixtures + README + schema tests; growth from tick_logs per D-21) |
 | AUTO-09 | Phase 18 | Pending |
 | INFRA-01 | Phase 18 | Pending |
 | INFRA-02 | Phase 14 | Complete ✓ 2026-05-18 |
