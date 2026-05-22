@@ -404,3 +404,216 @@ class TestFollowupStore:
             store = firestore_db.FollowupStore("test-project")
             with pytest.raises(RuntimeError):
                 store.add(due_at="2026-05-21T15:00:00+00:00", note="boom")
+
+
+# =============================================================================
+# OutreachLogStore — AUTO-03, D-07/D-09/D-10/D-21
+# =============================================================================
+
+class TestOutreachLogStore:
+    """Unit tests for OutreachLogStore — per-day record of autonomous outreach."""
+
+    _DATE = "2026-05-21"
+    _ENTRY = {
+        "topic_key": "overdue:reply-to-maya",
+        "time": "14:20",
+        "draft": "Sir, you have an overdue task...",
+        "final": "Sir, that reply to Maya is still on your plate.",
+        "tick_index": 22,
+    }
+
+    def test_append_uses_array_union_atomically(self):
+        """append() must wrap the entry in firestore.ArrayUnion and merge=True."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            store.append(self._DATE, self._ENTRY)
+
+        # set() called once on the date-keyed doc.
+        col.document.assert_called_with(self._DATE)
+        doc_ref.set.assert_called_once()
+        args, kwargs = doc_ref.set.call_args
+        payload = args[0]
+
+        assert kwargs.get("merge") is True, "OutreachLogStore.append must use merge=True"
+        assert payload["date"] == self._DATE
+
+        # entries field must be ArrayUnion-wrapped, not a plain list.
+        entries_val = payload["entries"]
+        assert "ArrayUnion" in type(entries_val).__name__, (
+            f"entries should be wrapped in firestore.ArrayUnion, got {type(entries_val).__name__}"
+        )
+        assert entries_val.values == [self._ENTRY]
+
+        # updated_at uses the SERVER_TIMESTAMP sentinel at the doc level
+        # (not inside the entry — that would break ArrayUnion dedup per NOTE 2).
+        assert payload["updated_at"] is firestore_db.firestore.SERVER_TIMESTAMP
+
+    def test_get_today_returns_entries_list(self):
+        """get_today(date) returns the entries list when the doc exists."""
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, self._DATE, {
+            "date": self._DATE,
+            "entries": [self._ENTRY, {"topic_key": "silence:afternoon", "time": "16:00"}],
+        })
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            result = store.get_today(self._DATE)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0] == self._ENTRY
+
+    def test_get_today_missing_doc_returns_empty(self):
+        """get_today(date) returns [] when no doc for that date."""
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "1999-01-01")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            assert store.get_today("1999-01-01") == []
+
+    def test_topics_today_returns_topic_keys_in_order(self):
+        """topics_today(date) returns the list of topic_keys from entries."""
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, self._DATE, {
+            "date": self._DATE,
+            "entries": [
+                {"topic_key": "overdue:reply-to-maya", "time": "14:20"},
+                {"topic_key": "silence:afternoon", "time": "16:00"},
+            ],
+        })
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            topics = store.topics_today(self._DATE)
+
+        assert topics == ["overdue:reply-to-maya", "silence:afternoon"]
+
+    def test_topics_today_missing_doc_returns_empty(self):
+        """topics_today(date) returns [] when no doc for that date."""
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "1999-01-01")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            assert store.topics_today("1999-01-01") == []
+
+    def test_get_today_returns_empty_on_firestore_error(self):
+        """Firestore .get() error → get_today and topics_today return [] (never raise)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated outage")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            assert store.get_today(self._DATE) == []
+            assert store.topics_today(self._DATE) == []
+
+    def test_append_raises_on_firestore_error(self):
+        """append() must log and re-raise when Firestore .set() fails."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = RuntimeError("simulated set failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            with pytest.raises(RuntimeError):
+                store.append(self._DATE, self._ENTRY)
+
+    def test_append_docstring_warns_about_server_timestamp(self):
+        """NOTE 2 regression guard — the warning must stay in the docstring.
+
+        Future devs must not silently drop the warning that putting
+        firestore.SERVER_TIMESTAMP inside the entry dict breaks ArrayUnion's
+        deep-equality dedup semantics.
+        """
+        doc = firestore_db.OutreachLogStore.append.__doc__ or ""
+        assert "SERVER_TIMESTAMP" in doc, (
+            "NOTE 2 regression: OutreachLogStore.append docstring must warn against "
+            "passing SERVER_TIMESTAMP inside entry dicts (ArrayUnion equality break)"
+        )
+
+
+# =============================================================================
+# TickLogStore — NOTE 1, D-21
+# =============================================================================
+
+class TestTickLogStore:
+    """Unit tests for TickLogStore — per-tick eval-fixture snapshots."""
+
+    _DATE = "2026-05-21"
+    _TICK = "14:20"
+    _SITUATION = {
+        "calendar": [],
+        "ticktick_overdue": ["reply-to-maya"],
+        "hours_since_contact": 4.5,
+        "empty": False,
+    }
+    _DECISION = {
+        "sent": True,
+        "trail": ["gather", "tick_brain", "compose", "send"],
+        "topic_key": "overdue:reply-to-maya",
+    }
+
+    def test_write_persists_tick_snapshot(self):
+        """write(date, tick, situation, decision) must write to tick_logs/{date}/ticks/{HH:MM}."""
+        client, col = _make_mock_client_with_collection()
+
+        # Capture the sub-collection chain: col.document(date).collection("ticks").document(tick).set(...)
+        date_doc = MagicMock()
+        ticks_col = MagicMock()
+        tick_doc = MagicMock()
+        col.document.return_value = date_doc
+        date_doc.collection.return_value = ticks_col
+        ticks_col.document.return_value = tick_doc
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.TickLogStore("test-project")
+            result = store.write(self._DATE, self._TICK, self._SITUATION, self._DECISION)
+
+        # Best-effort writes return None implicitly.
+        assert result is None
+        col.document.assert_called_with(self._DATE)
+        date_doc.collection.assert_called_with("ticks")
+        ticks_col.document.assert_called_with(self._TICK)
+
+        tick_doc.set.assert_called_once()
+        payload = tick_doc.set.call_args.args[0]
+
+        # Three required top-level fields.
+        assert "captured_at" in payload and payload["captured_at"]  # ISO string
+        assert "situation_snapshot" in payload
+        assert "decision_trail" in payload
+        # Decision trail passes through verbatim.
+        assert payload["decision_trail"] == self._DECISION
+        # situation_snapshot strips the 'empty' field but keeps the others.
+        assert "empty" not in payload["situation_snapshot"]
+        assert payload["situation_snapshot"]["calendar"] == []
+        assert payload["situation_snapshot"]["ticktick_overdue"] == ["reply-to-maya"]
+        assert payload["situation_snapshot"]["hours_since_contact"] == 4.5
+
+    def test_write_swallows_firestore_error(self):
+        """TickLogStore.write must NEVER raise — best-effort contract (Plan 06 _write_tick_log)."""
+        client, col = _make_mock_client_with_collection()
+        # Make the inner .set() raise.
+        date_doc = MagicMock()
+        ticks_col = MagicMock()
+        tick_doc = MagicMock()
+        tick_doc.set.side_effect = RuntimeError("simulated tick-log outage")
+        col.document.return_value = date_doc
+        date_doc.collection.return_value = ticks_col
+        ticks_col.document.return_value = tick_doc
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.TickLogStore("test-project")
+            # Must not raise.
+            result = store.write(self._DATE, self._TICK, self._SITUATION, self._DECISION)
+
+        assert result is None
