@@ -56,9 +56,9 @@
 
 ### Autonomous Engine (Phase 18)
 
-- [ ] **AUTO-01**: `run_autonomous_tick()` implements the 3-layer design: Layer 0 (free context gather), Layer 1 (tick-brain judgment), Layer 2 (main-brain composition, only on escalation)
-- [ ] **AUTO-02**: `gather_situation()` fetches calendar, TickTick, unread email count, follow-ups, hours-since-contact, recent journal, and today's outreach log
-- [x] **AUTO-03**: Repeat-suppression: `outreach_log/{date}` records every escalated send; tick-brain is informed of what was already raised today (store-layer complete Phase 18-01; wiring in Phase 18-06)
+- [x] **AUTO-01**: `run_autonomous_tick()` implements the 3-layer design: Layer 0 (free context gather), Layer 1 (tick-brain judgment), Layer 2 (main-brain composition, only on escalation)
+- [x] **AUTO-02**: `gather_situation()` fetches calendar, TickTick, unread email count, follow-ups, hours-since-contact, recent journal, and today's outreach log
+- [x] **AUTO-03**: Repeat-suppression: `outreach_log/{date}` records every escalated send; tick-brain is informed of what was already raised today (store-layer complete Phase 18-01; wiring complete Phase 18-06)
 - [x] **AUTO-04**: `FollowupStore` stores scheduled follow-ups (`followups` collection: `{due_at, note, created_at, done}`)
 - [x] **AUTO-05**: `schedule_followup(when, note)` direct tool lets Klaus schedule his own check-backs mid-conversation
 - [ ] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *`
@@ -116,9 +116,9 @@
 | JOUR-04 | Phase 17 | Complete ✓ 2026-05-19 |
 | JOUR-05 | Phase 17 | Complete ✓ 2026-05-19 |
 | JOUR-06 | Phase 17 | Complete ✓ 2026-05-19 |
-| AUTO-01 | Phase 18 | Pending |
-| AUTO-02 | Phase 18 | Pending |
-| AUTO-03 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-01: store-layer) |
+| AUTO-01 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-06: 3-layer pipeline wired) |
+| AUTO-02 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-06: gather_situation 8-source) |
+| AUTO-03 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-01 store + Plan 18-06 D-10 success-only wiring) |
 | AUTO-04 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-01) |
 | AUTO-05 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-02) |
 | AUTO-06 | Phase 18 | Pending |
@@ -135,4 +135,4 @@
 
 ---
 *Requirements defined: 2026-05-18*
-*Last updated: 2026-05-19 — Phase 17 complete; backfilled Phase 14 & 16 completion markers*
+*Last updated: 2026-05-23 — Phase 18 Plan 06 complete (AUTO-01, AUTO-02, AUTO-03 wiring)*
