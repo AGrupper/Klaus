@@ -122,7 +122,7 @@ Plans:
 - [x] 18-05-tick-brain-extension-PLAN.md — TickBrain.think system_override + _parse_response topic_key (AUTO-01, AUTO-07) ✓ 2026-05-22
 - [x] 18-06-autonomous-orchestrator-PLAN.md — core/autonomous.py 3-layer pipeline + pitfall tests (AUTO-01, AUTO-02, AUTO-03) ✓ 2026-05-23
 - [x] 18-07-cron-route-and-heartbeat-PLAN.md — /cron/autonomous-tick + heartbeat staleness entry (AUTO-06) ✓ 2026-05-23
-- [ ] 18-08-eval-runner-PLAN.md — scripts/eval_tick_brain.py precision/recall scorer (AUTO-09)
+- [x] 18-08-eval-runner-PLAN.md — scripts/eval_tick_brain.py precision/recall scorer (AUTO-09) ✓ 2026-05-23
 - [ ] 18-09-deployment-docs-PLAN.md — docs/DEPLOYMENT.md 9-cron table + Groq secret + Five Fingers quirk + Firestore index (INFRA-01)
 
 **Waves:** W1 = {18-01, 18-02 (depends on 01), 18-03, 18-04}; W2 = {18-05, 18-06 (depends on 01,02,03,05), 18-07 (depends on 06)}; W3 = {18-08 (depends on 03,04,05,06), 18-09 (depends on 07)}

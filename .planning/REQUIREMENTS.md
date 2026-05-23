@@ -64,7 +64,7 @@
 - [x] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *` (route + heartbeat staleness entry complete Phase 18-07; Cloud Scheduler job creation deferred to Phase 18-09 DEPLOYMENT.md)
 - [x] **AUTO-07**: `prompts/autonomous_triage.md` (tick-brain) and `prompts/autonomous.md` (main-brain) created with wide-latitude framing
 - [x] **AUTO-08**: Judgment eval harness: `evals/tick_brain/` with ~20–30 labeled `SituationSnapshot` fixtures (5 seed fixtures shipped Plan 18-04; 20–30 target grown retroactively from `tick_logs` per D-21)
-- [ ] **AUTO-09**: `scripts/eval_tick_brain.py` scores a candidate model against fixtures (precision/recall on "should speak")
+- [x] **AUTO-09**: `scripts/eval_tick_brain.py` scores a candidate model against fixtures (precision/recall on "should speak") (complete Phase 18-08: 366-line CLI runner + 4 subprocess tests; overall P/R/F1 + per-trigger table; Pitfall 8 errored bucket; exit 0 always)
 
 ### Infrastructure & Docs (Cross-cutting)
 
@@ -121,10 +121,10 @@
 | AUTO-03 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-01 store + Plan 18-06 D-10 success-only wiring) |
 | AUTO-04 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-01) |
 | AUTO-05 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-02) |
-| AUTO-06 | Phase 18 | Pending |
+| AUTO-06 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-07: route + heartbeat staleness entry; Cloud Scheduler creation deferred to 18-09) |
 | AUTO-07 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-03) |
 | AUTO-08 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-04: 5 seed fixtures + README + schema tests; growth from tick_logs per D-21) |
-| AUTO-09 | Phase 18 | Pending |
+| AUTO-09 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-08: scripts/eval_tick_brain.py 366 lines + 4 subprocess tests; P/R/F1 + per-trigger table + Pitfall 8 errored bucket) |
 | INFRA-01 | Phase 18 | Pending |
 | INFRA-02 | Phase 14 | Complete ✓ 2026-05-18 |
 
