@@ -61,7 +61,7 @@
 - [x] **AUTO-03**: Repeat-suppression: `outreach_log/{date}` records every escalated send; tick-brain is informed of what was already raised today (store-layer complete Phase 18-01; wiring complete Phase 18-06)
 - [x] **AUTO-04**: `FollowupStore` stores scheduled follow-ups (`followups` collection: `{due_at, note, created_at, done}`)
 - [x] **AUTO-05**: `schedule_followup(when, note)` direct tool lets Klaus schedule his own check-backs mid-conversation
-- [ ] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *`
+- [x] **AUTO-06**: `/cron/autonomous-tick` route added; Cloud Scheduler fires `*/20 7-21 * * *` (route + heartbeat staleness entry complete Phase 18-07; Cloud Scheduler job creation deferred to Phase 18-09 DEPLOYMENT.md)
 - [x] **AUTO-07**: `prompts/autonomous_triage.md` (tick-brain) and `prompts/autonomous.md` (main-brain) created with wide-latitude framing
 - [x] **AUTO-08**: Judgment eval harness: `evals/tick_brain/` with ~20–30 labeled `SituationSnapshot` fixtures (5 seed fixtures shipped Plan 18-04; 20–30 target grown retroactively from `tick_logs` per D-21)
 - [ ] **AUTO-09**: `scripts/eval_tick_brain.py` scores a candidate model against fixtures (precision/recall on "should speak")
