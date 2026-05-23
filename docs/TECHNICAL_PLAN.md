@@ -154,7 +154,15 @@ Measure everything, cap nothing (explicit user preference). Cost is recorded per
 `LLMUsageStore` (Phase 14) and surfaced in `get_self_status` (Phase 16).
 Free models (Groq) return cost=0.0 by design — see `core/pricing.py::compute_cost()`.
 
-## Phase 15 — Multimodal Telegram Photo Support & Get Ready Buffer Fix
+> **Numbering note.** Sections below labelled "Phase 15: Multimodal Telegram" were
+> implemented as an interim feature between Phases 14 and the start of the
+> Consciousness & Autonomy milestone work. The milestone-scoped roadmap
+> (`.planning/MILESTONES.md`, `.planning/PROJECT.md`) uses a different scheme
+> where Phases 15-18 refer to milestone-v2.0 deliverables. Both numbering
+> schemes are valid in context. The "Milestone v2.0 Phases" section at the
+> end of this file covers Phases 15-18 in the milestone sense.
+
+## Phase 15 (interim) — Multimodal Telegram Photo Support & Get Ready Buffer Fix
 
 ### Telegram Photo Vision Ingestion
 To keep conversational context rich while maintaining a lean state layer:
@@ -187,3 +195,163 @@ To keep conversational context rich while maintaining a lean state layer:
    - `mcp_tools/calendar_tool.py`'s `create_event()` intercept checks if the event summary starts with `"Get Ready"` (case-insensitive). If so, it disables `is_workout`, preventing the scheduler from creating nested pre-workout travel/prep buffers.
 2. **Smart Prompt Instruction**:
    - `prompts/smart_agent.md` clarifies that `"Get Ready"` buffers are automatically generated at the tool-level, explicitly forbidding the Smart Agent from creating travel or preparation blocks manually.
+
+---
+
+# Milestone v2.0 Phases — Consciousness & Autonomy ✓ Shipped 2026-05-23
+
+These phases use the milestone-scoped numbering documented in `.planning/MILESTONES.md`
+and `.planning/archive/v2.0/phases/`. Full per-plan execution paper trail (CONTEXT, RESEARCH,
+PLAN, SUMMARY, VERIFICATION, REVIEW) lives in `.planning/archive/v2.0/phases/<phase>/`.
+
+## Phase 14 — Foundation: Cost Metering + Tick-Brain + LLM Strategy ✓
+
+Already covered above (§4 Execution Phases line 36 + § LLM Strategy table).
+
+Highlights:
+- `core/pricing.py` — `MODEL_PRICING` dict + `compute_cost(model, in_tokens, out_tokens)`. Free models return 0.0.
+- `memory/firestore_db.py::LLMUsageStore` — records every call to `llm_usage/{YYYY-MM-DD}` with model, purpose, in/out tokens, cost.
+- `core/tick_brain.py` — Groq Qwen3-32B primary + Gemini fallback. Used by heartbeat + Phase 18 autonomous engine.
+- `core/llm_client.py` — all 3 backends surface token usage; `purpose` param threaded through; `_OpenAIBackend` accepts a per-instance `base_url` (so Groq can be targeted without mutating the env).
+
+## Phase 15 (v2.0) — Codebase Self-Knowledge ✓
+
+**Goal:** Klaus can read and search his own deployed source.
+
+**New module:** `mcp_tools/self_inspect.py` — `list_files(subdir=None)`, `read_source(path)`, `search_source(query)`. Path-traversal rejection + secret denylist (`.env*`, `*secret*`, `*credential*`, `*token*`, OAuth JSON).
+
+**3 brain-direct tools** wired in `core/tools.py` at all 5 sites (TOOL_SCHEMAS, _HANDLERS, SMART_AGENT_DIRECT_TOOLS, lazy-singleton accessor, WORKER_TOOL_SCHEMAS exclusion):
+- `list_own_files(subdir?)`
+- `read_own_source(path)`
+- `search_own_source(query)`
+
+`prompts/smart_agent.md` has a `SELF-INSPECTION` section telling Klaus he can inspect his own source. Direct-call only — never delegated to worker.
+
+## Phase 16 (v2.0) — Self-Model & State Awareness ✓
+
+**Goal:** Klaus carries a stable self-model + mutable self-state, both injected on every conversation turn.
+
+**`docs/SELF.md`** — auto-generated capability manifest. `core/self_manifest.py::generate_manifest()` introspects live tool schemas, cron routes, outbound channels, the model map (read from env vars — `SMART_AGENT_MODEL` etc.), and memory layers. Embeds a SHA so `core/heartbeat.py::check_code()` can flag staleness weekly. CI regenerates SELF.md on every Cloud Run deploy.
+
+**`memory/firestore_db.py::SelfStateStore`** — persists `identity_summary`, `current_focus`, `recent_context`, `mood`, `updated_at` in Firestore `config/self_state`. Bootstraps from SELF.md intro paragraph on first run.
+
+**Prompt assembly** (`core/main.py::AgentOrchestrator.render_smart_system`): per-message render step substitutes `{self_md}` (stable digest) + `{self_state}` (volatile) + `{journal_digest}` + `{today_date}` into `prompts/smart_agent.md`. Stable content goes first for prompt-cache friendliness.
+
+**`get_self_status` direct tool** in `core/tools.py` — returns uptime, today's message count, today/month LLM cost (from `LLMUsageStore`), latest heartbeat status. Degrades gracefully when journal absent.
+
+## Phase 17 (v2.0) — Reflection & Journal ✓
+
+**Goal:** Klaus reflects nightly, writes a journal entry, and updates his self-state.
+
+**`core/reflection.py::run_reflection()`** — gathers the day (conversation history, message count, LLM cost, heartbeat snapshot, calendar events via the shared `core/tools._get_calendar_tool()` singleton, TickTick today-tasks count) and composes a journal entry via the brain. Per-source try/except isolation — one failing source doesn't sink the whole reflection.
+
+**`memory/firestore_db.py::JournalStore`** — writes `journal/{YYYY-MM-DD}` docs in Firestore.
+
+**Pinecone integration** — each journal entry upserts to Pinecone with `kind="self"`. `memory/pinecone_db.py::_VALID_KINDS` now `{"fact", "chunk", "chat", "self"}`. Self-recall requires explicit `kinds=["self"]` — default `recall()` excludes journal entries to avoid polluting curated memory.
+
+**Cloud Scheduler:** `klaus-reflect` fires `0 22 * * *` Asia/Jerusalem → `POST /cron/reflect` (OIDC-protected) in `interfaces/web_server.py`. After reflection, `SelfStateStore.update()` evolves Klaus's self-state with the day's insights.
+
+**Per-message prompt assembly** also injects a digest of the last ~3 journal entries into `{journal_digest}` so Klaus carries forward context from recent days.
+
+## Phase 18 (v2.0) — The Autonomous Engine (capstone) ✓
+
+**Goal:** Judgment-driven proactive outreach with repeat-suppression and an eval harness.
+
+### 3-layer cost-gating pipeline
+
+```
+gather_situation()        Layer 0   8 sources, no LLM             $0.00
+        ↓
+empty-signals gate (D-11) Layer 0   if nothing happening → EXIT   $0.00
+        ↓
+tick_brain.think()        Layer 1   Groq qwen3-32b judgment       $0.00 (free tier)
+  purpose='tick_autonomous'         {should_act, reason, draft, topic_key}
+        ↓
+  if should_act=False → EXIT                                       $0.00
+        ↓
+_compose_layer2()         Layer 2   gemini-3.5-flash compose       costs money
+  purpose='autonomous_compose'      synthetic [{role:user, content}] via
+                                    AgentOrchestrator._run_smart_loop
+        ↓
+send_and_inject()         Telegram delivery + Firestore conversation injection
+        ↓
+OutreachLogStore.append() D-10: only after send success — repeat-suppression key
+```
+
+**Brain (paid) never runs unless tick-brain (free) affirmatively says "speak up".**
+
+### Components
+
+- **`core/autonomous.py`** (825 LOC) — `gather_situation`, `run_autonomous_tick`, `_compose_layer2`, `_compose_followup`, `_get_orchestrator` (process-wide singleton with double-checked locking), `_SMART_LOOP_ERROR_SENTINELS`.
+- **`prompts/autonomous_triage.md`** — Layer 1 tick-brain system prompt. Wide-latitude framing (no cadence cap, no hours-since-contact floor). Mandates JSON output: `{should_act, reason, draft, topic_key}`. Today's outreach log is informative-not-blocking.
+- **`prompts/autonomous.md`** — Layer 2 brain compose prompt with `{self_md}` / `{self_state}` / `{journal_digest}` / `{today_date}` placeholders. Includes follow-up fire variant with `{action: send|defer}` schema and D-14 force-fire on `defer_count >= 3`.
+- **`memory/firestore_db.py`** — three new stores:
+  - `FollowupStore` — scheduled follow-ups (add, list_due, mark_done, cancel, defer). Composite index on (`status`, `due_at`).
+  - `OutreachLogStore` — per-day topic_key log. `append()` uses `firestore.ArrayUnion` (deep-equality dedup) — never put server-timestamp sentinels inside the entry dict.
+  - `TickLogStore` — per-tick decision audit log. Best-effort, never raises.
+- **`core/tools.py`** — three brain-direct tools, wired at all 5 sites (15+ edit points):
+  - `schedule_followup(when, note)` — accepts ISO 8601 or natural-language (dateutil fallback)
+  - `list_followups()` — strips internal fields
+  - `cancel_followup(id)` — idempotent (D-15)
+  All three excluded from `WORKER_TOOL_SCHEMAS` — brain-only.
+- **`core/tick_brain.py`** (Phase 18 extension) — `think(prompt, system_override=None)` and `_parse_response` passes through `topic_key`. Purpose strings layered: `tick_autonomous` / `tick_autonomous_fallback` when override set; `tick` / `tick_fallback` when not (heartbeat backward compat preserved).
+- **`interfaces/web_server.py`** — `POST /cron/autonomous-tick` (OIDC-protected, calls `core.autonomous.run_autonomous_tick(_application.bot, now)`).
+- **`core/heartbeat.py::_CRON_MAX_STALENESS_HOURS`** — `'autonomous-tick': 1` (one hour = 3 missed 20-min ticks).
+- **`evals/tick_brain/fixtures/0001..0005-*.json`** — 5 seed `SituationSnapshot` fixtures (one per trigger type + one obvious-negative) with `ground_truth.should_speak` labels. Fixture 0003 (due-followup) is `should_speak=false` because D-13 routes follow-ups around tick-brain.
+- **`scripts/eval_tick_brain.py`** (366 LOC) — loads fixtures, runs each through `TickBrain.think(prompt, system_override=<autonomous_triage.md>)`, scores predicted vs ground-truth. Outputs overall precision/recall/F1 + per-trigger-type breakdown. Safe-mode returns (`parse_failure`, `llm_error`) tracked as a separate "errored" bucket — NOT counted as predicted-False (Pitfall 8). Exit code 0 always (measurement tool, not a CI gate).
+
+### Cloud Scheduler
+
+- `klaus-autonomous-tick` — `*/20 7-21 * * *` Asia/Jerusalem (43 ticks/day inclusive). OIDC bearer required.
+
+### Cost expectation (typical day)
+
+- ~most ticks: $0.00 (Layer 0 empty gate)
+- Remaining: $0.00 (tick-brain says no — Groq free tier)
+- Rare (a handful per day): a few hundredths of a cent each (Layer 2 brain compose)
+
+### Key invariants (verified by tests in `tests/test_autonomous.py`)
+
+- `OutreachLogStore.append` is gated on send success (D-10)
+- All 4 placeholders are resolved before `_run_smart_loop` is called (Pitfall 2 / BLOCKER 5b)
+- `_run_smart_loop` sentinel return falls back to tick-brain draft (D-19 / BLOCKER 3) — the `CONNECTIVITY_ERROR_TEXT` constant in `core/main.py` is asserted to contain every entry in `_SMART_LOOP_ERROR_SENTINELS` by `test_sentinel_substring_matches_main_constant`, so future edits to the canned error message can't silently break Layer-2 failure detection
+- `_get_orchestrator()` is a singleton — built once per Cloud Run instance, not 43 times/day
+- Synthetic Layer-2 user message does NOT pollute conversation history (Pitfall 2)
+- `defer_count >= 3` force-fires on the next due tick (D-14)
+- Empty/missing `topic_key` from tick-brain triggers handler synthesis (Pitfall 4)
+- Layer 1 purpose strings stay `tick_autonomous` / `tick_autonomous_fallback`; heartbeat purposes (`tick` / `tick_fallback`) are preserved untouched
+
+---
+
+# Live Infrastructure (post-v2.0)
+
+Updated to reflect the 9-cron production state. The §5 inventory above predates Phases 17-18.
+
+**Cloud Run service:** `klaus-agent` — region `me-west1`, project `klaus-agent`
+
+**Firestore database:** `klaus-firestore` (lowercase `klaus` — uppercase causes silent 404s). Collections:
+- `conversations` — per-user history (Phase 6)
+- `five_fingers_roster`, `five_fingers_practices` — Phase 8
+- `morning_briefings/{date}` — Phase 10 state machine
+- `chat_ingest/state`, `chat_export_ingest/state` — Phases 12-13 dedup
+- `llm_usage/{date}` — Phase 14 cost metering
+- `config/self_state` — Phase 16 mutable self-state
+- `journal/{date}` — Phase 17 reflection journal
+- `followups`, `outreach_log/{date}`, `tick_logs/{date}/ticks/{HH:MM}` — Phase 18
+
+**Pinecone index:** `klaus-memory` — serverless, AWS, 768-dim, cosine. Valid kinds: `{"fact", "chunk", "chat", "self"}`.
+
+**Cloud Scheduler jobs (9 total):**
+- `klaus-heartbeat` — `0 * * * *`
+- `klaus-proactive-alerts` — `30 21 * * *` Asia/Jerusalem (Phase 9)
+- `klaus-morning-briefing-tick` — `*/10 6-10 * * *` Asia/Jerusalem (Phase 10)
+- `klaus-five-fingers-morning` — Wed/Sun 10:30 (Phase 8)
+- `klaus-five-fingers-evening` — Wed/Sun 21:15 (Phase 8)
+- `klaus-chat-ingest` — `0 4 * * *` Asia/Jerusalem (Phase 12)
+- `klaus-chat-export-ingest` — `30 4 * * *` Asia/Jerusalem (Phase 13)
+- `klaus-reflect` — `0 22 * * *` Asia/Jerusalem (Phase 17 v2.0)
+- `klaus-autonomous-tick` — `*/20 7-21 * * *` Asia/Jerusalem (Phase 18 v2.0)
+
+**Secrets in Secret Manager:** all the original v1.0 secrets plus `klaus-tick-brain-key` (Groq API key for Phase 14/18 tick-brain).
+
+See `docs/DEPLOYMENT.md` for operator runbook (creating jobs, rotating secrets, the Firestore composite index on `followups(status, due_at)`, and the Five Fingers job-id-collision migration paragraph).
