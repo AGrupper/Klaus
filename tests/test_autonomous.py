@@ -836,3 +836,27 @@ def test_layer2_followup_defer_below_three_does_not_send(mock_bot, fixed_now):
     assert new_due_at == expected_new_due, (
         f"defer must push original_due+1h (NOTE 2). got {new_due_at!r}, expected {expected_new_due!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# M-5 — Sentinel/main.py constant coupling (post-review hardening, 2026-05-23)
+# ---------------------------------------------------------------------------
+
+def test_sentinel_substring_matches_main_constant():
+    """M-5 — autonomous's Layer-2 failure detection keys on a substring of
+    ``core.main.CONNECTIVITY_ERROR_TEXT``. If anyone edits the canned message
+    in main.py and forgets to update _SMART_LOOP_ERROR_SENTINELS here, D-19
+    fallback silently breaks. Imported lazily to avoid pulling core.main into
+    every test session — only this guard needs it.
+    """
+    from core.main import CONNECTIVITY_ERROR_TEXT
+
+    assert autonomous._SMART_LOOP_ERROR_SENTINELS, (
+        "_SMART_LOOP_ERROR_SENTINELS must not be empty"
+    )
+    for sentinel in autonomous._SMART_LOOP_ERROR_SENTINELS:
+        assert sentinel in CONNECTIVITY_ERROR_TEXT, (
+            f"sentinel {sentinel!r} no longer matches core.main.CONNECTIVITY_ERROR_TEXT "
+            f"({CONNECTIVITY_ERROR_TEXT!r}) — update both sides or D-19 fallback "
+            "silently breaks"
+        )

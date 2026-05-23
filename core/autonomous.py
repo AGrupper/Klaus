@@ -16,6 +16,14 @@ Called by Cloud Scheduler via Cloud Run:
             ``render_smart_system`` — BLOCKER 5b). Full tool-loop bounded by
             ``MAX_TOOL_ITERATIONS``.
 
+D-13 (follow-up path): due follow-ups go through their own Layer-2 compose
+(``_compose_followup``) and SKIP tick-brain for that send. They do NOT short-
+circuit the rest of the tick — Layer 1 triage still runs afterwards so an
+overdue task or long-silence escalation can fire on the same tick. A tick with
+a due follow-up can therefore emit two outreach messages (the follow-up plus
+a triage-judged proactive nudge). Both go through ``OutreachLogStore`` so D-06
+dedup still applies across the day.
+
 Repeat-suppression (D-06/D-09): per-day ``outreach_log/{date}`` doc; informative
 to the triage prompt, never blocking.
 
@@ -26,6 +34,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -42,8 +51,12 @@ _TICK_TOTAL_PER_DAY = 43
 _DEFER_FORCE_FIRE_THRESHOLD = 3
 
 # BLOCKER 3 guard — ``_run_smart_loop`` RETURNS this sentinel string on total
-# LLM exhaustion (core/main.py:401-409). Layer-2 callers MUST detect it and
-# treat as failure (D-19 fallback to triage draft).
+# LLM exhaustion. The full canned text lives in ``core.main.CONNECTIVITY_ERROR_TEXT``
+# (M-5 fix) — any edit to that constant is caught by
+# ``tests/test_autonomous.py::test_sentinel_substring_matches_main_constant``,
+# which imports ``core.main`` lazily at test time and asserts substring
+# containment. Layer-2 callers MUST detect this prefix and treat as failure
+# (D-19 fallback to triage draft).
 _SMART_LOOP_ERROR_SENTINELS = (
     "I'm afraid I encountered a connectivity",
 )
@@ -388,6 +401,7 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
 # --------------------------------------------------------------------------- #
 
 _orchestrator_singleton = None  # type: ignore[var-annotated]
+_orchestrator_lock = threading.Lock()
 
 
 def _get_orchestrator():
@@ -398,12 +412,20 @@ def _get_orchestrator():
     tick (~43 times/day) is wasteful. The singleton lives for the Cloud Run
     instance lifetime (typically many ticks before scale-to-zero).
 
+    Double-checked-locking (M-1 fix): Cloud Run concurrency is unpinned, so two
+    coincident requests can both pass the first ``is None`` check. The lock
+    serializes construction; the second ``is None`` check inside the lock
+    prevents a duplicate ``AgentOrchestrator()`` (which would leak a SelfState
+    client and 3 LLMClients).
+
     BLOCKER 5a fix.
     """
     global _orchestrator_singleton
     if _orchestrator_singleton is None:
-        from core.main import AgentOrchestrator
-        _orchestrator_singleton = AgentOrchestrator()
+        with _orchestrator_lock:
+            if _orchestrator_singleton is None:
+                from core.main import AgentOrchestrator
+                _orchestrator_singleton = AgentOrchestrator()
     return _orchestrator_singleton
 
 
@@ -692,10 +714,14 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     3-layer pipeline per D-20:
       1. ``gather_situation`` (Layer 0) — fast, no LLM
       2. If empty signals → return early (D-11 gate; cost control SC-3)
-      3. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain)
+      3. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain
+         FOR THE FOLLOW-UP SEND). Execution then continues into step 4 — a
+         follow-up firing does NOT short-circuit the rest of the tick.
       4. Triage (Layer 1) — ``TickBrain.think`` with ``autonomous_triage`` as
          ``system_override``; purpose ``tick_autonomous`` (fallback
-         ``tick_autonomous_fallback``).
+         ``tick_autonomous_fallback``). Runs regardless of whether step 3
+         fired, so a tick can emit BOTH a follow-up and a triage-judged
+         escalation (e.g. overdue task on the same tick).
       5. If ``should_act=False`` → log + return.
       6. Compose (Layer 2) — synthetic ``[{role:user, content}]`` via
          ``_run_smart_loop`` with ``autonomous.md`` as ``smart_system``.
@@ -703,7 +729,9 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
          tick-brain ``draft`` (D-19, BLOCKER 3).
       7. Send via ``send_and_inject(..., inject_into_conversation=True)``
          (D-18).
-      8. ONLY on send success: append to ``outreach_log`` (D-10).
+      8. ONLY on send success: append to ``outreach_log`` (D-10). Same-tick
+         double-sends are de-duplicated across the day by D-06 ``topic_key``
+         logic on the next tick, not within this one.
 
     Returns a decision-trail dict suitable for ``TickLogStore`` and debugging.
     """
@@ -728,8 +756,10 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
         for fu in due_followups:
             fu_outcome = await _compose_followup(bot, fu, situation, now)
             decision["trail"].append({"followup": fu.get("id"), "outcome": fu_outcome})
-        # NOTE: a followup firing does NOT preclude an overdue/silence escalation
-        # via triage in the same tick — continue to Layer 1.
+        # D-13 intent: follow-up firing does NOT preclude same-tick triage. The
+        # follow-up path skipped tick-brain for ITS send (Layer-2 only); Layer 1
+        # still runs below so an overdue/silence escalation can also fire on
+        # this tick. Per-day D-06 dedup prevents repeats across ticks.
 
     # Layer 1 — triage. tick_brain.think wraps both purpose='tick_autonomous'
     # (primary) and 'tick_autonomous_fallback' (fallback) internally (Plan 05).

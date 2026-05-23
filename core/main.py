@@ -46,6 +46,17 @@ MAX_TOOL_ITERATIONS = 8
 # Per-user conversation history is capped at this many turns (user+assistant = 2 messages).
 MAX_CONVERSATION_TURNS = 50
 
+# Canned message returned by ``_run_smart_loop`` on total LLM exhaustion
+# (primary + fallback both failed). Exported so the autonomous tick
+# (``core.autonomous._SMART_LOOP_ERROR_SENTINELS``) can detect it as a Layer-2
+# failure and engage D-19 fallback to the tick-brain draft. Any edit here MUST
+# preserve the substring asserted by
+# ``tests/test_autonomous.py::test_sentinel_substring_matches_main_constant``.
+CONNECTIVITY_ERROR_TEXT = (
+    "I'm afraid I encountered a connectivity issue, Sir. "
+    "Please try again in a moment."
+)
+
 
 # ------------------------------------------------------------------ #
 # ConversationStore protocol + backends                              #
@@ -413,15 +424,9 @@ class AgentOrchestrator:
                             "Smart agent FALLBACK also failed (iter %d): %s",
                             iteration, fallback_exc,
                         )
-                        return (
-                            "I'm afraid I encountered a connectivity issue, Sir. "
-                            "Please try again in a moment."
-                        )
+                        return CONNECTIVITY_ERROR_TEXT
                 else:
-                    return (
-                        "I'm afraid I encountered a connectivity issue, Sir. "
-                        "Please try again in a moment."
-                    )
+                    return CONNECTIVITY_ERROR_TEXT
 
             tool_calls = response["tool_calls"]
             response_text = response["text"]
