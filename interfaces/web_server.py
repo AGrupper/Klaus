@@ -360,6 +360,46 @@ async def cron_reflect(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/cron/autonomous-tick")
+async def cron_autonomous_tick(request: Request) -> JSONResponse:
+    """Autonomous tick — judgment-driven proactive outreach.
+
+    Schedule: */20 7-21 * * *  (Asia/Jerusalem) — 43 ticks/day.
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Flow (Phase 18 — AUTO-06):
+      1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
+      2. Guard: _application must be initialised (mirrors cron_proactive_alerts
+         and cron_morning_briefing_tick — the bot is required to send).
+      3. Delegate to core.autonomous.run_autonomous_tick, which runs the full
+         3-layer pipeline (gather → triage → compose) and only on success
+         appends to outreach_log (D-10).
+      4. Record success or failure to the heartbeat liveness ledger via
+         _log_cron_run('autonomous-tick', ok=...). Failure path re-raises so
+         Cloud Run logs the 500 and the consecutive_failures streak ticks up.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    # WHY: imported inside the handler so the heavy core.autonomous module
+    # (which pulls in tick_brain + the orchestrator graph) does not load at
+    # web_server import time — keeps /health cold-start fast.
+    import core.autonomous as _auto
+    try:
+        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+        # run_autonomous_tick is async — it wraps the sync _run_smart_loop
+        # in an executor internally, so the route just awaits the coroutine.
+        await _auto.run_autonomous_tick(_application.bot, now)
+        _log_cron_run("autonomous-tick", ok=True)
+    except Exception:
+        _log_cron_run("autonomous-tick", ok=False)
+        raise
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/cron/five-fingers-evening")
 async def cron_five_fingers_evening(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler evening tick and run the Five Fingers evening flow.

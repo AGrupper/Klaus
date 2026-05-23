@@ -110,7 +110,8 @@ _CRON_MAX_STALENESS_HOURS = {
     "proactive-alerts": 26,
     "ingest-chats": 26,
     "ingest-chat-exports": 26,
-    "reflect": 26,                # NEW — daily reflect cron, 26h tolerance
+    "reflect": 26,                # Phase 17 — daily reflect cron, 26h tolerance
+    "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
 }
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 
