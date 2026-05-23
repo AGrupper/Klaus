@@ -8,16 +8,11 @@ Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task
 
 Klaus should act as a genuinely intelligent, proactive companion that surfaces the right thing at the right time — while knowing exactly what he is and what he can do.
 
-## Current Milestone: v2.0 — Consciousness & Autonomy
+## Current Milestone: (none — between milestones)
 
-**Goal:** Make Klaus self-aware, maximally proactive, and cost-transparent — a judgment-driven autonomous agent that knows his own code, measures his costs, and decides when to reach out.
+**Last shipped:** v2.0 Consciousness & Autonomy on 2026-05-23 (5 phases, 24 plans, 41/41 requirements). See `.planning/MILESTONES.md § v2.0` for the closure summary.
 
-**Target features:**
-- Phase 14: Cost metering on every LLM call + free tick-brain (Groq/Qwen3-32B) + LLM strategy docs
-- Phase 15: Self-inspect tools — Klaus can read and search his own deployed source
-- Phase 16: SELF.md capability manifest + persistent self-state + `get_self_status` tool
-- Phase 17: Daily reflection cron → journal → self-state evolution loop
-- Phase 18: Autonomous judgment engine (20-min tick, `7-21`) + repeat-suppression + eval harness
+**Next:** Not yet defined. Run `/gsd-new-milestone` to start the next cycle.
 
 ## Requirements
 
@@ -43,11 +38,13 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 - ✓ `get_self_status` tool returns uptime, cost, heartbeat status (Phase 16)
 - ✓ SelfStateStore persists identity state across 6h conversation resets (Phase 16)
 - ✓ Heartbeat weekly SHA check flags stale SELF.md; CI regenerates on every deploy (Phase 16)
+- ✓ Daily reflection cron writes journal entries + updates self-state (Phase 17)
+- ✓ Autonomous tick engine fires every 20 min, 7-21, with judgment + repeat-suppression (Phase 18)
+- ✓ Judgment eval harness scores tick-brain on labeled fixtures (Phase 18)
 
 ### Active
-- [ ] Daily reflection cron writes journal entries + updates self-state (Phase 17)
-- [ ] Autonomous tick engine fires every 20 min, 7-21, with judgment + repeat-suppression (Phase 18)
-- [ ] Judgment eval harness scores tick-brain on labeled fixtures (Phase 18)
+
+(none — between milestones; live-staging verification of SC-1/SC-2/SC-4 outstanding, see STATE.md § Deferred Items)
 
 ### Out of Scope
 

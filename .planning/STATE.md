@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: milestone
-status: phase-complete
-last_updated: "2026-05-23T12:00:00.000Z"
-last_activity: 2026-05-23 -- Phase 18 Plan 09 executed (1 commit: 4ff06e5 docs +162 lines to docs/DEPLOYMENT.md: §19 9-cron inventory table + §14d klaus-reflect gcloud + §14e klaus-autonomous-tick gcloud + §20 TICK_BRAIN_API_KEY Groq secret/rotation + §21 Five Fingers quirk WITH legacy-job migration paragraph "gcloud scheduler jobs delete five-fingers" + §22 Firestore composite index followups(status,due_at); tests/test_docs.py NEW 8/8 grep tests pass; INFRA-01 complete; **PHASE 18 COMPLETE 9/9 plans done**; milestone v2.0 complete 5/5 phases)
+status: milestone-complete
+last_updated: "2026-05-23T14:00:00.000Z"
+last_activity: 2026-05-23 -- Milestone v2.0 closed (Consciousness & Autonomy, 5 phases / 24 plans / 41 requirements). Post-review fixes landed (commit 0be394e: H-1 docstring, M-1 singleton lock, M-5 sentinel constant + regression test). Master plan audit completed (.planning/MASTER-PLAN-AUDIT.md). Archive files written to .planning/milestones/v2.0-{ROADMAP,REQUIREMENTS}.md. REQUIREMENTS.md removed to free the slot for the next milestone.
 progress:
   total_phases: 5
   completed_phases: 5
@@ -17,9 +17,11 @@ progress:
 
 ## Current Position
 
-Phase: 18 — The Autonomous Engine (Capstone) ✓ **COMPLETE**
-Plans: 9/9 (Wave 1: 01 ✓, 02 ✓, 03 ✓, 04 ✓ · Wave 2: 05 ✓, 06 ✓, 07 ✓ · Wave 3: 08 ✓, 09 ✓)
-Status: **Phase 18 complete — milestone v2.0 complete (5/5 phases)**. Ready for milestone wrap-up or next milestone planning.
+Milestone: v2.0 — Consciousness & Autonomy ✓ **SHIPPED 2026-05-23**
+Phases: 14, 15, 16, 17, 18 — all complete
+Plans: 24/24 (15 in Phases 14–17 + 9 in Phase 18)
+Requirements: 41/41
+Status: **Milestone v2.0 closed.** No active phase. Run `/gsd-new-milestone` to start the next cycle, or `/gsd-spec-phase` to scope a one-off phase outside a milestone.
 Resume file: — (no active plan)
 Last activity: 2026-05-23 -- Plan 18-09 executed (1 commit: 4ff06e5 docs +162 lines to docs/DEPLOYMENT.md; 6 additions — §19 9-cron inventory table, §14d klaus-reflect gcloud block, §14e klaus-autonomous-tick gcloud block (*/20 7-21 * * *, /cron/autonomous-tick), §20 TICK_BRAIN_API_KEY Groq secret + 4-step rotation procedure, §21 Five Fingers job-id collision quirk WITH legacy-job migration paragraph including "gcloud scheduler jobs delete five-fingers" (bonus WARNING fix regression-guarded by test_five_fingers_migration_paragraph_present), §22 Firestore composite index followups(status ASC, due_at ASC) with both gcloud-create and FAILED_PRECONDITION click-link paths; tests/test_docs.py NEW with 8 grep-style completeness assertions, 8/8 pass; 155/155 adjacent regression tests pass (6 deselected — pre-existing fastapi local-env block, logged in deferred-items.md); endpoint-path drift fixed: morning-briefing row uses /cron/morning-briefing-tick matching interfaces/web_server.py:427 (Rule 1 deviation); INFRA-01 satisfied — last remaining Phase 18 requirement; **Phase 18 closed 9/9 plans done**; milestone v2.0 (Consciousness & Autonomy) complete 5/5 phases)
 
@@ -110,3 +112,19 @@ None.
 
 - `load_dotenv` must always use `override=True` — default silently ignores .env when shell already exports the var
 - All GCP/Pinecone resource names are lowercase "Klaus" — uppercase causes silent 404s
+
+## Deferred Items
+
+Items acknowledged and deferred at milestone v2.0 close on 2026-05-23. None
+are code defects; all are either live-staging blockers (need real services to
+verify) or local dev-venv hygiene (CI/Cloud Run env is unaffected). Logged
+here per the gsd-complete-milestone audit protocol.
+
+| Category | Item | Status | Resolves when |
+|----------|------|--------|---------------|
+| uat-gap | 16-HUMAN-UAT.md — 3 pending scenarios (SELF.md cold-start, self_state bootstrap, get_self_status live) | resolved (acknowledged at close) | operator runs SELF.md cold-start test against staging Cloud Run + Telegram |
+| verification-gap | 16-VERIFICATION.md status `human_needed` | resolved (acknowledged at close) | operator queries `config/self_state` in live Firestore after first deploy |
+| verification-gap | 18-VERIFICATION.md status `human_needed` (SC-1, SC-2, SC-4, SC-5) | resolved (acknowledged at close) | operator triggers `klaus-autonomous-tick` in staging with `TICK_BRAIN_API_KEY` set; verifies Telegram receives the message (SC-1), same-day repeat is suppressed (SC-2), `schedule_followup` fires on time (SC-4), eval runner outputs real precision/recall/F1 (SC-5). SC-3 (quiet-tick cost ≈ $0) already verified locally. |
+| env-hygiene | Local pytest fails on `googleapiclient` (test_tools.py), `fastapi` (test_web_server.py), `google.genai` (test_llm_client.py, test_pinecone_embed.py) | open (low priority) | `uv add googleapiclient fastapi google-genai` to dev requirements |
+| code-quality | 18-REVIEW.md M-2, M-3, M-4 + L-1..L-5 (8 findings) | open (Phase 19 candidate) | next housekeeping sweep — see `.planning/phases/18-autonomous-engine/deferred-items.md` § "Post-review backlog" |
+| docs-drift | `docs/TECHNICAL_PLAN.md` stops at the pre-v2.0 "Phase 15: Multimodal Telegram" and does NOT yet describe v2.0 Phases 15–18 | open (low priority) | next docs sweep (~30–60 min) — see `.planning/MASTER-PLAN-AUDIT.md` § "Documentation drift" |

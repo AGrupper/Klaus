@@ -10,6 +10,7 @@
 - [Plan 18-04 / 2026-05-22] tests/test_tools.py ImportError on `googleapiclient` in local env. Pre-existing — not caused by Plan 18-04 changes. CI/Cloud Run env has the package; only the local dev env is missing it. Out of scope.
 - [Plan 18-08 / 2026-05-23] `tests/test_web_server.py` ImportError on `fastapi` in local env. Pre-existing — reproduced on HEAD before any Plan 18-08 changes (`No module named 'fastapi'` at `interfaces/web_server.py:32`). CI/Cloud Run env has the package; only the local dev env is missing it. Out of scope for Plan 18-08 (Rule 4: scope boundary).
 - [Plan 18-09 / 2026-05-23] Same fastapi local-env block re-encountered (5 tests in `TestCronAutonomousTick` + `test_cron_heartbeat_rejects_unauthenticated`). Confirmed unchanged by Plan 18-09 (docs-only plan touches `docs/DEPLOYMENT.md` + `tests/test_docs.py`). 155/155 non-fastapi tests in the Plan 18-09 regression suite pass cleanly.
+- [Master audit / 2026-05-23] `google.genai` local-env import block — 4 tests in `tests/test_llm_client.py` (3) + `tests/memory/test_pinecone_embed.py` (1) fail with `ModuleNotFoundError: No module named 'google.genai'` at `core/llm_client.py:312,397` and `memory/pinecone_db.py:225`. Same family as fastapi/googleapiclient — CI/Cloud Run env has the package; local dev venv missing it. Suggest: `uv add google-genai` to dev requirements when next touching the venv. Not a regression; reproducible on HEAD before any Phase 18 work.
 
 ## Post-review backlog (Phase 19 hardening — from 18-REVIEW.md, 2026-05-23)
 
