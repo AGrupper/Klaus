@@ -162,8 +162,8 @@ def _gather_day(target_date: str) -> dict:
 
     # (c) Calendar events for today
     try:
-        from mcp_tools.calendar_tool import GoogleCalendarManager
-        cal = GoogleCalendarManager()
+        from core.tools import _get_calendar_tool
+        cal = _get_calendar_tool()
         events = cal.list_events(
             f"{target_date}T00:00:00+03:00",
             f"{target_date}T23:59:59+03:00",
