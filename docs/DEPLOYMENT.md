@@ -1050,3 +1050,165 @@ gcloud scheduler jobs run klaus-chat-export-ingest \
 Create a recurring monthly TickTick task: "Export ChatGPT + Claude + Gemini chats → run `upload_chat_export.sh`".
 
 Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.google.com → Schedule exports → Every 2 months).
+
+---
+
+## 19. Cloud Scheduler — Full Job Inventory
+
+The following 9 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
+are in `Asia/Jerusalem`.
+
+| # | Job ID                     | Schedule              | Endpoint                       | Phase   |
+|---|----------------------------|-----------------------|--------------------------------|---------|
+| 1 | klaus-five-fingers-morning | `30 10 * * 0,1,3,4`   | `/cron/five-fingers-morning`   | Earlier |
+| 2 | klaus-five-fingers-evening | `15 21 * * 0,3`       | `/cron/five-fingers-evening`   | Earlier |
+| 3 | klaus-morning-briefing     | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`  | Earlier |
+| 4 | klaus-proactive-alerts     | `30 21 * * *`         | `/cron/proactive-alerts`       | Earlier |
+| 5 | klaus-heartbeat            | `0 * * * *`           | `/cron/heartbeat`              | Earlier |
+| 6 | klaus-ingest-chats         | `0 4 * * *`           | `/cron/ingest-chats`           | 12      |
+| 7 | klaus-ingest-chat-exports  | `30 4 * * *`          | `/cron/ingest-chat-exports`    | 13      |
+| 8 | klaus-reflect              | `0 22 * * *`          | `/cron/reflect`                | 17      |
+| 9 | klaus-autonomous-tick      | `*/20 7-21 * * *`     | `/cron/autonomous-tick`        | 18      |
+
+Notes:
+- Schedules in column 2 are illustrative — verify against the live `gcloud scheduler
+  jobs list --project="${PROJECT_ID}" --location="${REGION}"` output before deploys.
+- Klaus's heartbeat picks up each job-id's last-run timestamp and alerts on staleness
+  per `core/heartbeat.py:_CRON_MAX_STALENESS_HOURS`. The `autonomous-tick` threshold
+  is 1 hour (3 missed 20-minute ticks) — see Phase 18 Pitfall 5.
+
+### §14d. klaus-reflect (Phase 17)
+
+Daily reflection cron — runs `core/reflection.py:run_reflection()` at 22:00 Jerusalem.
+
+```bash
+gcloud scheduler jobs create http klaus-reflect \
+  --schedule="0 22 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/reflect" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+### §14e. klaus-autonomous-tick (Phase 18)
+
+Autonomous outreach tick — runs `core/autonomous.py:run_autonomous_tick()` every
+20 minutes between 07:00 and 21:00 Jerusalem time. Layer-0 gate keeps quiet ticks
+near-zero-cost (SC-3).
+
+```bash
+gcloud scheduler jobs create http klaus-autonomous-tick \
+  --schedule="*/20 7-21 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/autonomous-tick" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+Pre-flight check before first deploy: `gcloud scheduler jobs list --project="${PROJECT_ID}"
+--location="${REGION}" --filter="name~autonomous-tick"` — confirm the job does not
+already exist (no historical/staging collisions).
+
+---
+
+## 20. TICK_BRAIN_API_KEY (Groq) Secret
+
+The tick-brain layer (Phase 14, used by both heartbeat reasoning and Phase 18's
+autonomous tick) calls Groq's free Qwen3-32B endpoint. Access is gated by a Groq
+API key stored in GCP Secret Manager.
+
+### Secret location
+
+- Secret name: `klaus-tick-brain-api-key`
+- Project: `${PROJECT_ID}`
+- Access by: the Cloud Run runtime service account
+
+Cloud Run reads the secret via the deploy manifest's `--set-secrets`:
+
+```bash
+gcloud run services update klaus-service \
+  --set-secrets=TICK_BRAIN_API_KEY=klaus-tick-brain-api-key:latest \
+  --region="${REGION}" --project="${PROJECT_ID}"
+```
+
+### Rotation procedure
+
+1. Generate a new API key at https://console.groq.com/keys
+2. Add a new secret version:
+   ```bash
+   gcloud secrets versions add klaus-tick-brain-api-key \
+     --data-file=- --project="${PROJECT_ID}"
+   ```
+   (paste new key, then Ctrl-D)
+3. Redeploy Cloud Run (it reads `:latest` by default).
+4. After confirming the new key works, disable the previous version:
+   ```bash
+   gcloud secrets versions disable <prev-version> --secret=klaus-tick-brain-api-key
+   ```
+
+Fallback behavior: if Groq is unavailable, `TickBrain.think()` falls back to Gemini
+3 Flash automatically (TICK-02 / Phase 14). The autonomous tick continues to operate
+on the fallback chain.
+
+---
+
+## 21. Known Quirks
+
+### Five Fingers job-id collision
+
+Historically the Five Fingers morning and evening jobs both logged to `_log_cron_run`
+under the same job-id string (`"five-fingers"`), which led to confusion when reading
+heartbeat staleness output. The canonical Cloud Scheduler job IDs are now:
+
+- `klaus-five-fingers-morning` (Wed/Sun 10:30)
+- `klaus-five-fingers-evening` (Wed/Sun 21:15)
+
+Both still hit different endpoints, but readers of `cron_runs` Firestore docs should
+expect the morning + evening to appear under distinct job-ids going forward. When
+creating a new scheduler job, run a pre-flight `gcloud scheduler jobs list` to
+confirm the chosen name does not collide.
+
+#### Migration from the legacy single `five-fingers` job (bonus WARNING fix)
+
+If your deployment predates 2026-05 and has a single `five-fingers` job in Cloud
+Scheduler (rather than the two canonical jobs above), perform a one-time migration:
+
+1. **Confirm the legacy job exists:**
+   ```bash
+   gcloud scheduler jobs list --project="${PROJECT_ID}" \
+     --location="${REGION}" --filter="name~five-fingers"
+   ```
+   If you see exactly one job named `five-fingers` (or `klaus-five-fingers` with no
+   `-morning`/`-evening` suffix), proceed.
+
+2. **Create the two new canonical jobs first** (so there's no coverage gap):
+   run the §14a / §14b gcloud blocks for `klaus-five-fingers-morning` and
+   `klaus-five-fingers-evening`.
+
+3. **Delete the legacy single job:**
+   ```bash
+   gcloud scheduler jobs delete five-fingers \
+     --location="${REGION}" --project="${PROJECT_ID}"
+   ```
+   (Substitute the actual legacy job name if it differs.)
+
+4. **Verify** the heartbeat staleness check picks up the new job-ids by waiting one
+   hour and reading `cron_runs/{job_id}` for both new IDs — the switchover happens
+   automatically once the new IDs are observed in Firestore.
+
+---
+
+## 22. Firestore Composite Indexes
+
+Klaus uses a small number of compound queries that require composite indexes:
+
+| Collection  | Fields                       | Created by | Notes |
+|-------------|------------------------------|------------|-------|
+| followups   | `status` ASC, `due_at` ASC   | Phase 18   | Required by `FollowupStore.list_due()`. On first production query, Firestore returns a `FAILED_PRECONDITION` error with a link to create the index — follow it once, or run `gcloud firestore indexes composite create --collection-group=followups --field-config=field-path=status,order=ascending --field-config=field-path=due_at,order=ascending` ahead of first cron-tick deploy. |
