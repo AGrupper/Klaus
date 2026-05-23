@@ -185,6 +185,41 @@ def test_cron_heartbeat_rejects_unauthenticated(monkeypatch):
     assert resp.status_code == 401
 
 
+def test_autonomous_tick_staleness_threshold_is_one_hour():
+    """Phase 18 AUTO-06: _CRON_MAX_STALENESS_HOURS must register 'autonomous-tick' = 1h.
+
+    The cron schedule is */20 7-21, so 1 hour = 3 missed ticks — a clear
+    "something's wrong" alert signal per RESEARCH Pitfall 5.
+    """
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert "autonomous-tick" in _CRON_MAX_STALENESS_HOURS, (
+        "autonomous-tick must be registered in _CRON_MAX_STALENESS_HOURS so "
+        "check_cron_health() will alert on stale autonomous ticks (AUTO-06)."
+    )
+    threshold = _CRON_MAX_STALENESS_HOURS["autonomous-tick"]
+    assert threshold == 1, (
+        f"autonomous-tick threshold must be 1 hour (3 missed 20-min ticks); "
+        f"got {threshold!r}"
+    )
+
+
+def test_all_cron_jobs_have_staleness_entry():
+    """Sanity: all known job-ids are reasonably tight (< 48h) and autonomous-tick is present."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    # The new entry must exist alongside the existing 5.
+    expected_subset = {
+        "morning-briefing", "proactive-alerts", "ingest-chats",
+        "ingest-chat-exports", "reflect", "autonomous-tick",
+    }
+    missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
+    assert not missing, f"Missing staleness entries: {missing}"
+    # All thresholds should be reasonable (< 48h is plenty of head-room for any cron).
+    for job_id, hours in _CRON_MAX_STALENESS_HOURS.items():
+        assert 0 < hours < 48, (
+            f"{job_id} threshold {hours} is implausible (must be 0 < h < 48)"
+        )
+
+
 def test_check_code_detects_drift_and_todos(tmp_path):
     from core.heartbeat import check_code, SEVERITY_FYI
 
