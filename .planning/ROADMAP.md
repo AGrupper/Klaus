@@ -106,13 +106,13 @@
 
 ---
 
-## Phase 18 — The Autonomous Engine (Capstone)
+## Phase 18 — The Autonomous Engine (Capstone) ✓ Complete 2026-05-23
 
 **Goal:** Klaus decides on his own judgment when to reach out — the headline feature — and the judgment is measured.
 
 **Requirements:** AUTO-01, AUTO-02, AUTO-03, AUTO-04, AUTO-05, AUTO-06, AUTO-07, AUTO-08, AUTO-09, INFRA-01
 
-**Plans:** 9 plans
+**Plans:** 9/9 complete
 
 Plans:
 - [x] 18-01-followup-outreach-stores-PLAN.md — FollowupStore + OutreachLogStore + TickLogStore + python-dateutil (AUTO-03, AUTO-04) ✓ 2026-05-22
@@ -123,7 +123,7 @@ Plans:
 - [x] 18-06-autonomous-orchestrator-PLAN.md — core/autonomous.py 3-layer pipeline + pitfall tests (AUTO-01, AUTO-02, AUTO-03) ✓ 2026-05-23
 - [x] 18-07-cron-route-and-heartbeat-PLAN.md — /cron/autonomous-tick + heartbeat staleness entry (AUTO-06) ✓ 2026-05-23
 - [x] 18-08-eval-runner-PLAN.md — scripts/eval_tick_brain.py precision/recall scorer (AUTO-09) ✓ 2026-05-23
-- [ ] 18-09-deployment-docs-PLAN.md — docs/DEPLOYMENT.md 9-cron table + Groq secret + Five Fingers quirk + Firestore index (INFRA-01)
+- [x] 18-09-deployment-docs-PLAN.md — docs/DEPLOYMENT.md 9-cron table + Groq secret + Five Fingers quirk + Firestore index (INFRA-01) ✓ 2026-05-23
 
 **Waves:** W1 = {18-01, 18-02 (depends on 01), 18-03, 18-04}; W2 = {18-05, 18-06 (depends on 01,02,03,05), 18-07 (depends on 06)}; W3 = {18-08 (depends on 03,04,05,06), 18-09 (depends on 07)}
 

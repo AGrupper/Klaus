@@ -68,7 +68,7 @@
 
 ### Infrastructure & Docs (Cross-cutting)
 
-- [ ] **INFRA-01**: `docs/DEPLOYMENT.md` documents all 9 Cloud Scheduler jobs (existing 7 + reflect + autonomous-tick), new Groq secret, and the Five Fingers duplicate job-id quirk
+- [x] **INFRA-01**: `docs/DEPLOYMENT.md` documents all 9 Cloud Scheduler jobs (existing 7 + reflect + autonomous-tick), new Groq secret, and the Five Fingers duplicate job-id quirk
 - [x] **INFRA-02**: Groq API key stored in GCP Secret Manager
 
 ## Out of Scope
@@ -125,14 +125,15 @@
 | AUTO-07 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-03) |
 | AUTO-08 | Phase 18 | Complete ✓ 2026-05-22 (Plan 18-04: 5 seed fixtures + README + schema tests; growth from tick_logs per D-21) |
 | AUTO-09 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-08: scripts/eval_tick_brain.py 366 lines + 4 subprocess tests; P/R/F1 + per-trigger table + Pitfall 8 errored bucket) |
-| INFRA-01 | Phase 18 | Pending |
+| INFRA-01 | Phase 18 | Complete ✓ 2026-05-23 (Plan 18-09: docs/DEPLOYMENT.md §19 inventory + §14d/§14e gcloud blocks + §20 Groq secret/rotation + §21 Five Fingers quirk WITH migration paragraph + §22 Firestore composite index; tests/test_docs.py 8/8) |
 | INFRA-02 | Phase 14 | Complete ✓ 2026-05-18 |
 
 **Coverage:**
 - v2.0 requirements: 41 total
 - Mapped to phases: 41
 - Unmapped: 0 ✓
+- **Complete: 41/41 ✓ — milestone v2.0 (Consciousness & Autonomy) all requirements satisfied**
 
 ---
 *Requirements defined: 2026-05-18*
-*Last updated: 2026-05-23 — Phase 18 Plan 06 complete (AUTO-01, AUTO-02, AUTO-03 wiring)*
+*Last updated: 2026-05-23 — Phase 18 Plan 09 complete (INFRA-01); milestone v2.0 closed (5/5 phases, 41/41 requirements).*
