@@ -274,17 +274,35 @@ def _render_manifest(root: Path, sha: str) -> str:
     ]
 
     # ----- §1 Identity ---------------------------------------------------
+    # Model strings are read from env so SELF.md never goes stale when the
+    # operator swaps backends. Defaults match the current production config
+    # (see .env.example).
+    brain_model = os.getenv("SMART_AGENT_MODEL", "gemini-3.5-flash")
+    brain_backend = os.getenv("SMART_AGENT_BACKEND", "gemini")
+    worker_model = os.getenv("WORKER_AGENT_MODEL", "deepseek-v4-flash")
+    worker_backend = os.getenv("WORKER_AGENT_BACKEND", "openai")
+    fallback_model = os.getenv("SMART_AGENT_FALLBACK_MODEL", "claude-haiku-4-5")
+    fallback_backend = os.getenv("SMART_AGENT_FALLBACK_BACKEND", "anthropic")
+    tick_model = os.getenv("TICK_BRAIN_MODEL", "qwen3-32b")
+
+    def _backend_label(name: str) -> str:
+        return {
+            "gemini": "Gemini (AI Studio)",
+            "anthropic": "Anthropic",
+            "openai": "OpenAI-compat (DeepSeek / Groq)",
+        }.get(name, name)
+
     lines += [
         "## Identity",
         "",
         (
             "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, "
             "serving a single user — Amit Grupper, based in Tel Aviv, Israel. "
-            "He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the "
-            "brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 "
-            "Flash operates as the worker (hands — fast structured JSON execution, data "
-            "gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on "
-            "any LLMError from the primary brain. "
+            f"He is built on a dual-model architecture: {brain_model} acts as the brain "
+            f"(smart agent — orchestration, judgment, tool planning), while {worker_model} "
+            "operates as the worker (hands — fast structured JSON execution, data gathering). "
+            f"{fallback_model} is the brain fallback, activated automatically on any LLMError "
+            "from the primary brain. "
             "The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: "
             "formal, crisp, zero-fluff, protective of Amit's schedule and routines, and "
             "deeply integrated with his daily digital life."
@@ -298,11 +316,11 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
         "| Purpose | Model | Backend |",
         "|---------|-------|---------|",
-        "| Brain (smart agent) | gemini-3-flash-preview | Gemini (AI Studio) |",
-        "| Worker | gemini-2.5-flash | Gemini (AI Studio) |",
-        "| Smart agent fallback | claude-haiku-4-5 | Anthropic |",
-        "| Tick-brain | qwen3-32b | Groq (OpenAI-compat) |",
-        "| Tick-brain fallback | gemini-3-flash-preview | Gemini (AI Studio) |",
+        f"| Brain (smart agent) | {brain_model} | {_backend_label(brain_backend)} |",
+        f"| Worker | {worker_model} | {_backend_label(worker_backend)} |",
+        f"| Smart agent fallback | {fallback_model} | {_backend_label(fallback_backend)} |",
+        f"| Tick-brain | {tick_model} | Groq (OpenAI-compat) |",
+        f"| Tick-brain fallback | {brain_model} | {_backend_label(brain_backend)} |",
         "| Embeddings | gemini-embedding-2 | Gemini (AI Studio) |",
         "",
     ]
