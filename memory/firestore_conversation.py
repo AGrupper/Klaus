@@ -149,3 +149,42 @@ class FirestoreConversationStore:
             logger.error(
                 "FirestoreConversationStore.clear failed for user_id=%d.", user_id
             )
+
+    def get_last_user_timestamp(self, user_id: int) -> datetime | None:
+        """Return the timestamp of the most recent user-role message for ``user_id``.
+
+        Per-message timestamps are not stored; the closest signal we have is the
+        document-level ``updated_at`` field, written on every append. We return
+        ``updated_at`` when the most-recent (or any) message in the array is
+        ``role == "user"``, else ``None`` — meaning no user message is stored in
+        this session window.
+
+        Returns ``None`` on empty/expired conversation OR on Firestore error.
+        Never raises.
+
+        Added in Phase 18 (Plan 06) for the autonomous tick's
+        ``hours_since_contact`` signal (BLOCKER 1 fix).
+        """
+        doc_ref = self._col.document(str(user_id))
+        try:
+            snapshot = doc_ref.get()
+        except GoogleAPICallError:
+            logger.warning(
+                "FirestoreConversationStore.get_last_user_timestamp failed "
+                "for user_id=%d",
+                user_id,
+            )
+            return None
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict() or {}
+        updated_at = data.get("updated_at")
+        messages = data.get("messages") or []
+        if not messages:
+            return None
+        # Per-message timestamps don't exist; the doc-level ``updated_at`` is
+        # the closest signal. Return it iff any user message exists in the array.
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                return updated_at if isinstance(updated_at, datetime) else None
+        return None
