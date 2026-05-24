@@ -24,6 +24,35 @@ class GarminUnavailableError(Exception):
     """Raised when Garmin data cannot be fetched (API down, parse error)."""
 
 
+def _get_garmin_tokens_from_firestore() -> str | None:
+    try:
+        from memory.firestore_db import _make_firestore_client
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        client = _make_firestore_client(project_id, database)
+        snap = client.collection("config").document("garmin_tokens").get()
+        if snap.exists:
+            return snap.to_dict().get("tokens_json")
+    except Exception as e:
+        logger.warning("Failed to retrieve Garmin tokens from Firestore: %s", e)
+    return None
+
+
+def _save_garmin_tokens_to_firestore(tokens_json: str) -> None:
+    try:
+        from memory.firestore_db import _make_firestore_client
+        from google.cloud import firestore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        client = _make_firestore_client(project_id, database)
+        client.collection("config").document("garmin_tokens").set({
+            "tokens_json": tokens_json,
+            "updated_at": firestore.SERVER_TIMESTAMP
+        }, merge=True)
+    except Exception as e:
+        logger.warning("Failed to save Garmin tokens to Firestore: %s", e)
+
+
 def fetch_garmin_today() -> dict:
     """Fetch today's health summary from Garmin Connect.
 
@@ -50,7 +79,34 @@ def fetch_garmin_today() -> dict:
     try:
         from garminconnect import Garmin  # imported lazily — garminconnect is optional
         api = Garmin(email=email, password=password)
-        api.login()
+        
+        # Try loading tokens from Firestore first
+        tokens_json = _get_garmin_tokens_from_firestore()
+        tokens_loaded_successfully = False
+        
+        if tokens_json:
+            try:
+                logger.info("Attempting Garmin login using cached tokens from Firestore")
+                api.login(tokenstore=tokens_json)
+                tokens_loaded_successfully = True
+                logger.info("Garmin login successful using cached tokens")
+            except Exception as exc:
+                logger.warning("Garmin token login failed (tokens may have expired): %s", exc)
+        
+        if not tokens_loaded_successfully:
+            logger.info("Attempting full Garmin login with email and password")
+            api.login()
+            logger.info("Garmin full login successful")
+            
+        # Extract new or refreshed tokens and persist them if changed
+        try:
+            new_tokens_json = api.client.dumps()
+            if new_tokens_json != tokens_json:
+                logger.info("Garmin tokens changed/refreshed, saving to Firestore")
+                _save_garmin_tokens_to_firestore(new_tokens_json)
+        except Exception as exc:
+            logger.warning("Failed to dump and save Garmin tokens: %s", exc)
+            
     except ImportError as exc:
         raise GarminUnavailableError(
             "garminconnect package is not installed — run: pip install garminconnect"
