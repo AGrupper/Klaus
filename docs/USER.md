@@ -34,3 +34,15 @@ The following Hebrew message template is used for all pre-practice and morning-a
 
 <!-- Replace the template above with your actual Hebrew text before going live. -->
 <!-- Template applies to all ping reasons: missed-last-week, shaky-attendance, social check-in. -->
+
+## 7. Studio Restaurant Work Shift Rules
+* **Shift Types & Typical Hours:**
+    * **Morning/Opening Shift:**
+        * **Opening Start (11:00):** Shift ends early at 16:30. Post-shift eating & travel buffer is 16:30–17:00 (gets home at 17:00).
+        * **Late Start (11:30):** Shift ends at 17:00. Post-shift eating & travel buffer is 17:00–17:30 (gets home at 17:30).
+    * **Evening Shift:**
+        * **Early Evening Start (17:00 with early release):** Shift ends at 22:30. Post-shift eating & travel buffer is 22:30–23:00 (gets home at 23:00).
+        * **Late/Standard Evening Start (17:00 or 18:00):** Shift ends at 23:00. Post-shift eating & travel buffer is 23:00–23:30 (gets home at 23:30). Note: 23:00 is also referred to as "11:00" in 12-hour spoken format.
+* **Travel & Eating Buffers:**
+    * **Pre-shift:** A 15-minute travel buffer immediately preceding the shift start.
+    * **Post-shift:** A 30-minute combined eating and travel buffer immediately following the shift (since Amit eats at the restaurant before traveling home).
