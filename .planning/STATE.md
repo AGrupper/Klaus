@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: milestone
-status: milestone-complete
-last_updated: "2026-05-23T14:00:00.000Z"
-last_activity: 2026-05-23 -- Milestone v2.0 closed (Consciousness & Autonomy, 5 phases / 24 plans / 41 requirements). Post-review fixes landed (commit 0be394e: H-1 docstring, M-1 singleton lock, M-5 sentinel constant + regression test). Master plan audit completed (.planning/MASTER-PLAN-AUDIT.md). Archive files written to .planning/milestones/v2.0-{ROADMAP,REQUIREMENTS}.md. REQUIREMENTS.md removed to free the slot for the next milestone.
+milestone: v3.0
+milestone_name: project-shifu
+status: ready-to-plan
+last_updated: "2026-05-25T18:00:00.000Z"
+last_activity: 2026-05-25 -- Milestone v3.0 roadmap created. Phase 19 + Phase 20 scoped with 41/41 requirements mapped. Ready to plan Phase 19.
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 24
-  completed_plans: 24
-  percent: 100
+  total_phases: 2
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Milestone: v2.0 — Consciousness & Autonomy ✓ **SHIPPED 2026-05-23**
-Phases: 14, 15, 16, 17, 18 — all complete
-Plans: 24/24 (15 in Phases 14–17 + 9 in Phase 18)
-Requirements: 41/41
-Status: **Milestone v2.0 closed.** No active phase. Run `/gsd-new-milestone` to start the next cycle, or `/gsd-spec-phase` to scope a one-off phase outside a milestone.
+Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
+Phases planned: 2 (Phase 19 + Phase 20)
+Phase: 19 — not started
+Plan: —
+Status: ready to plan Phase 19
 Resume file: — (no active plan)
-Last activity: 2026-05-23 -- Plan 18-09 executed (1 commit: 4ff06e5 docs +162 lines to docs/DEPLOYMENT.md; 6 additions — §19 9-cron inventory table, §14d klaus-reflect gcloud block, §14e klaus-autonomous-tick gcloud block (*/20 7-21 * * *, /cron/autonomous-tick), §20 TICK_BRAIN_API_KEY Groq secret + 4-step rotation procedure, §21 Five Fingers job-id collision quirk WITH legacy-job migration paragraph including "gcloud scheduler jobs delete five-fingers" (bonus WARNING fix regression-guarded by test_five_fingers_migration_paragraph_present), §22 Firestore composite index followups(status ASC, due_at ASC) with both gcloud-create and FAILED_PRECONDITION click-link paths; tests/test_docs.py NEW with 8 grep-style completeness assertions, 8/8 pass; 155/155 adjacent regression tests pass (6 deselected — pre-existing fastapi local-env block, logged in deferred-items.md); endpoint-path drift fixed: morning-briefing row uses /cron/morning-briefing-tick matching interfaces/web_server.py:427 (Rule 1 deviation); INFRA-01 satisfied — last remaining Phase 18 requirement; **Phase 18 closed 9/9 plans done**; milestone v2.0 (Consciousness & Autonomy) complete 5/5 phases)
+Last activity: 2026-05-25 -- v3.0 roadmap written (`.planning/ROADMAP.md`). 41/41 requirements mapped — 22 to Phase 19 (Training Awareness & Multimodal Audit), 19 to Phase 20 (Accountability Crons & Recovery Briefing). REQUIREMENTS.md Traceability table updated. Next: `/gsd-plan-phase 19`.
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-19)
+See: `.planning/PROJECT.md` (updated 2026-05-25)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 18 — The Autonomous Engine (judgment-driven proactive outreach + repeat-suppression + eval harness)
+**Current focus:** Phase 19 — Training Awareness & Multimodal Audit (Postgres schema + Garmin ingestion + UserProfileStore + ACWR + meal-photo critique)
 
 ## Accumulated Context
 

@@ -8,11 +8,23 @@ Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task
 
 Klaus should act as a genuinely intelligent, proactive companion that surfaces the right thing at the right time — while knowing exactly what he is and what he can do.
 
-## Current Milestone: (none — between milestones)
+## Current Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
+
+**Goal:** Give Klaus athletic coaching capability — read his own training data, audit meals via Telegram photos, hold the user accountable to logged sessions, and let recovery state shape the morning briefing.
+
+**Target features:**
+- `UserProfileStore` (empty scaffold; personalized rules/targets deferred to a later session)
+- Extended Garmin reads — training status, recent activities, RPE/Feel ingest into Postgres
+- ACWR plumbing — schema migration + Python computation tool
+- Nutrition tracking via Google Fit (Lifesum sync) → `MealStore`; autonomous-tick mid-day coaching + morning recap
+- `TrainingLogStore` + evidence-first training check-in cron (21:00 Israel)
+- Weekly training review cron (Sun 10:00 Israel)
+- Recovery-aware morning briefing (`recovery_concern` flag, v0 thresholds)
+- 3-year historical Garmin backfill into Postgres (one-shot, manual)
+
+**Approach:** Two phases — Phase 19 (data + awareness) then Phase 20 (accountability crons + recovery-aware briefing). Postgres infrastructure shipped in commit `2c8be7a` is now wired into the runtime.
 
 **Last shipped:** v2.0 Consciousness & Autonomy on 2026-05-23 (5 phases, 24 plans, 41/41 requirements). See `.planning/MILESTONES.md § v2.0` for the closure summary.
-
-**Next:** Not yet defined. Run `/gsd-new-milestone` to start the next cycle.
 
 ## Requirements
 
@@ -42,9 +54,16 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 - ✓ Autonomous tick engine fires every 20 min, 7-21, with judgment + repeat-suppression (Phase 18)
 - ✓ Judgment eval harness scores tick-brain on labeled fixtures (Phase 18)
 
-### Active
+### Active (v3.0 — Project Shifu)
 
-(none — between milestones; live-staging verification of SC-1/SC-2/SC-4 outstanding, see STATE.md § Deferred Items)
+See `.planning/REQUIREMENTS.md` for the full REQ-ID list. Headline scope:
+- Klaus can read his own Garmin training status, recent activities, and historical biometrics from Postgres
+- Lifesum-logged meals flow to Klaus via Google Fit; mid-day proactive coaching on notable meals; morning briefing recaps yesterday's macros
+- Training sessions get logged (auto from Garmin RPE when present; Telegram fallback when missing)
+- Morning briefing surfaces a recovery concern when ACWR / sleep / HRV trend warrants it
+
+**Deferred from v2.0 (not addressed in v3.0):**
+- Live-staging verification of SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
 
 ### Out of Scope
 
@@ -101,4 +120,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-18 — Phase 15 complete (SELF-01–05 verified; self-inspect tools wired brain-direct)*
+*Last updated: 2026-05-25 — Milestone v3.0 (Project Shifu) started; Phase 19 + 20 scoped*
