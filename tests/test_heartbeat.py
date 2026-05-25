@@ -236,3 +236,95 @@ def test_check_code_detects_drift_and_todos(tmp_path):
     signals = check_code(repo_root=tmp_path)
     assert all(s.severity == SEVERITY_FYI for s in signals)
     assert all(s.area == "code" for s in signals)
+
+
+def test_autonomous_tick_overnight_staleness_is_suppressed(monkeypatch):
+    """Verify that during overnight quiet hours (23:00 to 07:59 local),
+    autonomous-tick staleness check is skipped entirely.
+    """
+    from core import heartbeat
+    from datetime import timezone, timedelta
+    
+    # Case A: Daytime (e.g. 12:00 Jerusalem) -> should alert
+    # 2026-05-19 12:00 Jerusalem is 2026-05-19 09:00 UTC
+    day_now = datetime(2026, 5, 19, 9, 0, tzinfo=timezone.utc)
+    day_stale = day_now - timedelta(hours=2)
+    monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
+        "autonomous-tick": {"last_run_at": day_stale, "consecutive_failures": 0, "last_ok": True},
+    })
+    
+    class MockDatetimeDay:
+        @classmethod
+        def now(cls, tz=None):
+            return day_now
+    monkeypatch.setattr(heartbeat, "datetime", MockDatetimeDay)
+
+    signals = heartbeat.check_cron_health()
+    assert any(s.fingerprint == "cron:autonomous-tick:stale" for s in signals), "Expected staleness alert during daytime"
+
+    # Case B: Overnight (e.g. 23:00 Jerusalem) -> should be suppressed
+    # 2026-05-19 23:00 Jerusalem is 2026-05-19 20:00 UTC
+    night_now = datetime(2026, 5, 19, 20, 0, tzinfo=timezone.utc)
+    night_stale = night_now - timedelta(hours=2)
+    monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
+        "autonomous-tick": {"last_run_at": night_stale, "consecutive_failures": 0, "last_ok": True},
+    })
+    
+    class MockDatetimeNight:
+        @classmethod
+        def now(cls, tz=None):
+            return night_now
+    monkeypatch.setattr(heartbeat, "datetime", MockDatetimeNight)
+
+    signals = heartbeat.check_cron_health()
+    assert not any(s.fingerprint == "cron:autonomous-tick:stale" for s in signals), "Expected overnight staleness to be suppressed"
+
+    # Case C: Boundary (e.g. 22:00 Jerusalem) -> should alert (not suppressed)
+    # 2026-05-19 22:00 Jerusalem is 2026-05-19 19:00 UTC
+    border_now = datetime(2026, 5, 19, 19, 0, tzinfo=timezone.utc)
+    border_stale = border_now - timedelta(hours=2)
+    monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
+        "autonomous-tick": {"last_run_at": border_stale, "consecutive_failures": 0, "last_ok": True},
+    })
+    
+    class MockDatetimeBorder:
+        @classmethod
+        def now(cls, tz=None):
+            return border_now
+    monkeypatch.setattr(heartbeat, "datetime", MockDatetimeBorder)
+
+    signals = heartbeat.check_cron_health()
+    assert any(s.fingerprint == "cron:autonomous-tick:stale" for s in signals), "Expected staleness alert at 22:00"
+
+
+def test_check_code_hierarchical_directory_parsing(tmp_path):
+    """Verify that hierarchical directory trees in CLAUDE.md are correctly parsed."""
+    from core.heartbeat import check_code
+
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text(
+        "some text\n"
+        "```text\n"
+        "Klaus/\n"
+        "├── docs/\n"
+        "│   ├── PRD.md              # product requirements\n"
+        "│   └── nested/\n"
+        "│       └── config.json\n"
+        "└── root_file.py\n"
+        "```\n"
+        "more text\n"
+    )
+    
+    docs_dir = tmp_path / "docs"
+    docs_dir.mkdir()
+    (docs_dir / "PRD.md").write_text("PRD contents")
+    
+    nested_dir = docs_dir / "nested"
+    nested_dir.mkdir()
+    (nested_dir / "config.json").write_text("{}")
+    
+    (tmp_path / "root_file.py").write_text("print(1)")
+
+    signals = check_code(repo_root=tmp_path)
+    drift_signals = [s for s in signals if s.fingerprint == "code:docs-drift"]
+    assert len(drift_signals) == 0, f"Expected 0 drift signals, got: {[s.detail for s in drift_signals]}"

@@ -161,6 +161,14 @@ def check_cron_health() -> list[Signal]:
         if job_id in _CRON_BACKLOG_AWARE and doc.get("backlog_done") is True:
             continue
 
+        # Dynamic/Schedule-aware checks for specific crons:
+        # autonomous-tick runs on a */20 7-21 * * * schedule (07:00 to 21:00 Jerusalem time).
+        # Between 23:00 and 07:59 local time, it is overnight, so we do not expect runs.
+        if job_id == "autonomous-tick":
+            local_now = now.astimezone(_TZ)
+            if local_now.hour >= 23 or local_now.hour < 8:
+                continue
+
         last = doc.get("last_run_at")
         if last is not None:
             if last.tzinfo is None:
@@ -405,30 +413,41 @@ def check_code(repo_root: Path | None = None) -> list[Signal]:
             # Extract lines inside fenced ```text blocks
             in_block = False
             missing_paths: list[str] = []
+            dir_stack = [(0, root)]
             for line in content.splitlines():
                 if line.strip().startswith("```text"):
                     in_block = True
+                    dir_stack = [(0, root)]
                     continue
                 if in_block and line.strip().startswith("```"):
                     in_block = False
                     continue
                 if in_block:
-                    # Strip tree-drawing chars and extract a path-like token
-                    cleaned = re.sub(r"[│├└─ \t]+", "", line).strip()
-                    # Skip the root line (e.g. "Klaus/")
-                    if not cleaned or "/" not in cleaned and not cleaned.endswith(".py"):
-                        # Try as plain filename
-                        if cleaned and "." in cleaned:
-                            candidate = root / cleaned
-                            if not candidate.exists():
-                                missing_paths.append(cleaned)
+                    no_comment = line.split("#")[0]
+                    name = no_comment.lstrip("│├└─ \t").strip()
+                    if not name or name == "Klaus/":
+                        continue
+                    prefix_len = len(no_comment) - len(no_comment.lstrip("│├└─ \t"))
+                    depth = prefix_len // 4
+                    
+                    while len(dir_stack) > 1 and dir_stack[-1][0] >= depth:
+                        dir_stack.pop()
+                    
+                    parent_path = dir_stack[-1][1] if dir_stack else root
+                    
+                    if "{" in name or "*" in name:
+                        continue
+                        
+                    candidate = parent_path / name
+                    if name.endswith("/"):
+                        dir_name = name.rstrip("/")
+                        candidate_dir = parent_path / dir_name
+                        if not candidate_dir.exists():
+                            missing_paths.append(str(candidate_dir.relative_to(root)))
+                        dir_stack.append((depth, candidate_dir))
                     else:
-                        # Remove trailing comments
-                        path_part = cleaned.split("#")[0].strip()
-                        if path_part:
-                            candidate = root / path_part
-                            if not candidate.exists():
-                                missing_paths.append(path_part)
+                        if not candidate.exists():
+                            missing_paths.append(str(candidate.relative_to(root)))
             if missing_paths:
                 signals.append(Signal(
                     fingerprint="code:docs-drift",

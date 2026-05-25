@@ -84,6 +84,7 @@ Klaus/
 │   │                       #   Followup, OutreachLog, TickLog
 │   └── pinecone_db.py      # MemoryStore: remember/recall + chat upserts
 ├── mcp_tools/
+│   ├── database_tool.py    # Analytical PostgreSQL read-only queries
 │   ├── gmail_tool.py       # Read-only Gmail
 │   ├── calendar_tool.py    # Google Calendar list/create/free-busy/delete + Get Ready
 │   ├── ticktick_tool.py    # TickTick Open API (deadline + reminder)
@@ -114,6 +115,7 @@ Klaus/
 │   ├── eval_tick_brain.py  # Measurement-only judgment eval runner
 │   ├── ticktick_oauth_bootstrap.py
 │   ├── backfill_notion_titles.py
+│   ├── ingest_garmin_zip.py # Parses + ingests Garmin export zip to Postgres
 │   ├── upload_claude_logs.{sh,ps1}
 │   ├── upload_chat_export.sh
 │   ├── run_chat_export_backfill.sh
