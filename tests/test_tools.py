@@ -317,3 +317,78 @@ class TestFollowupTools:
         # FollowupStore.add must NOT have been called
         if fake_store.instances:
             assert fake_store.instances[0].added == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 Plan 02 — training profile + Garmin tool registration
+# ---------------------------------------------------------------------------
+
+class TestPhase19ToolRegistration:
+    """PROFILE-04 + GARMIN-04 — verify 4 new tools at all registration sites.
+
+    Brain-direct (in SMART_AGENT_DIRECT_TOOLS, excluded from WORKER_TOOL_SCHEMAS):
+      - get_training_profile
+      - update_training_profile
+
+    Worker-delegated (in WORKER_TOOL_SCHEMAS, NOT in SMART_AGENT_DIRECT_TOOLS):
+      - fetch_training_status
+      - fetch_recent_activities
+    """
+
+    def test_phase19_profile_tools_registered(self):
+        """Brain-direct tools appear at all 4 expected sites."""
+        # Site 1: SMART_AGENT_DIRECT_TOOLS membership
+        assert "get_training_profile" in tools.SMART_AGENT_DIRECT_TOOLS
+        assert "update_training_profile" in tools.SMART_AGENT_DIRECT_TOOLS
+        # Site 2: TOOL_SCHEMAS entry exists (by name)
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "get_training_profile" in names
+        assert "update_training_profile" in names
+        # Site 3: WORKER_TOOL_SCHEMAS EXCLUSION (brain-direct → NOT seen by worker)
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "get_training_profile" not in worker_names
+        assert "update_training_profile" not in worker_names
+        # Site 4: _HANDLERS dispatch
+        assert "get_training_profile" in tools._HANDLERS
+        assert "update_training_profile" in tools._HANDLERS
+
+    def test_phase19_fetch_tools_worker_delegated(self):
+        """fetch_* tools are worker-delegated (NOT in SMART_AGENT_DIRECT_TOOLS)."""
+        # NOT in smart-direct
+        assert "fetch_training_status" not in tools.SMART_AGENT_DIRECT_TOOLS
+        assert "fetch_recent_activities" not in tools.SMART_AGENT_DIRECT_TOOLS
+        # IN tool schemas
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "fetch_training_status" in names
+        assert "fetch_recent_activities" in names
+        # IN worker schemas (delegated through worker)
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "fetch_training_status" in worker_names
+        assert "fetch_recent_activities" in worker_names
+        # IN handlers dispatch
+        assert "fetch_training_status" in tools._HANDLERS
+        assert "fetch_recent_activities" in tools._HANDLERS
+
+    def test_phase19_tool_schema_shape(self):
+        """Each new schema has name + description + input_schema (object type)."""
+        targets = {
+            "get_training_profile", "update_training_profile",
+            "fetch_training_status", "fetch_recent_activities",
+        }
+        seen = set()
+        for s in tools.TOOL_SCHEMAS:
+            if s["name"] not in targets:
+                continue
+            seen.add(s["name"])
+            assert set(s.keys()) >= {"name", "description", "input_schema"}, (
+                f"{s['name']!r} schema missing required top-level keys"
+            )
+            assert s["input_schema"]["type"] == "object"
+        assert seen == targets, f"Missing schemas: {targets - seen}"
+
+    def test_phase19_update_profile_schema_requires_patch(self):
+        """update_training_profile must REQUIRE the patch argument."""
+        schema = next(
+            s for s in tools.TOOL_SCHEMAS if s["name"] == "update_training_profile"
+        )
+        assert schema["input_schema"]["required"] == ["patch"]
