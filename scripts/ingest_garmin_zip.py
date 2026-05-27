@@ -142,9 +142,17 @@ def parse_and_ingest_wellness(conn, extract_dir):
         except Exception as e:
             logger.error(f"Error parsing sleep file {file_path.name}: {e}")
 
-    # 2. Parse UDS / User daily summary files for resting heart rate & body battery
-    uds_dir = Path(extract_dir) / "DI_CONNECT" / "DI-Connect-User"
-    uds_files = list(uds_dir.glob("*UDSFile.json")) if uds_dir.exists() else []
+    # 2. Parse UDS / User daily summary files for resting heart rate & body battery.
+    # Real Garmin exports (verified 2026-05-27) place UDSFile_*.json under
+    # DI-Connect-Aggregator/, NOT DI-Connect-User/. Keep User as a fallback in
+    # case older exports used the original layout.
+    aggregator_dir = Path(extract_dir) / "DI_CONNECT" / "DI-Connect-Aggregator"
+    user_dir = Path(extract_dir) / "DI_CONNECT" / "DI-Connect-User"
+    uds_files: list[Path] = []
+    if aggregator_dir.exists():
+        uds_files.extend(aggregator_dir.glob("UDSFile*.json"))
+    if user_dir.exists():
+        uds_files.extend(user_dir.glob("*UDSFile.json"))
     logger.info(f"Found {len(uds_files)} UDS files.")
     for file_path in uds_files:
         try:
@@ -156,39 +164,48 @@ def parse_and_ingest_wellness(conn, extract_dir):
                         continue
                     if date_str not in biometrics:
                         biometrics[date_str] = {}
-                        
+
                     # Extract Resting Heart Rate
                     rhr = entry.get("restingHeartRate")
                     if rhr:
                         biometrics[date_str]["resting_hr"] = rhr
-                        
-                    # Extract Body Battery Max
-                    bb_max = entry.get("bodyBatteryMax")
-                    if bb_max:
-                        biometrics[date_str]["body_battery_max"] = bb_max
-                        
-                    # Extract Training Readiness
+
+                    # Extract Body Battery Max — in modern exports `bodyBattery` is
+                    # a nested object with bodyBatteryStatList entries; the legacy
+                    # flat `bodyBatteryMax` is also tolerated.
+                    bb_flat = entry.get("bodyBatteryMax")
+                    if bb_flat:
+                        biometrics[date_str]["body_battery_max"] = bb_flat
+                    else:
+                        bb_obj = entry.get("bodyBattery")
+                        if isinstance(bb_obj, dict):
+                            stats = bb_obj.get("bodyBatteryStatList") or []
+                            for s in stats:
+                                if isinstance(s, dict) and s.get("bodyBatteryStatType") == "HIGHEST":
+                                    sv = s.get("statsValue")
+                                    if sv is not None:
+                                        biometrics[date_str]["body_battery_max"] = sv
+                                        break
+
+                    # Extract Training Readiness (legacy flat field; not present in
+                    # current Aggregator UDS exports — left in place for forward/
+                    # backward compat).
                     readiness = entry.get("trainingReadiness")
                     if readiness:
                         biometrics[date_str]["training_readiness"] = readiness
-
-                    # PHASE 19: Extract VO2 Max (key verified by Wave-0 probe
-                    # + RESEARCH §Deep Research §1)
-                    vo2 = entry.get("vO2MaxValue")
-                    if vo2 is not None:
-                        biometrics[date_str]["vo2_max"] = vo2
         except Exception as e:
             logger.error(f"Error parsing UDS file {file_path.name}: {e}")
 
-    # Bulk insert daily biometrics
+    # Bulk insert daily biometrics. VO2 max is handled separately by
+    # parse_and_ingest_vo2_max() because in modern exports it lives in
+    # DI-Connect-Metrics/MetricsMaxMetData_*.json rather than the UDS file.
     if biometrics:
         logger.info(f"Ingesting {len(biometrics)} daily biometric records...")
         with conn.cursor() as cur:
             insert_query = """
             INSERT INTO daily_biometrics (
                 date, resting_hr, hrv_baseline, hrv_overnight,
-                sleep_score, sleep_duration, body_battery_max, training_readiness,
-                vo2_max
+                sleep_score, sleep_duration, body_battery_max, training_readiness
             ) VALUES %s
             ON CONFLICT (date) DO UPDATE SET
                 resting_hr = EXCLUDED.resting_hr,
@@ -196,8 +213,7 @@ def parse_and_ingest_wellness(conn, extract_dir):
                 sleep_score = EXCLUDED.sleep_score,
                 sleep_duration = EXCLUDED.sleep_duration,
                 body_battery_max = EXCLUDED.body_battery_max,
-                training_readiness = EXCLUDED.training_readiness,
-                vo2_max = EXCLUDED.vo2_max;
+                training_readiness = EXCLUDED.training_readiness;
             """
             values = [
                 (
@@ -209,7 +225,6 @@ def parse_and_ingest_wellness(conn, extract_dir):
                     b.get("sleep_duration"),
                     b.get("body_battery_max"),
                     b.get("training_readiness"),
-                    b.get("vo2_max"),
                 )
                 for d, b in biometrics.items()
             ]
@@ -217,35 +232,70 @@ def parse_and_ingest_wellness(conn, extract_dir):
         conn.commit()
         logger.info("Daily biometrics successfully ingested.")
 
+def _iter_activity_entries(file_obj):
+    """Yield activity entries from a *summarizedActivities.json file.
+
+    Modern Garmin exports (verified 2026-05-27) wrap the actual entries inside
+    [{"summarizedActivitiesExport": [<entries>]}, ...]. Older exports may put
+    a flat list of entries at the top level — both shapes are handled.
+    """
+    data = json.load(file_obj)
+    if not isinstance(data, list):
+        return
+    for top in data:
+        if isinstance(top, dict) and "summarizedActivitiesExport" in top:
+            inner = top.get("summarizedActivitiesExport") or []
+            for entry in inner:
+                if isinstance(entry, dict):
+                    yield entry
+        elif isinstance(top, dict):
+            # legacy flat shape: each list element is itself an activity entry
+            yield top
+
+
 def parse_and_ingest_activities(conn, extract_dir):
     fitness_dir = Path(extract_dir) / "DI_CONNECT" / "DI-Connect-Fitness"
     if not fitness_dir.exists():
         logger.warning(f"Fitness directory not found at: {fitness_dir}. Skipping activities ingestion.")
         return
 
-    # Activity summaries are usually saved as JSON files in fitness_dir
-    activity_files = list(fitness_dir.glob("*summaries.json"))
+    # Modern export name: *summarizedActivities.json (per-account, possibly
+    # split across multiple files for large histories). Legacy *summaries.json
+    # is kept as a fallback.
+    activity_files = list(fitness_dir.glob("*summarizedActivities.json"))
+    if not activity_files:
+        activity_files = list(fitness_dir.glob("*summaries.json"))
     logger.info(f"Found {len(activity_files)} activity summaries files.")
-    
+
     activities = []
     for file_path in activity_files:
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                for entry in data:
+                for entry in _iter_activity_entries(f):
                     activity_id = entry.get("activityId")
                     if not activity_id:
                         continue
-                        
-                    # Extract timestamp
-                    start_time = entry.get("startTimeGMT")
+
+                    # Extract timestamp. Modern exports use lowercase-mt
+                    # `startTimeGmt`; legacy used uppercase `startTimeGMT`.
+                    start_time = (
+                        entry.get("startTimeGmt")
+                        or entry.get("startTimeGMT")
+                        or entry.get("beginTimestamp")
+                    )
                     if not start_time:
                         continue
-                    dt = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc)
+                    dt = datetime.fromtimestamp(float(start_time) / 1000, tz=timezone.utc)
 
-                    # Convert Pace and Speed
-                    duration = entry.get("duration") or entry.get("activeDuration") or 0
-                    distance = entry.get("distance") or 0
+                    # Duration is in milliseconds, distance in centimeters in
+                    # the modern export. Convert to seconds and meters for the
+                    # `duration_sec` / `distance_m` columns.
+                    duration_ms = entry.get("duration") or entry.get("activeDuration") or 0
+                    distance_cm = entry.get("distance") or 0
+                    duration_sec = int(float(duration_ms) / 1000) if duration_ms else 0
+                    distance_m = (
+                        round(float(distance_cm) / 100, 2) if distance_cm else None
+                    )
 
                     # activityType may be a dict {"typeKey": "running"} OR a bare string
                     activity_type_raw = entry.get("activityType", "unknown")
@@ -254,21 +304,40 @@ def parse_and_ingest_activities(conn, extract_dir):
                     else:
                         activity_type = activity_type_raw
 
+                    # HR + training effect keys differ between modern and legacy
+                    # exports. Try modern lowercase first, then legacy.
+                    avg_hr = entry.get("avgHr") or entry.get("averageHeartRate")
+                    max_hr = entry.get("maxHr") or entry.get("maxHeartRate")
+                    if avg_hr is not None:
+                        avg_hr = int(round(float(avg_hr)))
+                    if max_hr is not None:
+                        max_hr = int(round(float(max_hr)))
+                    training_effect = (
+                        entry.get("aerobicTrainingEffect")
+                        or entry.get("trainingEffect")
+                    )
+
                     activities.append((
                         activity_id,
                         dt,
                         activity_type,
-                        int(duration),
-                        round(float(distance), 2) if distance else None,
-                        entry.get("averageHeartRate"),
-                        entry.get("maxHeartRate"),
+                        duration_sec,
+                        distance_m,
+                        avg_hr,
+                        max_hr,
                         entry.get("averagePace"),
-                        entry.get("trainingEffect"),
-                        # PHASE 19 ADDITIONS (NULL-safe — keys verified by Wave-0 probe
-                        # + RESEARCH §Deep Research §1)
+                        training_effect,
+                        # PHASE 19 ADDITIONS (NULL-safe — keys verified by
+                        # Wave-0 probe against real export 2026-05-27).
+                        # Source keys are `workoutRpe` / `workoutFeel` (NOT
+                        # the `directWorkoutRpe` / `directWorkoutFeel` names
+                        # originally assumed in the plan). Garmin stores RPE
+                        # 1-10 as 10..100 in steps of 10, and Feel 0-4 as
+                        # 0/25/50/75/100 — values preserved verbatim here;
+                        # rescaling happens at the analytics layer.
                         entry.get("activityTrainingLoad"),
-                        entry.get("directWorkoutRpe"),
-                        entry.get("directWorkoutFeel"),
+                        entry.get("workoutRpe"),
+                        entry.get("workoutFeel"),
                     ))
         except Exception as e:
             logger.error(f"Error parsing activity file {file_path.name}: {e}")
@@ -300,13 +369,85 @@ def parse_and_ingest_activities(conn, extract_dir):
         conn.commit()
         logger.info("Activities successfully ingested.")
 
+def parse_and_ingest_vo2_max(conn, extract_dir):
+    """Parse MetricsMaxMetData_*.json and UPSERT vo2_max into daily_biometrics.
+
+    Modern Garmin exports (verified 2026-05-27) store per-day VO2 max in
+    DI-Connect-Metrics/MetricsMaxMetData_*.json, not in UDS files. Each entry
+    has shape:
+        {
+          "calendarDate": "YYYY-MM-DD",
+          "sport": "RUNNING" | "CYCLING" | ...,
+          "subSport": "GENERIC" | ...,
+          "vo2MaxValue": <float>,
+          ...
+        }
+    Multiple entries can exist for the same date (running + cycling on the same
+    day → two VO2 max reads). We keep the MAX value across sports for a given
+    date — this matches Garmin Connect's per-day VO2 display which surfaces the
+    higher of running/cycling.
+
+    The UPSERT is idempotent and writes to the SAME daily_biometrics row that
+    parse_and_ingest_wellness populates (date is the PK), so VO2 cleanly slots
+    in alongside resting_hr / sleep_score / etc.
+    """
+    metrics_dir = Path(extract_dir) / "DI_CONNECT" / "DI-Connect-Metrics"
+    if not metrics_dir.exists():
+        logger.warning(
+            f"Metrics directory not found at: {metrics_dir}. Skipping VO2 ingestion."
+        )
+        return
+
+    metrics_files = list(metrics_dir.glob("MetricsMaxMetData_*.json"))
+    logger.info(f"Found {len(metrics_files)} MaxMetData files.")
+
+    vo2_by_date: dict[str, float] = {}
+    for file_path in metrics_files:
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                continue
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                date_str = entry.get("calendarDate")
+                vo2 = entry.get("vo2MaxValue")
+                if not date_str or vo2 is None:
+                    continue
+                try:
+                    vo2_f = float(vo2)
+                except (TypeError, ValueError):
+                    continue
+                prev = vo2_by_date.get(date_str)
+                if prev is None or vo2_f > prev:
+                    vo2_by_date[date_str] = vo2_f
+        except Exception as e:
+            logger.error(f"Error parsing MaxMet file {file_path.name}: {e}")
+
+    if not vo2_by_date:
+        logger.info("No VO2 max records to ingest.")
+        return
+
+    logger.info(f"Ingesting {len(vo2_by_date)} VO2 max daily records...")
+    with conn.cursor() as cur:
+        insert_query = """
+        INSERT INTO daily_biometrics (date, vo2_max) VALUES %s
+        ON CONFLICT (date) DO UPDATE SET vo2_max = EXCLUDED.vo2_max;
+        """
+        values = [(d, v) for d, v in vo2_by_date.items()]
+        execute_values(cur, insert_query, values)
+    conn.commit()
+    logger.info("VO2 max successfully ingested.")
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python scripts/ingest_garmin_zip.py <path_to_unzipped_garmin_folder_or_zip>")
         sys.exit(1)
-        
+
     path = sys.argv[1]
-    
+
     # Check if we need to unzip first
     extract_dir = path
     if path.endswith(".zip"):
@@ -315,14 +456,15 @@ def main():
         with zipfile.ZipFile(path, 'r') as zip_ref:
             zip_ref.extractall(extract_dir)
         logger.info("Extraction complete.")
-        
+
     try:
         conn = get_db_connection()
         setup_schema(conn)
-        
+
         parse_and_ingest_wellness(conn, extract_dir)
+        parse_and_ingest_vo2_max(conn, extract_dir)
         parse_and_ingest_activities(conn, extract_dir)
-        
+
         conn.close()
         logger.info("Ingestion completed successfully!")
     except Exception as e:
