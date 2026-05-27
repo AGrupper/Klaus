@@ -123,3 +123,76 @@ def test_recent_activities_raises_on_fetch_failure():
     with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
         with pytest.raises(gt.GarminUnavailableError):
             gt.fetch_garmin_activities(days=7)
+
+
+# ---------------------------------------------------------------------------
+# GARMIN-05 — write_today_biometrics_to_postgres (Plan 19-04)
+# ---------------------------------------------------------------------------
+
+def test_write_today_biometrics_executes_upsert(monkeypatch):
+    """Happy path: full garmin dict → cur.execute called with INSERT ... ON CONFLICT."""
+    import sys
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_conn = MagicMock()
+    fake_cursor = MagicMock()
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.return_value = fake_conn
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+    garmin = {
+        "date": "2026-05-26",
+        "resting_hr": 50,
+        "hrv_overnight": 60,
+        "sleep_score": 80,
+        "sleep_duration": 7.5,
+        "body_battery_max": 90,
+        "training_readiness": 75,
+        "vo2_max": 51.7,
+        "hrv_baseline": 58,
+    }
+    gt.write_today_biometrics_to_postgres(garmin)
+    assert fake_cursor.execute.called
+    args, _ = fake_cursor.execute.call_args
+    sql = args[0]
+    assert "INSERT INTO daily_biometrics" in sql
+    assert "ON CONFLICT (date) DO UPDATE SET" in sql
+
+
+def test_write_today_biometrics_no_db_url_silent_return(monkeypatch):
+    """No DATABASE_URL set → returns None, no DB call, no exception."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("PG_CONNECTION_STRING", raising=False)
+    result = gt.write_today_biometrics_to_postgres({"date": "2026-05-26"})
+    assert result is None
+
+
+def test_write_today_biometrics_connection_error_silent_log(monkeypatch):
+    """psycopg2.connect raises → fn logs warning + returns None (best-effort contract)."""
+    import sys
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.side_effect = RuntimeError("network down")
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+    # MUST NOT RAISE
+    result = gt.write_today_biometrics_to_postgres({"date": "2026-05-26"})
+    assert result is None
+
+
+def test_write_today_biometrics_handles_missing_keys(monkeypatch):
+    """Minimal dict with just 'date' → other fields default to None in params."""
+    import sys
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_conn = MagicMock()
+    fake_cursor = MagicMock()
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.return_value = fake_conn
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+    gt.write_today_biometrics_to_postgres({"date": "2026-05-26"})
+    args, _ = fake_cursor.execute.call_args
+    params = args[1]
+    # date is required; everything else should be None
+    assert params[0] == "2026-05-26"
+    assert all(p is None or p == "2026-05-26" for p in params)
