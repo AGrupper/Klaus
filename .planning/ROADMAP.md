@@ -60,7 +60,7 @@ session via `UserProfileStore` writes.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 19. Training Awareness & Nutrition Coaching | 3/5 | In Progress | — |
+| 19. Training Awareness & Nutrition Coaching | 4/5 | In Progress | — |
 | 20. Accountability Crons & Recovery Briefing | 0/TBD | Not started | — |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
