@@ -4,7 +4,7 @@ import json
 import zipfile
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from pathlib import Path
 
 # Add project root to sys.path
@@ -53,6 +53,15 @@ CREATE TABLE IF NOT EXISTS laps_telemetry (
     avg_hr INTEGER NOT NULL,
     speed_mps NUMERIC(5,2) NOT NULL
 );
+
+-- PHASE 19 — additive, idempotent (SCHEMA-01, SCHEMA-02, SCHEMA-03)
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS training_load REAL;
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS perceived_exertion SMALLINT;
+ALTER TABLE activities ADD COLUMN IF NOT EXISTS feel SMALLINT;
+ALTER TABLE daily_biometrics ADD COLUMN IF NOT EXISTS vo2_max REAL;
+ALTER TABLE daily_biometrics ADD COLUMN IF NOT EXISTS training_load_acute REAL;
+ALTER TABLE daily_biometrics ADD COLUMN IF NOT EXISTS training_load_chronic REAL;
+ALTER TABLE daily_biometrics ADD COLUMN IF NOT EXISTS acwr REAL;
 """
 
 def get_db_connection():
@@ -162,6 +171,12 @@ def parse_and_ingest_wellness(conn, extract_dir):
                     readiness = entry.get("trainingReadiness")
                     if readiness:
                         biometrics[date_str]["training_readiness"] = readiness
+
+                    # PHASE 19: Extract VO2 Max (key verified by Wave-0 probe
+                    # + RESEARCH §Deep Research §1)
+                    vo2 = entry.get("vO2MaxValue")
+                    if vo2 is not None:
+                        biometrics[date_str]["vo2_max"] = vo2
         except Exception as e:
             logger.error(f"Error parsing UDS file {file_path.name}: {e}")
 
@@ -171,8 +186,9 @@ def parse_and_ingest_wellness(conn, extract_dir):
         with conn.cursor() as cur:
             insert_query = """
             INSERT INTO daily_biometrics (
-                date, resting_hr, hrv_baseline, hrv_overnight, 
-                sleep_score, sleep_duration, body_battery_max, training_readiness
+                date, resting_hr, hrv_baseline, hrv_overnight,
+                sleep_score, sleep_duration, body_battery_max, training_readiness,
+                vo2_max
             ) VALUES %s
             ON CONFLICT (date) DO UPDATE SET
                 resting_hr = EXCLUDED.resting_hr,
@@ -180,7 +196,8 @@ def parse_and_ingest_wellness(conn, extract_dir):
                 sleep_score = EXCLUDED.sleep_score,
                 sleep_duration = EXCLUDED.sleep_duration,
                 body_battery_max = EXCLUDED.body_battery_max,
-                training_readiness = EXCLUDED.training_readiness;
+                training_readiness = EXCLUDED.training_readiness,
+                vo2_max = EXCLUDED.vo2_max;
             """
             values = [
                 (
@@ -191,7 +208,8 @@ def parse_and_ingest_wellness(conn, extract_dir):
                     b.get("sleep_score"),
                     b.get("sleep_duration"),
                     b.get("body_battery_max"),
-                    b.get("training_readiness")
+                    b.get("training_readiness"),
+                    b.get("vo2_max"),
                 )
                 for d, b in biometrics.items()
             ]
@@ -223,22 +241,34 @@ def parse_and_ingest_activities(conn, extract_dir):
                     start_time = entry.get("startTimeGMT")
                     if not start_time:
                         continue
-                    dt = datetime.fromtimestamp(start_time / 1000, tz=psycopg2.tz.FixedOffset(0))
-                    
+                    dt = datetime.fromtimestamp(start_time / 1000, tz=timezone.utc)
+
                     # Convert Pace and Speed
                     duration = entry.get("duration") or entry.get("activeDuration") or 0
                     distance = entry.get("distance") or 0
-                    
+
+                    # activityType may be a dict {"typeKey": "running"} OR a bare string
+                    activity_type_raw = entry.get("activityType", "unknown")
+                    if isinstance(activity_type_raw, dict):
+                        activity_type = activity_type_raw.get("typeKey", "unknown")
+                    else:
+                        activity_type = activity_type_raw
+
                     activities.append((
                         activity_id,
                         dt,
-                        entry.get("activityType", "unknown"),
+                        activity_type,
                         int(duration),
                         round(float(distance), 2) if distance else None,
                         entry.get("averageHeartRate"),
                         entry.get("maxHeartRate"),
                         entry.get("averagePace"),
-                        entry.get("trainingEffect")
+                        entry.get("trainingEffect"),
+                        # PHASE 19 ADDITIONS (NULL-safe — keys verified by Wave-0 probe
+                        # + RESEARCH §Deep Research §1)
+                        entry.get("activityTrainingLoad"),
+                        entry.get("directWorkoutRpe"),
+                        entry.get("directWorkoutFeel"),
                     ))
         except Exception as e:
             logger.error(f"Error parsing activity file {file_path.name}: {e}")
@@ -249,8 +279,9 @@ def parse_and_ingest_activities(conn, extract_dir):
         with conn.cursor() as cur:
             insert_query = """
             INSERT INTO activities (
-                activity_id, date, type, duration_sec, distance_m, 
-                avg_hr, max_hr, avg_pace, training_effect
+                activity_id, date, type, duration_sec, distance_m,
+                avg_hr, max_hr, avg_pace, training_effect,
+                training_load, perceived_exertion, feel
             ) VALUES %s
             ON CONFLICT (activity_id) DO UPDATE SET
                 date = EXCLUDED.date,
@@ -260,7 +291,10 @@ def parse_and_ingest_activities(conn, extract_dir):
                 avg_hr = EXCLUDED.avg_hr,
                 max_hr = EXCLUDED.max_hr,
                 avg_pace = EXCLUDED.avg_pace,
-                training_effect = EXCLUDED.training_effect;
+                training_effect = EXCLUDED.training_effect,
+                training_load = EXCLUDED.training_load,
+                perceived_exertion = EXCLUDED.perceived_exertion,
+                feel = EXCLUDED.feel;
             """
             execute_values(cur, insert_query, activities)
         conn.commit()

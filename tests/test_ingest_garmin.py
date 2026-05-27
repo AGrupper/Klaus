@@ -45,6 +45,10 @@ def _write_summaries(tmp_path, payload):
 
 
 def _write_uds(tmp_path, payload):
+    # Real Garmin exports always include the Wellness dir alongside User —
+    # the parser early-returns if Wellness is missing, so create it empty.
+    wellness_dir = tmp_path / "DI_CONNECT" / "DI-Connect-Wellness"
+    wellness_dir.mkdir(parents=True, exist_ok=True)
     user_dir = tmp_path / "DI_CONNECT" / "DI-Connect-User"
     user_dir.mkdir(parents=True, exist_ok=True)
     uds_file = user_dir / "user_UDSFile.json"
