@@ -219,6 +219,19 @@ def _gather_data(today_iso: str) -> dict:
         logger.warning("morning_briefing: Garmin data fetch failed", exc_info=True)
         data["garmin"] = {"state": 2}
 
+    # PHASE 19 — GARMIN-05: best-effort write of today's biometrics to Postgres
+    # so future ACWR queries see fresh data. write_today_biometrics_to_postgres
+    # already swallows its own exceptions; outer try/except is defense-in-depth.
+    try:
+        from mcp_tools.garmin_tool import write_today_biometrics_to_postgres
+        if data.get("garmin", {}).get("state") == 1:
+            write_today_biometrics_to_postgres(data["garmin"])
+    except Exception:
+        logger.warning(
+            "morning_briefing: Postgres biometrics writeback failed",
+            exc_info=True,
+        )
+
     # TickTick tasks
     try:
         from mcp_tools.ticktick_tool import get_today_tasks
@@ -226,6 +239,23 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: TickTick task fetch failed", exc_info=True)
         data["tasks"] = {"staleness_warning": "Task data unavailable, sir."}
+
+    # PHASE 19 — NUTR-05: yesterday's nutrition recap. NUTR-07 silent-omit
+    # precondition: only write data['nutrition'] when get_day_aggregate
+    # returns a TRUTHY dict (Pitfall 4 — empty dict means no meals, not
+    # {"meal_count": 0}).
+    try:
+        from memory.firestore_db import MealStore
+        yesterday = (date.fromisoformat(today_iso) - timedelta(days=1)).isoformat()
+        ms = MealStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        agg = ms.get_day_aggregate(yesterday)
+        if agg:  # NUTR-07: silent omit on empty
+            data["nutrition"] = agg
+    except Exception:
+        logger.warning("morning_briefing: meals aggregate failed", exc_info=True)
 
     return data
 
