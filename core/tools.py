@@ -811,6 +811,25 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # ============ PHASE 19 Plan 03 — GOOGLE FIT NUTRITION ============
+    {
+        "name": "fetch_recent_meals",
+        "description": (
+            "Get nutrition entries from Google Fit (Lifesum-sourced) in the last "
+            "N hours. Each entry has calories, protein_g, carbs_g, fat_g, "
+            "meal_type, optional food_item. Default hours=24. Worker-delegated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "hours": {
+                    "type": "integer",
+                    "description": "Hours back to fetch. Default 24.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Schemas passed to the worker agent — excludes meta tool and memory tools
@@ -1458,6 +1477,23 @@ def _handle_fetch_recent_activities(days: int = 7) -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _handle_fetch_recent_meals(hours: int = 24) -> str:
+    """NUTR-03 worker-delegated: live Google Fit nutrition entries (Lifesum source).
+
+    Returns a JSON-encoded list of meal dicts (see google_fit_tool._normalize_point
+    for the shape). On API outage returns ``{"error": "..."}`` so the worker LLM
+    gets a structured tool-result rather than a raised exception.
+    """
+    from mcp_tools.google_fit_tool import (
+        fetch_recent_meals,
+        GoogleFitUnavailableError,
+    )
+    try:
+        return json.dumps(fetch_recent_meals(hours=hours))
+    except GoogleFitUnavailableError as exc:
+        return json.dumps({"error": str(exc)})
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -1488,6 +1524,8 @@ _HANDLERS: dict[str, object] = {
     "update_training_profile": lambda args: _handle_update_training_profile(**args),
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
+    # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
+    "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
     "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
     "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
