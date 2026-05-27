@@ -12,17 +12,69 @@ the lib installed — mirrors the pattern in tests/test_firestore_db.py.
 from __future__ import annotations
 
 import sys
+from types import ModuleType
 from unittest.mock import MagicMock
 
 
-def _install_firestore_mock():
-    """Install firestore mocks at sys.modules level BEFORE importing MealStore."""
+def _install_firestore_mock() -> MagicMock:
+    """Install mock google.cloud.firestore + force re-import of firestore_db.
+
+    Mirrors tests/test_user_profile_store.py — same module had its mocks
+    set up by an earlier-running test (test_firestore_db.py) using a
+    different SERVER_TIMESTAMP sentinel, so we MUST evict and re-import
+    memory.firestore_db with our sentinel bound.
+    """
+    try:
+        import google  # noqa: F401
+        import google.cloud  # noqa: F401
+        google_mod = sys.modules["google"]
+        google_cloud_mod = sys.modules["google.cloud"]
+    except ImportError:
+        if "google" not in sys.modules or isinstance(sys.modules["google"], MagicMock):
+            google_mod = ModuleType("google")
+            google_mod.__path__ = []
+            sys.modules["google"] = google_mod
+        else:
+            google_mod = sys.modules["google"]
+        if "google.cloud" not in sys.modules or isinstance(sys.modules["google.cloud"], MagicMock):
+            google_cloud_mod = ModuleType("google.cloud")
+            google_cloud_mod.__path__ = []
+            sys.modules["google.cloud"] = google_cloud_mod
+            setattr(google_mod, "cloud", google_cloud_mod)
+        else:
+            google_cloud_mod = sys.modules["google.cloud"]
+
     firestore_mock = MagicMock()
-    firestore_mock.SERVER_TIMESTAMP = object()
-    google_cloud_mod = MagicMock()
-    google_cloud_mod.firestore = firestore_mock
-    sys.modules["google.cloud"] = google_cloud_mod
+    firestore_mock.SERVER_TIMESTAMP = object()  # distinguishable sentinel
+
     sys.modules["google.cloud.firestore"] = firestore_mock
+    google_cloud_mod.firestore = firestore_mock
+
+    # google.api_core.exceptions stub (firestore_db imports GoogleAPICallError)
+    exc_mod = sys.modules.get("google.api_core.exceptions", MagicMock())
+    exc_mod.GoogleAPICallError = Exception
+    sys.modules["google.api_core.exceptions"] = exc_mod
+    if "google.api_core" in sys.modules:
+        sys.modules["google.api_core"].exceptions = exc_mod
+    else:
+        api_core = MagicMock()
+        api_core.exceptions = exc_mod
+        sys.modules["google.api_core"] = api_core
+
+    # google.oauth2 — used inside _make_firestore_client when FIRESTORE_CREDENTIALS set
+    sys.modules.setdefault("google.oauth2", MagicMock())
+    sys.modules.setdefault("google.oauth2.service_account", MagicMock())
+
+    # dotenv — top-level import in firestore_db
+    dotenv_mod = MagicMock()
+    dotenv_mod.load_dotenv = MagicMock()
+    sys.modules.setdefault("dotenv", dotenv_mod)
+
+    # Force re-import of firestore_db so its `from google.cloud import firestore`
+    # re-binds to OUR mock (with our SERVER_TIMESTAMP sentinel).
+    if "memory.firestore_db" in sys.modules:
+        del sys.modules["memory.firestore_db"]
+
     return firestore_mock
 
 

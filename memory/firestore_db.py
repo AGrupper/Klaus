@@ -835,6 +835,157 @@ class JournalStore:
         return results[:n]
 
 
+class MealStore:
+    """Per-date nutrition log persistence (Phase 19 — NUTR-02).
+
+    Firestore path: ``meals/{YYYY-MM-DD}/timestamps/{source_id}``.
+
+    The date-partitioned layout matches JournalStore's discipline (one
+    document per calendar day) but uses a sub-collection of meal entries
+    rather than a single doc — Lifesum can log many meals per day and
+    each must round-trip through Fit + this store independently.
+
+    Idempotency:
+        ``source_id = "{dataStreamId}:{startTimeNanos}"`` (see
+        ``mcp_tools/google_fit_tool._normalize_point``). Re-syncs land on
+        the same doc with ``merge=True``, so Lifesum sync-timing variance
+        cannot produce duplicate rows (Pitfall 2 mitigation).
+
+    Pitfall 4:
+        ``get_day_aggregate`` returns ``{}`` (an EMPTY DICT) when no meals
+        are logged for the date — NOT ``{"meal_count": 0}``. The Plan 19-04
+        morning briefing uses truthiness on the return value to decide
+        between silent-omit and rendering the nutrition section; a
+        non-empty placeholder would break silent-omit.
+    """
+
+    _COLLECTION = "meals"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def upsert(self, source_id: str, meal: dict) -> None:
+        """Idempotent on source_id. Re-raises on Firestore failure (caller decides).
+
+        The meal dict's ``timestamp`` field (ISO-8601) drives the date-bucket
+        document — slicing the first 10 chars yields ``YYYY-MM-DD``. The
+        full meal payload is written with ``merge=True`` plus a server-side
+        ``updated_at`` stamp; ``source_id`` is also written into the payload
+        for easier downstream querying.
+
+        Args:
+            source_id: ``{dataStreamId}:{startTimeNanos}`` from Fit normalization.
+            meal:      Normalized meal dict (see google_fit_tool._normalize_point).
+
+        Raises:
+            Exception: re-raises any Firestore write failure after logging.
+        """
+        try:
+            date_str = meal["timestamp"][:10]
+            (
+                self._col.document(date_str)
+                .collection("timestamps")
+                .document(source_id)
+                .set(
+                    {
+                        **meal,
+                        "source_id": source_id,
+                        "updated_at": firestore.SERVER_TIMESTAMP,
+                    },
+                    merge=True,
+                )
+            )
+        except Exception:
+            logger.error("MealStore.upsert(%r) failed", source_id, exc_info=True)
+            raise
+
+    def get_day(self, date_str: str) -> list[dict]:
+        """Return all meals for a date, sorted by timestamp ascending.
+
+        Never raises — returns ``[]`` on any Firestore error so callers
+        (e.g. the morning briefing) can degrade gracefully.
+
+        Args:
+            date_str: ``YYYY-MM-DD`` (Asia/Jerusalem calendar date).
+
+        Returns:
+            List of meal dicts, ordered by ``timestamp`` ascending. ``[]``
+            when the date has no entries OR Firestore is unreachable.
+        """
+        try:
+            snaps = self._col.document(date_str).collection("timestamps").stream()
+            return sorted(
+                (s.to_dict() for s in snaps),
+                key=lambda d: d.get("timestamp", ""),
+            )
+        except Exception:
+            logger.warning("MealStore.get_day(%r) failed", date_str, exc_info=True)
+            return []
+
+    def get_day_aggregate(self, date_str: str) -> dict:
+        """Return totals + per-meal-type breakdown + biggest_gap_minutes.
+
+        Used by the Plan 19-04 morning briefing (NUTR-07 silent-omit gate)
+        and the autonomous-tick gather (NUTR-04 nudge logic).
+
+        Returns ``{}`` (empty dict) when no meals are logged on ``date_str``
+        — Pitfall 4 contract. Callers MUST use truthiness checks
+        (``if agg: ...``) rather than key lookups, or silent-omit breaks.
+
+        Args:
+            date_str: ``YYYY-MM-DD`` (Asia/Jerusalem calendar date).
+
+        Returns:
+            ``{}`` when no meals; else::
+
+                {
+                    "meal_count":           int,
+                    "totals":               {"calories": int, "protein_g": int, ...},
+                    "by_type":              {1: count_of_meal_type_1, ...},
+                    "biggest_gap_minutes":  float (rounded to 1 dp),
+                    "meals":                ordered list (asc by timestamp),
+                }
+        """
+        import collections
+        from datetime import datetime as _dt
+
+        meals = self.get_day(date_str)
+        if not meals:
+            # Pitfall 4 — silent-omit gate. DO NOT change to {"meal_count": 0}.
+            return {}
+
+        totals = {
+            "calories":  sum(m.get("calories")  or 0 for m in meals),
+            "protein_g": sum(m.get("protein_g") or 0 for m in meals),
+            "carbs_g":   sum(m.get("carbs_g")   or 0 for m in meals),
+            "fat_g":     sum(m.get("fat_g")     or 0 for m in meals),
+        }
+        by_type: dict = collections.defaultdict(list)
+        for m in meals:
+            by_type[m.get("meal_type", 1)].append(m)
+
+        biggest_gap_minutes = 0.0
+        for i in range(1, len(meals)):
+            try:
+                t_prev = _dt.fromisoformat(meals[i - 1]["timestamp"])
+                t_curr = _dt.fromisoformat(meals[i]["timestamp"])
+                gap = (t_curr - t_prev).total_seconds() / 60.0
+                if gap > biggest_gap_minutes:
+                    biggest_gap_minutes = gap
+            except (KeyError, ValueError, TypeError):
+                # Malformed timestamp on one entry → skip that pair.
+                continue
+
+        return {
+            "meal_count":          len(meals),
+            "totals":              totals,
+            "by_type":             {k: len(v) for k, v in by_type.items()},
+            "biggest_gap_minutes": round(biggest_gap_minutes, 1),
+            "meals":               meals,  # ordered — prompt may render breakdown
+        }
+
+
 class FollowupStore:
     """Persists scheduled follow-ups for Klaus's self-managed check-backs.
 
