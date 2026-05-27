@@ -554,6 +554,13 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
 
     # BLOCKER 5b — replicate handle_message's render step before _run_smart_loop.
     smart_system_template = _load_prompt("prompts/autonomous.md")
+    # PHASE 19 — NUTR-08: append non-personalized meal critique guidance so the
+    # brain's compose layer has the audit heuristics whenever a meal-driven
+    # nudge is in play. Defense-in-depth `if` guard: if the file vanishes,
+    # we don't append a stray separator.
+    meal_audit = _load_prompt("prompts/meal_audit.md")
+    if meal_audit:
+        smart_system_template = smart_system_template + "\n\n" + meal_audit
     smart_system = orchestrator.render_smart_system(smart_system_template)
     worker_system_template = _load_prompt("prompts/worker_agent.md")
     # worker_system only needs {today_date} resolved; reuse the same render
@@ -595,6 +602,13 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
     """
     orchestrator = _get_orchestrator()
     smart_system_template = _load_prompt("prompts/autonomous.md")
+    # PHASE 19 — NUTR-08: same meal_audit append as _compose_layer2. The
+    # follow-up compose path is a sibling brain-compose site and must carry
+    # the same audit guidance so a meal-adjacent follow-up nudge is critiqued
+    # under the same heuristics.
+    meal_audit = _load_prompt("prompts/meal_audit.md")
+    if meal_audit:
+        smart_system_template = smart_system_template + "\n\n" + meal_audit
     smart_system = orchestrator.render_smart_system(smart_system_template)
     worker_system_template = _load_prompt("prompts/worker_agent.md")
     worker_system = orchestrator.render_smart_system(worker_system_template)

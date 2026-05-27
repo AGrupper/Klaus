@@ -275,6 +275,19 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
         logger.warning("morning_briefing: prompt file missing — using fallback")
         return _plain_text_fallback(today_data, today_iso)
 
+    # PHASE 19 — NUTR-08: append non-personalized meal critique guidance so
+    # the morning recap LLM can audit yesterday's nutrition with the same
+    # heuristics the autonomous tick uses mid-day. Silent-omit semantics
+    # (NUTR-07) still hold — if the data block has no `nutrition` key, the
+    # briefing prompt instructs the LLM to skip the section.
+    meal_audit_path = Path(__file__).parent.parent / "prompts" / "meal_audit.md"
+    meal_audit = (
+        meal_audit_path.read_text(encoding="utf-8")
+        if meal_audit_path.exists() else ""
+    )
+    if meal_audit:
+        system_prompt = system_prompt + "\n\n" + meal_audit
+
     user_message = json.dumps(today_data, ensure_ascii=False, default=str)
 
     try:
