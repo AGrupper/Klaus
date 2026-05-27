@@ -421,3 +421,26 @@ class TestPhase19MorningBriefing:
                 s.stop()
         # state=2 (no data) → writeback should be skipped
         assert not write_mock.called
+
+
+# ---------------------------------------------------------------------------
+# TestPhase19MealAuditWiringMorningBriefing — NUTR-08 (Plan 19-05 Task 5)
+# ---------------------------------------------------------------------------
+
+
+class TestPhase19MealAuditWiringMorningBriefing:
+    def test_morning_briefing_source_references_meal_audit(self):
+        """NUTR-08 wiring: core/morning_briefing.py must reference prompts/meal_audit.md."""
+        src = open("core/morning_briefing.py").read()
+        assert "meal_audit.md" in src, (
+            "core/morning_briefing.py is missing prompts/meal_audit.md load — "
+            "NUTR-08 wiring broken"
+        )
+
+    def test_morning_briefing_loads_meal_audit_nonempty(self):
+        """NUTR-08: the meal_audit content must load and be non-empty (file-existence path)."""
+        from pathlib import Path
+        ma = Path("prompts/meal_audit.md")
+        assert ma.exists()
+        body = ma.read_text(encoding="utf-8")
+        assert body.strip(), "prompts/meal_audit.md is empty"
