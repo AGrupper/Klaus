@@ -1,0 +1,125 @@
+"""Tests for mcp_tools/garmin_tool.py Phase-19 extensions (Plan 02).
+
+Covers GARMIN-01 and GARMIN-02:
+  - fetch_garmin_training_status() — returns dict with vo2_max, training_status, load_focus
+  - fetch_garmin_activities(days=7) — returns normalized list, default window is 7 days
+
+Mock strategy
+-------------
+We patch the in-module `_authed_garmin_client` helper so neither garminconnect
+nor Firestore is touched.  Each test gets its own MagicMock Garmin API.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
+
+import pytest
+
+import mcp_tools.garmin_tool as gt
+
+
+# ---------------------------------------------------------------------------
+# GARMIN-01 — fetch_garmin_training_status
+# ---------------------------------------------------------------------------
+
+def test_training_status_shape():
+    """Returns dict with exactly the 3 expected keys."""
+    fake_api = MagicMock()
+    fake_api.get_training_status.return_value = {
+        "envelope": {
+            "vO2MaxValue": 51.7,
+            "trainingStatus": "PRODUCTIVE",
+            "loadFocus": "BALANCED",
+        }
+    }
+    fake_api.get_max_metrics.return_value = {"vO2MaxValue": 51.7}
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        result = gt.fetch_garmin_training_status()
+    assert set(result.keys()) == {"vo2_max", "training_status", "load_focus"}
+
+
+def test_training_status_extracts_values():
+    """Verifies values are pulled from the envelope when nested."""
+    fake_api = MagicMock()
+    fake_api.get_training_status.return_value = {
+        "envelope": {
+            "vO2MaxValue": 51.7,
+            "trainingStatus": "PRODUCTIVE",
+            "loadFocus": "BALANCED",
+        }
+    }
+    fake_api.get_max_metrics.return_value = {"vO2MaxValue": 51.7}
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        result = gt.fetch_garmin_training_status()
+    assert result["vo2_max"] == 51.7
+    assert result["training_status"] == "PRODUCTIVE"
+    assert result["load_focus"] == "BALANCED"
+
+
+def test_training_status_raises_garmin_unavailable():
+    """API exception → GarminUnavailableError (caller decides)."""
+    fake_api = MagicMock()
+    fake_api.get_training_status.side_effect = RuntimeError("net down")
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        with pytest.raises(gt.GarminUnavailableError):
+            gt.fetch_garmin_training_status()
+
+
+# ---------------------------------------------------------------------------
+# GARMIN-02 — fetch_garmin_activities
+# ---------------------------------------------------------------------------
+
+def test_recent_activities_shape():
+    """Normalized dict carries all expected keys + RPE/Feel/training_load."""
+    fake_api = MagicMock()
+    fake_api.get_activities_by_date.return_value = [
+        {
+            "activityId": 999,
+            "startTimeLocal": "2026-05-26T07:00:00",
+            "activityType": {"typeKey": "running"},
+            "duration": 1800,
+            "distance": 5000.0,
+            "directWorkoutRpe": 7,
+            "directWorkoutFeel": 4,
+            "activityTrainingLoad": 78.3,
+        }
+    ]
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        result = gt.fetch_garmin_activities(days=7)
+    assert isinstance(result, list)
+    assert len(result) == 1
+    r = result[0]
+    expected_keys = {
+        "activity_id", "date", "type", "duration_sec", "distance_m",
+        "perceived_exertion", "feel", "training_load",
+    }
+    assert expected_keys.issubset(r.keys())
+    assert r["activity_id"] == 999
+    assert r["type"] == "running"
+    assert r["duration_sec"] == 1800
+    assert r["perceived_exertion"] == 7
+    assert r["feel"] == 4
+    assert r["training_load"] == 78.3
+
+
+def test_recent_activities_default_days_7():
+    """default days=7 → window is today-6..today, inclusive."""
+    fake_api = MagicMock()
+    fake_api.get_activities_by_date.return_value = []
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        gt.fetch_garmin_activities(days=7)
+    args, _ = fake_api.get_activities_by_date.call_args
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+    assert args[1] == today.isoformat()
+    assert args[0] == (today - timedelta(days=6)).isoformat()
+
+
+def test_recent_activities_raises_on_fetch_failure():
+    """API exception → GarminUnavailableError."""
+    fake_api = MagicMock()
+    fake_api.get_activities_by_date.side_effect = RuntimeError("net down")
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        with pytest.raises(gt.GarminUnavailableError):
+            gt.fetch_garmin_activities(days=7)
