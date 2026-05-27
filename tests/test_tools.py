@@ -392,3 +392,26 @@ class TestPhase19ToolRegistration:
             s for s in tools.TOOL_SCHEMAS if s["name"] == "update_training_profile"
         )
         assert schema["input_schema"]["required"] == ["patch"]
+
+    # ---- Phase 19 Plan 03 — fetch_recent_meals (worker-delegated) ----
+
+    def test_fetch_recent_meals_worker_delegated(self):
+        """NUTR-03: fetch_recent_meals is worker-delegated at all 4 sites."""
+        # NOT in smart-direct (worker tier)
+        assert "fetch_recent_meals" not in tools.SMART_AGENT_DIRECT_TOOLS
+        # IN tool schemas
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "fetch_recent_meals" in names
+        # IN worker schemas (delegated through worker)
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "fetch_recent_meals" in worker_names
+        # IN handlers dispatch
+        assert "fetch_recent_meals" in tools._HANDLERS
+
+    def test_fetch_recent_meals_schema_default_hours(self):
+        """fetch_recent_meals schema: hours is integer + no required args."""
+        schema = next(
+            s for s in tools.TOOL_SCHEMAS if s["name"] == "fetch_recent_meals"
+        )
+        assert schema["input_schema"]["properties"]["hours"]["type"] == "integer"
+        assert schema["input_schema"]["required"] == []
