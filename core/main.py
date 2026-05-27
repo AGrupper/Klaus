@@ -281,11 +281,28 @@ class AgentOrchestrator:
                 journal_digest = "\n".join(lines)
             # else: leave "" — empty-state rule omits the block entirely
 
+        # PHASE 19 — training profile block (PROMPT-01)
+        # Same omit-empty discipline as self_state: empty profile → empty snippet,
+        # NOT a literal placeholder. The prompt instructs "ask the user" when blank.
+        training_profile_snippet = ""
+        if getattr(self, "_user_profile_store", None) is not None:
+            profile = self._user_profile_store.load()
+            non_empty = {
+                k: v for k, v in profile.items()
+                if k not in ("updated_at", "bootstrapped_at", "schema_version") and v
+            }
+            if non_empty:
+                lines = ["**Training profile:**"]
+                for k, v in non_empty.items():
+                    lines.append(f"- {k}: {v}")
+                training_profile_snippet = "\n".join(lines)
+
         return (
             template
             .replace("{self_md}", self._self_md_content)      # stable — benefits from cache
             .replace("{self_state}", self_state_snippet)       # volatile — after stable
             .replace("{journal_digest}", journal_digest)       # Phase 17 — smart-only (D-15)
+            .replace("{training_profile}", training_profile_snippet)  # PHASE 19 — PROMPT-01
             .replace("{today_date}", today_label)              # dynamic — always last
         )
 
