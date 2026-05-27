@@ -22,17 +22,17 @@
 
 ### UserProfileStore (Phase 19)
 
-- [ ] **PROFILE-01**: `UserProfileStore.load()` reads `users/amit` from Firestore; returns `{}` on any failure, never raises
-- [ ] **PROFILE-02**: `UserProfileStore.update(patch)` merges fields and stamps `updated_at` via `firestore.SERVER_TIMESTAMP`
-- [ ] **PROFILE-03**: `UserProfileStore.bootstrap_if_empty()` creates the document with empty scaffold (`athletic_goals: []`, `training_constraints: []`, `recovery_preferences: {}`, `schema_version: 1`) when missing; no personalized values seeded
-- [ ] **PROFILE-04**: `get_training_profile` and `update_training_profile` tools registered brain-direct at all 5 sites in `core/tools.py`
+- [x] **PROFILE-01**: `UserProfileStore.load()` reads `users/amit` from Firestore; returns `{}` on any failure, never raises
+- [x] **PROFILE-02**: `UserProfileStore.update(patch)` merges fields and stamps `updated_at` via `firestore.SERVER_TIMESTAMP`
+- [x] **PROFILE-03**: `UserProfileStore.bootstrap_if_empty()` creates the document with empty scaffold (`athletic_goals: []`, `training_constraints: []`, `recovery_preferences: {}`, `schema_version: 1`) when missing; no personalized values seeded
+- [x] **PROFILE-04**: `get_training_profile` and `update_training_profile` tools registered brain-direct at all 5 sites in `core/tools.py`
 
 ### Garmin Tool Extensions (Phase 19)
 
-- [ ] **GARMIN-01**: `fetch_garmin_training_status()` returns dict with `vo2_max`, `training_status` enum, `load_focus`
-- [ ] **GARMIN-02**: `fetch_garmin_activities(days=7)` returns normalized list including `perceived_exertion` and `feel` when Garmin captured them
-- [ ] **GARMIN-03**: `compute_acwr(activities_28d)` returns `{"acute": float, "chronic": float, "ratio": float | None}`; returns `None` ratio when chronic baseline is insufficient
-- [ ] **GARMIN-04**: `fetch_training_status` and `fetch_recent_activities` registered as worker-delegated tools (not in `SMART_AGENT_DIRECT_TOOLS`)
+- [x] **GARMIN-01**: `fetch_garmin_training_status()` returns dict with `vo2_max`, `training_status` enum, `load_focus`
+- [x] **GARMIN-02**: `fetch_garmin_activities(days=7)` returns normalized list including `perceived_exertion` and `feel` when Garmin captured them
+- [x] **GARMIN-03**: `compute_acwr(activities_28d)` returns `{"acute": float, "chronic": float, "ratio": float | None}`; returns `None` ratio when chronic baseline is insufficient
+- [x] **GARMIN-04**: `fetch_training_status` and `fetch_recent_activities` registered as worker-delegated tools (not in `SMART_AGENT_DIRECT_TOOLS`)
 - [ ] **GARMIN-05**: `core/morning_briefing.py` `_gather_data()` writes fresh daily biometrics + activities into Postgres on each tick (best-effort; Postgres outage does not block briefing)
 
 ### Nutrition Tracking via Google Fit (Phase 19)
@@ -117,14 +117,14 @@
 | INGEST-01      | 19    | Pending |
 | INGEST-02      | 19    | Pending |
 | INGEST-03      | 19    | Pending |
-| PROFILE-01     | 19    | Pending |
-| PROFILE-02     | 19    | Pending |
-| PROFILE-03     | 19    | Pending |
-| PROFILE-04     | 19    | Pending |
-| GARMIN-01      | 19    | Pending |
-| GARMIN-02      | 19    | Pending |
-| GARMIN-03      | 19    | Pending |
-| GARMIN-04      | 19    | Pending |
+| PROFILE-01     | 19    | Done    |
+| PROFILE-02     | 19    | Done    |
+| PROFILE-03     | 19    | Done    |
+| PROFILE-04     | 19    | Done    |
+| GARMIN-01      | 19    | Done    |
+| GARMIN-02      | 19    | Done    |
+| GARMIN-03      | 19    | Done    |
+| GARMIN-04      | 19    | Done    |
 | GARMIN-05      | 19    | Pending |
 | NUTR-01        | 19    | Pending |
 | NUTR-02        | 19    | Pending |
