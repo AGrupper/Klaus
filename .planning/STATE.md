@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
 status: executing
-last_updated: "2026-05-27T09:05:11.283Z"
-last_activity: 2026-05-27 -- Phase 19 planning complete
+last_updated: "2026-05-27T13:15:00.000Z"
+last_activity: 2026-05-27 -- Phase 19 Plan 01 complete (schema + Garmin parser + 3-year backfill)
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 5
-  completed_plans: 0
-  percent: 0
+  completed_plans: 1
+  percent: 20
 ---
 
 # State — Klaus
@@ -19,11 +19,11 @@ progress:
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
 Phases planned: 2 (Phase 19 + Phase 20)
-Phase: 19 — not started
-Plan: —
-Status: Ready to execute
-Resume file: — (no active plan)
-Last activity: 2026-05-27 -- Phase 19 planning complete
+Phase: 19 — in progress (1/5 plans complete)
+Plan: 19-02 — UserProfileStore + Garmin training_status/activities + ACWR + 4 new tools (next)
+Status: Wave 0 complete; ready for Wave 1
+Resume file: .planning/phases/19-training-awareness-nutrition-coaching/19-02-PLAN.md
+Last activity: 2026-05-27 -- Plan 19-01 shipped: 7 new Postgres columns + parser corrected for modern Garmin export shape; backfill landed 1197 activities + 907 daily biometrics across ~2.5 years
 
 ## Project Reference
 
@@ -54,6 +54,8 @@ See: `.planning/PROJECT.md` (updated 2026-05-25)
 - Phase 18-07: `interfaces/web_server.py` now exposes **POST /cron/autonomous-tick** at line 363 — OIDC-protected via `_verify_cron_request`, guards on `_application is None → 500`, awaits `core.autonomous.run_autonomous_tick(_application.bot, now)`, calls `_log_cron_run('autonomous-tick', ok=True/False)` on both success and exception paths (failure path re-raises so Cloud Run sees the 500 + consecutive_failures streak ticks up). `core/heartbeat.py:114` registers `'autonomous-tick': 1` in `_CRON_MAX_STALENESS_HOURS` — 1h tolerance = 3 missed 20-min ticks (RESEARCH Pitfall 5). Comment on the preceding `'reflect'` line retitled from `NEW` to `Phase 17` for chronological parity. Imports inside the handler body (not at module top) to keep `/health` cold-start fast — mirrors every other cron handler. Test scaffold `tests/test_web_server.py` created with 5 tests in `TestCronAutonomousTick`; `tests/test_heartbeat.py` extended with `test_autonomous_tick_staleness_threshold_is_one_hour` + `test_all_cron_jobs_have_staleness_entry`. Cloud Scheduler job creation (gcloud snippet) deferred to Plan 18-09's DEPLOYMENT.md.
 
 - Phase 18-09: `docs/DEPLOYMENT.md` extended +162 lines (1052 → 1214) with 6 operator-facing additions — **§19 Cloud Scheduler Full Job Inventory** (single master table with all 9 klaus-* job-ids: five-fingers-morning, five-fingers-evening, morning-briefing, proactive-alerts, heartbeat, ingest-chats, ingest-chat-exports, reflect, autonomous-tick — columns: `# | Job ID | Schedule | Endpoint | Phase`); **§14d klaus-reflect gcloud block** (Phase 17 retroactive: `0 22 * * *`, `/cron/reflect`); **§14e klaus-autonomous-tick gcloud block** (Phase 18 NEW: `*/20 7-21 * * *` Asia/Jerusalem, `/cron/autonomous-tick`, pre-flight collision check); **§20 TICK_BRAIN_API_KEY (Groq) Secret** (secret name `klaus-tick-brain-api-key`, `--set-secrets` Cloud Run binding, 4-step rotation: console.groq.com/keys → `gcloud secrets versions add` → redeploy → `gcloud secrets versions disable`); **§21 Known Quirks: Five Fingers job-id collision** with 4-step legacy-job migration paragraph for pre-2026-05 deploys (`gcloud scheduler jobs list --filter="name~five-fingers"` → create new canonical jobs first → `gcloud scheduler jobs delete five-fingers` → verify via Firestore `cron_runs`) — bonus WARNING fix regression-guarded by `test_five_fingers_migration_paragraph_present`; **§22 Firestore Composite Indexes** (single-row table: `followups: status ASC, due_at ASC` — required by `FollowupStore.list_due()`; both `gcloud firestore indexes composite create` and FAILED_PRECONDITION click-link paths documented). `tests/test_docs.py` NEW (89 lines, 8 grep-style completeness assertions in `TestDeploymentCompleteness`, all passing). **Rule 1 deviation:** plan template specified `/cron/morning-briefing` for the inventory table; actual route is `@app.post("/cron/morning-briefing-tick")` at `interfaces/web_server.py:427` — fixed in inventory table to prevent doc-vs-code drift. INFRA-01 satisfied → **Phase 18 complete 9/9 plans → milestone v2.0 complete 5/5 phases**.
+
+- Phase 19-01: 7 new Postgres columns shipped via idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` baked into `scripts/ingest_garmin_zip.py::setup_schema()` — `activities.{training_load, perceived_exertion, feel}` + `daily_biometrics.{vo2_max, training_load_acute, training_load_chronic, acwr}`. Wave-0 probe (`scripts/probe_garmin_export_keys.py`) caught **6 distinct field-name deviations** between PLAN-ASSUMED keys and the actual 2026 Garmin export: glob `*summaries.json` → `*summarizedActivities.json`, flat list → nested `[{"summarizedActivitiesExport":[...]}]`, `directWorkoutRpe`/`directWorkoutFeel` → `workoutRpe`/`workoutFeel`, UDS path `DI-Connect-User` → `DI-Connect-Aggregator`, VO2 source `UDSFile.vO2MaxValue` → `MetricsMaxMetData_*.json::vo2MaxValue`. New helper `parse_and_ingest_vo2_max(conn, extract_dir)` reads the post-2024 Metrics layout and UPSERTs vo2_max into daily_biometrics (same-date multi-sport entries deduped by MAX). Also auto-fixed pre-existing parser bugs in-scope under Rule 1: HR keys `averageHeartRate`/`maxHeartRate` → `avgHr`/`maxHr` (with legacy fallback); training-effect key `trainingEffect` → `aerobicTrainingEffect`; timestamp `startTimeGMT` → `startTimeGmt`; duration ms→s; distance cm→m; `bodyBatteryMax` now extracted from nested `bodyBattery.bodyBatteryStatList` HIGHEST stat. **RPE/Feel encoding:** Garmin stores `workoutRpe` in steps of 10 (10..100 for 1..10) and `workoutFeel` in steps of 25 (0/25/50/75/100 for 0..4); ingest preserves verbatim, rescaling deferred to Plan 19-03 analytics. Real backfill: 1197 activities + 907 daily biometrics across 2023-11-27..2026-05-22 (~2.49 years); all 5 INGEST-03 thresholds passed (training_load 0.84% null, RPE/Feel ~16% null, vo2_max 67.59% null). Test suite: 499 passed, 3 skipped (+5 net tests). **Deferred items** (logged in `.planning/phases/19-training-awareness-nutrition-coaching/deferred-items.md`): sleep parser TypeError on ISO-string `sleepEndTimestampGMT`; `trainingReadiness` 100% null in modern Aggregator UDS; `averagePace` must be computed from `avgSpeed`; per-activity `hrTimeInZone_*` / `powerTimeInZone_*` arrays unused — all in scope for Plan 19-02 or later.
 
 - Phase 18-06: `core/autonomous.py` (825 lines) holds the full 3-layer pipeline. **Module-level `_orchestrator_singleton`** via `_get_orchestrator()` (BLOCKER 5a) — `AgentOrchestrator.__init__` runs once per Cloud Run instance, saving ~42 reads of SELF.md + ~42 SelfStateStore bootstraps + ~42 LLMClient triples per day. **AgentOrchestrator.render_smart_system(template)** (Task 0 / core/main.py:221-272) was extracted from `handle_message` so `_compose_layer2` can pre-render `{self_md}/{self_state}/{journal_digest}/{today_date}` BEFORE `_run_smart_loop` (BLOCKER 5b — placeholder injection lives in `handle_message`, NOT `_run_smart_loop`). **Sentinel-return detection** via `_SMART_LOOP_ERROR_SENTINELS = ("I'm afraid I encountered a connectivity",)` (BLOCKER 3) — `_run_smart_loop` RETURNS the connectivity-error string rather than raising, so Layer-2 callers MUST substring-match. **Narrow calendar gap/overload detection** via `_calendar_has_gap_or_overload` (BLOCKER 2) — single non-conflicting event is NOT a signal; only overlapping events OR >2 events in next 2h trigger. **Pitfall 2 guard:** autonomous tick builds synthetic `[{role:user, content}]` freshly and NEVER routes through `handle_message` or appends to `conversation_manager` (only `send_and_inject(inject=True)` writes the assistant turn). **D-10 success-only outreach log:** `OutreachLogStore.append` called ONLY after `send_and_inject` succeeds. **D-13 dedicated follow-up path** (`_compose_followup`) skips tick-brain entirely. **D-14 force-fire** at `defer_count >= 3` overrides LLM "defer" action. **NOTE 2:** defer pushes `original_due + 1h`, not `now + 1h`. **WARNING 4:** `hours_since_contact = None` renders as the literal string `"unknown"` in the triage prompt, never `999.0`. **WARNING 5:** malformed JSON `{...}` block body stripped from polished follow-up text (`_parse_followup_action`). New `FirestoreConversationStore.get_last_user_timestamp(user_id)` returns the doc-level `updated_at` only when a user-role message exists in the messages array (per-message timestamps don't exist in the schema). Test guard: 31 tests in `tests/test_autonomous.py` including explicit named regression coverage for all 5 BLOCKERs and 4 Pitfalls.
 
