@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # IMPORTANT: editing this list invalidates the cached token — delete it to re-auth.
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+# PHASE 19 — read-only nutrition access for Google Fit (Lifesum sync).
+# Adding this scope invalidates the cached token; operator MUST re-consent
+# before redeploy or Gmail+Calendar calls will start returning 401 (Pitfall 1).
+FITNESS_NUTRITION_READ_SCOPE = "https://www.googleapis.com/auth/fitness.nutrition.read"
 
 
 # ------------------------------------------------------------------ #
@@ -189,7 +193,7 @@ class GoogleAuthManager:
            no user interaction.
     """
 
-    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE]
+    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE, FITNESS_NUTRITION_READ_SCOPE]
 
     def __init__(self, credentials_path: str, token_storage: TokenStorage) -> None:
         """
