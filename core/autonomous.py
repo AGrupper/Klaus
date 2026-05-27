@@ -181,6 +181,12 @@ def _is_empty_signals(situation: dict) -> bool:
         situation.get("now_context") or {},
     ):
         return False
+    # PHASE 19 — meals_since_last_tick is a proactive trigger (NUTR-04).
+    # NOTE: training_status and acwr are CONTEXT only — not triggers.
+    # Adding them here would over-fire the autonomous tick (a single high
+    # ACWR ratio would force a speak-up on every tick of the day).
+    if situation.get("meals_since_last_tick"):
+        return False
     return True
 
 
@@ -306,6 +312,39 @@ def gather_situation(now: datetime) -> dict:
     except Exception:
         logger.warning("autonomous: outreach_log gather failed", exc_info=True)
 
+    # (i) PHASE 19 — recent meals sync from Google Fit → MealStore (NUTR-04).
+    # since_hours=1 covers one tick interval (20 min) plus slack for Lifesum
+    # → Health Connect → Google Fit sync latency.
+    try:
+        from mcp_tools.google_fit_tool import sync_recent_meals
+        from memory.firestore_db import MealStore
+        ms = MealStore(project_id=project_id, database=database)
+        gathered["meals_since_last_tick"] = sync_recent_meals(
+            since_hours=1, store=ms,
+        ) or []
+    except Exception:
+        logger.warning("autonomous: meals gather failed", exc_info=True)
+        gathered["meals_since_last_tick"] = []
+
+    # (j) PHASE 19 — Garmin training status (live).
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_training_status
+        gathered["training_status"] = fetch_garmin_training_status() or {}
+    except Exception:
+        logger.warning("autonomous: training_status gather failed", exc_info=True)
+        gathered["training_status"] = {}
+
+    # (k) PHASE 19 — ACWR computed from Postgres activities (live).
+    # compute_acwr_from_db swallows its own exceptions and returns the
+    # sentinel {"acute": 0.0, "chronic": None, "ratio": None}; the outer
+    # try/except is defense-in-depth (Pattern C symmetry).
+    try:
+        from mcp_tools.garmin_tool import compute_acwr_from_db
+        gathered["acwr"] = compute_acwr_from_db() or {"ratio": None}
+    except Exception:
+        logger.warning("autonomous: acwr gather failed", exc_info=True)
+        gathered["acwr"] = {"ratio": None}
+
     # D-11 Layer-0 gate (BLOCKER 2 — narrow calendar detection).
     gathered["empty"] = _is_empty_signals(gathered)
     if gathered["empty"]:
@@ -366,6 +405,11 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         "ticktick_overdue": situation.get("ticktick_overdue", []),
         "unread_email_count": situation.get("unread_email_count", 0),
         "due_followups": situation.get("due_followups", []),
+        # PHASE 19 — new context surfaces (must stay in sync with
+        # _compose_layer2 and tests/test_evals.py::TestFixtureSchema).
+        "meals_since_last_tick": situation.get("meals_since_last_tick", []),
+        "training_status": situation.get("training_status", {}),
+        "acwr": situation.get("acwr", {"ratio": None}),
     }
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
@@ -523,6 +567,11 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "unread_email_count": situation.get("unread_email_count", 0),
         "due_followups": situation.get("due_followups", []),
         "hours_since_contact": situation.get("hours_since_contact"),
+        # PHASE 19 — parity with _build_triage_prompt so the brain's compose
+        # layer sees the same context the tick-brain saw at triage.
+        "meals_since_last_tick": situation.get("meals_since_last_tick", []),
+        "training_status": situation.get("training_status", {}),
+        "acwr": situation.get("acwr", {"ratio": None}),
     }, indent=2, ensure_ascii=False)
 
     synthetic_content = (
