@@ -33,15 +33,15 @@
 - [x] **GARMIN-02**: `fetch_garmin_activities(days=7)` returns normalized list including `perceived_exertion` and `feel` when Garmin captured them
 - [x] **GARMIN-03**: `compute_acwr(activities_28d)` returns `{"acute": float, "chronic": float, "ratio": float | None}`; returns `None` ratio when chronic baseline is insufficient
 - [x] **GARMIN-04**: `fetch_training_status` and `fetch_recent_activities` registered as worker-delegated tools (not in `SMART_AGENT_DIRECT_TOOLS`)
-- [ ] **GARMIN-05**: `core/morning_briefing.py` `_gather_data()` writes fresh daily biometrics + activities into Postgres on each tick (best-effort; Postgres outage does not block briefing)
+- [x] **GARMIN-05**: `core/morning_briefing.py` `_gather_data()` writes fresh daily biometrics + activities into Postgres on each tick (best-effort; Postgres outage does not block briefing)
 
 ### Nutrition Tracking via Google Fit (Phase 19)
 
 - [x] **NUTR-01**: `mcp_tools/google_fit_tool.py` wraps the Google Fitness REST API (`users/me/dataSources` + `users/me/datasets/aggregate` for `com.google.nutrition` data type) using existing Google OAuth; returns normalized meal records (timestamp, calories, protein_g, carbs_g, fat_g, meal_type)
 - [x] **NUTR-02**: `MealStore` in `memory/firestore_db.py` persists meal records to `meals/{date}/{timestamp}` with fields `timestamp`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `meal_type`, `source` (`google_fit` for v0); idempotent on re-sync
 - [x] **NUTR-03**: `fetch_recent_meals(hours)` registered as worker-delegated tool; returns normalized meal list for on-demand queries from the brain
-- [ ] **NUTR-04**: `core/autonomous.py` `gather_situation()` (Layer 0) syncs new meals from Google Fit to `MealStore` on each tick and includes meals-since-last-tick in the tick-brain's triage context, so the tick-brain can decide whether to comment proactively mid-day
-- [ ] **NUTR-05**: `core/morning_briefing.py` `_gather_data()` aggregates yesterday's meals from `MealStore` (totals + per-meal breakdown + biggest gap) and exposes them to the prompt for the morning nutrition recap
+- [x] **NUTR-04**: `core/autonomous.py` `gather_situation()` (Layer 0) syncs new meals from Google Fit to `MealStore` on each tick and includes meals-since-last-tick in the tick-brain's triage context, so the tick-brain can decide whether to comment proactively mid-day
+- [x] **NUTR-05**: `core/morning_briefing.py` `_gather_data()` aggregates yesterday's meals from `MealStore` (totals + per-meal breakdown + biggest gap) and exposes them to the prompt for the morning nutrition recap
 - [ ] **NUTR-06**: `prompts/autonomous_triage.md` updated so the tick-brain treats new meals as a potential trigger to speak up (timing relative to workouts, macro imbalance vs. training context, large gap since last meal); empty `{training_profile}` means generic critique only
 - [ ] **NUTR-07**: `prompts/morning_briefing.md` updated to include yesterday's nutrition recap when `MealStore` has data; silently omitted when no meals logged
 - [ ] **NUTR-08**: `prompts/meal_audit.md` exists with non-personalized critique guidance (nutrition density, protein adequacy, carb appropriateness vs. training context); referenced by both the autonomous tick (mid-day) and morning briefing (recap)
@@ -125,12 +125,12 @@
 | GARMIN-02      | 19    | Done    |
 | GARMIN-03      | 19    | Done    |
 | GARMIN-04      | 19    | Done    |
-| GARMIN-05      | 19    | Pending |
+| GARMIN-05      | 19    | Done    |
 | NUTR-01        | 19    | Done    |
 | NUTR-02        | 19    | Done    |
 | NUTR-03        | 19    | Done    |
-| NUTR-04        | 19    | Pending |
-| NUTR-05        | 19    | Pending |
+| NUTR-04        | 19    | Done    |
+| NUTR-05        | 19    | Done    |
 | NUTR-06        | 19    | Pending |
 | NUTR-07        | 19    | Pending |
 | NUTR-08        | 19    | Pending |

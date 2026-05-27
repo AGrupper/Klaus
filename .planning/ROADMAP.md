@@ -39,7 +39,7 @@ session via `UserProfileStore` writes.
 - [x] 19-01-PLAN.md — Postgres schema migration + Garmin parser extensions + INGEST-03 backfill checkpoint (SCHEMA-01..03, INGEST-01..03) — completed 2026-05-27
 - [x] 19-02-PLAN.md — UserProfileStore fill-in + Garmin live reads + compute_acwr + 4 tool registrations (PROFILE-01..04, GARMIN-01..04) — completed 2026-05-27
 - [x] 19-03-PLAN.md — Google Fit OAuth scope + google_fit_tool + MealStore + fetch_recent_meals registration (NUTR-01..03) — completed 2026-05-27
-- [ ] 19-04-PLAN.md — Autonomous-tick gather extensions + morning-briefing nutrition recap + Postgres biometrics writeback + eval fixture schema lock (NUTR-04, NUTR-05, GARMIN-05)
+- [x] 19-04-PLAN.md — Autonomous-tick gather extensions + morning-briefing nutrition recap + Postgres biometrics writeback + eval fixture schema lock (NUTR-04, NUTR-05, GARMIN-05) — completed 2026-05-27
 - [ ] 19-05-PLAN.md — render_smart_system extension + 4 prompt updates + SELF.md regen (PROMPT-01..03, NUTR-06..08)
 **UI hint**: yes
 
