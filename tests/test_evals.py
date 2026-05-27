@@ -33,6 +33,13 @@ _REQUIRED_SNAPSHOT_KEYS = {
     "self_state",
     "today_outreach_log",
     "now_context",
+    # PHASE 19 — gather_situation now produces these 3 new keys. Eval fixtures
+    # must carry them (with empty defaults on quiet fixtures) so the eval
+    # harness's triage prompt stays byte-for-byte identical to production
+    # (Pitfall 6 protection).
+    "meals_since_last_tick",
+    "training_status",
+    "acwr",
 }
 
 
@@ -105,3 +112,28 @@ class TestFixtureSchema:
             "WARNING 8 regression: 0003-due-followup.json should_speak must be false "
             "(see evals/tick_brain/README.md 'What should_speak Means')"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — fixture schema extension (Pitfall 6: lock fixtures in step with
+# gather_situation so eval-harness prompts stay byte-for-byte identical to prod)
+# ---------------------------------------------------------------------------
+
+def test_phase19_fixture_schema_keys_extended():
+    """Pitfall 6: ensure 3 new Phase 19 keys are in _REQUIRED_SNAPSHOT_KEYS."""
+    assert "meals_since_last_tick" in _REQUIRED_SNAPSHOT_KEYS
+    assert "training_status" in _REQUIRED_SNAPSHOT_KEYS
+    assert "acwr" in _REQUIRED_SNAPSHOT_KEYS
+    assert len(_REQUIRED_SNAPSHOT_KEYS) == 12
+
+
+def test_phase19_all_fixtures_have_new_keys():
+    """All 5 seed fixtures carry the 3 new Phase 19 keys (with empty defaults)."""
+    paths = _all_fixture_paths()
+    assert len(paths) >= 5
+    for path in paths:
+        data = json.loads(open(path).read())
+        snap = data["situation_snapshot"]
+        assert "meals_since_last_tick" in snap, f"{path}: missing meals_since_last_tick"
+        assert "training_status" in snap, f"{path}: missing training_status"
+        assert "acwr" in snap, f"{path}: missing acwr"

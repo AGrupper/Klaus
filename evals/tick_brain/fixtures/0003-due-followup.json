@@ -18,7 +18,10 @@
       "tick_index": 24,
       "tick_total": 43,
       "last_tick_at": "2026-05-21T14:40:00+03:00"
-    }
+    },
+    "meals_since_last_tick": [],
+    "training_status": {},
+    "acwr": {"acute": null, "chronic": null, "ratio": null}
   },
   "trigger_type": "followup",
   "ground_truth": {
