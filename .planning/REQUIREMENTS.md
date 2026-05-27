@@ -10,15 +10,15 @@
 
 ### Postgres Schema (Phase 19)
 
-- [ ] **SCHEMA-01**: `activities` table gains `training_load REAL`, `perceived_exertion SMALLINT`, `feel SMALLINT` columns
-- [ ] **SCHEMA-02**: `daily_biometrics` table gains `vo2_max REAL`, `training_load_acute REAL`, `training_load_chronic REAL`, `acwr REAL` columns
-- [ ] **SCHEMA-03**: All new columns added via idempotent `ALTER TABLE ADD COLUMN IF NOT EXISTS` statements that can run repeatedly without error
+- [x] **SCHEMA-01**: `activities` table gains `training_load REAL`, `perceived_exertion SMALLINT`, `feel SMALLINT` columns
+- [x] **SCHEMA-02**: `daily_biometrics` table gains `vo2_max REAL`, `training_load_acute REAL`, `training_load_chronic REAL`, `acwr REAL` columns
+- [x] **SCHEMA-03**: All new columns added via idempotent `ALTER TABLE ADD COLUMN IF NOT EXISTS` statements that can run repeatedly without error
 
 ### Garmin Ingestion (Phase 19)
 
-- [ ] **INGEST-01**: `scripts/ingest_garmin_zip.py` activity parser extracts `trainingLoad`, `perceivedExertion`, `feel` from each activity summary (NULL-safe when fields are absent)
-- [ ] **INGEST-02**: UDS parser extracts `vo2MaxValue` and writes it to `daily_biometrics.vo2_max`
-- [ ] **INGEST-03**: 3-year historical Garmin export ingests successfully end-to-end into Neon Postgres, sanity-checked via `mcp_tools/database_tool.py` queries (row counts, date ranges, NULL rates documented)
+- [x] **INGEST-01**: `scripts/ingest_garmin_zip.py` activity parser extracts `trainingLoad`, `perceivedExertion`, `feel` from each activity summary (NULL-safe when fields are absent)
+- [x] **INGEST-02**: UDS parser extracts `vo2MaxValue` and writes it to `daily_biometrics.vo2_max`
+- [x] **INGEST-03**: 3-year historical Garmin export ingests successfully end-to-end into Neon Postgres, sanity-checked via `mcp_tools/database_tool.py` queries (row counts, date ranges, NULL rates documented)
 
 ### UserProfileStore (Phase 19)
 
@@ -37,9 +37,9 @@
 
 ### Nutrition Tracking via Google Fit (Phase 19)
 
-- [ ] **NUTR-01**: `mcp_tools/google_fit_tool.py` wraps the Google Fitness REST API (`users/me/dataSources` + `users/me/datasets/aggregate` for `com.google.nutrition` data type) using existing Google OAuth; returns normalized meal records (timestamp, calories, protein_g, carbs_g, fat_g, meal_type)
-- [ ] **NUTR-02**: `MealStore` in `memory/firestore_db.py` persists meal records to `meals/{date}/{timestamp}` with fields `timestamp`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `meal_type`, `source` (`google_fit` for v0); idempotent on re-sync
-- [ ] **NUTR-03**: `fetch_recent_meals(hours)` registered as worker-delegated tool; returns normalized meal list for on-demand queries from the brain
+- [x] **NUTR-01**: `mcp_tools/google_fit_tool.py` wraps the Google Fitness REST API (`users/me/dataSources` + `users/me/datasets/aggregate` for `com.google.nutrition` data type) using existing Google OAuth; returns normalized meal records (timestamp, calories, protein_g, carbs_g, fat_g, meal_type)
+- [x] **NUTR-02**: `MealStore` in `memory/firestore_db.py` persists meal records to `meals/{date}/{timestamp}` with fields `timestamp`, `calories`, `protein_g`, `carbs_g`, `fat_g`, `meal_type`, `source` (`google_fit` for v0); idempotent on re-sync
+- [x] **NUTR-03**: `fetch_recent_meals(hours)` registered as worker-delegated tool; returns normalized meal list for on-demand queries from the brain
 - [ ] **NUTR-04**: `core/autonomous.py` `gather_situation()` (Layer 0) syncs new meals from Google Fit to `MealStore` on each tick and includes meals-since-last-tick in the tick-brain's triage context, so the tick-brain can decide whether to comment proactively mid-day
 - [ ] **NUTR-05**: `core/morning_briefing.py` `_gather_data()` aggregates yesterday's meals from `MealStore` (totals + per-meal breakdown + biggest gap) and exposes them to the prompt for the morning nutrition recap
 - [ ] **NUTR-06**: `prompts/autonomous_triage.md` updated so the tick-brain treats new meals as a potential trigger to speak up (timing relative to workouts, macro imbalance vs. training context, large gap since last meal); empty `{training_profile}` means generic critique only
@@ -111,12 +111,12 @@
 
 | REQ-ID         | Phase | Status  |
 |----------------|-------|---------|
-| SCHEMA-01      | 19    | Pending |
-| SCHEMA-02      | 19    | Pending |
-| SCHEMA-03      | 19    | Pending |
-| INGEST-01      | 19    | Pending |
-| INGEST-02      | 19    | Pending |
-| INGEST-03      | 19    | Pending |
+| SCHEMA-01      | 19    | Done    |
+| SCHEMA-02      | 19    | Done    |
+| SCHEMA-03      | 19    | Done    |
+| INGEST-01      | 19    | Done    |
+| INGEST-02      | 19    | Done    |
+| INGEST-03      | 19    | Done    |
 | PROFILE-01     | 19    | Done    |
 | PROFILE-02     | 19    | Done    |
 | PROFILE-03     | 19    | Done    |
@@ -126,9 +126,9 @@
 | GARMIN-03      | 19    | Done    |
 | GARMIN-04      | 19    | Done    |
 | GARMIN-05      | 19    | Pending |
-| NUTR-01        | 19    | Pending |
-| NUTR-02        | 19    | Pending |
-| NUTR-03        | 19    | Pending |
+| NUTR-01        | 19    | Done    |
+| NUTR-02        | 19    | Done    |
+| NUTR-03        | 19    | Done    |
 | NUTR-04        | 19    | Pending |
 | NUTR-05        | 19    | Pending |
 | NUTR-06        | 19    | Pending |
