@@ -23,6 +23,15 @@ def bot():
     return b
 
 
+def test_prompt_omits_section_when_no_nutrition():
+    """NUTR-07: the prompt must instruct silent omit when nutrition key absent."""
+    content = open("prompts/morning_briefing.md").read()
+    assert "Yesterday's Nutrition" in content
+    # The omit instruction is text — case-insensitive sanity
+    lowered = content.lower()
+    assert "omit" in lowered and "nutrition" in lowered
+
+
 # --- Plain text fallback tests (no mocking complexity) ---
 
 def test_plain_text_fallback_all_sections_present():

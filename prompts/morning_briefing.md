@@ -56,6 +56,16 @@ If no tasks or data unavailable: use the staleness_warning from the data block
 
 ---
 
+🥗 Yesterday's Nutrition (only when `nutrition` key present in data)
+Totals: ~{calories} kcal / {protein_g}g P / {carbs_g}g C / {fat_g}g F
+Meals: {meal_count} ({meal-type breakdown if interesting})
+{One-line note about biggest_gap_minutes if > 6 hours}
+
+If `nutrition` key is absent from data, OMIT this entire section. Do not
+write "no nutrition data" or any placeholder text.
+
+---
+
 📚 https://readwise.io/dailyreview
 
 ---
