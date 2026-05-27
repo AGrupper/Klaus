@@ -882,3 +882,118 @@ def test_sentinel_substring_matches_main_constant():
             f"({CONNECTIVITY_ERROR_TEXT!r}) — update both sides or D-19 fallback "
             "silently breaks"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — gather extensions (meals + training_status + acwr)
+# ---------------------------------------------------------------------------
+
+class TestPhase19Gather:
+    def _patch_existing_sources(self):
+        """Helper context-manager building — patches the 8 existing gather sources
+        to no-op stubs so we can isolate Phase-19 source behavior."""
+        return [
+            patch("core.tools._get_calendar_tool"),
+            patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}),
+            patch("core.tools._get_gmail_tool"),
+            patch("memory.firestore_db.FollowupStore"),
+            patch("memory.firestore_conversation.FirestoreConversationStore"),
+            patch("memory.firestore_db.JournalStore"),
+            patch("memory.firestore_db.SelfStateStore"),
+            patch("memory.firestore_db.OutreachLogStore"),
+        ]
+
+    def test_gather_includes_phase19_keys(self, fixed_now, monkeypatch):
+        """gather_situation returns 3 new keys with mocked values."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        fake_meals = [{"source_id": "x:1", "timestamp": "2026-05-21T13:00", "calories": 500}]
+        fake_status = {"vo2_max": 51.7, "training_status": "PRODUCTIVE", "load_focus": "BALANCED"}
+        fake_acwr = {"acute": 80.0, "chronic": 75.0, "ratio": 1.07}
+
+        existing = self._patch_existing_sources()
+        for p in existing:
+            p.start()
+        try:
+            with patch("mcp_tools.google_fit_tool.sync_recent_meals", return_value=fake_meals), \
+                 patch("memory.firestore_db.MealStore"), \
+                 patch("mcp_tools.garmin_tool.fetch_garmin_training_status", return_value=fake_status), \
+                 patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value=fake_acwr):
+                result = autonomous.gather_situation(fixed_now)
+        finally:
+            for p in existing:
+                p.stop()
+
+        assert result.get("meals_since_last_tick") == fake_meals
+        assert result.get("training_status") == fake_status
+        assert result.get("acwr") == fake_acwr
+
+    def test_gather_phase19_source_failure_isolation(self, fixed_now, monkeypatch):
+        """Each new source raises independently → others still populated."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        existing = self._patch_existing_sources()
+        for p in existing:
+            p.start()
+        try:
+            with patch("mcp_tools.google_fit_tool.sync_recent_meals", side_effect=RuntimeError("fit down")), \
+                 patch("memory.firestore_db.MealStore"), \
+                 patch("mcp_tools.garmin_tool.fetch_garmin_training_status", return_value={"vo2_max": 50}), \
+                 patch("mcp_tools.garmin_tool.compute_acwr_from_db", side_effect=RuntimeError("pg down")):
+                result = autonomous.gather_situation(fixed_now)
+        finally:
+            for p in existing:
+                p.stop()
+
+        # Meals source failed → empty list sentinel
+        assert result.get("meals_since_last_tick") == []
+        # Training status succeeded → real value
+        assert result.get("training_status") == {"vo2_max": 50}
+        # ACWR failed → ratio: None sentinel
+        assert result.get("acwr") == {"ratio": None}
+
+    def test_meal_in_meals_since_last_tick_makes_signals_not_empty(self):
+        """NUTR-04: a non-empty meals list is a trigger for the autonomous tick."""
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [{"source_id": "x:1"}],
+            "training_status": {},
+            "acwr": {"ratio": None},
+            "now_context": {},
+        }
+        assert autonomous._is_empty_signals(situation) is False
+
+    def test_training_status_and_acwr_alone_keep_signals_empty(self):
+        """training_status + acwr are CONTEXT only — not triggers (NUTR-04 boundary)."""
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "training_status": {"vo2_max": 51.7, "training_status": "PRODUCTIVE"},
+            "acwr": {"ratio": 1.6},
+            "now_context": {},
+        }
+        # Even with high ACWR, signals are empty — training context never triggers
+        assert autonomous._is_empty_signals(situation) is True
+
+    def test_triage_prompt_includes_phase19_keys(self):
+        """_build_triage_prompt JSON snapshot includes the 3 new keys."""
+        situation = {
+            "calendar": [],
+            "ticktick_overdue": [],
+            "unread_email_count": 0,
+            "due_followups": [],
+            "hours_since_contact": 2.0,
+            "recent_journal_digest": "",
+            "self_state": {},
+            "today_outreach_log": [],
+            "now_context": {"label": "afternoon"},
+            "meals_since_last_tick": [{"source_id": "x:1", "calories": 500}],
+            "training_status": {"vo2_max": 51.7},
+            "acwr": {"acute": 80.0, "chronic": 75.0, "ratio": 1.07},
+        }
+        prompt = autonomous._build_triage_prompt(situation, "")
+        assert "meals_since_last_tick" in prompt
+        assert "training_status" in prompt
+        assert "acwr" in prompt
