@@ -49,6 +49,9 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "schedule_followup",
     "list_followups",
     "cancel_followup",
+    # Phase 19 Plan 02 — brain-direct training-profile tools (PROFILE-04)
+    "get_training_profile",
+    "update_training_profile",
 })
 
 # ------------------------------------------------------------------ #
@@ -743,6 +746,71 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["task"],
         },
     },
+    # ============ PHASE 19 Plan 02 — TRAINING PROFILE + GARMIN LIVE ============
+    {
+        "name": "get_training_profile",
+        "description": (
+            "Read Sir's stored training profile (athletic_goals, training_constraints, "
+            "recovery_preferences). Brain-direct — call this when you need to know "
+            "Sir's coaching context before answering or planning."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "update_training_profile",
+        "description": (
+            "Merge new fields into Sir's stored training profile. Brain-direct. "
+            "Always confirm with Sir before recording. Recognized top-level keys: "
+            "athletic_goals (list), training_constraints (list), recovery_preferences (object)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "object",
+                    "description": (
+                        "Dict of fields to merge into users/amit. Top-level keys: "
+                        "athletic_goals, training_constraints, recovery_preferences."
+                    ),
+                },
+            },
+            "required": ["patch"],
+        },
+    },
+    {
+        "name": "fetch_training_status",
+        "description": (
+            "Fetch today's Garmin training status (PRODUCTIVE / MAINTAINING / RECOVERY / "
+            "DETRAINING / OVERREACHING), VO2 max, and load focus. Worker-delegated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "fetch_recent_activities",
+        "description": (
+            "Fetch Sir's last N days of Garmin activities as a normalized list "
+            "(activity_id, date, type, duration_sec, distance_m, perceived_exertion, "
+            "feel, training_load). Default days=7. Worker-delegated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Days of history to fetch, inclusive of today. Default 7.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Schemas passed to the worker agent — excludes meta tool and memory tools
@@ -762,6 +830,9 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "schedule_followup",
         "list_followups",
         "cancel_followup",
+        # Phase 19 Plan 02 — brain-direct profile tools (fetch_* tools STAY in worker)
+        "get_training_profile",
+        "update_training_profile",
     }
 ]
 
@@ -1334,6 +1405,60 @@ def _handle_cancel_followup(id: str) -> str:
 
 
 # ------------------------------------------------------------------ #
+# Phase 19 Plan 02 — training profile + Garmin live handlers         #
+# ------------------------------------------------------------------ #
+
+def _handle_get_training_profile() -> str:
+    """PROFILE-04 brain-direct: return the user training profile dict as JSON."""
+    from memory.firestore_db import UserProfileStore
+    store = UserProfileStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    return json.dumps(store.load())
+
+
+def _handle_update_training_profile(patch: dict) -> str:
+    """PROFILE-04 brain-direct: merge a patch into users/amit profile."""
+    from memory.firestore_db import UserProfileStore
+    store = UserProfileStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    try:
+        store.update(patch)
+        return json.dumps({"ok": True})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_fetch_training_status() -> str:
+    """GARMIN-04 worker-delegated: live Garmin training status / VO2 / load focus."""
+    from mcp_tools.garmin_tool import (
+        fetch_garmin_training_status,
+        GarminUnavailableError,
+        GarminAuthError,
+    )
+    try:
+        return json.dumps(fetch_garmin_training_status())
+    except (GarminUnavailableError, GarminAuthError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_fetch_recent_activities(days: int = 7) -> str:
+    """GARMIN-04 worker-delegated: live Garmin activities for the last N days."""
+    from mcp_tools.garmin_tool import (
+        fetch_garmin_activities,
+        GarminUnavailableError,
+        GarminAuthError,
+    )
+    try:
+        return json.dumps(fetch_garmin_activities(days=days))
+    except (GarminUnavailableError, GarminAuthError) as exc:
+        return json.dumps({"error": str(exc)})
+
+
+# ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
 
@@ -1358,6 +1483,11 @@ _HANDLERS: dict[str, object] = {
     "schedule_followup":       lambda args: _handle_schedule_followup(**args),
     "list_followups":          lambda args: _handle_list_followups(),
     "cancel_followup":         lambda args: _handle_cancel_followup(**args),
+    # Phase 19 Plan 02 — training profile + Garmin live
+    "get_training_profile":    lambda args: _handle_get_training_profile(),
+    "update_training_profile": lambda args: _handle_update_training_profile(**args),
+    "fetch_training_status":   lambda args: _handle_fetch_training_status(),
+    "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
     "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
     "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
