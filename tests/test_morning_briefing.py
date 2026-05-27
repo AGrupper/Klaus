@@ -278,3 +278,137 @@ def test_dedup_skips_when_already_sent(bot):
         asyncio.run(run_morning_briefing(bot, "2026-05-12", dedup=True))
     mock_gather.assert_not_called()
     mock_set.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 19 — nutrition recap + Postgres biometrics writeback
+# (NUTR-05 + GARMIN-05; Pitfall 4 silent-omit; best-effort writeback)
+# ---------------------------------------------------------------------------
+
+class TestPhase19MorningBriefing:
+    """_gather_data extensions: yesterday's meals + biometrics writeback."""
+
+    def _stub_other_sources(self):
+        """Patch context for the non-Phase-19 sources so a single test can focus
+        on either the nutrition aggregation OR the Postgres writeback."""
+        return [
+            patch("mcp_tools.weather_tool.fetch_weather", return_value=None),
+            patch("core.tools._get_calendar_tool"),
+            patch("core.tools._get_gmail_tool"),
+            patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": [], "today": []}),
+        ]
+
+    def test_aggregates_yesterday_meals(self, monkeypatch):
+        """Non-empty MealStore.get_day_aggregate → data['nutrition'] set."""
+        import core.morning_briefing as mb
+        fake_agg = {
+            "meal_count": 3,
+            "totals": {"calories": 2000, "protein_g": 120, "carbs_g": 200, "fat_g": 70},
+            "by_type": {1: 1, 2: 1, 3: 1},
+            "biggest_gap_minutes": 240.0,
+            "meals": [],
+        }
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("memory.firestore_db.MealStore") as MS, \
+                 patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None):
+                MS.return_value.get_day_aggregate.return_value = fake_agg
+                data = mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        assert data.get("nutrition") == fake_agg
+
+    def test_no_nutrition_key_when_empty(self, monkeypatch):
+        """Empty aggregate ({}) → 'nutrition' key NOT in data (silent omit / Pitfall 4)."""
+        import core.morning_briefing as mb
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("memory.firestore_db.MealStore") as MS, \
+                 patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None):
+                MS.return_value.get_day_aggregate.return_value = {}  # empty
+                data = mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        assert "nutrition" not in data  # NUTR-07: silent omit precondition
+
+    def test_meal_aggregate_failure_does_not_block_briefing(self, monkeypatch):
+        """MealStore raises → briefing still completes, nutrition key absent."""
+        import core.morning_briefing as mb
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("memory.firestore_db.MealStore", side_effect=RuntimeError("firestore down")), \
+                 patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None):
+                # MUST NOT RAISE
+                data = mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        assert "nutrition" not in data
+        assert isinstance(data, dict)
+
+    def test_writes_biometrics_to_postgres(self, monkeypatch):
+        """Garmin fetch returns today's data → write_today_biometrics called once."""
+        import core.morning_briefing as mb
+        fake_garmin = {"date": "2026-05-26", "resting_hr": 50, "hrv_overnight": 60, "sleep_score": 80}
+        write_mock = MagicMock()
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=fake_garmin), \
+                 patch("mcp_tools.garmin_tool.write_today_biometrics_to_postgres", write_mock), \
+                 patch("memory.firestore_db.MealStore") as MS:
+                MS.return_value.get_day_aggregate.return_value = {}
+                mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        # garmin.state == 1 (date matches) → writeback fires
+        assert write_mock.called
+
+    def test_postgres_outage_does_not_block_briefing(self, monkeypatch):
+        """write_today_biometrics raises → briefing data still complete."""
+        import core.morning_briefing as mb
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("mcp_tools.garmin_tool.fetch_garmin_today",
+                       return_value={"date": "2026-05-26", "resting_hr": 50}), \
+                 patch("mcp_tools.garmin_tool.write_today_biometrics_to_postgres",
+                       side_effect=RuntimeError("DB down")), \
+                 patch("memory.firestore_db.MealStore") as MS:
+                MS.return_value.get_day_aggregate.return_value = {}
+                # MUST NOT RAISE
+                data = mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        assert isinstance(data, dict)
+
+    def test_writeback_skipped_when_garmin_state_2(self, monkeypatch):
+        """Garmin returns None (no data → state=2) → writeback NOT called."""
+        import core.morning_briefing as mb
+        write_mock = MagicMock()
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
+                 patch("mcp_tools.garmin_tool.write_today_biometrics_to_postgres", write_mock), \
+                 patch("memory.firestore_db.MealStore") as MS:
+                MS.return_value.get_day_aggregate.return_value = {}
+                mb._gather_data("2026-05-26")
+        finally:
+            for s in stubs:
+                s.stop()
+        # state=2 (no data) → writeback should be skipped
+        assert not write_mock.called
