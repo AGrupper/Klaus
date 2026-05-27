@@ -229,6 +229,70 @@ def test_render_journal_digest_populated_block():
     assert "2026-05-20" in out
 
 
+class TestPhase19TrainingProfile:
+    """PROMPT-01 — render_smart_system substitutes {training_profile}."""
+
+    def test_training_profile_substituted(self):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = MagicMock()
+        orch._user_profile_store.load.return_value = {
+            "athletic_goals": ["5k under 20:00"],
+            "schema_version": 1,
+        }
+        result = orch.render_smart_system("PRE {training_profile} POST")
+        assert "PRE" in result and "POST" in result
+        assert "**Training profile:**" in result
+        assert "athletic_goals" in result
+        assert "5k under 20:00" in result
+
+    def test_training_profile_empty_renders_empty(self):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = MagicMock()
+        orch._user_profile_store.load.return_value = {}
+        result = orch.render_smart_system("X{training_profile}Y")
+        assert result.startswith("X") and result.endswith("Y")
+        assert "{training_profile}" not in result  # literal placeholder GONE
+        assert "Training profile" not in result
+
+    def test_training_profile_omits_meta_keys(self):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = MagicMock()
+        orch._user_profile_store.load.return_value = {
+            "athletic_goals": [],  # empty list → omitted
+            "schema_version": 1,    # meta → filtered
+            "bootstrapped_at": "ts",
+            "updated_at": "ts",
+        }
+        result = orch.render_smart_system("X{training_profile}Y")
+        assert "schema_version" not in result
+        assert "bootstrapped_at" not in result
+        assert "updated_at" not in result
+        # athletic_goals=[] is empty → filtered too
+        assert "Training profile" not in result
+
+    def test_user_profile_store_none_renders_empty(self):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = None
+        result = orch.render_smart_system("X{training_profile}Y")
+        assert result == "XY"
+
+
 def test_handle_message_uses_render_smart_system():
     """Regression: handle_message calls render_smart_system (not the inline render)."""
     import inspect
