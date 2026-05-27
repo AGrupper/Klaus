@@ -305,9 +305,9 @@ async def cron_five_fingers_morning(request: Request) -> JSONResponse:
     try:
         today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
         await _five_fingers.run_morning_endpoint(_application.bot, today)
-        _log_cron_run("five-fingers", ok=True)
+        _log_cron_run("five-fingers-morning", ok=True)
     except Exception:
-        _log_cron_run("five-fingers", ok=False)
+        _log_cron_run("five-fingers-morning", ok=False)
         raise
     return JSONResponse(content={"ok": True})
 
@@ -417,9 +417,9 @@ async def cron_five_fingers_evening(request: Request) -> JSONResponse:
     try:
         today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
         await _five_fingers.run_evening_endpoint(_application.bot, today)
-        _log_cron_run("five-fingers", ok=True)
+        _log_cron_run("five-fingers-evening", ok=True)
     except Exception:
-        _log_cron_run("five-fingers", ok=False)
+        _log_cron_run("five-fingers-evening", ok=False)
         raise
     return JSONResponse(content={"ok": True})
 

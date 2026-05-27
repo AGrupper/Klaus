@@ -63,8 +63,8 @@ def _has_practice_today(today: str) -> bool:
 
     try:
         events = _get_calendar_tool().list_events(
-            f"{today}T09:00:00",
-            f"{today}T22:00:00",
+            f"{today}T09:00:00+03:00",
+            f"{today}T22:00:00+03:00",
         )
     except Exception:
         logger.warning("Five Fingers: calendar fetch failed", exc_info=True)

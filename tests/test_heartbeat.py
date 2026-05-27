@@ -213,10 +213,10 @@ def test_all_cron_jobs_have_staleness_entry():
     }
     missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not missing, f"Missing staleness entries: {missing}"
-    # All thresholds should be reasonable (< 48h is plenty of head-room for any cron).
+    # All thresholds should be reasonable (< 120h is plenty of head-room for any cron).
     for job_id, hours in _CRON_MAX_STALENESS_HOURS.items():
-        assert 0 < hours < 48, (
-            f"{job_id} threshold {hours} is implausible (must be 0 < h < 48)"
+        assert 0 < hours <= 100, (
+            f"{job_id} threshold {hours} is implausible (must be 0 < h <= 100)"
         )
 
 

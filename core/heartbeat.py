@@ -112,6 +112,8 @@ _CRON_MAX_STALENESS_HOURS = {
     "ingest-chat-exports": 26,
     "reflect": 26,                # Phase 17 — daily reflect cron, 26h tolerance
     "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
+    "five-fingers-morning": 50,   # Runs Sun/Mon/Wed/Thu; longest gap Thu→Sun = ~62h, 50h catches missed single runs
+    "five-fingers-evening": 100,  # Runs Sun/Wed only; longest gap Wed→Sun = ~4 days, 100h is safe
 }
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 
