@@ -19,7 +19,7 @@ session via `UserProfileStore` writes.
 
 ### Phases
 
-- [ ] **Phase 19: Training Awareness & Nutrition Coaching** — Schema migration, 3-year Garmin backfill, `UserProfileStore`, extended Garmin reads (training status, recent activities, ACWR), Google Fit nutrition fetch + `MealStore`, autonomous-tick mid-day coaching extension, morning nutrition recap, smart-agent prompt extension.
+- [x] **Phase 19: Training Awareness & Nutrition Coaching** — Schema migration, 3-year Garmin backfill, `UserProfileStore`, extended Garmin reads (training status, recent activities, ACWR), Google Fit nutrition fetch + `MealStore`, autonomous-tick mid-day coaching extension, morning nutrition recap, smart-agent prompt extension.
 - [ ] **Phase 20: Accountability Crons & Recovery Briefing** — `TrainingLogStore`, evidence-first training check-in cron (Garmin-RPE-aware), weekly training review cron, `recovery_concern` flag in morning briefing, Cloud Scheduler bootstrap.
 
 ### Phase Details
@@ -40,7 +40,7 @@ session via `UserProfileStore` writes.
 - [x] 19-02-PLAN.md — UserProfileStore fill-in + Garmin live reads + compute_acwr + 4 tool registrations (PROFILE-01..04, GARMIN-01..04) — completed 2026-05-27
 - [x] 19-03-PLAN.md — Google Fit OAuth scope + google_fit_tool + MealStore + fetch_recent_meals registration (NUTR-01..03) — completed 2026-05-27
 - [x] 19-04-PLAN.md — Autonomous-tick gather extensions + morning-briefing nutrition recap + Postgres biometrics writeback + eval fixture schema lock (NUTR-04, NUTR-05, GARMIN-05) — completed 2026-05-27
-- [ ] 19-05-PLAN.md — render_smart_system extension + 4 prompt updates + SELF.md regen (PROMPT-01..03, NUTR-06..08)
+- [x] 19-05-PLAN.md — render_smart_system extension + 4 prompt updates + SELF.md regen (PROMPT-01..03, NUTR-06..08) — completed 2026-05-28
 **UI hint**: yes
 
 ### Phase 20: Accountability Crons & Recovery Briefing
@@ -60,7 +60,7 @@ session via `UserProfileStore` writes.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 19. Training Awareness & Nutrition Coaching | 4/5 | In Progress | — |
+| 19. Training Awareness & Nutrition Coaching | 5/5 | Complete (ready for verification) | 2026-05-28 |
 | 20. Accountability Crons & Recovery Briefing | 0/TBD | Not started | — |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
-status: executing
-last_updated: "2026-05-27T18:30:00.000Z"
-last_activity: 2026-05-27 -- Phase 19 Plan 04 complete (autonomous gather extensions + morning briefing nutrition recap + Postgres biometrics writeback + eval fixture schema lock)
+status: phase 19 complete (ready for verification)
+last_updated: "2026-05-28T00:00:00.000Z"
+last_activity: 2026-05-28 -- Phase 19 Plan 05 complete (prompt + identity layer: {training_profile} placeholder, smart_agent TRAINING section, autonomous_triage meal triggers, morning_briefing silent-omit nutrition recap, meal_audit.md NEW + runtime wiring, docs/SELF.md regenerated)
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 5
-  completed_plans: 4
-  percent: 80
+  completed_plans: 5
+  percent: 100
 ---
 
 # State — Klaus
@@ -19,11 +19,11 @@ progress:
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
 Phases planned: 2 (Phase 19 + Phase 20)
-Phase: 19 — in progress (4/5 plans complete)
-Plan: 19-05 — Prompt extensions (smart_agent.md TRAINING & ATHLETIC COACHING + autonomous_triage.md meal triggers + morning_briefing.md nutrition recap + meal_audit.md NEW) + SELF.md regen (next)
-Status: Wave 3 complete; ready for Wave 4
-Resume file: .planning/phases/19-training-awareness-nutrition-coaching/19-05-PLAN.md
-Last activity: 2026-05-27 -- Plan 19-03 shipped: FITNESS_NUTRITION_READ_SCOPE added to GoogleAuthManager.SCOPES; mcp_tools/google_fit_tool.py (fetch_recent_meals + _normalize_point + sync_recent_meals + GoogleFitUnavailableError) created; memory/firestore_db.py MealStore class with idempotent meals/{date}/timestamps/{source_id} persistence and Pitfall-4 empty-{} aggregate; fetch_recent_meals worker-delegated tool registered at 4 sites in core/tools.py. Operator re-consented (`config/token.json` rotated; pre-rotation backup at `config/token.json.pre-shifu-bak`), enabled `fitness.googleapis.com` on klaus-agent project, and the end-to-end probe returns clean (0 meals; no scope/403/GoogleFitUnavailableError). 540 passed (+18 net), 0 regressions
+Phase: 19 — COMPLETE (5/5 plans, ready for verification)
+Plan: next is Phase 20 planning (`/gsd-plan-phase 20`)
+Status: Phase 19 complete; awaiting verifier
+Resume file: .planning/phases/19-training-awareness-nutrition-coaching/19-05-SUMMARY.md
+Last activity: 2026-05-28 -- Plan 19-05 shipped: render_smart_system extended with {training_profile} placeholder (5th .replace; mirrors self_state omit-empty discipline); smart_agent.md TRAINING & ATHLETIC COACHING section with all 5 Phase 19 tool names; autonomous_triage.md `## Meals as triggers (Phase 19)` section + meal_audit.md cross-link; morning_briefing.md `🥗 Yesterday's Nutrition` section with conditional-render instruction (defense-in-depth for the NUTR-07 silent-omit data-layer contract from Plan 19-04); prompts/meal_audit.md NEW (31 lines — nutrition density / protein adequacy / carb-vs-training-context heuristics, JARVIS voice, no personalized thresholds); meal_audit.md runtime-wired into both brain compose sites in core/autonomous.py (_compose_layer2 + _compose_followup_layer2) AND into _compose_briefing in core/morning_briefing.py via `_load_prompt`/Path-read + guarded string-append; docs/SELF.md regenerated — all 5 Phase 19 tools (`get_training_profile`, `update_training_profile`, `fetch_training_status`, `fetch_recent_activities`, `fetch_recent_meals`) now surfaced (was 0/5 pre-regen). Auto-fixed Rule-3 blocker: `core/self_manifest.py` dynamic-import path was silently falling back to the Phase 15 hardcoded tool list (missing 8 tools); added 6 stub attribute sets (`GoogleAuthError`, `Request`, `InstalledAppFlow`, `Credentials`, `build`, `load_dotenv`, full api_core.exceptions set) so the live tools.py is now the source of truth for SELF.md regeneration. Tool count in SELF.md: 30 → 38 (+8 = Phase 18 follow-up trio + Phase 19 quintet). 572 passed, 3 skipped (+15 net, 0 regressions). TDD: 2 RED commits (`ebda0bf`, `35e9d4d`) → 6 GREEN/feat/docs commits (`c0008b2`, `f32469b`, `cb03282`, `907faf8`, `6259292`, `67a845c`). Satisfies PROMPT-01, PROMPT-02, PROMPT-03, NUTR-06, NUTR-07, NUTR-08 — Phase 19 closes at 26/26 requirements.
 
 ## Project Reference
 
