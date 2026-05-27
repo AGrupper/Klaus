@@ -389,19 +389,81 @@ class AttendanceStore:
 
 
 class UserProfileStore:
-    """Read/write the user's static profile + scheduling rules in Firestore."""
+    """Read/write the user's static profile + scheduling rules in Firestore.
 
-    def __init__(self, project_id: str, document_path: str = "users/amit") -> None:
-        self.project_id = project_id
-        self.document_path = document_path
+    PHASE 19 (Plan 02): filled in (was a Phase-5 stub raising NotImplementedError).
+    Mirrors SelfStateStore discipline (this module's `class SelfStateStore` below):
+      - Reads NEVER raise — return {} on any error.
+      - Writes (update) re-raise after logger.error, caller decides.
+      - bootstrap_if_empty is a startup safety call — NEVER raises (Pitfall 7).
+      - Every merge write stamps `updated_at: firestore.SERVER_TIMESTAMP`.
+
+    Singleton document at collection='users', document='amit'.
+    Scaffold fields seeded on first run:
+        athletic_goals: []
+        training_constraints: []
+        recovery_preferences: {}
+        schema_version: 1
+    """
+
+    _COLLECTION = "users"
+    _DOCUMENT_ID = "amit"
+    _SCAFFOLD = {
+        "athletic_goals": [],
+        "training_constraints": [],
+        "recovery_preferences": {},
+        "schema_version": 1,
+    }
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = (
+            self._client.collection(self._COLLECTION).document(self._DOCUMENT_ID)
+        )
 
     def load(self) -> dict:
-        """Return the full user profile as a plain dict."""
-        raise NotImplementedError("stub — Phase 5")
+        """PROFILE-01: return the user profile dict. Returns {} on any error — never raises."""
+        try:
+            snap = self._doc_ref.get()
+            if snap.exists:
+                return snap.to_dict() or {}
+            return {}
+        except Exception:
+            logger.warning("UserProfileStore.load() failed — returning empty", exc_info=True)
+            return {}
 
     def update(self, patch: dict) -> None:
-        """Merge `patch` into the stored profile document."""
-        raise NotImplementedError("stub — Phase 5")
+        """PROFILE-02: merge patch and stamp updated_at SERVER_TIMESTAMP. Re-raises on failure."""
+        try:
+            self._doc_ref.set(
+                {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("UserProfileStore.update() failed", exc_info=True)
+            raise
+
+    def bootstrap_if_empty(self) -> None:
+        """PROFILE-03: seed users/amit with empty scaffold if absent.
+
+        Safe to call on every startup — only writes when the document is absent.
+        Never raises (Pitfall 7: startup must not fail due to Firestore unavailability).
+        """
+        try:
+            snap = self._doc_ref.get()
+            if snap.exists:
+                return
+            self._doc_ref.set({
+                **self._SCAFFOLD,
+                "bootstrapped_at": firestore.SERVER_TIMESTAMP,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+            logger.info("UserProfileStore: bootstrapped users/amit")
+        except Exception:
+            logger.warning(
+                "UserProfileStore.bootstrap_if_empty() failed — skipping",
+                exc_info=True,
+            )
 
 
 _HEARTBEAT_CONFIG_DEFAULTS: dict = {

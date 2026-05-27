@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 
 from core.llm_client import LLMClient, LLMError
 from core import tools as tool_registry
-from memory.firestore_db import SelfStateStore, JournalStore
+from memory.firestore_db import SelfStateStore, JournalStore, UserProfileStore
 
 load_dotenv(override=True)
 
@@ -226,6 +226,13 @@ class AgentOrchestrator:
             self._self_state_store.bootstrap_if_empty(
                 identity_summary=_extract_intro_paragraph(self._self_md_content)
             )
+
+        # PHASE 19 (Plan 02) — bootstrap users/amit with empty scaffold on first
+        # startup. Pitfall 7: bootstrap_if_empty MUST never raise — handled
+        # internally by the store. Sibling of SelfStateStore bootstrap above.
+        self._user_profile_store = _build_user_profile_store()
+        if self._user_profile_store is not None:
+            self._user_profile_store.bootstrap_if_empty()
 
         self._journal_store = _build_journal_store()
 
@@ -691,6 +698,25 @@ def _build_journal_store() -> JournalStore | None:
         return None
     database = os.environ.get("FIRESTORE_DATABASE", "(default)")
     return JournalStore(project_id=project_id, database=database)
+
+
+def _build_user_profile_store() -> UserProfileStore | None:
+    """Build a UserProfileStore from environment variables (Phase 19 Plan 02).
+
+    Returns None if GCP_PROJECT_ID is not set (e.g. local dev without env)
+    or if construction fails for any reason — bootstrap is best-effort and
+    must never block AgentOrchestrator startup (Pitfall 7).
+    """
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if not project_id:
+        logger.warning("GCP_PROJECT_ID not set — UserProfileStore disabled")
+        return None
+    try:
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        return UserProfileStore(project_id=project_id, database=database)
+    except Exception:
+        logger.warning("Failed to build UserProfileStore", exc_info=True)
+        return None
 
 
 def _today_israel() -> str:
