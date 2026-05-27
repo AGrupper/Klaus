@@ -87,3 +87,28 @@ class TestDeploymentCompleteness:
         assert "followups" in content
         assert "status" in content
         assert "due_at" in content
+
+
+# ---------------------------------------------------------------------------
+# PROMPT-03 — docs/SELF.md lists all 5 new Phase 19 tools
+# ---------------------------------------------------------------------------
+
+SELF_MD_PATH = os.path.join(
+    os.path.dirname(__file__), os.pardir, "docs", "SELF.md"
+)
+
+
+class TestPhase19SelfManifest:
+    """PROMPT-03 — docs/SELF.md regenerated lists all 5 new Phase 19 tools."""
+
+    def test_self_md_lists_phase19_tools(self):
+        with open(SELF_MD_PATH, encoding="utf-8") as f:
+            content = f.read()
+        for tool in (
+            "get_training_profile",
+            "update_training_profile",
+            "fetch_training_status",
+            "fetch_recent_activities",
+            "fetch_recent_meals",
+        ):
+            assert tool in content, f"docs/SELF.md missing tool: {tool}"

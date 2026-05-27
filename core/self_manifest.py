@@ -146,19 +146,58 @@ def _load_tool_data(root: Path) -> list[dict]:
         errors_stub = _ensure_stub("googleapiclient.errors")
         errors_stub.HttpError = Exception  # type: ignore[attr-defined]
         gclient_stub.errors = errors_stub  # type: ignore[attr-defined]
-        _ensure_stub("googleapiclient.discovery")
+        discovery_stub = _ensure_stub("googleapiclient.discovery")
+        if not hasattr(discovery_stub, "build"):
+            discovery_stub.build = lambda *a, **k: None  # type: ignore[attr-defined]
 
         # google-cloud-firestore stubs
         _ensure_stub("google")
         _ensure_stub("google.cloud")
         _ensure_stub("google.cloud.firestore")
         _ensure_stub("google.api_core")
-        _ensure_stub("google.api_core.exceptions")
+        api_core_exc_stub = _ensure_stub("google.api_core.exceptions")
+        for _name in (
+            "GoogleAPICallError", "NotFound", "AlreadyExists", "PermissionDenied",
+            "InvalidArgument", "FailedPrecondition", "DeadlineExceeded",
+            "ResourceExhausted", "Aborted", "Unknown", "Cancelled",
+        ):
+            if not hasattr(api_core_exc_stub, _name):
+                setattr(api_core_exc_stub, _name, Exception)
         _ensure_stub("google.oauth2")
         _ensure_stub("google.oauth2.service_account")
+        _ensure_stub("google.oauth2.credentials")
+        # google-auth + oauthlib stubs (transitively imported by core.auth_google
+        # via core.tools — needed so the manifest generator's live import path
+        # works in local dev where google-auth isn't installed).
+        _ensure_stub("google.auth")
+        auth_exc_stub = _ensure_stub("google.auth.exceptions")
+        # core.auth_google does `from google.auth.exceptions import GoogleAuthError`
+        # — attach the symbol to the stub so the live-import path succeeds in
+        # environments without the real google-auth library installed.
+        if not hasattr(auth_exc_stub, "GoogleAuthError"):
+            auth_exc_stub.GoogleAuthError = Exception  # type: ignore[attr-defined]
+        if not hasattr(auth_exc_stub, "RefreshError"):
+            auth_exc_stub.RefreshError = Exception  # type: ignore[attr-defined]
+        _ensure_stub("google.auth.transport")
+        auth_req_stub = _ensure_stub("google.auth.transport.requests")
+        if not hasattr(auth_req_stub, "Request"):
+            auth_req_stub.Request = type("Request", (), {})  # type: ignore[attr-defined]
+        _ensure_stub("google_auth_oauthlib")
+        oauthlib_flow_stub = _ensure_stub("google_auth_oauthlib.flow")
+        if not hasattr(oauthlib_flow_stub, "InstalledAppFlow"):
+            oauthlib_flow_stub.InstalledAppFlow = type(  # type: ignore[attr-defined]
+                "InstalledAppFlow", (), {}
+            )
+        oauth2_creds_stub = sys.modules.get("google.oauth2.credentials")
+        if oauth2_creds_stub is not None and not hasattr(oauth2_creds_stub, "Credentials"):
+            oauth2_creds_stub.Credentials = type(  # type: ignore[attr-defined]
+                "Credentials", (), {}
+            )
 
-        # dotenv stub
-        _ensure_stub("dotenv")
+        # dotenv stub — provide load_dotenv shim so core.* imports work.
+        dotenv_stub = _ensure_stub("dotenv")
+        if not hasattr(dotenv_stub, "load_dotenv"):
+            dotenv_stub.load_dotenv = lambda *a, **k: None  # type: ignore[attr-defined]
 
         module = importlib.util.module_from_spec(spec)
         try:
