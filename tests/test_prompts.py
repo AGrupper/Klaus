@@ -23,6 +23,8 @@ import pytest
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRIAGE_PATH = os.path.join(REPO_ROOT, "prompts", "autonomous_triage.md")
 AUTONOMOUS_PATH = os.path.join(REPO_ROOT, "prompts", "autonomous.md")
+SMART_AGENT_PATH = os.path.join(REPO_ROOT, "prompts", "smart_agent.md")
+MEAL_AUDIT_PATH = os.path.join(REPO_ROOT, "prompts", "meal_audit.md")
 
 
 def _read(path: str) -> str:
@@ -170,3 +172,46 @@ class TestAutonomousPrompts:
             "autonomous.md must not inline smart_agent.md's identity block — "
             "rely on {self_md} injection instead (Phase 18 D-16 / WARNING 6)"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestPhase19Prompts — PROMPT-02 + NUTR-06 + NUTR-08
+# ---------------------------------------------------------------------------
+
+
+def test_smart_agent_has_training_section():
+    """PROMPT-02 — smart_agent.md contains the new section + 5 tool names."""
+    content = _read(SMART_AGENT_PATH)
+    assert "{training_profile}" in content
+    assert "TRAINING & ATHLETIC COACHING" in content
+    # The 5 new tools must be mentioned by name
+    for tool in (
+        "fetch_training_status",
+        "fetch_recent_activities",
+        "fetch_recent_meals",
+        "get_training_profile",
+        "update_training_profile",
+    ):
+        assert tool in content, f"tool name missing from smart_agent.md: {tool}"
+
+
+def test_triage_mentions_meal_triggers():
+    """NUTR-06 — autonomous_triage.md has Meals as triggers section + meal_audit cross-link."""
+    content = _read(TRIAGE_PATH)
+    assert "Meals as triggers" in content
+    assert "meals_since_last_tick" in content
+    # Cross-reference to meal_audit.md per NUTR-08
+    assert "meal_audit" in content
+
+
+def test_meal_audit_exists():
+    """NUTR-08 — prompts/meal_audit.md exists."""
+    assert os.path.isfile(MEAL_AUDIT_PATH), (
+        f"Expected prompts/meal_audit.md at {MEAL_AUDIT_PATH}"
+    )
+
+
+def test_meal_audit_referenced():
+    """NUTR-08 wiring — meal_audit.md is mentioned by autonomous_triage.md."""
+    triage = _read(TRIAGE_PATH)
+    assert "meal_audit" in triage

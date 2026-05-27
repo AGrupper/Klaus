@@ -82,6 +82,32 @@ optional colon-separated qualifier: `^[a-z]+(:[a-z0-9-]+)?$`.
 If none of these fit, invent a slug in the same shape. Keep the prefix
 generic (the category) and the qualifier specific (the instance).
 
+## Meals as triggers (Phase 19)
+
+A new meal in `meals_since_last_tick` is a candidate trigger to speak up.
+Speak when one of:
+- A large macro imbalance vs. the time of day (e.g., 800 kcal of carbs with
+  no protein logged before a workout block in the next 2h).
+- A long gap since the last meal (e.g., 6+ hours, no breakfast logged by
+  noon).
+- A meal type out of pattern given the calendar (e.g., a heavy "Dinner"
+  entry at 14:00 while the schedule shows an evening workout — the food
+  may not be timed well for the session).
+
+When `training_profile` is empty (most of v3.0), do NOT cite specific
+numeric thresholds. Use general nutritional reasoning ("low protein before
+a heavy lift", "long gap may affect afternoon energy"). When the profile
+becomes populated in a later session, the same triggers will read it.
+
+If `meals_since_last_tick` is empty AND no other signal is active, prefer
+silence. Meals alone are not a quota — only judge-out when the signal is
+genuine.
+
+See also: `prompts/meal_audit.md` for the non-personalized critique heuristics
+(nutrition density, protein adequacy, carb-vs-training-context). The runtime
+load of `meal_audit.md` happens in `core/autonomous.py` (brain compose layer)
+— see Task 6 of Plan 19-05.
+
 ## Rules
 
 - Prefer silence on doubt. The headline philosophy is judgment, not coverage.
