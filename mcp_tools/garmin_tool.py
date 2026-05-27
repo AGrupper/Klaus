@@ -419,3 +419,71 @@ def compute_acwr_from_db() -> dict:
     except Exception:
         logger.warning("compute_acwr_from_db failed", exc_info=True)
         return {"acute": 0.0, "chronic": None, "ratio": None}
+
+
+def write_today_biometrics_to_postgres(garmin: dict) -> None:
+    """Best-effort UPSERT of today's biometrics into Postgres (GARMIN-05).
+
+    Called from core/morning_briefing.py _gather_data after fetch_garmin_today
+    succeeds. Postgres outage MUST NOT block the briefing — all exceptions
+    logged + swallowed.
+
+    Maps fetch_garmin_today's snake_case dict to daily_biometrics columns:
+      date, resting_hr, hrv_baseline, hrv_overnight, sleep_score,
+      sleep_duration, body_battery_max, training_readiness, vo2_max
+
+    Args:
+        garmin: dict from fetch_garmin_today (must include 'date').
+
+    Returns:
+        None always — best-effort write, never raises.
+    """
+    dsn = os.environ.get("DATABASE_URL") or os.environ.get("PG_CONNECTION_STRING")
+    if not dsn:
+        logger.info("write_today_biometrics: DATABASE_URL unset — skipping")
+        return None
+    try:
+        import psycopg2  # lazy import — keeps cold-start cheap when unused
+    except ImportError:
+        logger.warning("write_today_biometrics: psycopg2 not installed")
+        return None
+    try:
+        date_str = garmin.get("date")
+        if not date_str:
+            logger.warning("write_today_biometrics: garmin dict missing 'date' key")
+            return None
+        params = (
+            date_str,
+            garmin.get("resting_hr"),
+            garmin.get("hrv_baseline"),
+            garmin.get("hrv_overnight"),
+            garmin.get("sleep_score"),
+            garmin.get("sleep_duration"),
+            garmin.get("body_battery_max"),
+            garmin.get("training_readiness"),
+            garmin.get("vo2_max"),
+        )
+        sql = """
+            INSERT INTO daily_biometrics (
+                date, resting_hr, hrv_baseline, hrv_overnight, sleep_score,
+                sleep_duration, body_battery_max, training_readiness, vo2_max
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (date) DO UPDATE SET
+                resting_hr = EXCLUDED.resting_hr,
+                hrv_baseline = EXCLUDED.hrv_baseline,
+                hrv_overnight = EXCLUDED.hrv_overnight,
+                sleep_score = EXCLUDED.sleep_score,
+                sleep_duration = EXCLUDED.sleep_duration,
+                body_battery_max = EXCLUDED.body_battery_max,
+                training_readiness = EXCLUDED.training_readiness,
+                vo2_max = EXCLUDED.vo2_max
+        """
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+    except Exception:
+        logger.warning(
+            "write_today_biometrics: best-effort write failed", exc_info=True,
+        )
+        return None
+    return None
