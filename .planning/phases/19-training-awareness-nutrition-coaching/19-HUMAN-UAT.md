@@ -15,11 +15,13 @@ updated: 2026-05-28
 
 ### 1. SC #1 — ACWR Telegram query end-to-end
 expected: Asking Klaus "what was my ACWR this week?" in Telegram returns a real number computed from Postgres (or an honest "chronic baseline insufficient" answer when too little history).
-result: **first attempt failed → root cause found → fix shipped locally → awaiting deploy + retest**
-- 2026-05-28 09:46 — user asked in Telegram, Klaus returned "Apologies, Sir. This request required more processing steps than expected. Please rephrase or break it into smaller parts." (MAX_TOOL_ITERATIONS=8 exceeded).
-- Root cause: `compute_acwr_from_db` existed in `mcp_tools/garmin_tool.py` (Plan 19-02) but was never registered as a callable tool. The brain's only path was `delegate_to_worker → fetch_recent_activities → manual arithmetic across iterations`, blowing the iteration cap.
-- Fix: commit `36b3afd` registers `get_acwr` as a worker-delegated single-call tool. Schema description explicitly nudges the brain away from the raw-fetch path. Tests + SELF.md regen included. Local suite: 527 passed, 3 skipped, 0 failures.
-- Awaited: deploy `36b3afd` to Cloud Run, re-ask in Telegram, confirm a numeric ratio (or "chronic baseline insufficient") response.
+result: **PASSED**
+- 2026-05-28 09:46 — first attempt failed with "more processing steps than expected" (MAX_TOOL_ITERATIONS=8 exceeded).
+- Root cause: `compute_acwr_from_db` existed in `mcp_tools/garmin_tool.py` (Plan 19-02) but was never registered as a callable tool. Brain had to delegate → fetch_recent_activities → compute manually across iterations.
+- Fix: commit `36b3afd` registered `get_acwr` as a worker-delegated single-call tool. Tests + SELF.md regen included.
+- Deployed: commit `5233185` pushed to `main` 2026-05-28; GitHub Actions deploy workflow completed.
+- 2026-05-28 10:15 — re-asked in Telegram. Klaus returned **ratio 0.21** (acute 7-day avg 11.4 / chronic 28-day avg 53.3), correctly noting the sweet spot is 0.8–1.3 and flagging detraining risk. Single-iteration response. TRAINING & ATHLETIC COACHING prompt extension (Plan 19-05) is alive and shapes the response voice.
+- Closes Gap-1.
 
 ### 2. SC #2 — Lifesum → Fit → Firestore → proactive Telegram nudge end-to-end
 expected: After logging a meal in Lifesum, within ~30 min Google Fit shows the nutrition entry; within the next autonomous tick (≤20 min after that) `meals/{YYYY-MM-DD}/timestamps/{source_id}` appears in Firestore with macros + meal type.
@@ -35,20 +37,19 @@ result: **BLOCKED — architectural gap discovered**
 ## Summary
 
 total: 2
-passed: 0
-issues: 2
+passed: 1
+issues: 1
 pending: 0
 skipped: 0
 blocked: 1
 
 ## Gaps
 
-### Gap-1 (SC #1 — fix in-tree, awaiting deploy)
-status: fixed_local
+### Gap-1 (SC #1 — RESOLVED)
+status: resolved
 - Description: `compute_acwr_from_db` was never registered as a tool — brain couldn't reach the helper.
-- Fix commit: `36b3afd`
-- Awaiting: Cloud Run redeploy + Telegram re-test
-- Routes to: live verification post-deploy (no new code needed)
+- Fix commit: `36b3afd` (deployed via `5233185` push to main)
+- Verified: 2026-05-28 10:15 Telegram — ratio 0.21 returned cleanly.
 
 ### Gap-2 (SC #2 — architectural; iOS HealthKit)
 status: pending_design
