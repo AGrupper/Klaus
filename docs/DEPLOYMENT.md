@@ -341,10 +341,8 @@ gcloud firestore databases create \
   --project=${PROJECT_ID}
 ```
 
-The database name `klaus-firestore` matches the `FIRESTORE_DATABASE` env var
 set in `.github/workflows/deploy.yml`. Collections used: `conversations`
-(per-user chat history), `five_fingers_roster`, `five_fingers_practices`
-(Phase 8 basketball helper), and `morning_briefings/{date}` (Phase 10
+(per-user chat history), and `morning_briefings/{date}` (Phase 10
 morning briefing state machine).
 
 ---
@@ -1055,21 +1053,19 @@ Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.go
 
 ## 19. Cloud Scheduler — Full Job Inventory
 
-The following 9 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+The following 7 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
 use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
 are in `Asia/Jerusalem`.
 
 | # | Job ID                     | Schedule              | Endpoint                       | Phase   |
 |---|----------------------------|-----------------------|--------------------------------|---------|
-| 1 | klaus-five-fingers-morning | `30 10 * * 0,1,3,4`   | `/cron/five-fingers-morning`   | Earlier |
-| 2 | klaus-five-fingers-evening | `15 21 * * 0,3`       | `/cron/five-fingers-evening`   | Earlier |
-| 3 | klaus-morning-briefing     | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`  | Earlier |
-| 4 | klaus-proactive-alerts     | `30 21 * * *`         | `/cron/proactive-alerts`       | Earlier |
-| 5 | klaus-heartbeat            | `0 * * * *`           | `/cron/heartbeat`              | Earlier |
-| 6 | klaus-ingest-chats         | `0 4 * * *`           | `/cron/ingest-chats`           | 12      |
-| 7 | klaus-ingest-chat-exports  | `30 4 * * *`          | `/cron/ingest-chat-exports`    | 13      |
-| 8 | klaus-reflect              | `0 22 * * *`          | `/cron/reflect`                | 17      |
-| 9 | klaus-autonomous-tick      | `*/20 7-21 * * *`     | `/cron/autonomous-tick`        | 18      |
+| 1 | klaus-morning-briefing     | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`  | Earlier |
+| 2 | klaus-proactive-alerts     | `30 21 * * *`         | `/cron/proactive-alerts`       | Earlier |
+| 3 | klaus-heartbeat            | `0 * * * *`           | `/cron/heartbeat`              | Earlier |
+| 4 | klaus-ingest-chats         | `0 4 * * *`           | `/cron/ingest-chats`           | 12      |
+| 5 | klaus-ingest-chat-exports  | `30 4 * * *`          | `/cron/ingest-chat-exports`    | 13      |
+| 6 | klaus-reflect              | `0 22 * * *`          | `/cron/reflect`                | 17      |
+| 7 | klaus-autonomous-tick      | `*/20 7-21 * * *`     | `/cron/autonomous-tick`        | 18      |
 
 Notes:
 - Schedules in column 2 are illustrative — verify against the live `gcloud scheduler
@@ -1159,53 +1155,7 @@ on the fallback chain.
 
 ---
 
-## 21. Known Quirks
-
-### Five Fingers job-id collision
-
-Historically the Five Fingers morning and evening jobs both logged to `_log_cron_run`
-under the same job-id string (`"five-fingers"`), which led to confusion when reading
-heartbeat staleness output. The canonical Cloud Scheduler job IDs are now:
-
-- `klaus-five-fingers-morning` (Wed/Sun 10:30)
-- `klaus-five-fingers-evening` (Wed/Sun 21:15)
-
-Both still hit different endpoints, but readers of `cron_runs` Firestore docs should
-expect the morning + evening to appear under distinct job-ids going forward. When
-creating a new scheduler job, run a pre-flight `gcloud scheduler jobs list` to
-confirm the chosen name does not collide.
-
-#### Migration from the legacy single `five-fingers` job (bonus WARNING fix)
-
-If your deployment predates 2026-05 and has a single `five-fingers` job in Cloud
-Scheduler (rather than the two canonical jobs above), perform a one-time migration:
-
-1. **Confirm the legacy job exists:**
-   ```bash
-   gcloud scheduler jobs list --project="${PROJECT_ID}" \
-     --location="${REGION}" --filter="name~five-fingers"
-   ```
-   If you see exactly one job named `five-fingers` (or `klaus-five-fingers` with no
-   `-morning`/`-evening` suffix), proceed.
-
-2. **Create the two new canonical jobs first** (so there's no coverage gap):
-   run the §14a / §14b gcloud blocks for `klaus-five-fingers-morning` and
-   `klaus-five-fingers-evening`.
-
-3. **Delete the legacy single job:**
-   ```bash
-   gcloud scheduler jobs delete five-fingers \
-     --location="${REGION}" --project="${PROJECT_ID}"
-   ```
-   (Substitute the actual legacy job name if it differs.)
-
-4. **Verify** the heartbeat staleness check picks up the new job-ids by waiting one
-   hour and reading `cron_runs/{job_id}` for both new IDs — the switchover happens
-   automatically once the new IDs are observed in Firestore.
-
----
-
-## 22. Firestore Composite Indexes
+## 21. Firestore Composite Indexes
 
 Klaus uses a small number of compound queries that require composite indexes:
 

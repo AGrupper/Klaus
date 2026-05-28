@@ -359,107 +359,7 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
-    {
-        "name": "five_fingers_add_teammate",
-        "description": (
-            "Add a teammate to the Five Fingers sub-team roster. "
-            "Phone accepts Israeli formats (05X…, +972…). "
-            "Returns the Firestore doc ID."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {"type": "string", "description": "Display name (Hebrew or English)."},
-                "phone": {
-                    "type": "string",
-                    "description": "Phone number in any Israeli format (05X…, +972…).",
-                },
-                "nickname": {
-                    "type": "string",
-                    "description": "Optional nickname used in outbound messages.",
-                },
-                "notes": {"type": "string", "description": "Optional free-text notes."},
-            },
-            "required": ["name", "phone"],
-        },
-    },
-    {
-        "name": "five_fingers_remove_teammate",
-        "description": (
-            "Remove (soft-delete) a teammate from the roster by their Firestore doc ID. "
-            "Use five_fingers_list_teammates to find the ID."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "roster_id": {
-                    "type": "string",
-                    "description": "Firestore document ID of the teammate to remove.",
-                },
-            },
-            "required": ["roster_id"],
-        },
-    },
-    {
-        "name": "five_fingers_list_teammates",
-        "description": (
-            "List all active Five Fingers sub-team members with their doc IDs and phone numbers."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
-    {
-        "name": "five_fingers_bulk_import",
-        "description": (
-            "Bulk-import teammates from a free-text list. "
-            "Format: one per line or comma-separated, 'Name Phone'. "
-            "Phone accepts Israeli formats."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "text": {
-                    "type": "string",
-                    "description": (
-                        "Free-text list of teammates. One per line or comma-separated. "
-                        "Each entry: 'Name Phone' where phone is in any Israeli format."
-                    ),
-                },
-            },
-            "required": ["text"],
-        },
-    },
-    {
-        "name": "five_fingers_log_attendance",
-        "description": (
-            "Log practice attendance. Pass 'came' and 'missed' as lists of teammate "
-            "names or roster doc IDs. Date is YYYY-MM-DD."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "date": {
-                    "type": "string",
-                    "description": "Practice date in YYYY-MM-DD format.",
-                },
-                "came": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Teammate names or roster doc IDs who attended.",
-                },
-                "missed": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Teammate names or roster doc IDs who were absent.",
-                },
-                "notes": {"type": "string", "description": "Optional notes about the practice."},
-            },
-            "required": ["date"],
-        },
-    },
+
     {
         "name": "run_morning_briefing",
         "description": (
@@ -869,16 +769,6 @@ from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from mcp_tools.weather_tool import fetch_weather        # noqa: E402
 from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
 from mcp_tools.garmin_tool import fetch_garmin_today    # noqa: E402
-from memory.firestore_db import RosterStore, AttendanceStore  # noqa: E402
-from mcp_tools.ticktick_tool import add_task as _ticktick_add_task  # noqa: E402
-from mcp_tools.self_inspect import (                                 # noqa: E402
-    list_own_files as _list_own_files,
-    read_own_source as _read_own_source,
-    search_own_source as _search_own_source,
-)
-from memory.pinecone_db import MemoryStore              # noqa: E402
-from mcp_tools.memory import MemoryTool                 # noqa: E402
-from mcp_tools.five_fingers.composer import normalize_phone  # noqa: E402
 from mcp_tools.notion_tool import (                     # noqa: E402
     search as _notion_search,
     get_page as _notion_get_page,
@@ -893,8 +783,6 @@ _gmail_tool: GmailTool | None = None
 _calendar_tool: GoogleCalendarManager | None = None
 _memory_store: MemoryStore | None = None
 _memory_tool: MemoryTool | None = None
-_roster_store: RosterStore | None = None
-_attendance_store: AttendanceStore | None = None
 
 
 def _get_auth_manager() -> GoogleAuthManager:
@@ -946,28 +834,7 @@ def _get_memory_tool() -> MemoryTool:
     return _memory_tool
 
 
-def _get_roster_store() -> RosterStore:
-    """Return the shared RosterStore instance, building it on first call."""
-    global _roster_store
-    if _roster_store is None:
-        project_id = os.getenv("GCP_PROJECT_ID")
-        if not project_id:
-            raise RuntimeError("GCP_PROJECT_ID env var is required for five_fingers tools")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        _roster_store = RosterStore(project_id=project_id, database=database)
-    return _roster_store
 
-
-def _get_attendance_store() -> AttendanceStore:
-    """Return the shared AttendanceStore instance, building it on first call."""
-    global _attendance_store
-    if _attendance_store is None:
-        project_id = os.getenv("GCP_PROJECT_ID")
-        if not project_id:
-            raise RuntimeError("GCP_PROJECT_ID env var is required for five_fingers tools")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        _attendance_store = AttendanceStore(project_id=project_id, database=database)
-    return _attendance_store
 
 
 # ------------------------------------------------------------------ #
@@ -1068,116 +935,7 @@ def _handle_search_chat_history(query: str, k: int = 5, project: str | None = No
     return json.dumps(result)
 
 
-def _handle_five_fingers_add_teammate(
-    name: str,
-    phone: str,
-    nickname: str | None = None,
-    notes: str | None = None,
-) -> str:
-    """Normalise phone and add a teammate to the roster."""
-    try:
-        phone_e164 = normalize_phone(phone)
-    except ValueError as exc:
-        return json.dumps({"error": f"Invalid phone number: {exc}"})
-    doc_id = _get_roster_store().add(name, phone_e164, nickname, notes)
-    return json.dumps({
-        "doc_id": doc_id,
-        "name": name,
-        "confirmation": f"Added {name} to the Five Fingers roster.",
-    })
 
-
-def _handle_five_fingers_remove_teammate(roster_id: str) -> str:
-    """Soft-delete a roster entry by Firestore doc ID."""
-    from google.api_core.exceptions import GoogleAPICallError
-    try:
-        _get_roster_store().deactivate(roster_id)
-    except GoogleAPICallError as exc:
-        return json.dumps({"error": str(exc)})
-    return json.dumps({"removed": True, "roster_id": roster_id})
-
-
-def _handle_five_fingers_list_teammates() -> str:
-    """Return all active roster entries."""
-    teammates = _get_roster_store().list_active()
-    return json.dumps({"teammates": teammates, "count": len(teammates)})
-
-
-def _handle_five_fingers_bulk_import(text: str) -> str:
-    """Parse a free-text list of Name Phone pairs and add each to the roster."""
-    errors: list[str] = []
-    imported = 0
-
-    # Split on newlines first, then on commas, to support both delimiters.
-    raw_tokens: list[str] = []
-    for line in text.splitlines():
-        raw_tokens.extend(line.split(","))
-
-    for token in raw_tokens:
-        token = token.strip()
-        if not token:
-            continue
-        parts = token.split()
-        if len(parts) < 2:
-            errors.append(f"Cannot parse (need name + phone): {token!r}")
-            continue
-        phone_raw = parts[-1]
-        name = " ".join(parts[:-1])
-        try:
-            phone_e164 = normalize_phone(phone_raw)
-        except ValueError as exc:
-            errors.append(f"Bad phone for {name!r}: {exc}")
-            continue
-        try:
-            _get_roster_store().add(name, phone_e164)
-            imported += 1
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"Store error for {name!r}: {exc}")
-
-    return json.dumps({"imported": imported, "skipped": errors})
-
-
-def _handle_five_fingers_log_attendance(
-    date: str,
-    came: list[str] | None = None,
-    missed: list[str] | None = None,
-    notes: str | None = None,
-) -> str:
-    """Resolve teammate names/IDs and record attendance in Firestore."""
-    roster = _get_roster_store().list_active()
-
-    def _resolve(identifier: str) -> str | None:
-        """Return roster doc_id for a name (case-insensitive) or direct doc_id."""
-        identifier_lower = identifier.lower()
-        for member in roster:
-            if member.get("doc_id") == identifier:
-                return identifier
-            if member.get("name", "").lower() == identifier_lower:
-                return member["doc_id"]
-        return None
-
-    store = _get_attendance_store()
-    logged = 0
-    warnings: list[str] = []
-
-    for identifier in (came or []):
-        doc_id = _resolve(identifier)
-        if doc_id is None:
-            warnings.append(f"Unresolved (came): {identifier!r}")
-            continue
-        store.mark_attendance(date, doc_id, "came")
-        logged += 1
-
-    for identifier in (missed or []):
-        doc_id = _resolve(identifier)
-        if doc_id is None:
-            warnings.append(f"Unresolved (missed): {identifier!r}")
-            continue
-        store.mark_attendance(date, doc_id, "missed")
-        logged += 1
-
-    if notes:
-        store.upsert_practice(date, notes=notes)
 
     return json.dumps({"date": date, "logged": logged, "warnings": warnings})
 
@@ -1526,11 +1284,6 @@ _HANDLERS: dict[str, object] = {
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
     "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
-    "five_fingers_add_teammate":    lambda args: _handle_five_fingers_add_teammate(**args),
-    "five_fingers_remove_teammate": lambda args: _handle_five_fingers_remove_teammate(**args),
-    "five_fingers_list_teammates":  lambda args: _handle_five_fingers_list_teammates(**args),
-    "five_fingers_bulk_import":     lambda args: _handle_five_fingers_bulk_import(**args),
-    "five_fingers_log_attendance":  lambda args: _handle_five_fingers_log_attendance(**args),
     "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
     "notion_search":          lambda args: _handle_notion_search(**args),
     "notion_get_page":        lambda args: _handle_notion_get_page(**args),

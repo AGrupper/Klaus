@@ -253,11 +253,7 @@ def _load_tool_data_fallback() -> list[dict]:
         ("fetch_weather",               "Fetch current weather conditions and today/tomorrow forecast for a location."),
         ("fetch_readwise_today",        "Fetch today's reading highlights from Readwise."),
         ("fetch_garmin_today",          "Fetch today's health summary from Garmin Connect: sleep score, sleep hours, HRV status, body battery, and resting heart rate."),
-        ("five_fingers_add_teammate",   "Add a teammate to the Five Fingers sub-team roster."),
-        ("five_fingers_remove_teammate","Remove (soft-delete) a teammate from the roster by their Firestore doc ID."),
-        ("five_fingers_list_teammates", "List all active Five Fingers sub-team members with their doc IDs and phone numbers."),
-        ("five_fingers_bulk_import",    "Bulk-import teammates from a free-text list."),
-        ("five_fingers_log_attendance", "Log practice attendance."),
+
         ("run_morning_briefing",        "Compose and send the morning briefing to Telegram immediately."),
         ("notion_search",               "Search across all Notion pages and databases shared with Klaus."),
         ("notion_get_page",             "Fetch the full content of a Notion page by its ID."),
@@ -386,8 +382,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         "| Heartbeat | `0 * * * *` | `/cron/heartbeat` |",
         "| Proactive alerts | `30 18 * * *` (21:30 IDT) | `/cron/proactive-alerts` |",
         "| Morning briefing tick | `*/10 3-7 * * *` (06–10 IDT) | `/cron/morning-briefing-tick` |",
-        "| Five Fingers morning | Wed/Sun `07:30 UTC` (10:30 IDT) | `/cron/five-fingers` |",
-        "| Five Fingers evening | Wed/Sun `18:15 UTC` (21:15 IDT) | `/cron/five-fingers` |",
+
         "| Chat ingest | `0 1 * * *` (04:00 IDT) | `/cron/chat-ingest` |",
         "| Chat export ingest | `30 1 * * *` (04:30 IDT) | `/cron/chat-export-ingest` |",
         "| Daily reflection | `0 22 * * *` (22:00 IDT) | `/cron/reflect` |",

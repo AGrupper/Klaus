@@ -288,29 +288,6 @@ def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) ->
 # Five Fingers cron routes                                           #
 # ------------------------------------------------------------------ #
 
-@app.post("/cron/five-fingers-morning")
-async def cron_five_fingers_morning(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler morning tick and run the Five Fingers morning flow.
-
-    Schedule: 30 10 * * 0,1,3,4  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    await _verify_cron_request(request)
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.five_fingers as _five_fingers
-    try:
-        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        await _five_fingers.run_morning_endpoint(_application.bot, today)
-        _log_cron_run("five-fingers-morning", ok=True)
-    except Exception:
-        _log_cron_run("five-fingers-morning", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
-
 
 @app.post("/cron/proactive-alerts")
 async def cron_proactive_alerts(request: Request) -> JSONResponse:
@@ -399,29 +376,6 @@ async def cron_autonomous_tick(request: Request) -> JSONResponse:
         raise
     return JSONResponse(content={"ok": True})
 
-
-@app.post("/cron/five-fingers-evening")
-async def cron_five_fingers_evening(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler evening tick and run the Five Fingers evening flow.
-
-    Schedule: 15 21 * * 0,3  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    await _verify_cron_request(request)
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.five_fingers as _five_fingers
-    try:
-        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        await _five_fingers.run_evening_endpoint(_application.bot, today)
-        _log_cron_run("five-fingers-evening", ok=True)
-    except Exception:
-        _log_cron_run("five-fingers-evening", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
 
 
 @app.post("/cron/morning-briefing-tick")

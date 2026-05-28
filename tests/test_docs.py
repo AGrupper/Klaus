@@ -22,10 +22,8 @@ def _content() -> str:
 
 class TestDeploymentCompleteness:
 
-    # All 9 job-ids must appear
+    # All 7 job-ids must appear
     ALL_JOB_IDS = [
-        "klaus-five-fingers-morning",
-        "klaus-five-fingers-evening",
         "klaus-morning-briefing",
         "klaus-proactive-alerts",
         "klaus-heartbeat",
@@ -63,23 +61,7 @@ class TestDeploymentCompleteness:
         # Rotation steps
         assert "gcloud secrets versions add" in content
 
-    def test_five_fingers_quirk_documented(self):
-        content = _content()
-        assert "Five Fingers" in content
-        assert "job-id" in content.lower() or "job id" in content.lower()
 
-    def test_five_fingers_migration_paragraph_present(self):
-        """Bonus WARNING — operators of older deploys need an explicit migration step."""
-        content = _content()
-        # The migration block instructs deleting the legacy single five-fingers job.
-        assert "gcloud scheduler jobs delete five-fingers" in content, (
-            "Bonus WARNING regression: migration paragraph for legacy single "
-            "'five-fingers' Cloud Scheduler job missing from DEPLOYMENT.md"
-        )
-        # Migration must mention either "migration" or "Migration" for context.
-        assert ("Migration" in content or "migration" in content), (
-            "Migration paragraph should explicitly label itself as a migration step"
-        )
 
     def test_followups_composite_index_documented(self):
         content = _content()

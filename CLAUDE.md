@@ -70,7 +70,6 @@ Klaus/
 │   ├── heartbeat.py        # Hourly cron: stale-cron detection, SELF.md SHA, tick-brain reasoning
 │   ├── proactive_alerts.py # 21:30 nightly: weather/overload/travel-time alerts
 │   ├── morning_briefing.py # */10 6-10: Garmin-anchored daily briefing state machine
-│   ├── five_fingers.py     # Practice helper recommender + composer
 │   ├── reflection.py       # Daily 22:00: gather day → journal entry → self_state update
 │   ├── autonomous.py       # */20 7-21: 3-layer gather → tick-brain triage → brain compose
 │   ├── scheduled_message.py# Telegram send + Firestore conversation injection
@@ -80,8 +79,7 @@ Klaus/
 ├── memory/
 │   ├── firestore_conversation.py # Per-user conversation history
 │   ├── firestore_db.py     # All Firestore stores: LLMUsage, SelfState, Journal,
-│   │                       #   FiveFingersRoster, Attendance, MorningBriefing,
-│   │                       #   Followup, OutreachLog, TickLog
+│   │                       #   MorningBriefing, Followup, OutreachLog, TickLog
 │   └── pinecone_db.py      # MemoryStore: remember/recall + chat upserts
 ├── mcp_tools/
 │   ├── database_tool.py    # Analytical PostgreSQL read-only queries
@@ -96,7 +94,6 @@ Klaus/
 │   ├── routes_tool.py      # Google Routes API (traffic-aware drive time)
 │   ├── memory.py           # remember/recall (Pinecone-backed)
 │   ├── self_inspect.py     # list_own_files / read_own_source / search_own_source
-│   └── five_fingers/       # composer, recommender, roster, attendance submodule
 ├── interfaces/
 │   ├── web_server.py       # FastAPI: Telegram webhook + /cron/* OIDC-protected routes
 │   ├── _router.py          # Telegram message router + photo download
@@ -130,7 +127,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **9 Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), five-fingers-morning (Wed/Sun 10:30), five-fingers-evening (Wed/Sun 21:15), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**
+- **7 Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**
 
 ## 6. Invariants
 

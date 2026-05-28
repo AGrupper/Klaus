@@ -61,11 +61,6 @@ class MessageRouter:
         Returns:
             None — responses are sent directly via ``update.message.reply_text``.
         """
-        # Five Fingers inline keyboard taps arrive as callback queries, not messages.
-        if update.callback_query is not None:
-            await self._handle_callback_query(update)
-            return
-
         # Guard: ignore updates that carry no message (e.g. channel posts, edits).
         if update.message is None:
             return
@@ -146,48 +141,6 @@ class MessageRouter:
         # model has drifted or accumulated stale context.
         self.orchestrator.conversation_manager.clear(telegram_user_id)
         await update.message.reply_text("Conversation history cleared, Sir.")
-
-    async def _handle_callback_query(self, update: Update) -> None:
-        """Handle Five Fingers inline keyboard taps.
-
-        Two callback data shapes are recognised:
-          ``ff_att|YYYY-MM-DD|roster_id|came|missed`` — mark attendance
-          ``ff_save|YYYY-MM-DD``                      — confirm save
-
-        Args:
-            update: The originating Telegram Update (callback_query is not None).
-
-        Returns:
-            None — answers the callback query directly via Telegram.
-        """
-        query = update.callback_query
-        data = query.data or ""
-
-        if data.startswith("ff_att|"):
-            parts = data.split("|")
-            if len(parts) == 4:
-                _, date_str, roster_id, status = parts
-                try:
-                    from core.tools import _get_attendance_store
-                    _get_attendance_store().mark_attendance(date_str, roster_id, status)
-                    symbol = "✅" if status == "came" else "❌"
-                    await query.answer(symbol)
-                except Exception as exc:
-                    logger.exception(
-                        "CallbackQuery ff_att failed for roster_id=%r: %s",
-                        roster_id, exc,
-                    )
-                    await query.answer("שגיאה — נסה שוב")
-            else:
-                logger.warning("Malformed ff_att callback_data: %r", data)
-                await query.answer()
-
-        elif data.startswith("ff_save|"):
-            await query.answer("נשמר ✓")
-
-        else:
-            logger.warning("Unrecognised callback_data: %r", data)
-            await query.answer()
 
     async def _handle_text_message(
         self,
