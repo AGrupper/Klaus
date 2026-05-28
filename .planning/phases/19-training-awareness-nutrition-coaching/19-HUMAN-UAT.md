@@ -8,30 +8,61 @@ updated: 2026-05-28
 
 ## Current Test
 
-[awaiting human testing — live Telegram + live Lifesum logging]
+[SC #1 gap fixed locally (commit 36b3afd) — awaiting Cloud Run deploy + Telegram re-test]
+[SC #2 blocked on real architecture gap — Lifesum on iOS writes to Apple HealthKit, not Google Fit]
 
 ## Tests
 
 ### 1. SC #1 — ACWR Telegram query end-to-end
-expected: Asking Klaus "what was my ACWR this week?" in Telegram returns a real number computed from Postgres (or an honest "chronic baseline insufficient" answer when too little history). Verifies the full brain → worker → `fetch_training_status` + `fetch_recent_activities` + `compute_acwr_from_db` path lights up against the live database backfilled by Plan 19-01.
-result: [pending]
+expected: Asking Klaus "what was my ACWR this week?" in Telegram returns a real number computed from Postgres (or an honest "chronic baseline insufficient" answer when too little history).
+result: **first attempt failed → root cause found → fix shipped locally → awaiting deploy + retest**
+- 2026-05-28 09:46 — user asked in Telegram, Klaus returned "Apologies, Sir. This request required more processing steps than expected. Please rephrase or break it into smaller parts." (MAX_TOOL_ITERATIONS=8 exceeded).
+- Root cause: `compute_acwr_from_db` existed in `mcp_tools/garmin_tool.py` (Plan 19-02) but was never registered as a callable tool. The brain's only path was `delegate_to_worker → fetch_recent_activities → manual arithmetic across iterations`, blowing the iteration cap.
+- Fix: commit `36b3afd` registers `get_acwr` as a worker-delegated single-call tool. Schema description explicitly nudges the brain away from the raw-fetch path. Tests + SELF.md regen included. Local suite: 527 passed, 3 skipped, 0 failures.
+- Awaited: deploy `36b3afd` to Cloud Run, re-ask in Telegram, confirm a numeric ratio (or "chronic baseline insufficient") response.
 
 ### 2. SC #2 — Lifesum → Fit → Firestore → proactive Telegram nudge end-to-end
-expected: After logging a meal in Lifesum, within ~30 min Google Fit shows the nutrition entry; within the next autonomous tick (≤20 min after that) `meals/{YYYY-MM-DD}/timestamps/{source_id}` appears in Firestore with macros + meal type. If the meal is notable (very low protein before a workout, large gap since last meal), Klaus may proactively reach out via Telegram mid-day — repeat-suppressed per existing `OutreachLogStore` rules. Verifies the full Layer 0 gather → tick-brain triage → Layer 2 compose path against live data.
-result: [pending]
+expected: After logging a meal in Lifesum, within ~30 min Google Fit shows the nutrition entry; within the next autonomous tick (≤20 min after that) `meals/{YYYY-MM-DD}/timestamps/{source_id}` appears in Firestore with macros + meal type.
+result: **BLOCKED — architectural gap discovered**
+- 2026-05-28 — user logged a meal in Lifesum on iPhone ~15 min before testing.
+- Local probe: `MealStore.get_day("2026-05-28")` returned 0 entries.
+- Direct Google Fit probe: `fetch_recent_meals(hours=24)` returned 0 entries.
+- Deeper probe: `users/me/dataSources(dataTypeName=com.google.nutrition).list()` returned **0 nutrition data sources at all** — not even historical data.
+- Root cause: Lifesum on iOS writes to **Apple HealthKit**, not Google Fit. Google Fit's consumer iOS app was deprecated by Google in late 2024 — the `Lifesum (iOS) → Google Fit → Klaus` chain has no bridge on iOS.
+- Phase 19's NUTR-01..08 design assumed Lifesum → Google Fit (Android path). Plan/RESEARCH didn't flag the iOS gap.
+- All code paths on Klaus's side ARE wired correctly (verified by local probe returning cleanly with no 403/scope errors after the OAuth rotation + Fitness API enable). The blocker is the upstream Lifesum→Fit bridge that doesn't exist on iOS.
 
 ## Summary
 
 total: 2
 passed: 0
-issues: 0
-pending: 2
+issues: 2
+pending: 0
 skipped: 0
-blocked: 0
+blocked: 1
 
 ## Gaps
 
-None yet — both items are deferred to staging exercise; no code changes pending.
+### Gap-1 (SC #1 — fix in-tree, awaiting deploy)
+status: fixed_local
+- Description: `compute_acwr_from_db` was never registered as a tool — brain couldn't reach the helper.
+- Fix commit: `36b3afd`
+- Awaiting: Cloud Run redeploy + Telegram re-test
+- Routes to: live verification post-deploy (no new code needed)
+
+### Gap-2 (SC #2 — architectural; iOS HealthKit)
+status: pending_design
+- Description: Lifesum on iOS writes to Apple HealthKit, not Google Fit. Phase 19's google_fit_tool path is correct for Android but has no source data on iOS.
+- User's chosen direction: switch to Apple HealthKit (proper fix).
+- Open architectural questions before planning:
+  - How does Klaus (cloud-hosted on Cloud Run) read from HealthKit (a native iOS API)? Options:
+    - iOS Shortcuts automation: scheduled or on-write Shortcut that POSTs HealthKit data to a Klaus webhook endpoint
+    - Third-party companion app (e.g., Health Auto Export) that POSTs to a webhook
+    - User-side bridge app (iOS Shortcut writing to a Firestore-accessible cloud function)
+    - Webhook into a new `/cron/healthkit-sync` Klaus endpoint that receives push from the iPhone
+  - What's the auth model? (Bearer token in the Shortcut HTTP step? OIDC?)
+  - How to align the existing MealStore schema (`source = 'google_fit'`) with a new `source = 'healthkit'` source — keep the same MealStore, just gain a second writer.
+- Recommended next step: run `/gsd-discuss-phase 19.1` to refine the architecture before planning. Don't run `/gsd-plan-phase --gaps` until the design questions above are answered.
 
 ## Notes
 
