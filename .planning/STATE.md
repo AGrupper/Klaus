@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
-status: phase 19.1 context captured — ready for /gsd-plan-phase 19.1
-last_updated: "2026-05-28T11:00:00.000Z"
-last_activity: 2026-05-28 -- Phase 19.1 (HealthKit nutrition bridge) discuss-phase complete. 24 decisions captured across 15 sub-areas in 19.1-CONTEXT.md (commit 133b38a): iOS Shortcut on Lifesum-close + 23:55 daily catch-up, shared-secret bearer auth, /cron/healthkit-sync upsert-only (next autonomous tick decides judgment via existing meals_since_last_tick wiring), source_id="healthkit:{HKObject.UUID}" for MealStore idempotency, HKMetadataKeyMealTime + hour-bucket fallback for meal_type, 48h heartbeat staleness, secret-version-disable kill-switch, Pydantic schema lock (Pitfall-6 pattern), scripts/test_healthkit_push.py operator CLI, docs/healthkit_shortcut.md operator runbook with iCloud share link, DEPLOYMENT.md §23 Push-driven endpoints + §24 secret. Google Fit path kept marked legacy. Forward-only backfill. Next: /clear then /gsd-plan-phase 19.1.
+status: executing
+last_updated: "2026-05-28T18:46:19.816Z"
+last_activity: 2026-05-28 -- Phase 19.1 planning complete
 progress:
   total_phases: 2
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 5
   completed_plans: 5
   percent: 100
@@ -21,9 +21,9 @@ Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
 Phases planned: 2 + 1 gap-closure (Phase 19 + Phase 19.1 HealthKit bridge + Phase 20)
 Phase: 19.1 — context captured (24 decisions across 15 sub-areas), ready for planning. Phase 19 still human_needed pending 19.1 ship.
 Plan: next is `/clear` then `/gsd-plan-phase 19.1` to turn the locked decisions in 19.1-CONTEXT.md into a concrete PLAN.md with task breakdown.
-Status: Phase 19.1 discuss complete; Phase 19 SC #2 still BLOCKED until 19.1 ships.
+Status: Ready to execute
 Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-CONTEXT.md
-Last activity: 2026-05-28 -- Live verification surfaced 2 findings via Telegram + Firestore probes. (1) SC #1 ACWR query — first attempt blew MAX_TOOL_ITERATIONS=8 because `compute_acwr_from_db` was never registered as a tool; commit `36b3afd` added `get_acwr` worker-delegated wrapper; deployed via `5233185` push to main → GitHub Actions; verified 10:15 with ratio 0.21 (acute 11.4 / chronic 53.3) and TRAINING coaching commentary. SC #1 closed. (2) SC #2 Lifesum → Fit → Klaus path is fundamentally blocked on iOS: Google Fit has 0 nutrition data sources because Lifesum on iPhone writes to Apple HealthKit, not Google Fit (Google Fit consumer iOS app deprecated late 2024). Phase 19 NUTR-* design assumed the Android path; iOS gap not flagged in plan/research. Code paths on Klaus side are clean (verified by direct probes — no scope/403/GoogleFitUnavailableError). User chose proper-fix path: open Phase 19.1 to add Apple HealthKit bridge. Phase 19 stays open pending 19.1. Phase 19 prior context: Plan 19-05 shipped: render_smart_system extended with {training_profile} placeholder (5th .replace; mirrors self_state omit-empty discipline); smart_agent.md TRAINING & ATHLETIC COACHING section with all 5 Phase 19 tool names; autonomous_triage.md `## Meals as triggers (Phase 19)` section + meal_audit.md cross-link; morning_briefing.md `🥗 Yesterday's Nutrition` section with conditional-render instruction (defense-in-depth for the NUTR-07 silent-omit data-layer contract from Plan 19-04); prompts/meal_audit.md NEW (31 lines — nutrition density / protein adequacy / carb-vs-training-context heuristics, JARVIS voice, no personalized thresholds); meal_audit.md runtime-wired into both brain compose sites in core/autonomous.py (_compose_layer2 + _compose_followup_layer2) AND into _compose_briefing in core/morning_briefing.py via `_load_prompt`/Path-read + guarded string-append; docs/SELF.md regenerated — all 5 Phase 19 tools (`get_training_profile`, `update_training_profile`, `fetch_training_status`, `fetch_recent_activities`, `fetch_recent_meals`) now surfaced (was 0/5 pre-regen). Auto-fixed Rule-3 blocker: `core/self_manifest.py` dynamic-import path was silently falling back to the Phase 15 hardcoded tool list (missing 8 tools); added 6 stub attribute sets (`GoogleAuthError`, `Request`, `InstalledAppFlow`, `Credentials`, `build`, `load_dotenv`, full api_core.exceptions set) so the live tools.py is now the source of truth for SELF.md regeneration. Tool count in SELF.md: 30 → 38 (+8 = Phase 18 follow-up trio + Phase 19 quintet). 572 passed, 3 skipped (+15 net, 0 regressions). TDD: 2 RED commits (`ebda0bf`, `35e9d4d`) → 6 GREEN/feat/docs commits (`c0008b2`, `f32469b`, `cb03282`, `907faf8`, `6259292`, `67a845c`). Satisfies PROMPT-01, PROMPT-02, PROMPT-03, NUTR-06, NUTR-07, NUTR-08 — Phase 19 closes at 26/26 requirements.
+Last activity: 2026-05-28 -- Phase 19.1 planning complete
 
 ## Project Reference
 
