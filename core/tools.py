@@ -711,6 +711,23 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "get_acwr",
+        "description": (
+            "Compute Sir's acute:chronic workload ratio (ACWR) from the Postgres "
+            "`activities` table. Returns JSON {acute, chronic, ratio}: acute = mean "
+            "7-day training_load, chronic = mean 28-day training_load, ratio = "
+            "acute/chronic. ratio is null when fewer than 14 of the last 28 days "
+            "have training_load data (\"chronic baseline insufficient\"). "
+            "Single-call wrapper — do NOT fetch raw activities and compute manually. "
+            "Worker-delegated."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
     # ============ PHASE 19 Plan 03 — GOOGLE FIT NUTRITION ============
     {
         "name": "fetch_recent_meals",
@@ -1235,6 +1252,18 @@ def _handle_fetch_recent_activities(days: int = 7) -> str:
         return json.dumps({"error": str(exc)})
 
 
+def _handle_get_acwr() -> str:
+    """Phase 19 SC-1 closeout: single-call ACWR wrapper around compute_acwr_from_db.
+
+    Reads last 28 days from Postgres `activities`, returns
+    {"acute", "chronic", "ratio"}. ratio is null when chronic baseline is
+    insufficient (<14 of 28 days with training_load). compute_acwr_from_db
+    swallows all exceptions and returns the sentinel — this handler never raises.
+    """
+    from mcp_tools.garmin_tool import compute_acwr_from_db
+    return json.dumps(compute_acwr_from_db())
+
+
 def _handle_fetch_recent_meals(hours: int = 24) -> str:
     """NUTR-03 worker-delegated: live Google Fit nutrition entries (Lifesum source).
 
@@ -1282,6 +1311,7 @@ _HANDLERS: dict[str, object] = {
     "update_training_profile": lambda args: _handle_update_training_profile(**args),
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
+    "get_acwr":                lambda args: _handle_get_acwr(),
     # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
     "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
     "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),

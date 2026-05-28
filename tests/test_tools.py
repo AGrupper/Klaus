@@ -415,3 +415,27 @@ class TestPhase19ToolRegistration:
         )
         assert schema["input_schema"]["properties"]["hours"]["type"] == "integer"
         assert schema["input_schema"]["required"] == []
+
+    def test_get_acwr_worker_delegated(self):
+        """Phase 19 SC-1 closeout: get_acwr is worker-delegated at all 4 sites."""
+        assert "get_acwr" not in tools.SMART_AGENT_DIRECT_TOOLS
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "get_acwr" in names
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "get_acwr" in worker_names
+        assert "get_acwr" in tools._HANDLERS
+
+    def test_get_acwr_schema_no_args(self):
+        """get_acwr schema: zero properties, zero required."""
+        schema = next(s for s in tools.TOOL_SCHEMAS if s["name"] == "get_acwr")
+        assert schema["input_schema"]["properties"] == {}
+        assert schema["input_schema"]["required"] == []
+
+    def test_get_acwr_handler_returns_json_with_ratio_key(self, monkeypatch):
+        """Handler dispatches to compute_acwr_from_db and returns JSON string."""
+        from mcp_tools import garmin_tool
+
+        sentinel = {"acute": 12.3, "chronic": 9.5, "ratio": 1.29}
+        monkeypatch.setattr(garmin_tool, "compute_acwr_from_db", lambda: sentinel)
+        result = tools._HANDLERS["get_acwr"]({})
+        assert json.loads(result) == sentinel
