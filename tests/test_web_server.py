@@ -237,18 +237,33 @@ def _load_sample_payload() -> dict:
         return json.load(f)
 
 
+@pytest.fixture(scope="module")
+def _ws_module():
+    """Module-scoped import of interfaces.web_server with stubs applied.
+
+    WHY: re-importing web_server in each test (the autonomous-tick test
+    pattern) triggers a CPython 3.14 segfault when repeated more than ~5
+    times in one process — the dotenv module's NamedTuple machinery
+    interacts badly with the GC during repeated module-deletion. Cache
+    the import at module scope; tests then mutate ws._application /
+    ws._log_cron_run as needed and rely on per-test os.environ patches.
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        yield ws
+
+
 class TestCronHealthkitSync:
     """Behavioral tests for the POST /cron/healthkit-sync endpoint (Phase 19.1)."""
 
-    def test_missing_auth_returns_401(self, monkeypatch):
+    def test_missing_auth_returns_401(self, monkeypatch, _ws_module):
         """No Authorization header → 401 from _verify_healthkit_request."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()  # bypass=False, token set
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
+        with patch.dict(os.environ, env):
             client = TestClient(ws.app)
             resp = client.post("/cron/healthkit-sync", json={"samples": []})
 
@@ -257,15 +272,13 @@ class TestCronHealthkitSync:
         )
         assert "Missing or malformed Authorization" in resp.text
 
-    def test_bad_token_returns_403(self, monkeypatch):
+    def test_bad_token_returns_403(self, monkeypatch, _ws_module):
         """Authorization header with wrong bearer → 403 from _verify_healthkit_request."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env(token="right-token")
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
+        with patch.dict(os.environ, env):
             client = TestClient(ws.app)
             resp = client.post(
                 "/cron/healthkit-sync",
@@ -278,28 +291,24 @@ class TestCronHealthkitSync:
         )
         assert "Invalid token" in resp.text
 
-    def test_verify_uses_compare_digest(self, monkeypatch):
+    def test_verify_uses_compare_digest(self, monkeypatch, _ws_module):
         """The auth helper MUST call hmac.compare_digest (constant-time compare)
         rather than plain ``==``. Patch the call site and assert it was invoked
         with byte-encoded arguments (per RESEARCH.md Q5)."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env(token="right-token")
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            digest_mock = MagicMock(return_value=False)
-            # Patch on the global hmac module so any qualified `hmac.compare_digest`
-            # reference (including lazy `import hmac` inside the helper body)
-            # resolves to our mock.
-            with patch("hmac.compare_digest", digest_mock):
-                client = TestClient(ws.app)
-                resp = client.post(
-                    "/cron/healthkit-sync",
-                    json={"samples": []},
-                    headers={"Authorization": "Bearer right-token"},
-                )
+        digest_mock = MagicMock(return_value=False)
+        with patch.dict(os.environ, env), patch.object(
+            ws.hmac, "compare_digest", digest_mock
+        ):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/cron/healthkit-sync",
+                json={"samples": []},
+                headers={"Authorization": "Bearer right-token"},
+            )
 
         # Mock returned False so we end up in the 403 branch.
         assert resp.status_code == 403, (
@@ -316,19 +325,17 @@ class TestCronHealthkitSync:
                 f"compare_digest must be called with byte args; got {args!r}"
             )
 
-    def test_missing_env_var_returns_500(self, monkeypatch):
+    def test_missing_env_var_returns_500(self, monkeypatch, _ws_module):
         """HEALTHKIT_WEBHOOK_TOKEN env unset → 500 (refuse-all, prevents fail-open)."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env(token=None)
-        # Defensive — also strip from monkeypatch in case _BASE_ENV ever sets it.
         monkeypatch.delenv("HEALTHKIT_WEBHOOK_TOKEN", raising=False)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env, clear=False):
-            # Ensure no leaked env from another test.
+        with patch.dict(os.environ, env, clear=False):
+            # Ensure no leaked HEALTHKIT_WEBHOOK_TOKEN from another test
+            # (env's None value just means "don't add" — strip explicitly).
             os.environ.pop("HEALTHKIT_WEBHOOK_TOKEN", None)
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
             client = TestClient(ws.app, raise_server_exceptions=False)
             resp = client.post(
                 "/cron/healthkit-sync",
@@ -341,15 +348,13 @@ class TestCronHealthkitSync:
         )
         assert "Server misconfigured" in resp.text
 
-    def test_malformed_payload_returns_422(self, monkeypatch):
+    def test_malformed_payload_returns_422(self, monkeypatch, _ws_module):
         """Body missing the `samples` key → 422 via Pydantic ValidationError translation."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
+        with patch.dict(os.environ, env):
             client = TestClient(ws.app)
             resp = client.post(
                 "/cron/healthkit-sync",
@@ -361,10 +366,11 @@ class TestCronHealthkitSync:
             f"Malformed body must yield 422; got {resp.status_code}: {resp.text}"
         )
 
-    def test_happy_path_upserts_each_sample(self, monkeypatch):
+    def test_happy_path_upserts_each_sample(self, monkeypatch, _ws_module):
         """Valid auth + Wave-0 fixture payload → 200 with {"upserted": N};
         MealStore.upsert called exactly once per sample."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
         expected_n = len(fixture["samples"])
@@ -373,17 +379,15 @@ class TestCronHealthkitSync:
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            with patch("memory.firestore_db.MealStore", mock_store_cls):
-                client = TestClient(ws.app)
-                resp = client.post(
-                    "/cron/healthkit-sync",
-                    json=fixture,
-                    headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
-                )
+        with patch.dict(os.environ, env), patch(
+            "memory.firestore_db.MealStore", mock_store_cls
+        ):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/cron/healthkit-sync",
+                json=fixture,
+                headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
+            )
 
         assert resp.status_code == 200, (
             f"Happy path must yield 200; got {resp.status_code}: {resp.text}"
@@ -396,10 +400,11 @@ class TestCronHealthkitSync:
             f"{expected_n}, got {mock_store.upsert.call_count})"
         )
 
-    def test_idempotent_repush(self, monkeypatch):
+    def test_idempotent_repush(self, monkeypatch, _ws_module):
         """Same payload POSTed twice → both return 200; upsert called 2*N times
         (idempotency lives in MealStore's merge=True semantics, not the handler)."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
         n = len(fixture["samples"])
@@ -408,15 +413,13 @@ class TestCronHealthkitSync:
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            with patch("memory.firestore_db.MealStore", mock_store_cls):
-                client = TestClient(ws.app)
-                hdrs = {"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"}
-                r1 = client.post("/cron/healthkit-sync", json=fixture, headers=hdrs)
-                r2 = client.post("/cron/healthkit-sync", json=fixture, headers=hdrs)
+        with patch.dict(os.environ, env), patch(
+            "memory.firestore_db.MealStore", mock_store_cls
+        ):
+            client = TestClient(ws.app)
+            hdrs = {"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"}
+            r1 = client.post("/cron/healthkit-sync", json=fixture, headers=hdrs)
+            r2 = client.post("/cron/healthkit-sync", json=fixture, headers=hdrs)
 
         assert r1.status_code == 200
         assert r2.status_code == 200
@@ -425,9 +428,10 @@ class TestCronHealthkitSync:
             f"got {mock_store.upsert.call_count})"
         )
 
-    def test_logs_cron_run_ok_true_on_success(self, monkeypatch):
+    def test_logs_cron_run_ok_true_on_success(self, monkeypatch, _ws_module):
         """Clean success path → _log_cron_run('healthkit-sync', ok=True) fires."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
         calls: list[dict] = []
@@ -439,19 +443,20 @@ class TestCronHealthkitSync:
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
-
-            with patch("memory.firestore_db.MealStore", mock_store_cls):
+        original_log = ws._log_cron_run
+        ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
+        try:
+            with patch.dict(os.environ, env), patch(
+                "memory.firestore_db.MealStore", mock_store_cls
+            ):
                 client = TestClient(ws.app)
                 resp = client.post(
                     "/cron/healthkit-sync",
                     json=fixture,
                     headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
                 )
+        finally:
+            ws._log_cron_run = original_log  # type: ignore[attr-defined]
 
         assert resp.status_code == 200
         relevant = [c for c in calls if c["job_id"] == "healthkit-sync"]
@@ -462,10 +467,11 @@ class TestCronHealthkitSync:
             f"Expected ok=True on success, got {relevant}"
         )
 
-    def test_logs_cron_run_ok_false_on_exception(self, monkeypatch):
+    def test_logs_cron_run_ok_false_on_exception(self, monkeypatch, _ws_module):
         """If ingest_payload raises, _log_cron_run('healthkit-sync', ok=False) fires
         AND the exception propagates as a 500 to the client."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
         calls: list[dict] = []
@@ -473,22 +479,23 @@ class TestCronHealthkitSync:
         def _fake_log(job_id: str, ok: bool, **kwargs) -> None:
             calls.append({"job_id": job_id, "ok": ok, "kwargs": kwargs})
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
-
+        original_log = ws._log_cron_run
+        ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
+        try:
             # Patch the ingest_payload function on the healthkit_tool module
             # so the handler hits an exception mid-flow.
             import mcp_tools.healthkit_tool as _hk  # noqa: PLC0415
-            with patch.object(_hk, "ingest_payload", side_effect=RuntimeError("kaboom")):
+            with patch.dict(os.environ, env), patch.object(
+                _hk, "ingest_payload", side_effect=RuntimeError("kaboom")
+            ):
                 client = TestClient(ws.app, raise_server_exceptions=False)
                 resp = client.post(
                     "/cron/healthkit-sync",
                     json=fixture,
                     headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
                 )
+        finally:
+            ws._log_cron_run = original_log  # type: ignore[attr-defined]
 
         assert resp.status_code == 500, (
             f"RuntimeError in ingest_payload must surface as 500; got {resp.status_code}"
@@ -501,48 +508,49 @@ class TestCronHealthkitSync:
             f"Expected ok=False on exception, got {relevant}"
         )
 
-    def test_cron_dev_bypass_skips_auth(self, monkeypatch):
+    def test_cron_dev_bypass_skips_auth(self, monkeypatch, _ws_module):
         """CRON_DEV_BYPASS=true short-circuits the auth check entirely."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env(bypass=True, token=None)
 
         mock_store = MagicMock(name="MealStore-instance")
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            with patch("memory.firestore_db.MealStore", mock_store_cls):
-                client = TestClient(ws.app)
-                # NO Authorization header on purpose
-                resp = client.post("/cron/healthkit-sync", json={"samples": []})
+        with patch.dict(os.environ, env), patch(
+            "memory.firestore_db.MealStore", mock_store_cls
+        ):
+            client = TestClient(ws.app)
+            # NO Authorization header on purpose
+            resp = client.post("/cron/healthkit-sync", json={"samples": []})
 
         assert resp.status_code == 200, (
             f"CRON_DEV_BYPASS=true must skip auth; got {resp.status_code}: {resp.text}"
         )
         assert resp.json() == {"upserted": 0}
 
-    def test_handler_does_not_touch_application(self, monkeypatch):
+    def test_handler_does_not_touch_application(self, monkeypatch, _ws_module):
         """The handler is upsert-only (D-10) — it must NOT 500 when _application
         is None (no orchestrator / Telegram dependency)."""
-        stubs = _stub_web_server_imports()
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env(bypass=True, token=None)
 
         mock_store = MagicMock(name="MealStore-instance")
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-            import interfaces.web_server as ws  # noqa: PLC0415
-            from fastapi.testclient import TestClient  # noqa: PLC0415
-
-            ws._application = None  # type: ignore[attr-defined]
-
-            with patch("memory.firestore_db.MealStore", mock_store_cls):
+        original_app = ws._application
+        ws._application = None  # type: ignore[attr-defined]
+        try:
+            with patch.dict(os.environ, env), patch(
+                "memory.firestore_db.MealStore", mock_store_cls
+            ):
                 client = TestClient(ws.app)
                 resp = client.post("/cron/healthkit-sync", json={"samples": []})
+        finally:
+            ws._application = original_app  # type: ignore[attr-defined]
 
         assert resp.status_code == 200, (
             f"Handler must not depend on _application; got {resp.status_code}: {resp.text}"
