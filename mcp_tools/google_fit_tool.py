@@ -14,6 +14,10 @@ Re-syncs from Lifesum land on the same Firestore doc, so duplicate writes
 collapse to a single document (Pitfall 2 mitigation).
 
 PHASE 19 Plan 03 — NUTR-01.
+
+Legacy Android-source path retained for portability. iOS clients use the
+HealthKit bridge — see ``mcp_tools/healthkit_tool.py``. MealStore stays
+multi-source aware. (Phase 19.1 — D-16.)
 """
 from __future__ import annotations
 

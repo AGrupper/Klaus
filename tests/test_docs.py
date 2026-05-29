@@ -94,3 +94,27 @@ class TestPhase19SelfManifest:
             "fetch_recent_meals",
         ):
             assert tool in content, f"docs/SELF.md missing tool: {tool}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 19.1 HEALTHKIT-07 / D-21 — SELF.md push-endpoints section
+# Phase 19.1 D-16 — google_fit legacy-marker docstring
+# ---------------------------------------------------------------------------
+
+
+def test_self_md_lists_healthkit_push_endpoint():
+    """HEALTHKIT-07 / D-21 — SELF.md must surface the push endpoint so the brain
+    truthfully answers 'how do my meals reach me?' without spelunking source."""
+    with open(SELF_MD_PATH, encoding="utf-8") as f:
+        content = f.read()
+    assert "## Push endpoints" in content
+    assert "/cron/healthkit-sync" in content
+    assert "iPhone Shortcut" in content
+    assert "shared-secret bearer" in content
+
+
+def test_google_fit_tool_marked_legacy():
+    """D-16 — preserved Android-source path must surface as legacy in the docstring."""
+    from mcp_tools import google_fit_tool
+    assert "Legacy" in (google_fit_tool.__doc__ or "")
+    assert "mcp_tools/healthkit_tool.py" in (google_fit_tool.__doc__ or "")

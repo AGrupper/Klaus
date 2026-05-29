@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-05-28T07:00:18Z
+generated_at: 2026-05-29T11:02:59Z
 sha: 4ebe4e3d75704c4870d86a496bb431adb2b28fdb
 ---
 
@@ -74,6 +74,12 @@ Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving 
 | Daily reflection | `0 22 * * *` (22:00 IDT) | `/cron/reflect` |
 
 <!-- TODO Phase 18: /cron/autonomous-tick -->
+
+## Push endpoints
+
+| Endpoint | Driver | Auth | Purpose |
+|----------|--------|------|---------|
+| `/cron/healthkit-sync` | iPhone Shortcut | shared-secret bearer | Lifesum nutrition bridge |
 
 ## Outbound Channels
 
