@@ -7,6 +7,16 @@ Pydantic model diverges from what the device actually sends — breaks loudly.
 Pattern lineage: mirrors tests/test_evals.py:23-60 (Pitfall-6 schema lock from
 Phase 18-04). The fixture itself was captured from a real iOS Shortcut POST to
 webhook.site on 2026-05-29; do NOT replace it with a hand-written one.
+
+PATH B (live UAT revision 2026-05-30): the wire format was redesigned during
+live UAT — the original "bundled samples_by_type" contract could not be
+populated correctly from iOS Shortcuts because Lifesum writes one HKQuantitySample
+per macro per food item and HKCorrelation parent IDs are unreachable from the
+Shortcuts `Find Health Samples` action. The new contract is FLAT: one HK sample
+per row, with `quantity_type` + `value` keys. The server groups by
+(start_date, food_item) and sums same-quantity-type duplicates to reconstruct
+per-meal records. The 2026-05-29 20:00 fixture below is a real operator meal
+(324 kcal / 5.4g protein / 43.2g carbs / 14.4g fat / 2.4g fiber).
 """
 from __future__ import annotations
 
@@ -16,7 +26,7 @@ import pytest
 
 _FIXTURE_PATH = "tests/fixtures/healthkit_payload_sample.json"
 _REQUIRED_TOP_KEYS = {"samples"}
-_REQUIRED_SAMPLE_KEYS = {"uuid", "start_date", "samples_by_type"}
+_REQUIRED_SAMPLE_KEYS = {"uuid", "start_date", "quantity_type", "value"}
 
 
 def _load() -> dict:
