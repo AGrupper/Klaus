@@ -1,10 +1,12 @@
 """HealthKit Nutrition tool — Lifesum-on-iOS-sourced meal sync.
 
-Pipeline:
+Pipeline (Path B, live-UAT revised 2026-05-30):
     Lifesum (iOS) → Apple HealthKit → iOS Shortcut (Personal Automation
     on Lifesum close) → POST /cron/healthkit-sync → HealthKitPayload
-    Pydantic parse → _normalize_healthkit_sample() → MealStore.upsert()
-    (idempotent on source_id).
+    Pydantic parse (FLAT per-quantity samples) →
+    _aggregate_quantity_samples() group-by (start_date, food_item) +
+    sum same-quantity-type duplicates → _normalize_healthkit_sample() →
+    MealStore.upsert() (idempotent on source_id).
 
 The source_id `healthkit:{HKObject.UUID}` is the integrity anchor.
 Re-syncs (e.g. the 23:55 24h catch-up automation) collapse to the same
@@ -16,12 +18,21 @@ returns the source-app NAME ("Lifesum") rather than the HKObject UUID. When
 to a deterministic synthetic key ``healthkit:{start_date_iso}:{calories_int}``
 so every distinct meal still gets a unique source_id.
 
+Path B (live UAT, 2026-05-30) found that Lifesum writes ONE HKQuantitySample
+per macro PER FOOD ITEM (a meal with 3 foods = 3 Energy + 3 Protein + 3
+Carbs + 3 Fat + 3 Fiber samples). iOS Shortcuts cannot read the
+HKCorrelation parent UUID via the `Find Health Samples` action, so the
+bundling into per-meal records MUST happen server-side. The wire format is
+therefore FLAT — one ``HealthKitQuantitySample`` per row — and
+``_aggregate_quantity_samples`` groups by ``(start_date.isoformat(), food_item)``
+and sums same-quantity-type values within each group.
+
 Output dict shape is the SAME 9 keys as mcp_tools.google_fit_tool._normalize_point
 (source_id, timestamp, meal_type, calories, protein_g, carbs_g, fat_g,
 food_item, source) with ``meal_type`` as **int 1..4** (parity with google_fit's
 int enum; see RESEARCH.md Q8).
 
-PHASE 19.1 — HEALTHKIT-01, HEALTHKIT-02, HEALTHKIT-03.
+PHASE 19.1 — HEALTHKIT-01, HEALTHKIT-02, HEALTHKIT-03 (and Plan 05 Path B).
 """
 from __future__ import annotations
 
@@ -56,27 +67,41 @@ _GMT_OFFSET_RE = re.compile(r"GMT([+-])(\d{1,2})(?::?(\d{2}))?$")
 class HealthKitUnavailableError(Exception):
     """Raised when the operator-side bridge is broken.
 
-    Per-sample errors inside ingest_payload are logged + skipped (Pattern C)
-    so one malformed sample does not drop the batch — this exception is for
+    Per-meal errors inside ingest_payload are logged + skipped (Pattern C)
+    so one malformed meal does not drop the batch — this exception is for
     "no bridge at all" failure modes (heartbeat staleness catches via
     _CRON_MAX_STALENESS_HOURS['healthkit-sync'] = 48 in Plan 04).
     """
 
 
 # ------------------------------------------------------------------ #
-# Pydantic models                                                    #
+# Pydantic models — FLAT wire format (Path B)                        #
 # ------------------------------------------------------------------ #
 
-class HealthKitSample(BaseModel):
-    """One HealthKit dietary sample, as emitted by the iOS Shortcut.
+class HealthKitQuantitySample(BaseModel):
+    """Single HKQuantitySample as emitted by an iOS Shortcut.
 
-    Field shape locked by tests/fixtures/healthkit_payload_sample.json (Plan 01).
+    Lifesum writes one of these per (food_item × macro_type). Server groups
+    by (start_date, food_item) to reconstruct per-meal records — see
+    :func:`_aggregate_quantity_samples`.
+
+    Wire-format example (one of ~5 rows per meal)::
+
+        {
+            "uuid": "Lifesum",
+            "start_date": "2026-05-29T20:00:00GMT+3",
+            "quantity_type": "DietaryEnergyConsumed_kcal",
+            "value": 324.0,
+            "metadata": {},
+            "food_item": null
+        }
     """
 
     uuid: str
     start_date: datetime
-    samples_by_type: dict[str, float]
-    metadata: dict[str, Any] = {}
+    quantity_type: str
+    value: float
+    metadata: dict[str, Any] = Field(default_factory=dict)
     food_item: str | None = None
 
     @field_validator("start_date", mode="before")
@@ -99,32 +124,83 @@ class HealthKitSample(BaseModel):
         offset = f"{sign}{hours:02d}:{mins_int:02d}"
         return _GMT_OFFSET_RE.sub(offset, v)
 
-    @field_validator("samples_by_type", mode="before")
+    @field_validator("value", mode="before")
     @classmethod
-    def _coerce_stringy_numerics(cls, v: Any) -> dict:
+    def _coerce_stringy_numeric(cls, v: Any) -> Any:
         """iOS Shortcuts often emits numeric Health-sample values as strings
-        (RESEARCH.md Q1). Walk the dict and float()-coerce; non-coercible
-        entries are dropped with a warning so one bad nutrient doesn't drop
-        the whole sample."""
-        if not isinstance(v, dict):
-            return v
-        out: dict[str, float] = {}
-        for k, val in v.items():
-            try:
-                out[k] = float(val)
-            except (TypeError, ValueError):
-                logger.warning(
-                    "HealthKit: dropping non-numeric value %r at key %r", val, k
-                )
-        return out
+        (RESEARCH.md Q1). Float-coerce string inputs; raises ValueError via
+        Pydantic if the string is not parseable.
+
+        Unlike the legacy bundled samples_by_type validator (which silently
+        dropped non-coercible entries), Path B's one-sample-per-row shape
+        means a garbage value can be properly reported per-row — the
+        per-meal try/except in ingest_payload still keeps a bad row from
+        dropping the entire batch.
+        """
+        if isinstance(v, str):
+            return float(v)
+        return v
 
 
 class HealthKitPayload(BaseModel):
-    """Top-level wire format from POST /cron/healthkit-sync."""
+    """Top-level wire format from POST /cron/healthkit-sync.
 
-    # DoS guard per RESEARCH.md threat model — 200 is well above a real day's
-    # meal count (~3-8 entries) but cheap to validate.
-    samples: list[HealthKitSample] = Field(max_length=200)
+    Path B: a flat list of per-quantity samples. The 1000-cap accommodates
+    fan-out from multi-item meals (5 macros × N food items × ~5-8 meals/day).
+    """
+
+    # DoS guard per RESEARCH.md threat model — 1000 covers ~ 1 day's full
+    # fan-out (e.g. 8 meals × 5 macros × 5 food items = 200, with headroom)
+    # while staying cheap to validate.
+    samples: list[HealthKitQuantitySample] = Field(max_length=1000)
+
+
+# ------------------------------------------------------------------ #
+# Server-side aggregator (Path B)                                    #
+# ------------------------------------------------------------------ #
+
+def _aggregate_quantity_samples(
+    samples: list[HealthKitQuantitySample],
+) -> list[dict]:
+    """Group flat per-quantity samples by (start_date, food_item) into per-meal dicts.
+
+    Multiple samples at the same (start_date, food_item) for the same
+    ``quantity_type`` are **summed** — handles Lifesum's per-food-item fan-out
+    (a meal with 3 chicken pieces may write 3 protein samples at the same
+    timestamp under the same food label).
+
+    Returns a list of dicts in the legacy bundled shape
+    ``{uuid, start_date, samples_by_type, metadata, food_item}``, ready to be
+    consumed by :func:`_normalize_healthkit_sample`. The aggregator output is
+    a plain dict (not a Pydantic instance) — the values have already been
+    validated by the ``HealthKitQuantitySample`` model on parse, and the
+    normalizer just reads dict keys, so the extra Pydantic round-trip would
+    cost CPU without buying any safety.
+
+    Grouping key is the ISO string form of ``start_date`` so that the
+    aware/naive distinction never silently splits a meal across two groups.
+    """
+    groups: dict[tuple[str, str | None], dict] = {}
+    for s in samples:
+        key = (s.start_date.isoformat(), s.food_item)
+        g = groups.get(key)
+        if g is None:
+            g = {
+                "uuid": s.uuid,
+                "start_date": s.start_date,
+                "samples_by_type": {},
+                "metadata": dict(s.metadata),
+                "food_item": s.food_item,
+            }
+            groups[key] = g
+        # Sum same-quantity-type values within the group (Lifesum fan-out).
+        g["samples_by_type"][s.quantity_type] = (
+            g["samples_by_type"].get(s.quantity_type, 0.0) + float(s.value)
+        )
+        # Merge metadata (later samples win on key collision — Lifesum
+        # typically writes identical metadata across the fan-out).
+        g["metadata"].update(s.metadata)
+    return list(groups.values())
 
 
 # ------------------------------------------------------------------ #
@@ -148,7 +224,7 @@ def _hour_bucket(hour: int) -> int:
     return 4
 
 
-def _infer_meal_type(sample: HealthKitSample) -> int:
+def _infer_meal_type(meal: dict) -> int:
     """HKMetadataKeyMealTime override if present and parseable; else hour bucket.
 
     Per RESEARCH.md Q2, HKMetadataKeyMealTime is NOT a documented Apple
@@ -160,8 +236,12 @@ def _infer_meal_type(sample: HealthKitSample) -> int:
     - int 1..4 used as-is
     - string variants ('Breakfast'/'breakfast' etc.) mapped to int 1..4
     - anything else → hour-bucket fallback
+
+    Args:
+        meal: A per-meal dict in the aggregator's output shape
+              (``{uuid, start_date, samples_by_type, metadata, food_item}``).
     """
-    raw = sample.metadata.get(_META_MEAL_TIME_KEY)
+    raw = meal.get("metadata", {}).get(_META_MEAL_TIME_KEY)
     if isinstance(raw, int) and 1 <= raw <= 4:
         return raw
     if isinstance(raw, str):
@@ -169,17 +249,17 @@ def _infer_meal_type(sample: HealthKitSample) -> int:
         mapped = mapping.get(raw.strip().lower())
         if mapped is not None:
             return mapped
-    return _hour_bucket(sample.start_date.astimezone(_TZ).hour)
+    return _hour_bucket(meal["start_date"].astimezone(_TZ).hour)
 
 
 # ------------------------------------------------------------------ #
 # source_id (Wave 0 Lifesum fallback)                                #
 # ------------------------------------------------------------------ #
 
-def _compute_source_id(sample: HealthKitSample) -> str:
-    """Build the idempotency-anchor source_id for a HealthKit sample.
+def _compute_source_id(meal: dict) -> str:
+    """Build the idempotency-anchor source_id for a per-meal dict.
 
-    Primary path: ``f"healthkit:{sample.uuid}"`` (HEALTHKIT-03, D-12).
+    Primary path: ``f"healthkit:{meal['uuid']}"`` (HEALTHKIT-03, D-12).
 
     Wave 0 fallback: when ``uuid`` is empty OR is one of the known
     source-app NAMES that the iOS Shortcut emits in place of the real
@@ -188,12 +268,12 @@ def _compute_source_id(sample: HealthKitSample) -> str:
     still gets a distinct, repeatable source_id (re-syncs collapse to
     the same doc via MealStore's merge=True).
     """
-    uuid = (sample.uuid or "").strip()
+    uuid = (meal.get("uuid") or "").strip()
     if uuid and uuid not in _KNOWN_SOURCE_NAMES:
-        return f"healthkit:{sample.uuid}"
+        return f"healthkit:{meal['uuid']}"
     # Fallback: synthesize from start_date + calories. Both are stable per-meal.
-    start_iso = sample.start_date.isoformat()
-    calories = int(sample.samples_by_type.get("DietaryEnergyConsumed_kcal", 0))
+    start_iso = meal["start_date"].isoformat()
+    calories = int(meal["samples_by_type"].get("DietaryEnergyConsumed_kcal", 0))
     return f"healthkit:{start_iso}:{calories}"
 
 
@@ -201,8 +281,8 @@ def _compute_source_id(sample: HealthKitSample) -> str:
 # Normalizer                                                         #
 # ------------------------------------------------------------------ #
 
-def _normalize_healthkit_sample(sample: HealthKitSample) -> dict:
-    """Convert a HealthKitSample into Klaus's canonical meal dict.
+def _normalize_healthkit_sample(meal: dict) -> dict:
+    """Convert an aggregated per-meal dict into Klaus's canonical meal shape.
 
     Returns the SAME 9 keys as mcp_tools.google_fit_tool._normalize_point:
     source_id, timestamp, meal_type, calories, protein_g, carbs_g, fat_g,
@@ -210,16 +290,21 @@ def _normalize_healthkit_sample(sample: HealthKitSample) -> dict:
 
     Unknown ``samples_by_type`` keys (e.g. Wave 0's DietaryFiber_g) are
     silently ignored — only the four canonical macros are surfaced.
+
+    Args:
+        meal: A per-meal dict in the aggregator's output shape — see
+              :func:`_aggregate_quantity_samples`.
     """
+    sbt = meal["samples_by_type"]
     return {
-        "source_id": _compute_source_id(sample),
-        "timestamp": sample.start_date.isoformat(),
-        "meal_type": _infer_meal_type(sample),
-        "calories": sample.samples_by_type.get("DietaryEnergyConsumed_kcal", 0),
-        "protein_g": sample.samples_by_type.get("DietaryProtein_g", 0),
-        "carbs_g": sample.samples_by_type.get("DietaryCarbohydrates_g", 0),
-        "fat_g": sample.samples_by_type.get("DietaryFatTotal_g", 0),
-        "food_item": sample.food_item,
+        "source_id": _compute_source_id(meal),
+        "timestamp": meal["start_date"].isoformat(),
+        "meal_type": _infer_meal_type(meal),
+        "calories": sbt.get("DietaryEnergyConsumed_kcal", 0),
+        "protein_g": sbt.get("DietaryProtein_g", 0),
+        "carbs_g": sbt.get("DietaryCarbohydrates_g", 0),
+        "fat_g": sbt.get("DietaryFatTotal_g", 0),
+        "food_item": meal.get("food_item"),
         "source": "healthkit",
     }
 
@@ -229,11 +314,12 @@ def _normalize_healthkit_sample(sample: HealthKitSample) -> dict:
 # ------------------------------------------------------------------ #
 
 def ingest_payload(payload_dict: dict, store) -> dict:
-    """Validate payload, normalize each sample, upsert idempotently.
+    """Validate payload, aggregate flat samples, normalize each meal, upsert.
 
-    Returns ``{"upserted_count": N, "errored_count": M}``. Per-sample try/except
-    means one malformed sample does NOT drop the rest of the batch (Pattern C
-    from Phase 19-04 gather_situation).
+    Returns ``{"upserted_count": N, "errored_count": M}`` where N + M ≤ number
+    of distinct (start_date, food_item) groups in the input — NOT the raw
+    input sample count. Per-meal try/except means one malformed meal does NOT
+    drop the rest of the batch (Pattern C from Phase 19-04 gather_situation).
 
     Args:
         payload_dict: Raw JSON dict from the /cron/healthkit-sync POST body.
@@ -245,20 +331,23 @@ def ingest_payload(payload_dict: dict, store) -> dict:
             HealthKitPayload (the webhook route translates this into 422).
     """
     payload = HealthKitPayload.model_validate(payload_dict)
+    meals = _aggregate_quantity_samples(payload.samples)
     upserted = 0
     errored = 0
-    for sample in payload.samples:
+    for meal in meals:
         try:
-            meal = _normalize_healthkit_sample(sample)
-            store.upsert(source_id=meal["source_id"], meal=meal)
+            normalized = _normalize_healthkit_sample(meal)
+            store.upsert(source_id=normalized["source_id"], meal=normalized)
             upserted += 1
         except Exception:
             logger.warning(
-                "healthkit ingest_payload: sample %s failed; continuing",
-                sample.uuid, exc_info=True,
+                "healthkit ingest_payload: meal at %s (food=%r) failed; continuing",
+                meal.get("start_date"), meal.get("food_item"),
+                exc_info=True,
             )
             errored += 1
     logger.info(
-        "healthkit_sync.upserted count=%d errored=%d", upserted, errored
+        "healthkit_sync.upserted count=%d errored=%d samples_in=%d meals_out=%d",
+        upserted, errored, len(payload.samples), len(meals),
     )
     return {"upserted_count": upserted, "errored_count": errored}
