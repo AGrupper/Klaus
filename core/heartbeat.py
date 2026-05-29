@@ -114,6 +114,7 @@ _CRON_MAX_STALENESS_HOURS = {
     "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
     "five-fingers-morning": 50,   # Runs Sun/Mon/Wed/Thu; longest gap Thu→Sun = ~62h, 50h catches missed single runs
     "five-fingers-evening": 100,  # Runs Sun/Wed only; longest gap Wed→Sun = ~4 days, 100h is safe
+    "healthkit-sync": 48,         # Phase 19.1 — D-18; 48h tolerance for iPhone Shortcut push bridge
 }
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 
