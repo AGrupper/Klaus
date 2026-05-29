@@ -136,3 +136,46 @@ def test_deployment_md_section_23_healthkit_secret():
     assert "klaus-healthkit-webhook-token" in content
     assert "secrets.token_urlsafe(32)" in content
     assert "gcloud secrets versions disable" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 19.1 HEALTHKIT-08 / D-23 — operator iOS Shortcut runbook
+# ---------------------------------------------------------------------------
+
+HEALTHKIT_RUNBOOK_PATH = os.path.join(
+    os.path.dirname(__file__), os.pardir, "docs", "healthkit_shortcut.md"
+)
+
+
+def test_healthkit_shortcut_runbook_complete():
+    """HEALTHKIT-08 / D-23 — operator runbook has all 8 required sections + key security guidance."""
+    with open(HEALTHKIT_RUNBOOK_PATH, encoding="utf-8") as f:
+        content = f.read()
+    # All 8 section headings present
+    for heading in [
+        "## 1. Overview",
+        "## 2. Required HealthKit permissions",
+        "## 3. Build: Lifesum-close 2h automation",
+        "## 4. Build: 23:55 24h catch-up automation",
+        "## 5. iCloud Shortcut share link",
+        "## 6. Security Considerations",
+        "## 7. Testing",
+        "## 8. Troubleshooting",
+    ]:
+        assert heading in content, f"missing runbook section: {heading!r}"
+    # Key build instructions
+    for marker in [
+        "Find Health Samples",
+        "Personal Automation",
+        "Authorization",
+        "Bearer",
+    ]:
+        assert marker in content, f"runbook missing build marker: {marker!r}"
+    # Security guidance — token NOT in URL
+    assert (
+        "Authorization header ONLY" in content
+        or "NEVER in URL" in content
+    ), "runbook must explicitly tell operator NOT to put token in URL query"
+    # Cross-references to other docs
+    assert "DEPLOYMENT.md" in content
+    assert "klaus-healthkit-webhook-token" in content
