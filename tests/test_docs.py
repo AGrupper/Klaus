@@ -118,3 +118,21 @@ def test_google_fit_tool_marked_legacy():
     from mcp_tools import google_fit_tool
     assert "Legacy" in (google_fit_tool.__doc__ or "")
     assert "mcp_tools/healthkit_tool.py" in (google_fit_tool.__doc__ or "")
+
+
+def test_deployment_md_section_22_push_endpoints():
+    """RESEARCH.md Q10 — DEPLOYMENT.md ends at §21; this phase adds §22 + §23 (NOT §23 + §24)."""
+    with open(DEPLOYMENT_PATH, encoding="utf-8") as f:
+        content = f.read()
+    assert "## 22. Push-driven endpoints" in content
+    assert "/cron/healthkit-sync" in content
+
+
+def test_deployment_md_section_23_healthkit_secret():
+    """HEALTHKIT-08 part 1 — secret rotation runbook present."""
+    with open(DEPLOYMENT_PATH, encoding="utf-8") as f:
+        content = f.read()
+    assert "## 23. HEALTHKIT_WEBHOOK_TOKEN Secret" in content
+    assert "klaus-healthkit-webhook-token" in content
+    assert "secrets.token_urlsafe(32)" in content
+    assert "gcloud secrets versions disable" in content
