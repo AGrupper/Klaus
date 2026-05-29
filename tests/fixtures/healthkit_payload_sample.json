@@ -1,14 +1,14 @@
 {
   "samples": [
     {
-      "uuid": "",
-      "start_date": "2026-05-29T13:00:00GMT+3",
+      "uuid": "Lifesum",
+      "start_date": "2026-05-29T07:30:00GMT+3",
       "samples_by_type": {
-        "DietaryEnergyConsumed_kcal": 0,
-        "DietaryProtein_g": 0,
-        "DietaryCarbohydrates_g": 0,
-        "DietaryFatTotal_g": 0,
-        "DietaryFiber_g": 0
+        "DietaryEnergyConsumed_kcal": 1038,
+        "DietaryProtein_g": 70,
+        "DietaryCarbohydrates_g": 109,
+        "DietaryFatTotal_g": 38,
+        "DietaryFiber_g": 5.6
       }
     }
   ]
