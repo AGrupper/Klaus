@@ -60,29 +60,36 @@ def _parse_args() -> argparse.Namespace:
 def _build_synthetic_payload(count: int) -> tuple[dict, int]:
     """Synthetic payload matching mcp_tools.healthkit_tool.HealthKitPayload.
 
-    The source_id prefix `healthkit:test-{ts_marker}-` makes the resulting
-    Firestore docs trivially identifiable for cleanup (D-20).
+    Path B (live UAT 2026-05-30): the wire format is FLAT — one
+    HKQuantitySample per row. Each synthetic "meal" emits 4 flat samples
+    (Energy / Protein / Carbs / Fat) tagged with a distinct ``food_item``
+    so the server-side aggregator buckets them into ``count`` distinct
+    per-meal Firestore docs.
+
+    The ``uuid`` prefix ``test-{ts_marker}-`` flows through to the
+    fallback ``source_id`` (uuid is NOT in _KNOWN_SOURCE_NAMES) so the
+    resulting Firestore docs are trivially identifiable for cleanup
+    via the source_id prefix ``healthkit:test-{ts_marker}-`` (D-20).
     """
     now = datetime.now(ZoneInfo("Asia/Jerusalem"))
     ts_marker = int(time.time())
-    payload = {
-        "samples": [
-            {
+    samples = []
+    for i in range(count):
+        for qtype, value in (
+            ("DietaryEnergyConsumed_kcal", 500.0 + i * 10),
+            ("DietaryProtein_g", 30.0),
+            ("DietaryCarbohydrates_g", 60.0),
+            ("DietaryFatTotal_g", 18.0),
+        ):
+            samples.append({
                 "uuid": f"test-{ts_marker}-{i}",
                 "start_date": now.isoformat(),
-                "samples_by_type": {
-                    "DietaryEnergyConsumed_kcal": 500.0 + i * 10,
-                    "DietaryProtein_g": 30.0,
-                    "DietaryCarbohydrates_g": 60.0,
-                    "DietaryFatTotal_g": 18.0,
-                },
+                "quantity_type": qtype,
+                "value": value,
                 "metadata": {},
                 "food_item": f"smoke-test-meal-{i}",
-            }
-            for i in range(count)
-        ]
-    }
-    return payload, ts_marker
+            })
+    return {"samples": samples}, ts_marker
 
 
 def _post(url: str, token: str, payload: dict) -> tuple[int, dict]:

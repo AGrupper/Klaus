@@ -19,24 +19,51 @@ Klaus's deployed `/cron/healthkit-sync` webhook.
 Bridge architecture: see `docs/SELF.md` § Push endpoints.
 Secret rotation: see `docs/DEPLOYMENT.md` § 23.
 
-**Wave 0 reminders (informs the build steps below):**
+**Wire format — Path B (live UAT revision, 2026-05-30):**
 
-- Lifesum writes **individual HKQuantitySample records** (Energy / Protein /
-  Carbs / Fat / Fiber) — NOT a single Food correlation. Each macro is its own
-  sample. The Shortcut must run **one `Find Health Samples` per macro type**
-  and then **join the parallel streams by start_date** inside a
-  `Repeat with Each` loop to build per-meal records.
+The wire format is a FLAT list of per-quantity samples. One row per
+HKQuantitySample. The server groups by `(start_date, food_item)` and
+sums same-quantity-type duplicates to reconstruct per-meal records.
+
+```json
+{
+  "samples": [
+    {"uuid": "Lifesum", "start_date": "2026-05-29T20:00:00GMT+3", "quantity_type": "DietaryEnergyConsumed_kcal", "value": 324.0, "food_item": null},
+    {"uuid": "Lifesum", "start_date": "2026-05-29T20:00:00GMT+3", "quantity_type": "DietaryProtein_g", "value": 5.4, "food_item": null},
+    {"uuid": "Lifesum", "start_date": "2026-05-29T20:00:00GMT+3", "quantity_type": "DietaryCarbohydrates_g", "value": 43.2, "food_item": null},
+    {"uuid": "Lifesum", "start_date": "2026-05-29T20:00:00GMT+3", "quantity_type": "DietaryFatTotal_g", "value": 14.4, "food_item": null},
+    {"uuid": "Lifesum", "start_date": "2026-05-29T20:00:00GMT+3", "quantity_type": "DietaryFiber_g", "value": 2.4, "food_item": null}
+  ]
+}
+```
+
+Required keys per row: `uuid`, `start_date`, `quantity_type`, `value`.
+Optional: `metadata` (dict), `food_item` (string or null).
+
+Why flat (and not bundled samples_by_type)? Lifesum writes ONE
+HKQuantitySample per macro per food item, and HKCorrelation parent IDs
+are not exposed through the iOS Shortcuts `Find Health Samples` action.
+The original bundled contract therefore could not be populated correctly
+from a Shortcut; live UAT confirmed this on 2026-05-30. Server-side
+aggregation is the only path that works end-to-end.
+
+**Field / behaviour reminders (carry over from Wave 0):**
+
 - `Get Details of Health Sample → Source` returns the literal source-app
   name string (e.g. `"Lifesum"`), **not** an HKObject UUID. Klaus's
-  normalizer (Plan 02) handles this — when `uuid` is `"Lifesum"` /
-  `"Apple Health"` / `"Health"` / empty, it falls back to a deterministic
-  `healthkit:{start_date_iso}:{calories_int}` source_id. So you can pass
-  Source as the `uuid` field and dedup still works.
+  normalizer handles this — when `uuid` is `"Lifesum"` / `"Apple Health"` /
+  `"Health"` / empty, it falls back to a deterministic
+  `healthkit:{start_date_iso}:{calories_int}` source_id. So passing Source
+  as the `uuid` field is fine and dedup still works.
 - `Find Health Samples` **Limit must be left OFF** when iterating. Wave 0
   capture with `Limit: 1` hit a phantom zero-quantity sample at run time.
 - Date format from iOS comes through with a `GMT+3` suffix (non-strict
-  ISO-8601). Plan 02's Pydantic `@field_validator("start_date", mode="before")`
+  ISO-8601). The Pydantic `@field_validator("start_date", mode="before")`
   rewrites `GMT+N` → `+0N:00` before parsing, so this is OK.
+- Same-`start_date` + same-`food_item` + same-`quantity_type` rows are
+  summed by the server. A meal with 3 chicken pieces all tagged the same
+  way will see 3 protein samples sum into one per-meal total — desired
+  behaviour.
 
 ## 2. Required HealthKit permissions
 
@@ -53,38 +80,39 @@ Grant READ access for:
 No WRITE access is needed. No HRV / sleep / workout permissions are needed
 in this phase (those stay on Garmin per Phase 19 contract).
 
-## 3. Build: Lifesum-close 2h automation
+## 3. Build: Lifesum-close 2h automation (Path B placeholder)
 
-iOS Shortcuts → Automation → Personal Automation → "+" → App → Lifesum → "Is Closed" → Next.
+> **PATH B REDESIGN PENDING** — the step-by-step build below is the OLD
+> bundled-samples_by_type design (which proved unbuildable in iOS Shortcuts:
+> there is no action to bundle parallel macro streams back into a single
+> per-meal dict without HKCorrelation parent IDs, and those IDs are not
+> exposed). A simpler Path-B Shortcut design follows naturally from the
+> new flat wire format documented in §1 — it is a "dumb flat pipe":
+>
+> **High-level Path-B Shortcut design (operator to flesh out at next iteration):**
+>
+> 1. Five separate `Find Health Samples` actions, one per macro type:
+>    Dietary Energy / Protein / Carbohydrates / Fat Total / (optional) Fiber.
+>    Date filter: "Started in the last 2 Hours". Limit: OFF.
+> 2. For each result list, a `Repeat with Each` loop that emits one flat
+>    sample dictionary per iteration:
+>    `{uuid, start_date, quantity_type, value}` — with `quantity_type`
+>    hard-coded for that branch (e.g. `"DietaryEnergyConsumed_kcal"`).
+> 3. Concatenate all five lists into one top-level `samples` list.
+> 4. POST `{"samples": <list>}` to `/cron/healthkit-sync` with the standard
+>    `Authorization: Bearer <token>` header.
+> 5. The server's `_aggregate_quantity_samples` groups by
+>    `(start_date, food_item)` and reconstructs per-meal records — no
+>    client-side bundling required.
+>
+> No `Get Details → Source` UUID acrobatics, no parallel-stream joining,
+> no per-meal Dictionary assembly. The dumb flat pipe is what iOS
+> Shortcuts can actually produce; the server does the work.
 
-Toggle **Run Without Asking** on (default since iOS 15.4 for app triggers).
-Toggle **Notify When Run** OFF (silent operation; failures still surface via
-the explicit Show Notification step #9 below).
-
-Actions, in order:
-
-1. **Find Health Samples** — Type: Dietary Energy / Date: "Started in the last 2 Hours" / Sort: Start Date / Limit: **OFF** → save to Variable `Energy`.
-   *(If your iOS version only exposes "Last N Days", use "Today" or "Last 1 Day" and rely on Klaus's idempotent upsert on `source_id` to dedup older repeats.)*
-2. **Find Health Samples** — Type: Dietary Protein / same date filter / Limit OFF → `Protein`.
-3. **Find Health Samples** — Type: Dietary Carbohydrates / same date filter / Limit OFF → `Carbs`.
-4. **Find Health Samples** — Type: Dietary Fat Total / same date filter / Limit OFF → `Fat`.
-5. **Set Variable** `samples` to a new (empty) List action.
-6. **Repeat with Each** — iterate over `Energy` (the canonical anchor list — every Lifesum meal has an Energy sample). For each item:
-   - Use `Get Details of Health Sample` to extract the current Energy sample's `Start Date` → variable `EnergyStart`.
-   - Use `Get Details of Health Sample` to extract `Source` → variable `SourceName` (will be the literal string `"Lifesum"`; that's OK).
-   - Use `Get Details of Health Sample` to extract `Quantity` → variable `EnergyKcal`.
-   - (Join step) Use `Find Health Samples` filtered by Start Date == `EnergyStart` to pull the matching Protein / Carbs / Fat sample (one per macro). Get Details → Quantity for each → variables `ProteinG`, `CarbsG`, `FatG`. If no match (rare; macro stream out of sync), default that macro to 0 via an If action.
-   - Build a **Dictionary** with keys:
-     - `uuid` → `SourceName` (the literal `"Lifesum"` string is fine — normalizer falls back to a deterministic source_id).
-     - `start_date` → `EnergyStart` (ISO-ish format; `GMT+N` suffix is handled server-side).
-     - `samples_by_type` → a sub-Dictionary with keys `DietaryEnergyConsumed_kcal` (= `EnergyKcal`), `DietaryProtein_g` (= `ProteinG`), `DietaryCarbohydrates_g` (= `CarbsG`), `DietaryFatTotal_g` (= `FatG`).
-     - `metadata` → an empty Dictionary (Lifesum doesn't write `HKMetadataKeyMealTime`; Klaus's hour-bucket fallback covers this).
-     - (Optional) `food_item` → human-readable label if you have one; safe to omit.
-   - **Add to List** `samples` ← the Dictionary you just built.
-7. **End Repeat**.
-8. **Dictionary** — top-level wrapper `{"samples": <samples variable>}`.
-9. **Get Contents of URL** — Method: POST, URL: `https://klaus-agent-XXXX.run.app/cron/healthkit-sync` (your operator Cloud Run URL, lowercase per CLAUDE.md invariant), Headers: `Authorization: Bearer <paste-token-here>`, `Content-Type: application/json`, Request Body: the wrapper Dictionary from step 8.
-10. **If** (Status Code of response) ≠ 200 → **Show Notification** "Klaus meal push failed (status: <code>)" — D-05 notify-on-fail contract.
+The historical (deprecated) bundled-samples build steps used to live here.
+They are intentionally removed — do NOT attempt to follow them with the
+Path-B server. Operator will rebuild the Shortcut against the §1 contract
+in a follow-up commit; this runbook section is the placeholder pointer.
 
 ## 4. Build: 23:55 24h catch-up automation
 
@@ -92,11 +120,11 @@ iOS Shortcuts → Automation → Personal Automation → "+" → Time of Day →
 
 Toggle **Run Without Asking** on. Toggle **Notify When Run** OFF.
 
-Same action chain as the Lifesum-close automation (steps 1–10 from §3), but
-change every `Find Health Samples` date filter from "Started in the last
-2 Hours" to **"Started in the last 24 Hours"**. This rescues any meal that
-the 2h close-trigger missed (phone locked, app crashed, Shortcut suspended,
-push failed mid-flight, etc.).
+Same action chain as the Lifesum-close automation (Path-B placeholder
+in §3), but change every `Find Health Samples` date filter from
+"Started in the last 2 Hours" to **"Started in the last 24 Hours"**.
+This rescues any meal that the 2h close-trigger missed (phone locked,
+app crashed, Shortcut suspended, push failed mid-flight, etc.).
 
 The catch-up is fully idempotent on Klaus's side — re-pushed samples land on
 the same Firestore doc because MealStore.upsert is keyed on `source_id`
@@ -191,12 +219,13 @@ Then on the iPhone, the live UAT loop:
 |----------|--------------|-----|
 | 401 | Missing / malformed `Authorization` header | Re-check the iOS Shortcut's "Get Contents of URL" → Headers entry. Should read `Authorization: Bearer <token>` (single space after Bearer, no quotes around the token). |
 | 403 | Token mismatch — Shortcut header drifted from Secret Manager | Rotate per `docs/DEPLOYMENT.md` § 23 step 3 (add a new version, update Cloud Run with `:latest`); re-paste the new token into the Shortcut's Authorization header. |
-| 422 | Payload shape doesn't match `HealthKitPayload` (Plan 02) | Compare the Shortcut's emitted JSON body against `tests/fixtures/healthkit_payload_sample.json`. If the wire format drifted (e.g., iOS update changed `Get Details` keys), recapture the fixture via webhook.site, refresh `mcp_tools/healthkit_tool.py` if needed, and bump the fixture-locked schema test. |
+| 422 | Payload shape doesn't match `HealthKitPayload` (flat Path-B contract) | Each row must carry `uuid`, `start_date`, `quantity_type`, `value`. Compare against `tests/fixtures/healthkit_payload_sample.json`. If the wire format drifted (e.g., iOS update changed `Get Details` keys), recapture the fixture via webhook.site, refresh `mcp_tools/healthkit_tool.py` if needed, and bump the fixture-locked schema test. |
 | 500 "Server misconfigured" | `HEALTHKIT_WEBHOOK_TOKEN` env unset in Cloud Run | The secret binding was lost on a Cloud Run revision push. Verify with `gcloud run services describe klaus-agent --region=me-west1 --format="value(spec.template.spec.containers[0].env)"`; rebind per `docs/DEPLOYMENT.md` § 23 step 2. |
 | No notification, no Firestore doc | iOS automation didn't fire | Open iOS Shortcuts → Automation → check that "Run Without Asking" is ON. Re-toggle if needed (iOS occasionally drops the flag on app updates). Also verify the trigger is "Is Closed" (not "Is Opened" — that fires hourly and creates noise). |
 | All macros zero / Energy quantity = 0 | `Find Health Samples` `Limit` is set to 1 | Wave 0 finding: `Limit: 1` hits a phantom zero-quantity sample on some iOS versions. Set Limit to OFF (no value) on every `Find Health Samples` step. |
-| Repeated 200s but only 1 Firestore doc instead of N | Shortcut emitted newline-concatenated text instead of a proper JSON array | The Shortcut is using a single Set-Variable + Text template instead of `Repeat with Each` + Add to List. Rebuild step 6 of §3 — the loop is the only way to emit a true `[{...}, {...}]` array. |
-| Per-macro quantities don't align (e.g. 4 Energy samples but only 3 Carbs) | One macro stream is out of sync with the others (Lifesum drops a write occasionally) | Add an If action inside the Repeat-with-Each: if the per-meal `Find Health Samples` filter for a macro returns 0 results, default that macro to 0. The 23:55 catch-up will pick up the late-arriving sample. |
+| Repeated 200s but only 1 Firestore doc instead of N | Shortcut emitted newline-concatenated text instead of a proper JSON array | The Shortcut is using a single Set-Variable + Text template instead of `Repeat with Each` + Add to List. Rebuild the per-macro emit loop — the loop is the only way to emit a true `[{...}, {...}]` array. |
+| All meals collapsing to one Firestore doc | All flat samples share the same `start_date` and `food_item` and are being summed into a single per-meal group | Path B is doing exactly what it should — same `(start_date, food_item)` IS one meal. If you want distinct meals, ensure either `start_date` or `food_item` differs per meal in the Shortcut's emit loop. |
+| Per-macro quantities don't align (e.g. 4 Energy samples but only 3 Carbs) | One macro stream is out of sync with the others (Lifesum drops a write occasionally) | In Path B this is automatic — each macro is its own row, and missing rows just leave that macro at 0 in the aggregated meal. The 23:55 catch-up will re-push the late-arriving sample on the next day's 24h window. |
 
 Firestore quick-check (from operator Mac):
 

@@ -2,14 +2,33 @@
   "samples": [
     {
       "uuid": "Lifesum",
-      "start_date": "2026-05-29T07:30:00GMT+3",
-      "samples_by_type": {
-        "DietaryEnergyConsumed_kcal": 1038,
-        "DietaryProtein_g": 70,
-        "DietaryCarbohydrates_g": 109,
-        "DietaryFatTotal_g": 38,
-        "DietaryFiber_g": 5.6
-      }
+      "start_date": "2026-05-29T20:00:00GMT+3",
+      "quantity_type": "DietaryEnergyConsumed_kcal",
+      "value": 324.0
+    },
+    {
+      "uuid": "Lifesum",
+      "start_date": "2026-05-29T20:00:00GMT+3",
+      "quantity_type": "DietaryProtein_g",
+      "value": 5.4
+    },
+    {
+      "uuid": "Lifesum",
+      "start_date": "2026-05-29T20:00:00GMT+3",
+      "quantity_type": "DietaryCarbohydrates_g",
+      "value": 43.2
+    },
+    {
+      "uuid": "Lifesum",
+      "start_date": "2026-05-29T20:00:00GMT+3",
+      "quantity_type": "DietaryFatTotal_g",
+      "value": 14.4
+    },
+    {
+      "uuid": "Lifesum",
+      "start_date": "2026-05-29T20:00:00GMT+3",
+      "quantity_type": "DietaryFiber_g",
+      "value": 2.4
     }
   ]
 }
