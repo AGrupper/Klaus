@@ -1,15 +1,14 @@
 ---
-status: partial
+status: resolved
 phase: 19-training-awareness-nutrition-coaching
 source: [19-VERIFICATION.md]
 started: 2026-05-28
-updated: 2026-05-28
+updated: 2026-05-30
 ---
 
 ## Current Test
 
-[SC #1 gap fixed locally (commit 36b3afd) — awaiting Cloud Run deploy + Telegram re-test]
-[SC #2 blocked on real architecture gap — Lifesum on iOS writes to Apple HealthKit, not Google Fit]
+[ALL TESTS PASSED — SC #1 closed 2026-05-28, SC #2 closed 2026-05-30 via Phase 19.1 HealthKit bridge]
 
 ## Tests
 
@@ -23,9 +22,15 @@ result: **PASSED**
 - 2026-05-28 10:15 — re-asked in Telegram. Klaus returned **ratio 0.21** (acute 7-day avg 11.4 / chronic 28-day avg 53.3), correctly noting the sweet spot is 0.8–1.3 and flagging detraining risk. Single-iteration response. TRAINING & ATHLETIC COACHING prompt extension (Plan 19-05) is alive and shapes the response voice.
 - Closes Gap-1.
 
-### 2. SC #2 — Lifesum → Fit → Firestore → proactive Telegram nudge end-to-end
-expected: After logging a meal in Lifesum, within ~30 min Google Fit shows the nutrition entry; within the next autonomous tick (≤20 min after that) `meals/{YYYY-MM-DD}/timestamps/{source_id}` appears in Firestore with macros + meal type.
-result: **BLOCKED — architectural gap discovered**
+### 2. SC #2 — Lifesum → HealthKit → Firestore → proactive Telegram nudge end-to-end
+expected: After logging a meal in Lifesum on iPhone, within ~30 min the HealthKit bridge POSTs the dietary samples; within the next autonomous tick (≤20 min after that) `meals/{YYYY-MM-DD}/timestamps/{source_id}` appears in Firestore with macros + meal type.
+result: **PASSED — closed via Phase 19.1 HealthKit bridge (2026-05-30 01:11)**
+- 2026-05-30 — operator built the production iOS Personal Automation per `docs/healthkit_shortcut.md` (Lifesum-close trigger + Repeat-With-Each loops emitting flat per-quantity samples), logged a real meal in Lifesum, closed the app.
+- The Shortcut POSTed 4 flat samples (Energy/Protein/Carbs/Fat) to deployed `/cron/healthkit-sync`.
+- Server-side aggregator grouped by (start_date, food_item) → 1 meal upserted.
+- Firestore doc landed at `meals/2026-05-30/timestamps/healthkit:2026-05-30T08:00:00+03:00:62` with calories=62, protein=3g, carbs=5g, fat=3g, source="healthkit", meal_type=1 (breakfast — hour-bucket fallback).
+- See `.planning/phases/19.1-healthkit-nutrition-bridge/19.1-05-SUMMARY.md` and `19.1-05-PATH-B-SUMMARY.md` for the full closeout trail (including the live-UAT wire-format redesign from bundled → flat samples).
+- Closes Gap-2.
 - 2026-05-28 — user logged a meal in Lifesum on iPhone ~15 min before testing.
 - Local probe: `MealStore.get_day("2026-05-28")` returned 0 entries.
 - Direct Google Fit probe: `fetch_recent_meals(hours=24)` returned 0 entries.
@@ -37,11 +42,11 @@ result: **BLOCKED — architectural gap discovered**
 ## Summary
 
 total: 2
-passed: 1
-issues: 1
+passed: 2
+issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 
@@ -51,8 +56,8 @@ status: resolved
 - Fix commit: `36b3afd` (deployed via `5233185` push to main)
 - Verified: 2026-05-28 10:15 Telegram — ratio 0.21 returned cleanly.
 
-### Gap-2 (SC #2 — architectural; iOS HealthKit)
-status: pending_design
+### Gap-2 (SC #2 — RESOLVED via Phase 19.1)
+status: resolved
 - Description: Lifesum on iOS writes to Apple HealthKit, not Google Fit. Phase 19's google_fit_tool path is correct for Android but has no source data on iOS.
 - User's chosen direction: switch to Apple HealthKit (proper fix).
 - Open architectural questions before planning:

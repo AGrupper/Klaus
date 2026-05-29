@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
 status: executing
-last_updated: "2026-05-28T18:46:19.816Z"
-last_activity: 2026-05-28 -- Phase 19.1 planning complete
+last_updated: "2026-05-30T01:11:00.000Z"
+last_activity: 2026-05-30 -- Phase 19.1 LIVE UAT closed; Phase 19 SC #2 resolved
 progress:
-  total_phases: 2
-  completed_phases: 1
-  total_plans: 5
-  completed_plans: 5
+  total_phases: 3
+  completed_phases: 2
+  total_plans: 10
+  completed_plans: 10
   percent: 100
 ---
 
@@ -18,12 +18,12 @@ progress:
 ## Current Position
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
-Phases planned: 2 + 1 gap-closure (Phase 19 + Phase 19.1 HealthKit bridge + Phase 20)
-Phase: 19.1 — context captured (24 decisions across 15 sub-areas), ready for planning. Phase 19 still human_needed pending 19.1 ship.
-Plan: next is `/clear` then `/gsd-plan-phase 19.1` to turn the locked decisions in 19.1-CONTEXT.md into a concrete PLAN.md with task breakdown.
-Status: Ready to execute
-Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-CONTEXT.md
-Last activity: 2026-05-28 -- Phase 19.1 planning complete
+Phases shipped: 2 + 1 gap-closure complete (Phase 19 ✓ + Phase 19.1 ✓ + Phase 20 pending)
+Phase: 19.1 — **COMPLETE**. Server-side flat-samples aggregator deployed; iOS Personal Automation on Lifesum-close live; real meal landed in Firestore 2026-05-30 01:11 with correct macros. Phase 19 SC #2 closed.
+Plan: next is `/clear` then begin Phase 20 (`/gsd-discuss-phase 20` or `/gsd-plan-phase 20`).
+Status: Ready for next phase
+Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-05-PATH-B-SUMMARY.md
+Last activity: 2026-05-30 -- Phase 19.1 LIVE UAT closed; Phase 19 SC #2 resolved
 
 ## Project Reference
 

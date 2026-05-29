@@ -19,8 +19,8 @@ session via `UserProfileStore` writes.
 
 ### Phases
 
-- [x] **Phase 19: Training Awareness & Nutrition Coaching** — Schema migration, 3-year Garmin backfill, `UserProfileStore`, extended Garmin reads (training status, recent activities, ACWR), Google Fit nutrition fetch + `MealStore`, autonomous-tick mid-day coaching extension, morning nutrition recap, smart-agent prompt extension.  *(SC #2 blocked pending Phase 19.1)*
-- [ ] **Phase 19.1: HealthKit Nutrition Bridge** — Gap-closure for Phase 19 SC #2 on iOS. iOS Shortcut on Lifesum-close + 23:55 daily catch-up → `POST /cron/healthkit-sync` (shared-secret bearer) → Pydantic schema lock → normalize → existing `MealStore.upsert`. Reuses the existing autonomous-tick wiring for judgment (no new triggers). Forward-only backfill.
+- [x] **Phase 19: Training Awareness & Nutrition Coaching** — Schema migration, 3-year Garmin backfill, `UserProfileStore`, extended Garmin reads (training status, recent activities, ACWR), Google Fit nutrition fetch + `MealStore`, autonomous-tick mid-day coaching extension, morning nutrition recap, smart-agent prompt extension.  *(SC #2 closed by Phase 19.1 on 2026-05-30)*
+- [x] **Phase 19.1: HealthKit Nutrition Bridge** — Gap-closure for Phase 19 SC #2 on iOS. iOS Personal Automation on Lifesum-close emits flat per-quantity HealthKit samples → `POST /cron/healthkit-sync` (shared-secret bearer) → server-side aggregation by (start_date, food_item) → normalize → existing `MealStore.upsert`. Live UAT verified 2026-05-30 01:11 — real Lifesum meal landed in Firestore with correct macros.
 - [ ] **Phase 20: Accountability Crons & Recovery Briefing** — `TrainingLogStore`, evidence-first training check-in cron (Garmin-RPE-aware), weekly training review cron, `recovery_concern` flag in morning briefing, Cloud Scheduler bootstrap.
 
 ### Phase Details
@@ -80,8 +80,8 @@ session via `UserProfileStore` writes.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 19. Training Awareness & Nutrition Coaching | 5/5 | Complete (SC #2 blocked pending 19.1) | 2026-05-28 |
-| 19.1. HealthKit Nutrition Bridge | 0/5 | In Progress | — |
+| 19. Training Awareness & Nutrition Coaching | 5/5 | Complete (SC #2 closed by 19.1) | 2026-05-28 |
+| 19.1. HealthKit Nutrition Bridge | 5/5 | Complete | 2026-05-30 |
 | 20. Accountability Crons & Recovery Briefing | 0/TBD | Not started | — |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
