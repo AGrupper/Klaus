@@ -366,14 +366,23 @@ class TestCronHealthkitSync:
             f"Malformed body must yield 422; got {resp.status_code}: {resp.text}"
         )
 
-    def test_happy_path_upserts_each_sample(self, monkeypatch, _ws_module):
-        """Valid auth + Wave-0 fixture payload → 200 with {"upserted": N};
-        MealStore.upsert called exactly once per sample."""
+    def test_happy_path_upserts_each_meal(self, monkeypatch, _ws_module):
+        """Valid auth + Path-B fixture payload → 200 with {"upserted": N_meals};
+        MealStore.upsert called exactly once per aggregated meal.
+
+        Path B: the fixture is 5 flat HKQuantitySample rows at one start_date
+        (one for Energy / Protein / Carbs / Fat / Fiber) → the server
+        aggregator groups them into ONE meal → ONE upsert call.
+        """
         ws = _ws_module
         from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
-        expected_n = len(fixture["samples"])
+        # Path B: count meals (distinct start_date + food_item pairs), not
+        # raw samples. The Path-B fixture is single-meal so this is 1.
+        expected_meals = len({
+            (s["start_date"], s.get("food_item")) for s in fixture["samples"]
+        })
 
         mock_store = MagicMock(name="MealStore-instance")
         mock_store.upsert = MagicMock(return_value=None)
@@ -392,22 +401,27 @@ class TestCronHealthkitSync:
         assert resp.status_code == 200, (
             f"Happy path must yield 200; got {resp.status_code}: {resp.text}"
         )
-        assert resp.json() == {"upserted": expected_n}, (
-            f"Response body must be {{'upserted': {expected_n}}}; got {resp.json()}"
+        assert resp.json() == {"upserted": expected_meals}, (
+            f"Response body must be {{'upserted': {expected_meals}}}; "
+            f"got {resp.json()}"
         )
-        assert mock_store.upsert.call_count == expected_n, (
-            f"MealStore.upsert must be called once per sample (expected "
-            f"{expected_n}, got {mock_store.upsert.call_count})"
+        assert mock_store.upsert.call_count == expected_meals, (
+            f"MealStore.upsert must be called once per aggregated meal "
+            f"(expected {expected_meals}, got {mock_store.upsert.call_count})"
         )
 
     def test_idempotent_repush(self, monkeypatch, _ws_module):
-        """Same payload POSTed twice → both return 200; upsert called 2*N times
-        (idempotency lives in MealStore's merge=True semantics, not the handler)."""
+        """Same payload POSTed twice → both return 200; upsert called
+        2 * N_meals times (idempotency lives in MealStore's merge=True
+        semantics, not the handler)."""
         ws = _ws_module
         from fastapi.testclient import TestClient  # noqa: PLC0415
         env = _healthkit_env()
         fixture = _load_sample_payload()
-        n = len(fixture["samples"])
+        # Path B: meals = distinct (start_date, food_item) groups.
+        n_meals = len({
+            (s["start_date"], s.get("food_item")) for s in fixture["samples"]
+        })
 
         mock_store = MagicMock(name="MealStore-instance")
         mock_store.upsert = MagicMock(return_value=None)
@@ -423,9 +437,9 @@ class TestCronHealthkitSync:
 
         assert r1.status_code == 200
         assert r2.status_code == 200
-        assert mock_store.upsert.call_count == 2 * n, (
-            f"Two pushes must each call upsert N times (expected {2*n}, "
-            f"got {mock_store.upsert.call_count})"
+        assert mock_store.upsert.call_count == 2 * n_meals, (
+            f"Two pushes must each call upsert N_meals times "
+            f"(expected {2 * n_meals}, got {mock_store.upsert.call_count})"
         )
 
     def test_logs_cron_run_ok_true_on_success(self, monkeypatch, _ws_module):
