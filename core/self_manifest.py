@@ -391,6 +391,16 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
     ]
 
+    # ----- Push endpoints (Phase 19.1 — HEALTHKIT-07 / D-21) -------------
+    lines += [
+        "## Push endpoints",
+        "",
+        "| Endpoint | Driver | Auth | Purpose |",
+        "|----------|--------|------|---------|",
+        "| `/cron/healthkit-sync` | iPhone Shortcut | shared-secret bearer | Lifesum nutrition bridge |",
+        "",
+    ]
+
     # ----- §5 Outbound Channels ------------------------------------------
     lines += [
         "## Outbound Channels",

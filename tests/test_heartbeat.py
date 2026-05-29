@@ -328,3 +328,20 @@ def test_check_code_hierarchical_directory_parsing(tmp_path):
     signals = check_code(repo_root=tmp_path)
     drift_signals = [s for s in signals if s.fingerprint == "code:docs-drift"]
     assert len(drift_signals) == 0, f"Expected 0 drift signals, got: {[s.detail for s in drift_signals]}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 19.1 HEALTHKIT-06 — staleness threshold regression guards
+# ---------------------------------------------------------------------------
+
+def test_healthkit_sync_staleness_threshold_is_48_hours():
+    """Regression guard for Phase 19.1 D-18 + HEALTHKIT-06."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert _CRON_MAX_STALENESS_HOURS["healthkit-sync"] == 48
+
+
+def test_healthkit_sync_present_in_staleness_dict():
+    """Catches accidental dict-key removal."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert "healthkit-sync" in _CRON_MAX_STALENESS_HOURS
+

@@ -1162,3 +1162,52 @@ Klaus uses a small number of compound queries that require composite indexes:
 | Collection  | Fields                       | Created by | Notes |
 |-------------|------------------------------|------------|-------|
 | followups   | `status` ASC, `due_at` ASC   | Phase 18   | Required by `FollowupStore.list_due()`. On first production query, Firestore returns a `FAILED_PRECONDITION` error with a link to create the index — follow it once, or run `gcloud firestore indexes composite create --collection-group=followups --field-config=field-path=status,order=ascending --field-config=field-path=due_at,order=ascending` ahead of first cron-tick deploy. |
+
+---
+
+## 22. Push-driven endpoints
+
+Endpoints driven by a verified external client (NOT Cloud Scheduler) — distinct
+from §19 because the trigger lives off-platform and auth differs (shared-secret
+bearer instead of OIDC JWT). Heartbeat staleness (`_CRON_MAX_STALENESS_HOURS`
+in `core/heartbeat.py`) still monitors these via `_log_cron_run`.
+
+| Endpoint | Driver | Auth | Phase |
+|----------|--------|------|-------|
+| `/cron/healthkit-sync` | iPhone Shortcut (Personal Automation) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | 19.1 |
+
+---
+
+## 23. HEALTHKIT_WEBHOOK_TOKEN Secret
+
+Static shared-secret bearer for `/cron/healthkit-sync` (§22). Mirrors §20
+(TICK_BRAIN_API_KEY) shape.
+
+**Secret name (lowercase per CLAUDE.md invariant):** `klaus-healthkit-webhook-token`
+
+**Cloud Run binding:**
+
+```
+--set-secrets=HEALTHKIT_WEBHOOK_TOKEN=klaus-healthkit-webhook-token:latest
+```
+
+**Token mint (≥32-byte entropy per ASVS V2; RESEARCH.md Q5):**
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+**Rotation (4 steps):**
+
+1. `printf '%s' "$NEW_TOKEN" | gcloud secrets versions add klaus-healthkit-webhook-token --data-file=-`
+2. `gcloud run services update klaus-agent --region=me-west1 --update-secrets=HEALTHKIT_WEBHOOK_TOKEN=klaus-healthkit-webhook-token:latest`
+3. Paste new token into the iOS Shortcut's `Authorization: Bearer …` header.
+4. `gcloud secrets versions disable klaus-healthkit-webhook-token --version=<OLD_N>`
+
+**Kill-switch (emergency disable, no redeploy — D-08):**
+
+```bash
+gcloud secrets versions disable klaus-healthkit-webhook-token --version=<CURRENT_N>
+```
+
+All inbound HealthKit pushes fail auth immediately. Re-enable by adding a new version.
