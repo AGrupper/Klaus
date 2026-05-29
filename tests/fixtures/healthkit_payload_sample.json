@@ -1,0 +1,15 @@
+{
+  "samples": [
+    {
+      "uuid": "",
+      "start_date": "2026-05-29T13:00:00GMT+3",
+      "samples_by_type": {
+        "DietaryEnergyConsumed_kcal": 0,
+        "DietaryProtein_g": 0,
+        "DietaryCarbohydrates_g": 0,
+        "DietaryFatTotal_g": 0,
+        "DietaryFiber_g": 0
+      }
+    }
+  ]
+}
