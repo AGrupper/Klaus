@@ -4,7 +4,7 @@ milestone: v3.0
 milestone_name: — Project Shifu
 status: executing
 last_updated: "2026-05-30T01:11:00.000Z"
-last_activity: 2026-05-30 -- Phase 19.1 LIVE UAT closed; Phase 19 SC #2 resolved
+last_activity: 2026-05-30 -- Phase 19.1 conversational UAT: 5/6 pass, Test 5 (on-demand meal query) failed → Phase 19.3 inserted
 progress:
   total_phases: 3
   completed_phases: 2
@@ -33,6 +33,11 @@ See: `.planning/PROJECT.md` (updated 2026-05-25)
 **Current focus:** Phase 19 — Training Awareness & Multimodal Audit (Postgres schema + Garmin ingestion + UserProfileStore + ACWR + meal-photo critique)
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 19.2 inserted after Phase 19.1: Wire `DietaryFiber_g` through Klaus's reasoning layer — normalizer drops the fiber the Shortcut already sends; persist + surface it (URGENT, post-ship follow-up requested by Amit 2026-05-29)
+- Phase 19.3 inserted after Phase 19.2: Redirect BOTH meal read paths from the dead Google Fit source to `MealStore.get_day()` — (a) brain-direct `fetch_recent_meals` tool at `core/tools.py:1267` (confirmed live failing 2026-05-30 16:07: Klaus said "no entries in Google Fit or Lifesum" to "what did I eat today?"), and (b) the autonomous-tick gather at `core/autonomous.py:319` (`sync_recent_meals()`). Morning briefing (`core/morning_briefing.py:254`) already reads `MealStore` correctly. Surfaced by Phase 19.1 UAT Test 5 failure; requested by Amit (2026-05-30)
 
 ### Architecture decisions carried forward
 

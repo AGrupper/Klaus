@@ -15,12 +15,14 @@ and lets recovery state (ACWR / HRV / sleep) shape the morning briefing tone.
 Plumbing-only — personalized rules and thresholds are deferred to a later
 session via `UserProfileStore` writes.
 
-**Phases:** 3 · **Plans:** 5 (Phase 19) + TBD (Phase 19.1) + TBD (Phase 20) · **Requirements:** 53
+**Phases:** 5 · **Plans:** 5 (Phase 19) + 5 (Phase 19.1) + TBD (Phase 19.2) + TBD (Phase 19.3) + TBD (Phase 20) · **Requirements:** 53
 
 ### Phases
 
 - [x] **Phase 19: Training Awareness & Nutrition Coaching** — Schema migration, 3-year Garmin backfill, `UserProfileStore`, extended Garmin reads (training status, recent activities, ACWR), Google Fit nutrition fetch + `MealStore`, autonomous-tick mid-day coaching extension, morning nutrition recap, smart-agent prompt extension.  *(SC #2 closed by Phase 19.1 on 2026-05-30)*
 - [x] **Phase 19.1: HealthKit Nutrition Bridge** — Gap-closure for Phase 19 SC #2 on iOS. iOS Personal Automation on Lifesum-close emits flat per-quantity HealthKit samples → `POST /cron/healthkit-sync` (shared-secret bearer) → server-side aggregation by (start_date, food_item) → normalize → existing `MealStore.upsert`. Live UAT verified 2026-05-30 01:11 — real Lifesum meal landed in Firestore with correct macros.
+- [ ] **Phase 19.2: Fiber Through Reasoning Layer** *(INSERTED)* — Post-ship follow-up to 19.1. The HealthKit Shortcut already emits `DietaryFiber_g` but the normalizer drops it; persist fiber through the meal pipeline (normalizer + `MealStore`) and surface it in Klaus's reasoning/briefings. Explicitly requested by Amit (2026-05-29).
+- [ ] **Phase 19.3: Meal Read Paths → iOS HealthKit (MealStore)** *(INSERTED)* — Post-ship follow-up to 19.1. BOTH meal *read* paths still query the dead Google Fit source (returns `[]` on iOS), so HealthKit-ingested meals are invisible to Klaus: (a) the brain-direct `fetch_recent_meals` tool at `core/tools.py:1267` (`_handle_fetch_recent_meals` → `google_fit_tool.fetch_recent_meals`) — confirmed live 2026-05-30 16:07 ("no entries in Google Fit or Lifesum"); (b) the mid-day autonomous tick at `core/autonomous.py:319` (`sync_recent_meals()`). Redirect both to read the shared `MealStore` (where `/cron/healthkit-sync` writes), matching the morning briefing's already-correct `MealStore` path. Found during 19.1 UAT (2026-05-30).
 - [ ] **Phase 20: Accountability Crons & Recovery Briefing** — `TrainingLogStore`, evidence-first training check-in cron (Garmin-RPE-aware), weekly training review cron, `recovery_concern` flag in morning briefing, Cloud Scheduler bootstrap.
 
 ### Phase Details
@@ -63,6 +65,31 @@ session via `UserProfileStore` writes.
 - [ ] 19.1-05-PLAN.md — Operator push script + Shortcut runbook + live UAT (HEALTHKIT-08)
 **UI hint**: yes
 
+### Phase 19.2: Fiber Through Reasoning Layer *(INSERTED)*
+**Goal**: `DietaryFiber_g` — already sent by the HealthKit Shortcut but dropped by the normalizer — is persisted through the meal pipeline and available to Klaus's reasoning, so fiber can inform nutrition coaching and morning recaps.
+**Depends on**: Phase 19.1 (needs `healthkit_tool.py` normalizer/aggregator + `MealStore` schema)
+**Requirements**: TBD (FIBER-01 — to register at plan time)
+**Success Criteria** (what must be TRUE):
+  1. A HealthKit push carrying `DietaryFiber_g` results in a `MealStore` document that retains the fiber value (no longer silently dropped by the normalizer).
+  2. Fiber is exposed to Klaus's reasoning layer — `fetch_recent_meals` / the smart-agent meal view surfaces fiber, so asking about fiber intake returns a real number rather than omitting it.
+  3. The morning nutrition recap (and/or autonomous-tick coaching) can reference fiber where relevant, without forcing a "no data" placeholder when fiber is absent.
+  4. Existing meals without fiber and the multi-source `MealStore` schema remain backward-compatible (fiber is additive/optional).
+**Plans**: TBD
+**UI hint**: no
+
+### Phase 19.3: Meal Read Paths → iOS HealthKit (MealStore) *(INSERTED)*
+**Goal**: Every place Klaus *reads* meals — the on-demand "what did I eat?" tool and the mid-day autonomous tick — pulls from the shared `MealStore` (where the iOS HealthKit bridge writes), instead of the deprecated Google Fit source that returns nothing on iPhone. So both on-demand answers and proactive nudges reflect real logged meals.
+**Depends on**: Phase 19.1 (needs `/cron/healthkit-sync` → `MealStore` write path live)
+**Requirements**: TBD (MEALSRC-01 — to register at plan time)
+**Success Criteria** (what must be TRUE):
+  1. Asking Klaus "what did I eat today?" in Telegram after a HealthKit-ingested meal returns the real macros (NOT "no entries in Google Fit or Lifesum"). The brain-direct `fetch_recent_meals` tool (`core/tools.py:1267` `_handle_fetch_recent_meals`) reads `MealStore.get_day()`, not `google_fit_tool.fetch_recent_meals`.
+  2. After a meal is ingested via `/cron/healthkit-sync`, the next autonomous tick's `meals_since_last_tick` contains that meal (read from `MealStore.get_day()`), so the tick-brain trigger can fire — verified against a HealthKit-sourced (not Google-Fit) meal. `core/autonomous.py:319` no longer calls `sync_recent_meals()` from `google_fit_tool`.
+  3. Both repointed read paths keep the same meal-dict shape downstream consumers expect (the 9-key normalized record; triage prompt + `tests/test_evals.py` snapshot keys unchanged — no fixture-schema regression).
+  4. A full audit confirms no remaining production caller depends on `google_fit_tool` for live meal data; `google_fit_tool.py` stays in the tree as legacy/no-op (docstring already marks it legacy from 19.1-04) — not deleted, just unreferenced.
+  5. Repeat-suppression and the existing tick cost-gating (Layer 0 → 1 → 2) are unchanged — only the data source for the meal signal moves. `docs/SELF.md` tool description for `fetch_recent_meals` no longer claims Google Fit as the source.
+**Plans**: TBD
+**UI hint**: no
+
 ### Phase 20: Accountability Crons & Recovery Briefing
 **Goal**: Klaus actively tracks training adherence and surfaces recovery concerns in the morning briefing.
 **Depends on**: Phase 19 (needs `UserProfileStore`, Garmin reads, Postgres ACWR columns)
@@ -82,6 +109,8 @@ session via `UserProfileStore` writes.
 |-------|----------------|--------|-----------|
 | 19. Training Awareness & Nutrition Coaching | 5/5 | Complete (SC #2 closed by 19.1) | 2026-05-28 |
 | 19.1. HealthKit Nutrition Bridge | 5/5 | Complete | 2026-05-30 |
+| 19.2. Fiber Through Reasoning Layer *(INSERTED)* | 0/TBD | Not started | — |
+| 19.3. Meal Read Paths → iOS HealthKit (MealStore) *(INSERTED)* | 0/TBD | Not started | — |
 | 20. Accountability Crons & Recovery Briefing | 0/TBD | Not started | — |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
