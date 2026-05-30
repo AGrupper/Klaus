@@ -134,6 +134,23 @@ class HealthKitQuantitySample(BaseModel):
         offset = f"{sign}{hours:02d}:{mins_int:02d}"
         return _GMT_OFFSET_RE.sub(offset, v)
 
+    @field_validator("start_date", mode="after")
+    @classmethod
+    def _ensure_aware(cls, v: datetime) -> datetime:
+        """Attach Asia/Jerusalem to any naive datetime at parse time (WR-02).
+
+        The GMT-offset coercer only rewrites a trailing ``GMT+N`` suffix and
+        passes everything else through, so an ISO string with no offset parses
+        to a NAIVE datetime. Downstream, ``_infer_meal_type`` calls
+        ``astimezone(_TZ)`` (which on a naive value assumes the system-local tz
+        — UTC on Cloud Run, mis-bucketing meals near band edges), and the
+        synthetic source_id embeds ``isoformat()`` (so a naive vs. aware variant
+        of the same instant yields different keys, breaking idempotency between
+        the 2h-close push and the 23:55 catch-up). The codebase intends
+        Asia/Jerusalem semantics throughout, so normalize naive → aware here.
+        """
+        return v.replace(tzinfo=_TZ) if v.tzinfo is None else v
+
     @field_validator("value", mode="before")
     @classmethod
     def _coerce_stringy_numeric(cls, v: Any) -> Any:

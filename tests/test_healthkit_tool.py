@@ -321,6 +321,45 @@ def test_flat_payload_gmt_offset_normalized():
     assert p1.samples[0].start_date == p2.samples[0].start_date
 
 
+def test_flat_payload_naive_datetime_becomes_jerusalem_aware():
+    """WR-02: an ISO start_date with NO offset parses to an Asia/Jerusalem-aware
+    datetime (not naive), so meal-type bucketing and the synthetic source_id are
+    computed against the intended wall clock and stay idempotent."""
+    parsed = HealthKitPayload.model_validate(
+        {"samples": [{
+            "uuid": "NAIVE-1",
+            "start_date": "2026-05-28T13:42:00",
+            "quantity_type": "DietaryEnergyConsumed_kcal",
+            "value": 100.0,
+        }]}
+    )
+    sd = parsed.samples[0].start_date
+    assert sd.tzinfo is not None
+    assert sd.utcoffset() == datetime(2026, 5, 28, 13, 42, tzinfo=_TZ).utcoffset()
+
+
+def test_naive_and_aware_same_instant_yield_same_source_id():
+    """WR-02: the naive form and the explicit +03:00 form of the same Jerusalem
+    instant must aggregate identically and produce the same source_id, so the
+    2h-close push and the 23:55 catch-up push collapse to one Firestore doc."""
+    naive = HealthKitPayload.model_validate(
+        {"samples": [{"uuid": "Lifesum", "start_date": "2026-05-28T13:42:00",
+                      "quantity_type": "DietaryEnergyConsumed_kcal", "value": 100.0,
+                      "food_item": "Toast"}]}
+    )
+    aware = HealthKitPayload.model_validate(
+        {"samples": [{"uuid": "Lifesum", "start_date": "2026-05-28T13:42:00+03:00",
+                      "quantity_type": "DietaryEnergyConsumed_kcal", "value": 100.0,
+                      "food_item": "Toast"}]}
+    )
+    g_naive = _aggregate_quantity_samples(naive.samples)[0]
+    g_aware = _aggregate_quantity_samples(aware.samples)[0]
+    assert (
+        _normalize_healthkit_sample(g_naive)["source_id"]
+        == _normalize_healthkit_sample(g_aware)["source_id"]
+    )
+
+
 def test_flat_payload_caps_samples_at_1000():
     """A meal with 5 food items × 5 macros = 25 samples; 200 was too tight.
     The Path B DoS cap moves to 1000 — still cheap to validate, comfortably
