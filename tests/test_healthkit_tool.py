@@ -512,6 +512,41 @@ def test_source_id_falls_back_when_uuid_empty():
     assert result["source_id"] != "healthkit:"
 
 
+def test_source_id_sanitizes_slash_in_primary_uuid():
+    """WR-01: a uuid containing '/' must NOT leak into the Firestore document
+    path (a '/' would write into an unexpected subcollection). _compute_source_id
+    replaces '/' with '_'."""
+    meal = _make_meal_dict(uuid="a/b/c")
+    result = _normalize_healthkit_sample(meal)
+    assert "/" not in result["source_id"]
+    assert result["source_id"] == "healthkit:a_b_c"
+
+
+def test_source_id_strips_whitespace_for_idempotency():
+    """WR-01: 'ABC ' and 'ABC' (a trailing-space variant across two pushes) must
+    map to the SAME source_id so idempotency is preserved."""
+    sid_padded = _normalize_healthkit_sample(_make_meal_dict(uuid="ABC "))["source_id"]
+    sid_clean = _normalize_healthkit_sample(_make_meal_dict(uuid="ABC"))["source_id"]
+    assert sid_padded == sid_clean == "healthkit:ABC"
+
+
+def test_uuid_over_max_length_rejected_by_model():
+    """WR-01: the Pydantic model bounds uuid length (defense-in-depth against an
+    over-long Firestore document ID)."""
+    payload = {
+        "samples": [
+            {
+                "uuid": "x" * 2000,
+                "start_date": "2026-05-28T13:42:00+03:00",
+                "quantity_type": "DietaryEnergyConsumed_kcal",
+                "value": 100.0,
+            }
+        ]
+    }
+    with pytest.raises(ValidationError):
+        HealthKitPayload.model_validate(payload)
+
+
 # ------------------------------------------------------------------ #
 # ingest_payload — Path B end-to-end                                  #
 # ------------------------------------------------------------------ #

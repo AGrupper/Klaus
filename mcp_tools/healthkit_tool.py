@@ -101,7 +101,13 @@ class HealthKitQuantitySample(BaseModel):
         }
     """
 
-    uuid: str
+    # ``uuid`` becomes part of the Firestore document ID on the primary path
+    # (``healthkit:{uuid}``). Firestore IDs cannot contain '/', cannot be
+    # '.'/'..', cannot match ``__.*__`` and are capped at 1500 bytes. Bound
+    # the length here as defense-in-depth (the route is authenticated); '/' is
+    # additionally stripped in _compute_source_id so a bad value can never
+    # change the document path (WR-01).
+    uuid: str = Field(max_length=1024)
     start_date: datetime
     quantity_type: str
     value: float
