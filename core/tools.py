@@ -732,9 +732,11 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "fetch_recent_meals",
         "description": (
-            "Get nutrition entries from Google Fit (Lifesum-sourced) in the last "
-            "N hours. Each entry has calories, protein_g, carbs_g, fat_g, "
-            "meal_type, optional food_item. Default hours=24. Worker-delegated."
+            "Get the user's logged nutrition entries from the last N hours "
+            "(Lifesum → Apple HealthKit → Klaus on iOS, or Google Fit on Android; "
+            "both land in the same meal store). Each entry has calories, protein_g, "
+            "carbs_g, fat_g, fiber_g, meal_type, optional food_item. "
+            "Default hours=24. Worker-delegated."
         ),
         "input_schema": {
             "type": "object",
@@ -1265,19 +1267,48 @@ def _handle_get_acwr() -> str:
 
 
 def _handle_fetch_recent_meals(hours: int = 24) -> str:
-    """NUTR-03 worker-delegated: live Google Fit nutrition entries (Lifesum source).
+    """Phase 19.3: recent meals from MealStore (multi-source: HealthKit + Google Fit).
 
-    Returns a JSON-encoded list of meal dicts (see google_fit_tool._normalize_point
-    for the shape). On API outage returns ``{"error": "..."}`` so the worker LLM
-    gets a structured tool-result rather than a raised exception.
+    Reads ``MealStore.get_day()`` for the Asia/Jerusalem calendar date(s) the
+    requested window touches, then filters to meals within the last ``hours``.
+    This replaces the legacy direct Google Fit read, which returns ``[]`` on iOS
+    (Lifesum on iPhone writes to Apple HealthKit, surfaced into MealStore by
+    ``/cron/healthkit-sync``). MealStore is the shared, source-agnostic store the
+    morning briefing already reads, so meals from either source are visible here.
+
+    Each meal dict includes ``fiber_g`` alongside the core macros (Phase 19.2).
+    Returns a JSON-encoded list of meal dicts. On error returns ``{"error": ...}``
+    so the worker LLM gets a structured tool-result rather than a raised exception.
     """
-    from mcp_tools.google_fit_tool import (
-        fetch_recent_meals,
-        GoogleFitUnavailableError,
-    )
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Jerusalem")
+    now = datetime.now(tz)
+    cutoff = now - timedelta(hours=hours)
     try:
-        return json.dumps(fetch_recent_meals(hours=hours))
-    except GoogleFitUnavailableError as exc:
+        from memory.firestore_db import MealStore
+        ms = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+            database=os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+        )
+        # A window of `hours` (default 24) can straddle midnight, so union the
+        # calendar dates the window touches. MealStore.get_day never raises.
+        dates = {now.date().isoformat(), cutoff.date().isoformat()}
+        meals: list[dict] = []
+        for d in sorted(dates):
+            meals.extend(ms.get_day(d))
+        out: list[dict] = []
+        for m in meals:
+            try:
+                ts = datetime.fromisoformat(m["timestamp"])
+                if ts >= cutoff:
+                    out.append(m)
+            except (KeyError, ValueError, TypeError):
+                # Malformed timestamp on one entry → skip it, keep the rest.
+                continue
+        return json.dumps(out)
+    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
         return json.dumps({"error": str(exc)})
 
 

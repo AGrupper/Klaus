@@ -662,6 +662,7 @@ class MealStore:
             "protein_g": sum(m.get("protein_g") or 0 for m in meals),
             "carbs_g":   sum(m.get("carbs_g")   or 0 for m in meals),
             "fat_g":     sum(m.get("fat_g")     or 0 for m in meals),
+            "fiber_g":   sum(m.get("fiber_g")   or 0 for m in meals),  # Phase 19.2
         }
         by_type: dict = collections.defaultdict(list)
         for m in meals:

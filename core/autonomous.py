@@ -135,6 +135,10 @@ def _calendar_has_gap_or_overload(events: list[dict], now_ctx: dict) -> bool:
         except (ValueError, TypeError):
             continue
         if s and en:
+            if s.tzinfo is None:
+                s = s.replace(tzinfo=_TZ)
+            if en.tzinfo is None:
+                en = en.replace(tzinfo=_TZ)
             parsed.append((s, en))
 
     # (1) Pairwise overlap detection.
@@ -312,16 +316,27 @@ def gather_situation(now: datetime) -> dict:
     except Exception:
         logger.warning("autonomous: outreach_log gather failed", exc_info=True)
 
-    # (i) PHASE 19 — recent meals sync from Google Fit → MealStore (NUTR-04).
-    # since_hours=1 covers one tick interval (20 min) plus slack for Lifesum
-    # → Health Connect → Google Fit sync latency.
+    # (i) PHASE 19.3 — recent meals read from MealStore (NUTR-04).
+    # The iOS HealthKit bridge (/cron/healthkit-sync) writes meals into
+    # MealStore directly, so we READ from the store rather than re-syncing
+    # from Google Fit (dead on iOS — returned []). Keep only meals within the
+    # last hour so `meals_since_last_tick` retains its "since last tick"
+    # trigger semantics (the tick runs */20 7-21, so a 1h window never needs
+    # to straddle midnight). Same store the morning briefing reads.
     try:
-        from mcp_tools.google_fit_tool import sync_recent_meals
         from memory.firestore_db import MealStore
         ms = MealStore(project_id=project_id, database=database)
-        gathered["meals_since_last_tick"] = sync_recent_meals(
-            since_hours=1, store=ms,
-        ) or []
+        today_iso = now.astimezone(_TZ).date().isoformat()
+        cutoff = now.astimezone(_TZ) - timedelta(hours=1)
+        recent: list[dict] = []
+        for m in ms.get_day(today_iso):
+            try:
+                ts = datetime.fromisoformat(m["timestamp"])
+                if ts >= cutoff:
+                    recent.append(m)
+            except (KeyError, ValueError, TypeError):
+                continue
+        gathered["meals_since_last_tick"] = recent
     except Exception:
         logger.warning("autonomous: meals gather failed", exc_info=True)
         gathered["meals_since_last_tick"] = []

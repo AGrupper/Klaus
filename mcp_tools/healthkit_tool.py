@@ -321,12 +321,12 @@ def _compute_source_id(meal: dict) -> str:
 def _normalize_healthkit_sample(meal: dict) -> dict:
     """Convert an aggregated per-meal dict into Klaus's canonical meal shape.
 
-    Returns the SAME 9 keys as mcp_tools.google_fit_tool._normalize_point:
+    Returns the SAME 10 keys as mcp_tools.google_fit_tool._normalize_point:
     source_id, timestamp, meal_type, calories, protein_g, carbs_g, fat_g,
-    food_item, source. ``meal_type`` is **int** 1..4 (parity contract).
+    fiber_g, food_item, source. ``meal_type`` is **int** 1..4 (parity contract).
 
-    Unknown ``samples_by_type`` keys (e.g. Wave 0's DietaryFiber_g) are
-    silently ignored — only the four canonical macros are surfaced.
+    ``fiber_g`` is threaded from ``DietaryFiber_g`` (Phase 19.2 — the Shortcut
+    already emits it). Other unknown ``samples_by_type`` keys are still ignored.
 
     Args:
         meal: A per-meal dict in the aggregator's output shape — see
@@ -341,6 +341,7 @@ def _normalize_healthkit_sample(meal: dict) -> dict:
         "protein_g": sbt.get("DietaryProtein_g", 0),
         "carbs_g": sbt.get("DietaryCarbohydrates_g", 0),
         "fat_g": sbt.get("DietaryFatTotal_g", 0),
+        "fiber_g": sbt.get("DietaryFiber_g", 0),
         "food_item": meal.get("food_item"),
         "source": "healthkit",
     }

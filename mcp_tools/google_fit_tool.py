@@ -135,7 +135,7 @@ def _normalize_point(point: dict, ds_id: str) -> dict:
 
     Returns:
         Dict with keys ``source_id, timestamp, meal_type, calories,
-        protein_g, carbs_g, fat_g, food_item, source``.
+        protein_g, carbs_g, fat_g, fiber_g, food_item, source``.
 
         source_id is ``{ds_id}:{startTimeNanos}`` so re-syncs from Lifesum
         produce ONE Firestore doc per (source, time) regardless of arrival
@@ -182,6 +182,7 @@ def _normalize_point(point: dict, ds_id: str) -> dict:
         "protein_g": macros.get("protein"),
         "carbs_g": macros.get("carbs.total"),
         "fat_g": macros.get("fat.total"),
+        "fiber_g": macros.get("dietary_fiber"),
         "food_item": food_item,
         "source": "google_fit",
     }

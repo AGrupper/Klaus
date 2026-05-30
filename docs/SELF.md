@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-05-30T11:06:30Z
+generated_at: 2026-05-30T16:13:05Z
 sha: 69fd2f3a6cf38c23e18db21bebe21325a81d3ea5
 ---
 
@@ -60,7 +60,7 @@ Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving 
 | `fetch_training_status` | worker-delegated | Fetch today's Garmin training status (PRODUCTIVE / MAINTAINING / RECOVERY / DETRAINING / OVERREACHING), VO2 max, and load focus. |
 | `fetch_recent_activities` | worker-delegated | Fetch Sir's last N days of Garmin activities as a normalized list (activity_id, date, type, duration_sec, distance_m, perceived_exertion, feel, training_load). |
 | `get_acwr` | worker-delegated | Compute Sir's acute:chronic workload ratio (ACWR) from the Postgres `activities` table. |
-| `fetch_recent_meals` | worker-delegated | Get nutrition entries from Google Fit (Lifesum-sourced) in the last N hours. |
+| `fetch_recent_meals` | worker-delegated | Get the user's logged nutrition entries from the last N hours (Lifesum → Apple HealthKit → Klaus on iOS, or Google Fit on Android; both land in the same meal store). |
 
 ## Cron Jobs
 

@@ -125,6 +125,7 @@ def test_normalize_shape_matches_google_fit():
         "protein_g",
         "carbs_g",
         "fat_g",
+        "fiber_g",
         "food_item",
         "source",
     }
@@ -144,30 +145,34 @@ def test_meal_type_is_int_not_string():
     assert 1 <= result["meal_type"] <= 4
 
 
-def test_normalize_ignores_unknown_macro_keys():
-    """Wave 0 finding: real-device fixture has DietaryFiber_g — normalizer silently ignores."""
+def test_normalize_captures_fiber_and_ignores_other_unknown_keys():
+    """Phase 19.2: DietaryFiber_g is now threaded to fiber_g; other unknowns ignored."""
     meal = _make_meal_dict(
         samples_by_type={
             "DietaryEnergyConsumed_kcal": 1038.0,
             "DietaryProtein_g": 70.0,
             "DietaryCarbohydrates_g": 109.0,
             "DietaryFatTotal_g": 38.0,
-            "DietaryFiber_g": 5.6,  # extra key — must NOT raise
+            "DietaryFiber_g": 5.6,       # Phase 19.2 — now captured
+            "DietarySugar_g": 12.0,      # still-unknown key — must be ignored
         }
     )
     result = _normalize_healthkit_sample(meal)
     assert result["calories"] == 1038.0
     assert result["fat_g"] == 38.0
+    assert result["fiber_g"] == 5.6
+    assert "DietarySugar_g" not in result  # genuinely unknown key dropped
 
 
 def test_normalize_missing_macro_keys_defaults_to_zero():
-    """Missing macros use 0 default per CONTEXT.md <specifics>."""
+    """Missing macros (incl. fiber) use 0 default per CONTEXT.md <specifics>."""
     meal = _make_meal_dict(samples_by_type={"DietaryEnergyConsumed_kcal": 100.0})
     result = _normalize_healthkit_sample(meal)
     assert result["calories"] == 100.0
     assert result["protein_g"] == 0
     assert result["carbs_g"] == 0
     assert result["fat_g"] == 0
+    assert result["fiber_g"] == 0
 
 
 # ------------------------------------------------------------------ #

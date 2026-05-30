@@ -13,6 +13,11 @@ default in v3.0).
 - < 15g per meal that is not labeled "snack" is light on protein.
 - A day-total < 100g for an active adult is light overall.
 
+### Fiber adequacy (general adult heuristic)
+- ~30g/day is a reasonable target; a day-total well under that is light.
+- Only comment when fiber is actually logged (some meal has `fiber_g` > 0).
+  Treat an all-zero day as "not tracked", not "zero fiber" — stay silent.
+
 ### Carb appropriateness vs. training context
 - Heavy carbs (>80g) before a sedentary block: high glycemic load with
   nowhere to go.

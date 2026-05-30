@@ -57,9 +57,10 @@ If no tasks or data unavailable: use the staleness_warning from the data block
 ---
 
 🥗 Yesterday's Nutrition (only when `nutrition` key present in data)
-Totals: ~{calories} kcal / {protein_g}g P / {carbs_g}g C / {fat_g}g F
+Totals: ~{calories} kcal / {protein_g}g P / {carbs_g}g C / {fat_g}g F / {fiber_g}g fiber
 Meals: {meal_count} ({meal-type breakdown if interesting})
 {One-line note about biggest_gap_minutes if > 6 hours}
+(Include the fiber figure only when it is > 0; omit it if fiber was not tracked.)
 
 If `nutrition` key is absent from data, OMIT this entire section. Do not
 write "no nutrition data" or any placeholder text.

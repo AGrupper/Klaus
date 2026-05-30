@@ -177,7 +177,7 @@ def test_get_day_aggregate_full():
         m = MagicMock()
         m.to_dict.return_value = {
             "timestamp": ts, "calories": kcal, "protein_g": prot,
-            "carbs_g": 50, "fat_g": 15, "meal_type": mt,
+            "carbs_g": 50, "fat_g": 15, "fiber_g": 4, "meal_type": mt,
         }
         snaps.append(m)
     s._col.document.return_value.collection.return_value.stream.return_value = snaps
@@ -185,6 +185,7 @@ def test_get_day_aggregate_full():
     assert agg["meal_count"] == 3
     assert agg["totals"]["calories"] == 1700
     assert agg["totals"]["protein_g"] == 100
+    assert agg["totals"]["fiber_g"] == 12  # Phase 19.2 — fiber summed in totals
     assert set(agg["by_type"].keys()) == {1, 2, 3}
     assert agg["biggest_gap_minutes"] > 0
     assert len(agg["meals"]) == 3

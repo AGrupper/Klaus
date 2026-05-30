@@ -409,6 +409,34 @@ def test_calendar_overlap_triggers_non_empty(fixed_now):
     events = [{"start": a_s, "end": a_e}, {"start": b_s, "end": b_e}]
     assert autonomous._calendar_has_gap_or_overload(events, now_ctx) is True
 
+def test_calendar_has_gap_or_overload_naive_aware_mix(fixed_now):
+    """Verify that a mix of offset-naive (all-day) and offset-aware (timed) calendar events does not raise a TypeError."""
+    now_ctx = autonomous._now_context(fixed_now)
+    now_ctx["now_iso"] = fixed_now.isoformat()
+    # Timed event (offset-aware)
+    timed_s = fixed_now.replace(hour=11, minute=0).isoformat()
+    timed_e = fixed_now.replace(hour=12, minute=0).isoformat()
+    # 1. Non-overlapping all-day event (offset-naive start/end format YYYY-MM-DD on a different day)
+    all_day_s1 = "2026-05-22"
+    all_day_e1 = "2026-05-23"
+    events_non_overlap = [
+        {"start": timed_s, "end": timed_e},
+        {"start": all_day_s1, "end": all_day_e1},
+    ]
+    # This should complete successfully and return False (since there is no overlap)
+    assert autonomous._calendar_has_gap_or_overload(events_non_overlap, now_ctx) is False
+
+    # 2. Overlapping all-day event (offset-naive start/end format YYYY-MM-DD on the same day)
+    all_day_s2 = "2026-05-21"
+    all_day_e2 = "2026-05-22"
+    events_overlap = [
+        {"start": timed_s, "end": timed_e},
+        {"start": all_day_s2, "end": all_day_e2},
+    ]
+    # This should complete successfully and return True (since they overlap)
+    assert autonomous._calendar_has_gap_or_overload(events_overlap, now_ctx) is True
+
+
 
 def test_calendar_with_single_non_conflicting_event_is_quiet(fixed_now):
     """BLOCKER 2 — single isolated event is NOT a signal."""
@@ -906,16 +934,18 @@ class TestPhase19Gather:
     def test_gather_includes_phase19_keys(self, fixed_now, monkeypatch):
         """gather_situation returns 3 new keys with mocked values."""
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-        fake_meals = [{"source_id": "x:1", "timestamp": "2026-05-21T13:00", "calories": 500}]
+        fake_meals = [{"source_id": "x:1", "timestamp": "2026-05-21T13:00+03:00", "calories": 500}]
         fake_status = {"vo2_max": 51.7, "training_status": "PRODUCTIVE", "load_focus": "BALANCED"}
         fake_acwr = {"acute": 80.0, "chronic": 75.0, "ratio": 1.07}
+
+        mock_meal_store = MagicMock()
+        mock_meal_store.get_day.return_value = fake_meals
 
         existing = self._patch_existing_sources()
         for p in existing:
             p.start()
         try:
-            with patch("mcp_tools.google_fit_tool.sync_recent_meals", return_value=fake_meals), \
-                 patch("memory.firestore_db.MealStore"), \
+            with patch("memory.firestore_db.MealStore", return_value=mock_meal_store), \
                  patch("mcp_tools.garmin_tool.fetch_garmin_training_status", return_value=fake_status), \
                  patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value=fake_acwr):
                 result = autonomous.gather_situation(fixed_now)
@@ -930,12 +960,14 @@ class TestPhase19Gather:
     def test_gather_phase19_source_failure_isolation(self, fixed_now, monkeypatch):
         """Each new source raises independently → others still populated."""
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        # Phase 19.3: meals now read from MealStore.get_day() (not Google Fit).
+        failing_meal_store = MagicMock()
+        failing_meal_store.get_day.side_effect = RuntimeError("firestore down")
         existing = self._patch_existing_sources()
         for p in existing:
             p.start()
         try:
-            with patch("mcp_tools.google_fit_tool.sync_recent_meals", side_effect=RuntimeError("fit down")), \
-                 patch("memory.firestore_db.MealStore"), \
+            with patch("memory.firestore_db.MealStore", return_value=failing_meal_store), \
                  patch("mcp_tools.garmin_tool.fetch_garmin_training_status", return_value={"vo2_max": 50}), \
                  patch("mcp_tools.garmin_tool.compute_acwr_from_db", side_effect=RuntimeError("pg down")):
                 result = autonomous.gather_situation(fixed_now)
