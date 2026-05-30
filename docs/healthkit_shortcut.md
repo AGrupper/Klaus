@@ -129,7 +129,7 @@ app crashed, Shortcut suspended, push failed mid-flight, etc.).
 The catch-up is fully idempotent on Klaus's side — re-pushed samples land on
 the same Firestore doc because MealStore.upsert is keyed on `source_id`
 (`healthkit:{uuid}` or, for Lifesum's `"Lifesum"` source-name case,
-`healthkit:{start_date_iso}:{calories_int}`). No duplicates, no quota burn
+`healthkit:{start_date_iso}:{food_item}:{calories_int}`). No duplicates, no quota burn
 from re-pushing.
 
 ## 5. iCloud Shortcut share link

@@ -455,11 +455,13 @@ def test_source_id_falls_back_when_uuid_is_lifesum():
     """Wave 0 finding: iOS Shortcut 'Get Details → Source' returns the source-app
     name string ('Lifesum'), NOT the HKObject UUID. Without a fallback, every
     sample would collapse to source_id='healthkit:Lifesum' and dedup would break.
-    Normalizer must synthesize source_id = 'healthkit:{start_date_iso}:{calories_int}'."""
+    Normalizer must synthesize
+    source_id = 'healthkit:{start_date_iso}:{food_item}:{calories_int}'."""
     meal = _make_meal_dict(
         uuid="Lifesum",
         hour=7,
         minute=30,
+        food_item="Oatmeal",
         samples_by_type={
             "DietaryEnergyConsumed_kcal": 1038.0,
             "DietaryProtein_g": 70.0,
@@ -471,6 +473,35 @@ def test_source_id_falls_back_when_uuid_is_lifesum():
     assert result["source_id"].startswith("healthkit:")
     assert result["source_id"] != "healthkit:Lifesum"
     assert "1038" in result["source_id"]
+    assert "Oatmeal" in result["source_id"]
+
+
+def test_source_id_fallback_includes_food_item_to_avoid_collision():
+    """CR-01 regression: two meals at the SAME start_date with the SAME integer
+    calories but DIFFERENT food_item, both reporting uuid='Lifesum', must produce
+    TWO distinct source_ids. Before the fix the synthetic key was only
+    (start_date, calories), so both collapsed to one Firestore doc and one meal
+    was silently lost on upsert (merge=True)."""
+    common = {
+        "DietaryEnergyConsumed_kcal": 95.0,
+        "DietaryCarbohydrates_g": 25.0,
+    }
+    apple = _make_meal_dict(
+        uuid="Lifesum", hour=15, minute=0, food_item="Apple",
+        samples_by_type=dict(common),
+    )
+    banana = _make_meal_dict(
+        uuid="Lifesum", hour=15, minute=0, food_item="Banana",
+        samples_by_type=dict(common),
+    )
+    sid_apple = _normalize_healthkit_sample(apple)["source_id"]
+    sid_banana = _normalize_healthkit_sample(banana)["source_id"]
+    assert sid_apple != sid_banana
+    # Both upsert under their own key — no silent merge/loss.
+    store = MagicMock()
+    store.upsert(source_id=sid_apple, meal=apple)
+    store.upsert(source_id=sid_banana, meal=banana)
+    assert store.upsert.call_count == 2
 
 
 def test_source_id_falls_back_when_uuid_empty():
