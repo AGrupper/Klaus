@@ -377,17 +377,15 @@ def _render_manifest(root: Path, sha: str) -> str:
     lines += [
         "## Cron Jobs",
         "",
-        "| Job | Schedule (UTC) | Handler |",
-        "|-----|----------------|---------|",
+        "| Job | Schedule (Asia/Jerusalem) | Handler |",
+        "|-----|---------------------------|---------|",
         "| Heartbeat | `0 * * * *` | `/cron/heartbeat` |",
-        "| Proactive alerts | `30 18 * * *` (21:30 IDT) | `/cron/proactive-alerts` |",
-        "| Morning briefing tick | `*/10 3-7 * * *` (06–10 IDT) | `/cron/morning-briefing-tick` |",
-
-        "| Chat ingest | `0 1 * * *` (04:00 IDT) | `/cron/chat-ingest` |",
-        "| Chat export ingest | `30 1 * * *` (04:30 IDT) | `/cron/chat-export-ingest` |",
-        "| Daily reflection | `0 22 * * *` (22:00 IDT) | `/cron/reflect` |",
-        "",
-        "<!-- TODO Phase 18: /cron/autonomous-tick -->",
+        "| Proactive alerts | `30 21 * * *` | `/cron/proactive-alerts` |",
+        "| Morning briefing tick | `*/10 6-10 * * *` | `/cron/morning-briefing-tick` |",
+        "| Chat ingest | `0 4 * * *` | `/cron/ingest-chats` |",
+        "| Chat export ingest | `30 4 * * *` | `/cron/ingest-chat-exports` |",
+        "| Daily reflection | `0 22 * * *` | `/cron/reflect` |",
+        "| Autonomous tick | `*/20 7-21 * * *` | `/cron/autonomous-tick` |",
         "",
     ]
 
