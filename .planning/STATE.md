@@ -18,12 +18,13 @@ progress:
 ## Current Position
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
-Phases shipped: 2 + 1 gap-closure complete (Phase 19 ✓ + Phase 19.1 ✓ + Phase 20 pending)
-Phase: 19.1 — **COMPLETE**. Server-side flat-samples aggregator deployed; iOS Personal Automation on Lifesum-close live; real meal landed in Firestore 2026-05-30 01:11 with correct macros. Phase 19 SC #2 closed.
-Plan: next is `/clear` then begin Phase 20 (`/gsd-discuss-phase 20` or `/gsd-plan-phase 20`).
-Status: Ready for next phase
-Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-05-PATH-B-SUMMARY.md
-Last activity: 2026-05-30 -- Phase 19.1 LIVE UAT closed; Phase 19 SC #2 resolved
+Phases shipped: Phase 19 ✓ + Phase 19.1 ✓ + 19.2 (fiber) & 19.3 (meal-read repoint) fixed inline ✓ (Phase 20 pending)
+Phase: 19.1 — **COMPLETE** (UAT 5/6; Test 5 fix landed). Server-side flat-samples aggregator live; real meal landed in Firestore 2026-05-30 01:11. Phase 19 SC #2 closed.
+19.2 (fiber threaded end-to-end) + 19.3 (both meal READ paths repointed off dead Google Fit → MealStore.get_day()) fixed inline 2026-05-30 — 626 tests pass, committed 0088aca, pushed to main, **deployed green ✓**.
+Plan: live Telegram re-verify (ask Klaus "what did I eat today?" → expect real macros + fiber, not "no entries in Google Fit"). Then `/clear` and begin Phase 20.
+Status: Deployed green; awaiting live Telegram re-verify, then Phase 20
+Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-UAT.md
+Last activity: 2026-05-30 -- 19.x meal-read + fiber fix shipped & deployed green; live re-verify pending
 
 ## Project Reference
 
