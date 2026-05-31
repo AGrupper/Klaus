@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
 status: executing
-last_updated: "2026-05-30T16:50:00.000Z"
-last_activity: 2026-05-30 -- Phase 19.1 UAT 5/6; Test 5 fix + fiber (19.2) + meal-read repoint (19.3) committed (0088aca) + pushed to main + deployed green ✓. Live Telegram re-verify ("what did I eat today?") pending operator.
+last_updated: "2026-05-31T09:35:00.000Z"
+last_activity: 2026-05-31 -- Phase 19.1 UAT 6/6 PASS (verified live). Test 5 + fiber (19.2) + meal-read repoint (19.3) + serialization fix (a46431f) all deployed green; Klaus returned real HealthKit breakfast w/ fiber on Telegram 09:27.
 progress:
   total_phases: 3
   completed_phases: 2
@@ -19,10 +19,10 @@ progress:
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
 Phases shipped: Phase 19 ✓ + Phase 19.1 ✓ + 19.2 (fiber) & 19.3 (meal-read repoint) fixed inline ✓ (Phase 20 pending)
-Phase: 19.1 — **COMPLETE** (UAT 5/6; Test 5 fix landed). Server-side flat-samples aggregator live; real meal landed in Firestore 2026-05-30 01:11. Phase 19 SC #2 closed.
-19.2 (fiber threaded end-to-end) + 19.3 (both meal READ paths repointed off dead Google Fit → MealStore.get_day()) fixed inline 2026-05-30 — 626 tests pass, committed 0088aca, pushed to main, **deployed green ✓**.
-Plan: live Telegram re-verify (ask Klaus "what did I eat today?" → expect real macros + fiber, not "no entries in Google Fit"). Then `/clear` and begin Phase 20.
-Status: Deployed green; awaiting live Telegram re-verify, then Phase 20
+Phase: 19.1 — **COMPLETE & VERIFIED LIVE** (UAT 6/6). Server-side flat-samples aggregator live; Phase 19 SC #2 closed.
+19.2 (fiber threaded end-to-end) + 19.3 (both meal READ paths repointed off dead Google Fit → MealStore.get_day()) fixed inline 2026-05-30/31 — 627 tests pass, commits 0088aca + a46431f (serialization fix), deployed green. **Verified live 2026-05-31 09:27**: Klaus returned the real HealthKit breakfast (1113 kcal / 44P / 156C / 34F / 19.7g fiber) from MealStore on Telegram.
+Plan: `/clear` then begin Phase 20 (`/gsd-discuss-phase 20` or `/gsd-plan-phase 20`).
+Status: Ready for Phase 20
 Resume file: .planning/phases/19.1-healthkit-nutrition-bridge/19.1-UAT.md
 Last activity: 2026-05-30 -- 19.x meal-read + fiber fix shipped & deployed green; live re-verify pending
 
