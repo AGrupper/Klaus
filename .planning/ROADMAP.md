@@ -95,12 +95,19 @@ session via `UserProfileStore` writes.
 **Depends on**: Phase 19 (needs `UserProfileStore`, Garmin reads, Postgres ACWR columns)
 **Requirements**: LOG-01, LOG-02, LOG-03, LOG-04, CHECKIN-01, CHECKIN-02, CHECKIN-03, CHECKIN-04, CHECKIN-05, CHECKIN-06, REVIEW-01, REVIEW-02, REVIEW-03, REVIEW-04, RECOVERY-01, RECOVERY-02, RECOVERY-03, CRON-01, CRON-02
 **Success Criteria** (what must be TRUE):
-  1. On a typical day where Garmin already has RPE for every planned workout, the 21:00 training check-in cron sends zero Telegram messages and the day's Garmin activities appear in `training_log` with `source="garmin"`.
-  2. On a day where a planned workout has no Garmin record, the 21:00 cron sends an inline-keyboard prompt ("Skipped or watch off?"); selecting a button writes a `training_log` entry and the follow-up notes prompt accepts `/skip` or a free-text reply.
+  1. On a typical day where Garmin already has RPE for every planned workout, the 21:30 training check-in (folded into the proactive-alerts cron) sends zero Telegram messages and the day's Garmin activities appear in `training_log` with `source="garmin"`.
+  2. On a day where a planned workout has no Garmin record, the 21:30 check-in sends an inline-keyboard prompt ("Skipped or watch off?"); selecting a button writes a `training_log` entry and the follow-up notes prompt accepts `/skip` or a free-text reply.
   3. Morning briefing on an ACWR>1.5 day with a heavy session scheduled mentions recovery concern with a direct, metric-anchored tone shift (not commanding); on a normal day the same prompt produces the usual briefing without recovery framing.
-  4. Sunday 10:00 weekly-review cron sends a Telegram message containing planned-vs-actual training, HRV/RHR/sleep trend lines, and one suggestion for the coming week, sourced from `training_log`, `activities`, `daily_biometrics`, and `meal_audits`.
-  5. Operator running `scripts/bootstrap_shifu_crons.sh` creates `klaus-training-checkin` and `klaus-weekly-training-review` Cloud Scheduler jobs with OIDC auth; both appear alongside the existing 9 jobs in `docs/DEPLOYMENT.md` Phase Shifu section.
-**Plans**: TBD
+  4. Sunday 10:00 weekly-review cron sends a Telegram message containing planned-vs-actual training, HRV/RHR/sleep trend lines, and one suggestion for the coming week, sourced from `training_log`, `activities`, `daily_biometrics`, and live `MealStore` 7-day totals.
+  5. Operator running `scripts/bootstrap_shifu_crons.sh` creates the single `klaus-weekly-training-review` Cloud Scheduler job with OIDC auth (the training check-in needs no new job — it folds into proactive-alerts per D-09); the new job appears alongside the existing jobs in `docs/DEPLOYMENT.md` Phase Shifu section.
+**Plans**: 7
+- [ ] 20-01-PLAN.md — TrainingLogStore + PendingPromptStore + log_training/get_training_history tools (LOG-01..04)
+- [ ] 20-02-PLAN.md — Reconcile REQUIREMENTS/ROADMAP for D-09 + D-21 (CHECKIN-01/06, REVIEW-02, CRON-01)
+- [ ] 20-03-PLAN.md — send_and_inject reply_markup + router callback_query dispatch + Training-calendar read (CHECKIN-04)
+- [ ] 20-04-PLAN.md — core/training_checkin.py (silent Garmin sync + branch + callbacks) folded into proactive-alerts (CHECKIN-01..06)
+- [ ] 20-05-PLAN.md — RECOVERY_THRESHOLDS + compute_recovery_concern + morning_briefing/proactive_alert tone shift (RECOVERY-01..03)
+- [ ] 20-06-PLAN.md — Weekly-review cron route + brain compose module + prompt + heartbeat staleness key (REVIEW-01..04)
+- [ ] 20-07-PLAN.md — bootstrap_shifu_crons.sh + DEPLOYMENT.md Phase Shifu + SELF.md regen (CRON-01, CRON-02)
 **UI hint**: yes
 
 ### Progress
@@ -111,7 +118,7 @@ session via `UserProfileStore` writes.
 | 19.1. HealthKit Nutrition Bridge | 5/5 | Complete | 2026-05-30 |
 | 19.2. Fiber Through Reasoning Layer *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
 | 19.3. Meal Read Paths → iOS HealthKit (MealStore) *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
-| 20. Accountability Crons & Recovery Briefing | 0/TBD | Not started | — |
+| 20. Accountability Crons & Recovery Briefing | 0/7 | Planned | — |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
 `.planning/phases/20-*/` once `/gsd-plan-phase` runs. Archived to
