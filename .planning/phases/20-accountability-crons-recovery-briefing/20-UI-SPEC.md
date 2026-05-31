@@ -1,10 +1,11 @@
 ---
 phase: 20
 slug: accountability-crons-recovery-briefing
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-05-31
+reviewed_at: 2026-05-31
 medium: telegram-only
 ---
 
@@ -78,15 +79,17 @@ Reinterpreted for Telegram: "typography" = markdown formatting and emphasis conv
 
 Reinterpreted for Telegram: "color" = emoji semantic palette. These emoji carry the visual weight that colors carry in a web UI.
 
-| Role | Emoji | Semantic Meaning | Usage |
-|------|-------|-----------------|-------|
-| Dominant (neutral) | — | Plain text background | Body copy, no emoji decoration |
-| Positive / done | ✅ | Completed | Weekly scorecard: workout logged (any source) |
-| Negative / missed | ❌ | Skipped | Weekly scorecard: workout explicitly skipped |
-| Warning / unknown | ⚠️ | No log entry | Weekly scorecard: planned workout with no record — not confirmed done or skipped |
-| Recovery concern (mild) | ⚠️ | Mild caution | Recovery framing preamble when severity = mild |
-| Recovery concern (strong) | 🔴 | Strong caution | Recovery framing preamble when severity = strong (D-12) |
-| Section navigation | 📅 📧 ✅ 📚 🥗 | Header anchors | Pre-rendered section markers; same set as `morning_briefing.md`; do not invent new section emoji |
+| Role | Emoji | Context | Semantic Meaning | Usage |
+|------|-------|---------|-----------------|-------|
+| Dominant (neutral) | — | all | Plain text background | Body copy, no emoji decoration |
+| Positive / done | ✅ | scorecard row | Completed | Weekly scorecard: workout logged (any source) |
+| Negative / missed | ❌ | scorecard row | Skipped | Weekly scorecard: workout explicitly skipped |
+| Warning / unknown | ⚠️ | scorecard row | No log entry | Weekly scorecard: planned workout with no record — not confirmed done or skipped |
+| Recovery concern (mild) | ⚠️ | recovery preamble | Mild caution | Recovery framing preamble when severity = mild |
+| Recovery concern (strong) | 🔴 | recovery preamble | Strong caution | Recovery framing preamble when severity = strong (D-12) |
+| Section navigation | 📅 📧 ✅ 📚 🥗 | section header | Header anchors | Pre-rendered section markers; same set as `morning_briefing.md`; do not invent new section emoji |
+
+**Context disambiguation:** ⚠️ means "no log entry" only in a scorecard row, and "mild recovery concern" only in a recovery preamble — the two never share a message context. ✅ likewise means "workout completed" in a scorecard row and is a structural header anchor in the section-navigation set; never mix the two roles within one line.
 
 **Accent reserved for:** scorecard status column only (✅/❌/⚠️ per workout row). Do not scatter status emoji into prose.
 
@@ -300,11 +303,11 @@ Morning briefing tick (existing, extended)
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals (Telegram message structure): PASS
-- [ ] Dimension 3 Color (Emoji semantics): PASS
-- [ ] Dimension 4 Typography (Markdown conventions): PASS
-- [ ] Dimension 5 Spacing (Message structure): PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals (Telegram message structure): PASS
+- [x] Dimension 3 Color (Emoji semantics): PASS (FLAG resolved — Context column added)
+- [x] Dimension 4 Typography (Markdown conventions): PASS
+- [x] Dimension 5 Spacing (Message structure): PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** APPROVED — 2026-05-31 (gsd-ui-checker; 1 non-blocking FLAG resolved)
