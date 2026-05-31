@@ -27,7 +27,7 @@ We will build the following functional blocks:
 * **Phase 5:** Cloud Run deployment. ✓ Complete — Dockerfile, `interfaces/web_server.py` (FastAPI + Telegram webhook), GitHub Actions CI/CD with Workload Identity Federation, Secret Manager for all API keys.
 * **Phase 6:** Conversation persistence + long-term memory. ✓ Complete — `memory/firestore_conversation.py` (Firestore per-user history), `memory/pinecone_db.py` (Pinecone RAG via gemini-embedding-2), `mcp_tools/memory.py` (remember/recall tools).
 * **Phase 7:** External connections. ✓ Complete — `mcp_tools/weather_tool.py` (wttr.in), `mcp_tools/readwise_tool.py` (Readwise API), `mcp_tools/garmin_tool.py` (Garmin Connect), all registered as callable tools.
-* **Phase 8:** Five Fingers practice helper. ✓ Complete — three cron-driven flows (pre-practice, post-practice attendance, morning-after follow-up). `wa.me` prefilled-link delivery via Telegram DM — no autonomous WhatsApp sending. New Firestore collections: `five_fingers_roster`, `five_fingers_practices`. New modules: `mcp_tools/five_fingers/` (composer, recommender, roster, attendance), `core/five_fingers.py`. Two new Cloud Scheduler jobs + OIDC-protected cron endpoints in `interfaces/web_server.py`. Inline-keyboard attendance entry wired into `interfaces/_router.py`.
+* **Phase 8:** Five Fingers practice helper. ✗ Deprecated & Removed (Phase 19.3) — The proactive cron-driven flows, attendance rosters, and Telegram check-in keyboards have been fully removed from the active codebase. Amit's Wednesday/Sunday practice routine and workout travel buffer calendar keywords are preserved in `docs/USER.md` for manual calendar scheduling.
 * **Phase 9:** Proactive evening alerts. ✓ Complete — nightly Cloud Scheduler job (`30 21 * * *` Asia/Jerusalem) scans tomorrow's calendar and detects weather conflicts, overloaded days, and travel-time violations. Template-based detection (zero LLM cost on quiet days); Smart Agent composes message when alerts exist. `core/proactive_alerts.py` refactored to use `core/scheduled_message.py` (shared Telegram send + Firestore conversation injection). Cloud Scheduler job: `Klaus-proactive-alerts`.
 * **Phase 10:** Morning briefing. ✓ Complete — Garmin-sync-anchored daily briefing via Telegram. State machine in Firestore (`morning_briefings/{date}`), polled every 10 min by Cloud Scheduler (`*/10 6-10 * * *` Asia/Jerusalem). Data sources: weather, calendar, Gmail, Garmin, TickTick tasks (real-time Open API, replaces Things 3 snapshot). Briefing injected into conversation history as assistant turn. Manual trigger via Smart Agent tool `run_morning_briefing`. Key modules: `core/morning_briefing.py`, `prompts/morning_briefing.md`. Cloud Scheduler job: `Klaus-morning-briefing-tick`.
 * **Phase 11:** Notion integration. ✓ Complete — `mcp_tools/notion_tool.py` (5 tools: search, get_page, query_database, create_page, append_blocks), wired in `core/tools.py`. Internal integration token (`NOTION_API_TOKEN`), no OAuth flow. Read + create/append access. Auth pattern: static token (like `READWISE_TOKEN`).
@@ -44,7 +44,7 @@ We will build the following functional blocks:
 **Data flow:**
 ```
 Local machine (~/.claude/projects/)
-    ↓ gcloud storage rsync (hourly, upload_claude_logs.sh/.ps1)
+    ↓ gcloud storage rsync (daily, upload_claude_logs.sh/.ps1)
 GCS bucket: gs://CHAT_LOGS_BUCKET/claude-code/{mac,pc}/
     ↓ Cloud Scheduler (0 4 * * * Asia/Jerusalem)
 POST /cron/ingest-chats → core.chat_ingest.run_one_batch()
@@ -80,8 +80,8 @@ POST /cron/ingest-chats → core.chat_ingest.run_one_batch()
 * **Cloud Run service:** `Klaus-agent` — region `me-west1`, project `Klaus-agent`
 * **Firestore database:** `Klaus-firestore`
   * Collection `conversations` — per-user conversation history (Phase 6)
-  * Collection `five_fingers_roster` — Phase 8 sub-team roster (one doc per teammate)
-  * Collection `five_fingers_practices` — Phase 8 attendance log (one doc per practice, ID = YYYY-MM-DD)
+  * Collection `five_fingers_roster` — Phase 8 sub-team roster (Deprecated/Legacy)
+  * Collection `five_fingers_practices` — Phase 8 attendance log (Deprecated/Legacy)
   * Collection `morning_briefings/{date}` — Phase 10 state machine + structured metadata
 * **Pinecone index:** `Klaus-memory` — serverless, AWS, dimension=768, cosine
 * **Cloud Scheduler jobs:**
@@ -331,7 +331,7 @@ Updated to reflect the 9-cron production state. The §5 inventory above predates
 
 **Firestore database:** `klaus-firestore` (lowercase `klaus` — uppercase causes silent 404s). Collections:
 - `conversations` — per-user history (Phase 6)
-- `five_fingers_roster`, `five_fingers_practices` — Phase 8
+- `five_fingers_roster`, `five_fingers_practices` — Phase 8 (Deprecated/Legacy)
 - `morning_briefings/{date}` — Phase 10 state machine
 - `chat_ingest/state`, `chat_export_ingest/state` — Phases 12-13 dedup
 - `llm_usage/{date}` — Phase 14 cost metering
@@ -341,12 +341,12 @@ Updated to reflect the 9-cron production state. The §5 inventory above predates
 
 **Pinecone index:** `klaus-memory` — serverless, AWS, 768-dim, cosine. Valid kinds: `{"fact", "chunk", "chat", "self"}`.
 
-**Cloud Scheduler jobs (9 total):**
+**Cloud Scheduler jobs (7 active, 2 removed):**
 - `klaus-heartbeat` — `0 * * * *`
 - `klaus-proactive-alerts` — `30 21 * * *` Asia/Jerusalem (Phase 9)
 - `klaus-morning-briefing-tick` — `*/10 6-10 * * *` Asia/Jerusalem (Phase 10)
-- `klaus-five-fingers-morning` — Wed/Sun 10:30 (Phase 8)
-- `klaus-five-fingers-evening` — Wed/Sun 21:15 (Phase 8)
+- `klaus-five-fingers-morning` — Wed/Sun 10:30 (Removed in Phase 19.3)
+- `klaus-five-fingers-evening` — Wed/Sun 21:15 (Removed in Phase 19.3)
 - `klaus-chat-ingest` — `0 4 * * *` Asia/Jerusalem (Phase 12)
 - `klaus-chat-export-ingest` — `30 4 * * *` Asia/Jerusalem (Phase 13)
 - `klaus-reflect` — `0 22 * * *` Asia/Jerusalem (Phase 17 v2.0)

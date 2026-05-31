@@ -36,9 +36,12 @@ Three alert types:
 Detection is template-based (zero LLM cost on quiet days). If any alerts are found,
 the structured data is passed to the Smart Agent to compose a single message in Klaus voice.
 
-## 6. Five Fingers Practice Helper (Phase 8) ✓ Live
+## 6. Five Fingers Practice Helper (Phase 8) ✗ Deprecated/Removed
 
-Three proactive flows triggered by Cloud Scheduler (Sun/Wed mornings and evenings, Mon/Thu mornings):
+> [!WARNING]
+> **Deprecated & Removed (Phase 19.3)**: The Five Fingers proactive cron-driven flows, attendance rosters, and Telegram check-in keyboards have been removed from the active codebase. Amit's Wednesday/Sunday practice routine and workout travel buffer calendar keywords are still preserved in `docs/USER.md` for manual calendar scheduling.
+
+Three proactive flows historically triggered by Cloud Scheduler (Sun/Wed mornings and evenings, Mon/Thu mornings):
 
 * **Pre-practice (Wed/Sun 10:30):** Klaus reads the calendar to confirm practice is on, runs a recommendation engine against the sub-team roster and attendance history, and sends a Telegram DM with `wa.me` prefilled-message links for 2–3 teammates to ping. Includes a copy-paste Hebrew status block for the captains WhatsApp group. If the calendar event is missing, Klaus asks Amit whether practice is happening before proceeding.
 * **Post-practice attendance (Wed/Sun 21:15):** Klaus sends a Telegram inline-keyboard checklist of the 10-person sub-team. Amit taps ✓/✗ per person; results are written to Firestore.
@@ -79,7 +82,7 @@ Proactive scanning and Pinecone memory ingestion are deferred to a later phase.
 
 **What it does:**
 - Parses structured JSONL session files from `~/.claude/projects/` on the user's machines
-- Pushes raw files to a GCS staging bucket via lightweight upload scripts (hourly cron)
+- Pushes raw files to a GCS staging bucket via lightweight upload scripts (daily cron)
 - A Cloud Run endpoint (`/cron/ingest-chats`, triggered daily at 04:00 Israel time) processes logs in bounded batches:
   - Embeds conversation chunks → Pinecone (semantic search, kind="chat")
   - Summarizes each session → Notion database (one row per conversation: title, date, project, 2-3 sentence summary, topic labels)

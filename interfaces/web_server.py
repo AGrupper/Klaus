@@ -344,9 +344,7 @@ def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) ->
         logger.warning("Failed to record cron run for %s", job_id, exc_info=True)
 
 
-# ------------------------------------------------------------------ #
-# Five Fingers cron routes                                           #
-# ------------------------------------------------------------------ #
+
 
 
 @app.post("/cron/proactive-alerts")

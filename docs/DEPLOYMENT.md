@@ -927,14 +927,14 @@ CHAT_LOGS_BUCKET="${BUCKET_NAME}" ./scripts/upload_claude_logs.sh
 
 Then add to crontab (edit with `crontab -e`):
 ```
-0 * * * * CHAT_LOGS_BUCKET=your-bucket-name /path/to/Klaus/scripts/upload_claude_logs.sh >> /tmp/claude-log-upload.log 2>&1
+0 3 * * * CHAT_LOGS_BUCKET=your-bucket-name /path/to/Klaus/scripts/upload_claude_logs.sh >> /tmp/claude-log-upload.log 2>&1
 ```
 
 ### 17h. Set Up the Upload Task (Windows)
 
 1. Open **Task Scheduler** → **Create Basic Task**.
 2. Name: "Klaus Log Uploader"
-3. Trigger: Daily, repeat every 1 hour.
+3. Trigger: Daily (e.g., at 03:00, with no repetition).
 4. Action: Start a program → `powershell.exe`
 5. Arguments: `-File C:\path\to\Klaus\scripts\upload_claude_logs.ps1`
 6. Set `CHAT_LOGS_BUCKET` as a system environment variable (Control Panel → System → Advanced → Environment Variables).

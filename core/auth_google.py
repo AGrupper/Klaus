@@ -193,7 +193,7 @@ class GoogleAuthManager:
            no user interaction.
     """
 
-    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE, FITNESS_NUTRITION_READ_SCOPE]
+    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE]
 
     def __init__(self, credentials_path: str, token_storage: TokenStorage) -> None:
         """

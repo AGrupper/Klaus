@@ -9,8 +9,8 @@
 #      (see docs/DEPLOYMENT.md §17 for IAM setup)
 #   3. CHAT_LOGS_BUCKET env var set, OR hardcode BUCKET below.
 #
-# Scheduling: add to crontab for hourly runs:
-#   0 * * * * CHAT_LOGS_BUCKET=your-bucket /path/to/Klaus/scripts/upload_claude_logs.sh >> /tmp/claude-log-upload.log 2>&1
+# Scheduling: add to crontab for daily runs (e.g., at 03:00):
+#   0 3 * * * CHAT_LOGS_BUCKET=your-bucket /path/to/Klaus/scripts/upload_claude_logs.sh >> /tmp/claude-log-upload.log 2>&1
 
 set -euo pipefail
 

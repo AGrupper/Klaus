@@ -10,7 +10,7 @@
 #
 # Scheduling: use Task Scheduler with:
 #   Action: powershell.exe -File C:\path\to\Klaus\scripts\upload_claude_logs.ps1
-#   Trigger: Daily, repeat every 1 hour
+#   Trigger: Daily (e.g., at 03:00, with no repetition)
 
 param()
 

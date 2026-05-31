@@ -13,7 +13,7 @@ def test_fitness_scope_constant_exists():
     assert FITNESS_NUTRITION_READ_SCOPE == "https://www.googleapis.com/auth/fitness.nutrition.read"
 
 
-def test_scopes_list_includes_fitness():
-    """PHASE 19-03 NUTR-01: GoogleAuthManager.SCOPES contains the fitness scope."""
+def test_scopes_list_excludes_fitness():
+    """PHASE 19-03 NUTR-01: GoogleAuthManager.SCOPES does NOT contain the fitness scope."""
     from core.auth_google import GoogleAuthManager, FITNESS_NUTRITION_READ_SCOPE
-    assert FITNESS_NUTRITION_READ_SCOPE in GoogleAuthManager.SCOPES
+    assert FITNESS_NUTRITION_READ_SCOPE not in GoogleAuthManager.SCOPES
