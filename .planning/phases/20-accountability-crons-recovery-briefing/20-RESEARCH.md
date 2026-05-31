@@ -786,19 +786,24 @@ def get_recent(self, days: int) -> list[dict]:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **proactive_alerts dedup interaction with check-in**
+> All three questions were resolved during planning and folded into Phase 20 plan actions:
+> Q1 → Plan 20-04 Task 3 (run check-in BEFORE the `_already_sent`/`_mark_processed` gate);
+> Q2 → Plan 20-01 Task 1 (RPE normalisation guard, `% 10 == 0` encoding detection);
+> Q3 → Plan 20-05 Task 1 (`_recent_sleep_scores` Postgres read of `daily_biometrics`).
+
+1. **[RESOLVED — Plan 20-04 Task 3]** proactive_alerts dedup interaction with check-in
    - What we know: `run_proactive_alerts` at `proactive_alerts.py:98` marks the date as processed and returns early on subsequent calls
    - What's unclear: If proactive alerts already ran (no issues) and we fold check-in in, does the `_already_sent` gate block a retry of the check-in on the same evening?
    - Recommendation: Run training check-in BEFORE the `_already_sent` / `_mark_processed` gate, or give the check-in its own separate dedup key in `pending_prompts` or `training_checkin/{date}`.
 
-2. **Garmin RPE encoding normalisation**
+2. **[RESOLVED — Plan 20-01 Task 1]** Garmin RPE encoding normalisation
    - What we know: STATE.md Phase 19-01 notes "Garmin stores workoutRpe in steps of 10 (10..100 for 1..10)"
    - What's unclear: Does the live `fetch_garmin_activities` response already normalise RPE to 1–10, or does it return raw 10–100?
    - Recommendation: Add a normalisation step in TrainingLogStore.log_session or in the silent-sync step; guard with `% 10 == 0` check to detect the encoding.
 
-3. **How to surface Garmin sleep from multiple nights for the consecutive-low-sleep rule (D-15)**
+3. **[RESOLVED — Plan 20-05 Task 1]** How to surface Garmin sleep from multiple nights for the consecutive-low-sleep rule (D-15)
    - What we know: `fetch_garmin_today` provides today's sleep; `morning_briefing._gather_data` fetches today's garmin data; `daily_biometrics` Postgres table has sleep data
    - What's unclear: Is yesterday's sleep_score easily accessible without a separate Garmin API call or Postgres query?
    - Recommendation: Use `compute_acwr_from_db`-style Postgres read for sleep: `SELECT date, sleep_score FROM daily_biometrics WHERE date >= (today - 2) ORDER BY date DESC LIMIT 2`. This avoids a second Garmin API call and uses data already written by `write_today_biometrics_to_postgres`.
