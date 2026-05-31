@@ -206,3 +206,27 @@ def test_get_day_aggregate_biggest_gap():
     s._col.document.return_value.collection.return_value.stream.return_value = snaps
     agg = s.get_day_aggregate("2026-05-26")
     assert agg["biggest_gap_minutes"] == 300.0  # 5 hours
+
+
+def test_get_day_strips_non_serializable_updated_at():
+    """Phase 19.3 live-UAT fix: get_day drops the Firestore updated_at stamp so
+    downstream json.dumps (fetch_recent_meals tool, autonomous triage) never
+    chokes on a DatetimeWithNanoseconds ('timestamp serialization anomaly')."""
+    import json as _json
+
+    class _FakeTs:  # stand-in for Firestore DatetimeWithNanoseconds
+        def __repr__(self):
+            return "DatetimeWithNanoseconds(...)"
+
+    s = _store()
+    snap = MagicMock()
+    snap.to_dict.return_value = {
+        "timestamp": "2026-05-31T08:00:00+03:00",
+        "calories": 300, "protein_g": 20, "fiber_g": 4,
+        "source_id": "healthkit:x", "updated_at": _FakeTs(),
+    }
+    s._col.document.return_value.collection.return_value.stream.return_value = [snap]
+    meals = s.get_day("2026-05-31")
+    assert "updated_at" not in meals[0]
+    # The returned list must be JSON-serializable end-to-end.
+    _json.dumps(meals)

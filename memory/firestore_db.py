@@ -617,10 +617,17 @@ class MealStore:
         """
         try:
             snaps = self._col.document(date_str).collection("timestamps").stream()
-            return sorted(
-                (s.to_dict() for s in snaps),
-                key=lambda d: d.get("timestamp", ""),
-            )
+            meals = []
+            for s in snaps:
+                d = s.to_dict() or {}
+                # Phase 19.3 live-UAT fix: drop the Firestore server-write stamp.
+                # It round-trips as a DatetimeWithNanoseconds, which is NOT
+                # json-serializable and breaks downstream json.dumps in the
+                # fetch_recent_meals tool + the autonomous triage snapshot. It's
+                # internal write-metadata, never meal data, so readers don't need it.
+                d.pop("updated_at", None)
+                meals.append(d)
+            return sorted(meals, key=lambda d: d.get("timestamp", ""))
         except Exception:
             logger.warning("MealStore.get_day(%r) failed", date_str, exc_info=True)
             return []
