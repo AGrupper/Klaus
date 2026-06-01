@@ -70,6 +70,36 @@ class TestDeploymentCompleteness:
         assert "status" in content
         assert "due_at" in content
 
+    def test_phase_shifu_section_present(self):
+        """CRON-02 — DEPLOYMENT.md contains the Phase Shifu section with the new job."""
+        content = _content()
+        assert "Phase Shifu" in content, "DEPLOYMENT.md missing 'Phase Shifu' section"
+        assert "klaus-weekly-training-review" in content, (
+            "DEPLOYMENT.md missing 'klaus-weekly-training-review' job reference"
+        )
+
+    def test_allowed_updates_callback_query_documented(self):
+        """CRON-02 / Pitfall 1 — DEPLOYMENT.md documents the callback_query allowed_updates re-registration."""
+        content = _content()
+        assert '"callback_query"' in content, (
+            'DEPLOYMENT.md must document allowed_updates ["message","callback_query"] re-registration'
+        )
+
+    def test_no_separate_training_checkin_job(self):
+        """D-09 — DEPLOYMENT.md does NOT register a separate klaus-training-checkin scheduler job."""
+        content = _content()
+        # The design note (folds into proactive-alerts) must be documented
+        assert "proactive-alerts" in content or "folds into" in content, (
+            "DEPLOYMENT.md should document that check-in folds into proactive-alerts (D-09)"
+        )
+        # No row in the inventory table for a training-checkin job
+        # (A brief mention in a note is fine, but there must not be a scheduler job entry)
+        import re
+        # Check there is no gcloud create block for training-checkin
+        assert not re.search(r"gcloud scheduler jobs create[^\n]*training-checkin", content), (
+            "DEPLOYMENT.md must NOT register a separate klaus-training-checkin scheduler job (D-09)"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PROMPT-03 — docs/SELF.md lists all 5 new Phase 19 tools

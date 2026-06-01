@@ -386,6 +386,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         "| Chat export ingest | `30 4 * * *` | `/cron/ingest-chat-exports` |",
         "| Daily reflection | `0 22 * * *` | `/cron/reflect` |",
         "| Autonomous tick | `*/20 7-21 * * *` | `/cron/autonomous-tick` |",
+        "| Weekly training review | `0 10 * * 0` (Sundays) | `/cron/weekly-training-review` |",
         "",
     ]
 

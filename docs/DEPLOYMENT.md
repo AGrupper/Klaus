@@ -1053,19 +1053,23 @@ Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.go
 
 ## 19. Cloud Scheduler — Full Job Inventory
 
-The following 7 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+The following 8 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
 use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
 are in `Asia/Jerusalem`.
 
-| # | Job ID                     | Schedule              | Endpoint                       | Phase   |
-|---|----------------------------|-----------------------|--------------------------------|---------|
-| 1 | klaus-morning-briefing     | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`  | Earlier |
-| 2 | klaus-proactive-alerts     | `30 21 * * *`         | `/cron/proactive-alerts`       | Earlier |
-| 3 | klaus-heartbeat            | `0 * * * *`           | `/cron/heartbeat`              | Earlier |
-| 4 | klaus-ingest-chats         | `0 4 * * *`           | `/cron/ingest-chats`           | 12      |
-| 5 | klaus-ingest-chat-exports  | `30 4 * * *`          | `/cron/ingest-chat-exports`    | 13      |
-| 6 | klaus-reflect              | `0 22 * * *`          | `/cron/reflect`                | 17      |
-| 7 | klaus-autonomous-tick      | `*/20 7-21 * * *`     | `/cron/autonomous-tick`        | 18      |
+| # | Job ID                       | Schedule              | Endpoint                          | Phase          |
+|---|------------------------------|-----------------------|-----------------------------------|----------------|
+| 1 | klaus-morning-briefing       | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`     | Earlier        |
+| 2 | klaus-proactive-alerts       | `30 21 * * *`         | `/cron/proactive-alerts`          | Earlier        |
+| 3 | klaus-heartbeat              | `0 * * * *`           | `/cron/heartbeat`                 | Earlier        |
+| 4 | klaus-ingest-chats           | `0 4 * * *`           | `/cron/ingest-chats`              | 12             |
+| 5 | klaus-ingest-chat-exports    | `30 4 * * *`          | `/cron/ingest-chat-exports`       | 13             |
+| 6 | klaus-reflect                | `0 22 * * *`          | `/cron/reflect`                   | 17             |
+| 7 | klaus-autonomous-tick        | `*/20 7-21 * * *`     | `/cron/autonomous-tick`           | 18             |
+| 8 | klaus-weekly-training-review | `0 10 * * 0`          | `/cron/weekly-training-review`    | 20 (Shifu)     |
+
+Note: There is no `klaus-training-checkin` scheduler job — the 21:30 training
+check-in folds into the existing `proactive-alerts` cron (D-09); no separate job is needed.
 
 Notes:
 - Schedules in column 2 are illustrative — verify against the live `gcloud scheduler
@@ -1211,3 +1215,72 @@ gcloud secrets versions disable klaus-healthkit-webhook-token --version=<CURRENT
 ```
 
 All inbound HealthKit pushes fail auth immediately. Re-enable by adding a new version.
+
+---
+
+## 24. Phase Shifu (Phase 20) — Accountability Crons
+
+### New Cloud Scheduler job
+
+One new scheduler job is added in Phase 20 (Shifu): `klaus-weekly-training-review`.
+Run `scripts/bootstrap_shifu_crons.sh` idempotently to create or update it.
+
+```bash
+# Prerequisites: export PROJECT_ID, SERVICE_URL, CLOUD_SCHEDULER_SA_EMAIL
+# REGION defaults to me-west1 if not set.
+
+bash scripts/bootstrap_shifu_crons.sh
+```
+
+The script is re-runnable (describe-or-create/update per D-25). It creates exactly
+one job using the existing OIDC service account (same SA as all other cron jobs):
+
+```bash
+gcloud scheduler jobs create http "klaus-weekly-training-review" \
+  --schedule="0 10 * * 0" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/weekly-training-review" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+### Training check-in — no separate scheduler job (D-09)
+
+The training check-in at 21:30 (checking whether today's expected session was
+logged) folds into the existing `proactive-alerts` cron. No `klaus-training-checkin`
+scheduler job is needed or registered.
+
+### Webhook re-registration — REQUIRED after deploy (Pitfall 1)
+
+**WARNING: If you do not run this step, all inline-keyboard button taps (callback_query
+updates) will be silently dropped by Telegram. Users see the buttons but nothing happens.**
+
+After deploying Phase 20, re-register the Telegram webhook to include `callback_query`
+in `allowed_updates`. Currently the webhook was registered with `["message"]` only
+(see initial setWebhook in this runbook). Phase 20 adds inline keyboard buttons whose
+taps arrive as `callback_query` updates — Telegram will not deliver them unless
+explicitly listed.
+
+Run once after deploy (one-time operator step):
+
+```bash
+curl -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
+  -d "url=${SERVICE_URL}/telegram-webhook" \
+  -d "secret_token=${WEBHOOK_SECRET}" \
+  -d "allowed_updates=[\"message\",\"callback_query\"]"
+```
+
+Verify the update was accepted:
+
+```bash
+curl "https://api.telegram.org/bot${TELEGRAM_TOKEN}/getWebhookInfo"
+```
+
+The response `allowed_updates` field should show `["message","callback_query"]`.
+
+Note: Telegram's allow-list on `callback_query` is for delivery only — the router
+(`interfaces/_router.py`) still enforces the user allow-list on every callback,
+so no additional spoofing surface is opened (T-20-17 accepted).
