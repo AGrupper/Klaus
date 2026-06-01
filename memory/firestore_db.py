@@ -856,6 +856,183 @@ class TrainingLogStore:
             return []
 
 
+def _pending_expiry(hours: int = 20) -> tuple[str, str]:
+    """Return (created_at_iso, expires_at_iso) in UTC for a pending prompt session.
+
+    Args:
+        hours: TTL hours from now (default 20 — prompts sent at 21:30 expire before
+               the morning briefing window 6–10 am, per Finding 5).
+
+    Returns:
+        Tuple of (created_at, expires_at) as ISO-8601 UTC strings.
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    return now.isoformat(), (now + timedelta(hours=hours)).isoformat()
+
+
+class PendingPromptStore:
+    """Session state for multi-step training check-in prompts (Phase 20 — V3 session mgmt).
+
+    Firestore path: pending_prompts/{session_key}
+
+    Each document records where the user is in the check-in flow.  The soft TTL
+    (~20h, per Finding 5) prevents stale sessions from the prior evening from
+    triggering on the next day.
+
+    Valid state values:
+        awaiting_rpe            — RPE inline keyboard sent; waiting for button tap
+        awaiting_watchoff       — Watch-off RPE keyboard sent; waiting for button tap
+        awaiting_notes          — Notes prompt sent; waiting for reply-to text
+        awaiting_skipreason_other — "other" skip reason keyboard; waiting for text
+
+    Document fields (Finding 5):
+        session_key:   str  — "{YYYY-MM-DD}_{event_id_fragment}"
+        user_id:       int  — Telegram user ID
+        state:         str  — one of the four state values above
+        message_id:    int  — Telegram message_id of the prompt (reply-to detection)
+        event_summary: str  — Calendar event name (user-facing copy)
+        event_date:    str  — YYYY-MM-DD
+        rpe:           int | None — filled after RPE tap
+        created_at:    str  — ISO-8601 UTC
+        expires_at:    str  — ISO-8601 UTC (soft TTL ~20h)
+
+    T-20-02 (DoS mitigation): reads enforce the soft TTL; expired sessions return
+    None so stale docs are inert even if not yet physically deleted.  delete() is
+    called on terminal state transitions (Plans 03/04) to prevent collection growth.
+
+    Write discipline:
+        set() NEVER raises — a failed pending-prompt write is logged + silently
+        skipped; the check-in degrades to no follow-up, not a crash.
+
+    Read discipline:
+        get() / get_open_note_session() NEVER raise — return None on error.
+    """
+
+    _COLLECTION = "pending_prompts"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def set(self, session_key: str, payload: dict) -> None:
+        """Upsert a pending prompt session.
+
+        Stamps ``session_key`` into the stored payload.  Uses merge=True so
+        partial updates (e.g. adding ``rpe`` after the RPE tap) are safe.
+
+        NEVER raises — a Firestore failure is logged at WARNING and silently
+        swallowed; the check-in degrades to no follow-up rather than a crash.
+
+        Args:
+            session_key: Document ID (``"{YYYY-MM-DD}_{event_id_fragment}"``).
+            payload:     Session fields dict (see class docstring for shape).
+        """
+        try:
+            self._col.document(session_key).set(
+                {**payload, "session_key": session_key},
+                merge=True,
+            )
+        except Exception:
+            logger.warning("PendingPromptStore.set(%r) failed", session_key, exc_info=True)
+            # NEVER re-raises — degraded write is silent
+
+    def get(self, session_key: str) -> dict | None:
+        """Return the session dict, or None if expired/missing/error.
+
+        Enforces the soft TTL: if ``expires_at`` is in the past, the session
+        is silently discarded (returns None) even if the document still exists.
+        This prevents stale-replay attacks (T-20-02 / Security Domain V3).
+
+        Args:
+            session_key: Document ID.
+
+        Returns:
+            Session dict, or None if the session is absent, expired, or
+            Firestore is unreachable.
+        """
+        try:
+            from datetime import datetime, timezone
+            snap = self._col.document(session_key).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            expires_at = data.get("expires_at")
+            if expires_at:
+                if isinstance(expires_at, str):
+                    exp = datetime.fromisoformat(expires_at)
+                    if exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                else:
+                    exp = expires_at
+                if datetime.now(timezone.utc) > exp:
+                    return None   # soft TTL expired — stale-replay rejected
+            return data
+        except Exception:
+            logger.warning("PendingPromptStore.get(%r) failed", session_key, exc_info=True)
+            return None
+
+    def delete(self, session_key: str) -> None:
+        """Delete a session on terminal state transition (resolved/cancelled).
+
+        Never raises — cleanup failure is logged at WARNING but does not
+        propagate (the session is inert after the TTL expires anyway).
+
+        Args:
+            session_key: Document ID to delete.
+        """
+        try:
+            self._col.document(session_key).delete()
+        except Exception:
+            logger.warning("PendingPromptStore.delete(%r) failed", session_key, exc_info=True)
+
+    def get_open_note_session(self, user_id: int) -> dict | None:
+        """Return the first open ``awaiting_notes`` session for the given user.
+
+        Used by the router's reply-to detection fallback (Finding 5): when
+        there is no ``reply_to_message`` but an open notes session exists,
+        the brain decides whether the incoming text is the notes reply.
+
+        Never raises — returns None on Firestore error.
+
+        Args:
+            user_id: Telegram user ID.
+
+        Returns:
+            The first non-expired ``awaiting_notes`` session dict for the user,
+            or None if no such session exists.
+        """
+        try:
+            from datetime import datetime, timezone
+            snaps = list(self._col.stream())
+            now = datetime.now(timezone.utc)
+            for snap in snaps:
+                data = snap.to_dict() or {}
+                if data.get("state") != "awaiting_notes":
+                    continue
+                if data.get("user_id") != user_id:
+                    continue
+                # enforce soft TTL
+                expires_at = data.get("expires_at")
+                if expires_at:
+                    if isinstance(expires_at, str):
+                        exp = datetime.fromisoformat(expires_at)
+                        if exp.tzinfo is None:
+                            exp = exp.replace(tzinfo=timezone.utc)
+                    else:
+                        exp = expires_at
+                    if now > exp:
+                        continue
+                return data
+            return None
+        except Exception:
+            logger.warning(
+                "PendingPromptStore.get_open_note_session(%r) failed",
+                user_id, exc_info=True,
+            )
+            return None
+
+
 class FollowupStore:
     """Persists scheduled follow-ups for Klaus's self-managed check-backs.
 
