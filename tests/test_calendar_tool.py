@@ -74,3 +74,28 @@ def test_non_workout_stays_on_primary_and_skips_lookup():
 
     assert calls[0]["calendarId"] == "primary", calls
     gcbn.assert_not_called()
+
+
+def test_bare_practice_detected_as_workout_and_routed():
+    """A bare 'Practice' event (auto-detected) routes to the Training calendar."""
+    calls: list = []
+    m = _mgr()
+    start, end = _window()
+    with patch.object(m, "_get_service", return_value=_fake_service(calls)), \
+         patch.object(m, "get_calendar_id_by_name", return_value="training_cal_id"):
+        m.create_event("Practice", start, end)  # is_workout auto-detected
+
+    assert calls[0]["calendarId"] == "training_cal_id", calls
+
+
+def test_practice_substring_does_not_false_positive():
+    """'practice' is whole-word matched — 'Practice presentation' is NOT a workout."""
+    calls: list = []
+    m = _mgr()
+    start, end = _window()
+    with patch.object(m, "_get_service", return_value=_fake_service(calls)), \
+         patch.object(m, "get_calendar_id_by_name") as gcbn:
+        m.create_event("Practice presentation for work", start, end)
+
+    assert calls[0]["calendarId"] == "primary", calls
+    gcbn.assert_not_called()

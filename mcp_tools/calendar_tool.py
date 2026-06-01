@@ -379,7 +379,14 @@ class GoogleCalendarManager:
         # Step 1 — Determine whether this is a workout and set travel.   #
         # -------------------------------------------------------------- #
         if is_workout is None:
-            is_workout = any(kw in summary.lower() for kw in WORKOUT_KEYWORDS)
+            summary_lc = summary.lower()
+            is_workout = any(kw in summary_lc for kw in WORKOUT_KEYWORDS)
+            # A bare "Practice" event (the user's basketball session) is a workout.
+            # Matched as the exact title only — NOT a substring — so unrelated events
+            # like "Practice presentation" are never misclassified. ("Basketball
+            # practice" etc. are already caught by the keyword list above.)
+            if not is_workout and summary_lc.strip() == "practice":
+                is_workout = True
         if is_workout and summary.lower().startswith("get ready"):
             is_workout = False
 
