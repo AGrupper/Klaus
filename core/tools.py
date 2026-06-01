@@ -52,6 +52,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     # Phase 19 Plan 02 — brain-direct training-profile tools (PROFILE-04)
     "get_training_profile",
     "update_training_profile",
+    # Phase 20 — brain-direct training log (LOG-03)
+    "log_training",
 })
 
 # ------------------------------------------------------------------ #
@@ -749,6 +751,79 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # ============ PHASE 20 Plan 01 — TRAINING LOG (LOG-03/LOG-04) ============
+    {
+        "name": "log_training",
+        "description": (
+            "Log a completed or skipped training session. Brain-direct. "
+            "Call when Sir reports a workout done, skipped, or RPE. "
+            "Parameters: date (YYYY-MM-DD, required), session_type (gym/run/etc), "
+            "completed (bool), rpe (1–10 optional), notes (optional), "
+            "skipped_reason (rest_recovery | sick_injured | too_busy | other, optional)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string",
+                    "description": "Training date in YYYY-MM-DD format.",
+                },
+                "session_type": {
+                    "type": "string",
+                    "description": "Type of session (gym, run, bike, swim, etc.).",
+                },
+                "completed": {
+                    "type": "boolean",
+                    "description": "True if the session was completed; False if skipped.",
+                },
+                "skipped_reason": {
+                    "type": "string",
+                    "description": (
+                        "Reason for skipping. One of: rest_recovery, sick_injured, "
+                        "too_busy, other."
+                    ),
+                },
+                "rpe": {
+                    "type": "integer",
+                    "description": "Perceived exertion on 1–10 scale (Rate of Perceived Exertion).",
+                },
+                "feel": {
+                    "type": "integer",
+                    "description": "Garmin feel value (verbatim, 0–4 scale).",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Free-form session notes from Sir.",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Origin of the log entry: telegram | garmin | manual_chat.",
+                },
+                "garmin_activity_id": {
+                    "type": "string",
+                    "description": "Garmin activity ID if this log entry was auto-created from Garmin.",
+                },
+            },
+            "required": ["date"],
+        },
+    },
+    {
+        "name": "get_training_history",
+        "description": (
+            "Return recent training log entries from Firestore. "
+            "Worker-delegated. Use days param (default 7) for recent history."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days of history to return. Default 7.",
+                },
+            },
+            "required": [],
+        },
+    },
 ]
 
 # Schemas passed to the worker agent — excludes meta tool and memory tools
@@ -771,6 +846,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         # Phase 19 Plan 02 — brain-direct profile tools (fetch_* tools STAY in worker)
         "get_training_profile",
         "update_training_profile",
+        # Phase 20 Plan 01 — brain-direct training log (get_training_history STAYS in worker)
+        "log_training",
     }
 ]
 
@@ -1313,6 +1390,37 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
 
 
 # ------------------------------------------------------------------ #
+# Phase 20 Plan 01 — training log handlers (LOG-03/LOG-04)          #
+# ------------------------------------------------------------------ #
+
+def _handle_log_training(**kwargs) -> str:
+    """LOG-03 brain-direct: write one training session to TrainingLogStore."""
+    from memory.firestore_db import TrainingLogStore
+    store = TrainingLogStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    # Derive slot from explicit slot kwarg, else from date (manual_chat off-grid log)
+    if "slot" not in kwargs or not kwargs.get("slot"):
+        kwargs["slot"] = "manual"
+    try:
+        store.log_session(**kwargs)
+        return json.dumps({"ok": True})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_get_training_history(days: int = 7) -> str:
+    """LOG-04 worker-delegated: return recent training log entries as JSON."""
+    from memory.firestore_db import TrainingLogStore
+    store = TrainingLogStore(
+        project_id=os.environ["GCP_PROJECT_ID"],
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    return json.dumps(store.get_recent(days))
+
+
+# ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
 
@@ -1351,6 +1459,9 @@ _HANDLERS: dict[str, object] = {
     "notion_query_database":  lambda args: _handle_notion_query_database(**args),
     "notion_create_page":     lambda args: _handle_notion_create_page(**args),
     "notion_append_blocks":   lambda args: _handle_notion_append_blocks(**args),
+    # Phase 20 Plan 01 — training log tools (LOG-03/LOG-04)
+    "log_training":            lambda args: _handle_log_training(**args),
+    "get_training_history":    lambda args: _handle_get_training_history(**args),
 }
 
 
