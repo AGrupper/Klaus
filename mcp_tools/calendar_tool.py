@@ -148,6 +148,116 @@ class GoogleCalendarManager:
             )
             return []
 
+    # Phase 20 — D-01/D-02: training-calendar read path
+    _TRAINING_CALENDAR_NAME: str = "Training"   # D-01: configurable via constant
+
+    def get_calendar_id_by_name(self, name: str) -> str | None:
+        """Return the calendarId for the calendar with the given display name.
+
+        Iterates through the user's calendarList with pagination (Pitfall 6)
+        and matches on ``item["summary"]``.
+
+        Args:
+            name: Calendar display name to search for (e.g. ``"Training"``).
+
+        Returns:
+            The calendar ID string, or ``None`` if not found or on any API error.
+            Never raises.
+        """
+        try:
+            service = self._get_service()
+            page_token = None
+            while True:
+                kwargs: dict = {}
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                result = service.calendarList().list(**kwargs).execute()
+                for item in result.get("items", []):
+                    if item.get("summary", "").strip() == name:
+                        return item.get("id")
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+            return None
+        except Exception as exc:
+            logger.error(
+                "Calendar calendarList error looking up %r: %s", name, exc
+            )
+            return None
+
+    def list_training_events(
+        self,
+        time_min_iso: str,
+        time_max_iso: str,
+        calendar_name: str = "Training",
+        max_results: int = 20,
+    ) -> list[dict]:
+        """List events from the named training calendar, filtering buffer blocks.
+
+        Resolves the calendar by display name (D-01) rather than a hardcoded ID,
+        then returns events excluding ``Get Ready:`` and ``Travel:`` buffer blocks
+        created by the automatic workout-prep logic (D-02).
+
+        Args:
+            time_min_iso:   RFC 3339 / ISO 8601 window start.
+            time_max_iso:   RFC 3339 / ISO 8601 window end.
+            calendar_name:  Display name of the training calendar.  Defaults to
+                            ``_TRAINING_CALENDAR_NAME`` (``"Training"``).
+            max_results:    Maximum events to return (default 20).
+
+        Returns:
+            A list of dicts, each containing ``"id"``, ``"summary"``, ``"start"``,
+            ``"end"``, ``"description"``.  Returns ``[]`` if the calendar is not
+            found or on any API error.  Never raises.
+        """
+        cal_id = self.get_calendar_id_by_name(calendar_name)
+        if cal_id is None:
+            logger.warning("Training calendar %r not found", calendar_name)
+            return []
+        try:
+            service = self._get_service()
+            result = (
+                service.events()
+                .list(
+                    calendarId=cal_id,          # NOT "primary" — resolved by name
+                    timeMin=time_min_iso,
+                    timeMax=time_max_iso,
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=max_results,
+                )
+                .execute()
+            )
+            events: list[dict] = []
+            for item in result.get("items", []):
+                summary = item.get("summary", "") or ""
+                # D-02: skip buffer blocks added by create_event workout logic
+                if summary.startswith("Get Ready:") or summary.startswith("Travel:"):
+                    continue
+                start_field = item.get("start", {})
+                end_field = item.get("end", {})
+                # WHY prefer dateTime over date: same normalisation as list_events
+                start = start_field.get("dateTime") or start_field.get("date", "")
+                end = end_field.get("dateTime") or end_field.get("date", "")
+                events.append(
+                    {
+                        "id": item.get("id", ""),
+                        "summary": summary,
+                        "start": start,
+                        "end": end,
+                        "description": item.get("description", ""),
+                    }
+                )
+            return events
+        except Exception:
+            logger.warning(
+                "list_training_events(%r, %r) failed",
+                time_min_iso,
+                time_max_iso,
+                exc_info=True,
+            )
+            return []
+
     def is_free(self, start_iso: str, end_iso: str) -> dict:
         """Check whether the primary calendar has no events in the given window.
 
