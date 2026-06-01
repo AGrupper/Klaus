@@ -424,6 +424,15 @@ class GoogleCalendarManager:
         try:
             service = self._get_service()
 
+            # Workouts go to the dedicated Training calendar (D-01) so the evening
+            # training check-in — which reads ONLY the Training calendar — can see
+            # them. Fall back to the primary calendar if no Training calendar exists.
+            target_cal = "primary"
+            if is_workout:
+                training_cal_id = self.get_calendar_id_by_name(self._TRAINING_CALENDAR_NAME)
+                if training_cal_id:
+                    target_cal = training_cal_id
+
             event_body: dict = {
                 "summary": summary,
                 "description": description,
@@ -442,7 +451,7 @@ class GoogleCalendarManager:
 
             created_event: dict = (
                 service.events()
-                .insert(calendarId="primary", body=event_body)
+                .insert(calendarId=target_cal, body=event_body)
                 .execute()
             )
 
@@ -475,7 +484,7 @@ class GoogleCalendarManager:
 
                 get_ready_event: dict = (
                     service.events()
-                    .insert(calendarId="primary", body=get_ready_body)
+                    .insert(calendarId=target_cal, body=get_ready_body)
                     .execute()
                 )
                 get_ready_event_id = get_ready_event.get("id", "")
