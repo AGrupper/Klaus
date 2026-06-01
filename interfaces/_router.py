@@ -55,12 +55,30 @@ class MessageRouter:
         Routes ``/start`` and ``/reset`` commands; everything else is
         treated as a plain text message and forwarded to the orchestrator.
 
+        Phase 20: dispatches inline-keyboard callback_query updates BEFORE
+        the message guard so button taps are not silently dropped (Pitfall 2).
+
         Args:
             update: A python-telegram-bot ``Update`` object (long-poll or webhook).
 
         Returns:
-            None — responses are sent directly via ``update.message.reply_text``.
+            None — responses are sent directly via ``update.message.reply_text``
+            or ``cq.answer()`` + follow-up messages.
         """
+        # Phase 20: dispatch inline-keyboard button taps before the message guard.
+        # WHY: callback_query updates have update.message=None, so the guard below
+        # would silently drop them (Pitfall 2). T-20-04 access control: check
+        # allowed_user_ids BEFORE dispatching any callback.
+        if update.callback_query is not None:
+            if (
+                update.effective_user is None
+                or update.effective_user.id not in self.allowed_user_ids
+            ):
+                logger.warning("Unauthorised callback_query — silently ignored.")
+                return
+            await self._handle_callback_query(update)
+            return
+
         # Guard: ignore updates that carry no message (e.g. channel posts, edits).
         if update.message is None:
             return
@@ -92,6 +110,16 @@ class MessageRouter:
             except Exception as e:
                 logger.exception("Failed to download Telegram photo: %s", e)
 
+        # Phase 20: reply-to detection for notes step.
+        # WHY: when the user replies to a pending notes prompt, the message carries
+        # reply_to_message with the message_id of the prompt we sent.  We route this
+        # to the pending-note path BEFORE the normal command/text path.
+        if update.message.reply_to_message is not None:
+            handled = await self._check_pending_note_reply(update)
+            if handled:
+                return
+            # else fall through to normal text handling
+
         # Route slash commands before the general message path.
         if message_text == "/start":
             await self._handle_start(update, telegram_user_id)
@@ -111,6 +139,94 @@ class MessageRouter:
     # ------------------------------------------------------------------ #
     # Internal handlers                                                  #
     # ------------------------------------------------------------------ #
+
+    async def _handle_callback_query(self, update: Update) -> None:
+        """Dispatch an inline-keyboard button tap.
+
+        Phase 20 — T-20-04/T-20-05 mitigations:
+        - Allow-list guard is enforced in ``handle_update`` before this method.
+        - cq.answer() is called immediately to clear the Telegram spinner.
+        - Dispatch is restricted to known prefixes; unknown prefix is logged
+          + discarded (no crash, T-20-05 input validation).
+        - core.training_checkin is imported lazily so this plan ships
+          independently of Plan 04 (lazy import + ImportError guard).
+
+        Args:
+            update: Telegram Update carrying a non-None ``callback_query``.
+        """
+        cq = update.callback_query
+        await cq.answer()                       # dismiss the Telegram spinner immediately
+        data = cq.data or ""
+        user_id = update.effective_user.id
+
+        try:
+            import core.training_checkin as _checkin
+        except ImportError:
+            logger.warning(
+                "training_checkin module unavailable for callback %r — Plan 04 not yet deployed",
+                data,
+            )
+            return
+
+        if data.startswith("rpe:"):
+            await _checkin.handle_rpe_callback(self.orchestrator, user_id, cq, data)
+        elif data.startswith("watchoff:"):
+            await _checkin.handle_watchoff_callback(self.orchestrator, user_id, cq, data)
+        elif data.startswith("skipreason:"):
+            await _checkin.handle_skipreason_callback(self.orchestrator, user_id, cq, data)
+        else:
+            logger.warning("training_checkin: unknown callback_data=%r", data)
+
+    async def _check_pending_note_reply(self, update: Update) -> bool:
+        """Check whether a reply-to message matches a pending notes session.
+
+        Phase 20: when a user replies to the notes prompt Klaus sent, we detect
+        it here via ``reply_to_message.message_id`` and route the text to
+        ``core.training_checkin.attach_note``.
+
+        Args:
+            update: Telegram Update whose ``message.reply_to_message`` is not None.
+
+        Returns:
+            True if the reply was handled (caller should return); False to fall
+            through to normal text handling.
+        """
+        try:
+            replied_to_id = update.message.reply_to_message.message_id
+
+            from memory.firestore_db import PendingPromptStore
+            project_id = os.environ["GCP_PROJECT_ID"]
+            database = os.getenv("FIRESTORE_DATABASE", "(default)")
+            store = PendingPromptStore(project_id=project_id, database=database)
+
+            user_id = update.effective_user.id
+            session = store.get_open_note_session(user_id)
+            if session is None:
+                return False
+
+            # Match by message_id
+            if session.get("message_id") != replied_to_id:
+                return False
+
+            # Route to attach_note — lazy import so Plan 03 ships independently
+            try:
+                import core.training_checkin as _checkin
+            except ImportError:
+                logger.warning(
+                    "_check_pending_note_reply: training_checkin module unavailable"
+                )
+                return False
+
+            note_text = update.message.text or update.message.caption or ""
+            await _checkin.attach_note(self.orchestrator, user_id, session, note_text)
+            return True
+
+        except Exception:
+            logger.warning(
+                "_check_pending_note_reply: unexpected error — falling through",
+                exc_info=True,
+            )
+            return False
 
     async def _handle_start(self, update: Update, telegram_user_id: int) -> None:
         """Handle the /start command — confirms the bot is online.

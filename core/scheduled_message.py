@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import logging
 import os
+from typing import TYPE_CHECKING
 
 from telegram import Bot
+
+if TYPE_CHECKING:
+    import telegram
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +28,8 @@ async def send_and_inject(
     text: str,
     *,
     inject_into_conversation: bool = False,
-) -> None:
+    reply_markup=None,              # InlineKeyboardMarkup | None (Phase 20)
+) -> "telegram.Message":
     """Send a Telegram message and optionally append it to conversation history.
 
     Args:
@@ -33,14 +38,22 @@ async def send_and_inject(
         inject_into_conversation: If True, append the message as an 'assistant'
                                   turn in FirestoreConversationStore so the next
                                   user message is a natural follow-up.
+        reply_markup:             Optional InlineKeyboardMarkup to attach to the
+                                  message (Phase 20 — check-in inline keyboards).
+                                  Keyword-only, defaults to None so existing callers
+                                  are unaffected.
+
+    Returns:
+        The sent ``telegram.Message`` (message_id used for reply-to detection).
+
     Raises:
         Exception: Re-raises Telegram send failures (callers should handle retry).
     """
     user_id = _telegram_user_id()
-    await bot.send_message(chat_id=user_id, text=text)
+    msg = await bot.send_message(chat_id=user_id, text=text, reply_markup=reply_markup)
 
     if not inject_into_conversation:
-        return
+        return msg
 
     try:
         from memory.firestore_conversation import FirestoreConversationStore
@@ -55,3 +68,4 @@ async def send_and_inject(
             "scheduled_message: conversation injection failed — message still sent",
             exc_info=True,
         )
+    return msg
