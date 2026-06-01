@@ -68,9 +68,9 @@ gaps:
 | 16 | `recovery_concern` computed in `morning_briefing._gather_data` and wired to morning briefing prompt | VERIFIED | `core/morning_briefing.py` lines 236–246: imports `compute_recovery_concern`, calls with `garmin_data`, conditionally sets `data["recovery_concern"]`; `prompts/morning_briefing.md` lines 116–147 read the key and shift tone |
 | 17 | RECOVERY_THRESHOLDS defined at module level with v0 heuristics and docstring | VERIFIED | `core/training_checkin.py` lines 65–75: dict with 7 keys (`acwr_mild=1.5`, `acwr_strong=1.8`, `sleep_low=70`, `consecutive_low_sleep_nights=2`, `intensity_keywords_high/moderate`, `hrv_flag_values`) |
 | 18 | `scripts/bootstrap_shifu_crons.sh` creates ONLY `klaus-weekly-training-review` at `0 10 * * 0` Asia/Jerusalem | VERIFIED | Script lines 1–33: one job, schedule matches, OIDC SA param, re-runnable describe-or-create |
-| 19 | `recovery_concern` flows into the evening proactive-alert tone shift (RECOVERY-03 / D-16) | FAILED | `prompts/proactive_alert.md` was extended with recovery_concern framing, but `core/proactive_alerts.run_proactive_alerts` never computes `recovery_concern` or inserts it into `alerts_context`. The key is absent from the LLM prompt data at runtime for the evening alert path. |
+| 19 | `recovery_concern` flows into the evening proactive-alert tone shift (RECOVERY-03 / D-16) | VERIFIED (resolved `67bd7dc`) | `core/proactive_alerts.run_proactive_alerts` now computes `compute_recovery_concern` best-effort (with `fetch_garmin_today` for HRV/sleep parity) and injects it into `alerts_context` before `_compose_alert`; omitted when None (D-13). 2 new tests in `tests/test_proactive_alerts.py`. See Gap Resolution below. |
 
-**Score:** 18/19 truths verified
+**Score:** 19/19 truths verified (18 at initial verification + RECOVERY-03 resolved in-phase)
 
 ---
 
