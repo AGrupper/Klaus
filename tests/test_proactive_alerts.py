@@ -103,3 +103,75 @@ def test_plain_text_fallback_on_llm_failure(
     # Should still have sent something (plain-text fallback)
     call_text = mock_bot.send_message.call_args.kwargs.get("text", "")
     assert call_text.startswith("Tomorrow (2026-05-12) — heads up, Sir:")
+
+
+@patch("core.proactive_alerts._mark_processed")
+@patch("core.proactive_alerts._already_sent", return_value=False)
+@patch("core.proactive_alerts._detect_travel_issues", return_value=[])
+@patch("core.proactive_alerts._detect_overloaded_day", return_value=None)
+@patch("core.proactive_alerts._detect_weather_conflicts")
+@patch("core.proactive_alerts._home_address", return_value="Tel Aviv")
+@patch("core.proactive_alerts._get_calendar_tool")
+def test_recovery_concern_injected_into_alert_context(
+    mock_cal, mock_home, mock_weather_fn, mock_overload, mock_travel,
+    mock_already_sent, mock_mark, mock_bot
+):
+    """RECOVERY-03 / D-16: when compute_recovery_concern returns a concern, it is
+    injected into the alerts_context handed to _compose_alert (evening path parity
+    with the morning briefing)."""
+    mock_cal.return_value.list_events.return_value = []
+    mock_weather_fn.return_value = [
+        {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+    ]
+    concern = {"level": "strong", "acwr": 1.6, "hrv_status": "unbalanced",
+               "sleep_score": 52, "intensity": "high"}
+    captured = {}
+
+    def _capture(ctx):
+        captured["ctx"] = ctx
+        return "LLM-produced alert text"
+
+    # compute_recovery_concern + fetch_garmin_today are imported locally inside
+    # run_proactive_alerts; patch at their source modules so the local imports resolve.
+    with patch("core.training_checkin.compute_recovery_concern", return_value=concern), \
+         patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={"date": "2026-05-12"}), \
+         patch("core.proactive_alerts._compose_alert", side_effect=_capture), \
+         patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}):
+        from core.proactive_alerts import run_proactive_alerts
+        asyncio.run(run_proactive_alerts(mock_bot, "2026-05-12"))
+
+    assert captured["ctx"].get("recovery_concern") == concern
+    mock_bot.send_message.assert_called_once()
+
+
+@patch("core.proactive_alerts._mark_processed")
+@patch("core.proactive_alerts._already_sent", return_value=False)
+@patch("core.proactive_alerts._detect_travel_issues", return_value=[])
+@patch("core.proactive_alerts._detect_overloaded_day", return_value=None)
+@patch("core.proactive_alerts._detect_weather_conflicts")
+@patch("core.proactive_alerts._home_address", return_value="Tel Aviv")
+@patch("core.proactive_alerts._get_calendar_tool")
+def test_no_recovery_concern_key_when_none(
+    mock_cal, mock_home, mock_weather_fn, mock_overload, mock_travel,
+    mock_already_sent, mock_mark, mock_bot
+):
+    """D-13 no-fabrication: when compute_recovery_concern returns None, the
+    recovery_concern key is absent from alerts_context (no 'all clear' placeholder)."""
+    mock_cal.return_value.list_events.return_value = []
+    mock_weather_fn.return_value = [
+        {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+    ]
+    captured = {}
+
+    def _capture(ctx):
+        captured["ctx"] = ctx
+        return "LLM-produced alert text"
+
+    with patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+         patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={"date": "2026-05-12"}), \
+         patch("core.proactive_alerts._compose_alert", side_effect=_capture), \
+         patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}):
+        from core.proactive_alerts import run_proactive_alerts
+        asyncio.run(run_proactive_alerts(mock_bot, "2026-05-12"))
+
+    assert "recovery_concern" not in captured["ctx"]

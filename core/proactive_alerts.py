@@ -144,6 +144,29 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         "overload_alert": overload_alert,
         "travel_alerts": travel_alerts,
     }
+
+    # Phase 20 — RECOVERY-03 / D-16: surface recovery_concern with full framing in the
+    # evening alert too (equal weight with the morning briefing). Best-effort Pattern-C:
+    # fetch today's Garmin (HRV/sleep parity with the morning path) and compute the concern;
+    # omit the key entirely when there is none (D-13 no-fabrication — the prompt renders the
+    # recovery section only when the key is present). Note: this rides along with an alert
+    # that is already firing; it does not by itself trigger an evening send.
+    try:
+        from core.training_checkin import compute_recovery_concern
+        garmin_data = None
+        try:
+            from mcp_tools.garmin_tool import fetch_garmin_today
+            garmin_data = fetch_garmin_today()
+        except Exception:
+            logger.warning("proactive_alerts: Garmin fetch for recovery_concern failed", exc_info=True)
+        today_iso = datetime.now(_TZ).date().isoformat()
+        rc = compute_recovery_concern(garmin_data=garmin_data, today_iso=today_iso)
+        if rc:
+            alerts_context["recovery_concern"] = rc
+    except Exception:
+        logger.warning("proactive_alerts: recovery_concern computation failed", exc_info=True)
+        # silent omit — no "all clear" placeholder (D-13 guardrail)
+
     message = _compose_alert(alerts_context)
 
     from core.scheduled_message import send_and_inject
