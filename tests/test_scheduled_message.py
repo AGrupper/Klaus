@@ -38,7 +38,10 @@ def _make_fake_firestore_module(store_class):
 def test_sends_telegram_message(bot):
     from core.scheduled_message import send_and_inject
     asyncio.run(send_and_inject(bot, "Hello, sir."))
-    bot.send_message.assert_called_once_with(chat_id=123456, text="Hello, sir.")
+    # Phase 20: reply_markup=None is now passed through (backward-compatible default)
+    bot.send_message.assert_called_once_with(
+        chat_id=123456, text="Hello, sir.", reply_markup=None
+    )
 
 
 def test_no_conversation_inject_by_default(bot):
@@ -47,7 +50,10 @@ def test_no_conversation_inject_by_default(bot):
     if Firestore were touched it would raise (not mocked), failing the test."""
     from core.scheduled_message import send_and_inject
     asyncio.run(send_and_inject(bot, "Hello"))
-    bot.send_message.assert_called_once_with(chat_id=123456, text="Hello")
+    # Phase 20: reply_markup=None is now forwarded to bot.send_message
+    bot.send_message.assert_called_once_with(
+        chat_id=123456, text="Hello", reply_markup=None
+    )
 
 
 def test_injects_into_conversation_when_flag_set(bot):
