@@ -75,39 +75,43 @@ for _name in ["googleapiclient", "googleapiclient.discovery", "googleapiclient.e
         sys.modules[_name] = mod
 
 # Stub telegram
-if "telegram" not in sys.modules:
-    telegram_mod = types.ModuleType("telegram")
+# Install a *functional* telegram fake whose keyboard classes record callback_data
+# (the keyboard-layout tests below assert on it). Reuse any telegram module another
+# test file already registered, but ALWAYS (re)assign these functional classes —
+# otherwise, depending on collection order, a bare-MagicMock stub from another file
+# (e.g. test_recovery_concern) would win and break the keyboard assertions when the
+# whole suite runs in one process (test pollution).
+class _FakeInlineKeyboardButton:
+    def __init__(self, text, callback_data=None, **kwargs):
+        self.text = text
+        self.callback_data = callback_data
 
-    class _FakeInlineKeyboardButton:
-        def __init__(self, text, callback_data=None, **kwargs):
-            self.text = text
-            self.callback_data = callback_data
+class _FakeInlineKeyboardMarkup:
+    def __init__(self, inline_keyboard):
+        self.inline_keyboard = inline_keyboard
 
-    class _FakeInlineKeyboardMarkup:
-        def __init__(self, inline_keyboard):
-            self.inline_keyboard = inline_keyboard
+class _FakeBot:
+    pass
 
-    class _FakeBot:
+class _FakeMessage:
+    def __init__(self, message_id=42):
+        self.message_id = message_id
+
+class _FakeCallbackQuery:
+    def __init__(self, data="", message=None):
+        self.data = data
+        self.message = message or _FakeMessage()
+
+    async def answer(self):
         pass
 
-    class _FakeMessage:
-        def __init__(self, message_id=42):
-            self.message_id = message_id
-
-    class _FakeCallbackQuery:
-        def __init__(self, data="", message=None):
-            self.data = data
-            self.message = message or _FakeMessage()
-
-        async def answer(self):
-            pass
-
-    telegram_mod.InlineKeyboardButton = _FakeInlineKeyboardButton
-    telegram_mod.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
-    telegram_mod.Bot = _FakeBot
-    telegram_mod.Message = _FakeMessage
-    telegram_mod.CallbackQuery = _FakeCallbackQuery
-    sys.modules["telegram"] = telegram_mod
+telegram_mod = sys.modules.get("telegram") or types.ModuleType("telegram")
+telegram_mod.InlineKeyboardButton = _FakeInlineKeyboardButton
+telegram_mod.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
+telegram_mod.Bot = _FakeBot
+telegram_mod.Message = _FakeMessage
+telegram_mod.CallbackQuery = _FakeCallbackQuery
+sys.modules["telegram"] = telegram_mod
 
 # Stub core.auth_google
 if "core.auth_google" not in sys.modules:

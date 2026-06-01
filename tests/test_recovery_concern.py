@@ -48,10 +48,16 @@ def _stub_heavy_imports():
             m = types.ModuleType(mod)
             sys.modules[mod] = m
 
-    # Minimal telegram stubs used by training_checkin
+    # Minimal telegram stubs used by training_checkin. Only fill in attributes that
+    # are missing — never overwrite an existing telegram module's keyboard classes.
+    # test_training_checkin installs a *functional* fake (real _FakeInlineKeyboard*
+    # classes its keyboard-layout tests assert on); clobbering them with bare
+    # MagicMocks here breaks that file when both run in one process (test pollution).
     t = sys.modules["telegram"]
-    t.InlineKeyboardMarkup = MagicMock()
-    t.InlineKeyboardButton = MagicMock()
+    if not hasattr(t, "InlineKeyboardMarkup"):
+        t.InlineKeyboardMarkup = MagicMock()
+    if not hasattr(t, "InlineKeyboardButton"):
+        t.InlineKeyboardButton = MagicMock()
 
     gf = sys.modules["google.cloud.firestore"]
     gf.SERVER_TIMESTAMP = object()
