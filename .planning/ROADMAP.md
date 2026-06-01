@@ -104,10 +104,10 @@ session via `UserProfileStore` writes.
 - [x] 20-01-PLAN.md — TrainingLogStore + PendingPromptStore + log_training/get_training_history tools (LOG-01..04)
 - [x] 20-02-PLAN.md — Reconcile REQUIREMENTS/ROADMAP for D-09 + D-21 (CHECKIN-01/06, REVIEW-02, CRON-01)
 - [x] 20-03-PLAN.md — send_and_inject reply_markup + router callback_query dispatch + Training-calendar read (CHECKIN-04)
-- [ ] 20-04-PLAN.md — core/training_checkin.py (silent Garmin sync + branch + callbacks) folded into proactive-alerts (CHECKIN-01..06)
+- [x] 20-04-PLAN.md — core/training_checkin.py (silent Garmin sync + branch + callbacks) folded into proactive-alerts (CHECKIN-01..06)
 - [ ] 20-05-PLAN.md — RECOVERY_THRESHOLDS + compute_recovery_concern + morning_briefing/proactive_alert tone shift (RECOVERY-01..03)
 - [x] 20-06-PLAN.md — Weekly-review cron route + brain compose module + prompt + heartbeat staleness key (REVIEW-01..04)
-- [ ] 20-07-PLAN.md — bootstrap_shifu_crons.sh + DEPLOYMENT.md Phase Shifu + SELF.md regen (CRON-01, CRON-02)
+- [x] 20-07-PLAN.md — bootstrap_shifu_crons.sh + DEPLOYMENT.md Phase Shifu + SELF.md regen (CRON-01, CRON-02)
 **UI hint**: yes
 
 ### Progress
@@ -118,7 +118,7 @@ session via `UserProfileStore` writes.
 | 19.1. HealthKit Nutrition Bridge | 5/5 | Complete | 2026-05-30 |
 | 19.2. Fiber Through Reasoning Layer *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
 | 19.3. Meal Read Paths → iOS HealthKit (MealStore) *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
-| 20. Accountability Crons & Recovery Briefing | 4/7 | In Progress|  |
+| 20. Accountability Crons & Recovery Briefing | 6/7 | In Progress|  |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
 `.planning/phases/20-*/` once `/gsd-plan-phase` runs. Archived to
