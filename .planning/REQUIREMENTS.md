@@ -72,17 +72,17 @@
 
 ### Training Check-in Cron (Phase 20)
 
-- [ ] **CHECKIN-01**: `/cron/training-checkin` endpoint exists in `interfaces/web_server.py` with same OIDC auth pattern as `cron_autonomous_tick`
+- [ ] **CHECKIN-01** (RECONCILED per D-09): No separate `/cron/training-checkin` endpoint. The check-in logic folds into the existing 21:30 `proactive-alerts` cron via a new `core/training_checkin.py` module invoked from `core/proactive_alerts.py`.
 - [ ] **CHECKIN-02**: Cron first silent-syncs Garmin activities with populated `perceived_exertion` to `training_log` (no Telegram message)
 - [ ] **CHECKIN-03**: Cron sends Telegram message only for planned calendar workouts that lack both a Garmin RPE and a log entry; branches into "RPE prompt" or "skipped vs. watch off" based on activity presence
 - [ ] **CHECKIN-04**: RPE prompt uses inline keyboard 1–10 buttons (same pattern as five-fingers attendance); after RPE selected, a follow-up message asks for optional notes (`/skip` or timeout to skip)
 - [ ] **CHECKIN-05**: Cron is fully silent on days where all planned workouts have either a Garmin RPE sync or an existing log entry
-- [ ] **CHECKIN-06**: Cron runs at `0 21 * * *` Asia/Jerusalem (not 21:30, to avoid colliding with `proactive-alerts`)
+- [ ] **CHECKIN-06** (RECONCILED per D-09): The `0 21` schedule is moot. The check-in runs at 21:30 Asia/Jerusalem inside `proactive-alerts` (no separate scheduler trigger).
 
 ### Weekly Training Review Cron (Phase 20)
 
 - [ ] **REVIEW-01**: `/cron/weekly-training-review` endpoint exists in `interfaces/web_server.py` with OIDC auth
-- [ ] **REVIEW-02**: Weekly review composes from 7-day `training_log`, `activities`, `daily_biometrics`, `meal_audits`, and `UserProfileStore.athletic_goals` (skipped if empty)
+- [ ] **REVIEW-02** (RECONCILED per D-21): Weekly review composes from 7-day `training_log`, `activities`, `daily_biometrics`, live `MealStore` 7-day totals (calories/protein/carbs/fiber, no persisted `MealAuditStore`) interpreted at review time via the runtime `prompts/meal_audit.md` guidance, and `UserProfileStore.athletic_goals` (skipped if empty).
 - [ ] **REVIEW-03**: `prompts/weekly_training_review.md` exists; produces planned-vs-actual table, HRV/RHR/sleep trend, one suggestion for next week
 - [ ] **REVIEW-04**: Cron runs at `0 10 * * 0` Asia/Jerusalem (Sunday 10:00, workweek start in Israel)
 
@@ -94,7 +94,7 @@
 
 ### Cloud Scheduler Bootstrap (Phase 20)
 
-- [ ] **CRON-01**: `scripts/bootstrap_shifu_crons.sh` creates `klaus-training-checkin` and `klaus-weekly-training-review` Cloud Scheduler jobs using the existing `CLOUD_SCHEDULER_SA_EMAIL` OIDC service account
+- [ ] **CRON-01** (RECONCILED per D-09): `scripts/bootstrap_shifu_crons.sh` creates ONLY `klaus-weekly-training-review` (the `klaus-training-checkin` job is eliminated) using the existing `CLOUD_SCHEDULER_SA_EMAIL` OIDC service account.
 - [ ] **CRON-02**: `docs/DEPLOYMENT.md` gains a "Phase Shifu" section documenting the two new jobs alongside the existing 9 (matching the §19 inventory table convention)
 
 ---
