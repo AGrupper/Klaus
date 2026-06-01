@@ -435,6 +435,41 @@ async def cron_autonomous_tick(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/cron/weekly-training-review")
+async def cron_weekly_training_review(request: Request) -> JSONResponse:
+    """Weekly training review — Sunday 10:00 Asia/Jerusalem.
+
+    Phase 20 — REVIEW-01.
+
+    Flow:
+      1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
+      2. Guard: _application must be initialised (bot is required to send).
+      3. Delegate to core.weekly_training_review.run_weekly_review, which
+         gathers the previous Sun–Sat window (training_log, Garmin, biometrics,
+         MealStore totals, athletic_goals), brain-composes the scorecard +
+         narrative + suggestion, and always sends (D-24).
+      4. Record success or failure to the heartbeat liveness ledger via
+         _log_cron_run('weekly-training-review', ok=...). Re-raises on exception.
+
+    Returns:
+        JSONResponse: ``{"ok": true}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    # WHY: imported inside the handler so the module does not load at
+    # web_server import time — keeps /health cold-start fast.
+    import core.weekly_training_review as _review  # lazy import — keeps /health cold-start fast
+    try:
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        await _review.run_weekly_review(_application.bot, today)
+        _log_cron_run("weekly-training-review", ok=True)
+    except Exception:
+        _log_cron_run("weekly-training-review", ok=False)
+        raise
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/cron/healthkit-sync")
 async def cron_healthkit_sync(request: Request) -> JSONResponse:
     """Push-driven webhook from the iPhone Shortcut "Lifesum closed" automation.
