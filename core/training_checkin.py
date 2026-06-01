@@ -252,7 +252,6 @@ def TrainingLogStore():  # noqa: N802  (factory, intentionally named like a clas
 
 def PendingPromptStore():  # noqa: N802
     from memory.firestore_db import PendingPromptStore as _PPS
-    from memory.firestore_db import _pending_expiry
     project_id = os.environ["GCP_PROJECT_ID"]
     database = os.getenv("FIRESTORE_DATABASE", "(default)")
     return _PPS(project_id, database)
@@ -567,10 +566,13 @@ async def run_training_checkin(bot, today_iso: str) -> None:
             logger.debug("training_checkin: skipping future event %s", event.get("summary"))
             continue
 
-        # Check if already covered (existing log entry with rpe, or garmin source)
+        # Check if already covered by an existing log entry with an RPE for this slot.
+        # (Garmin coverage is detected separately via _garmin_covers below — silent-sync
+        # entries are keyed by activity_id, never the calendar event id held in `slot`,
+        # so a source=="garmin" match on this slot can't occur.)
         existing = logged_by_slot.get(slot)
         if existing:
-            if existing.get("rpe") is not None or existing.get("source") == "garmin":
+            if existing.get("rpe") is not None:
                 logger.debug("training_checkin: %s covered by existing log", slot)
                 continue
 
@@ -609,7 +611,7 @@ async def run_training_checkin(bot, today_iso: str) -> None:
     if count == 1:
         intro = "Good evening, sir. One item to close out the training log."
     else:
-        intro = f"Good evening, sir. A couple of items to log before the day closes."
+        intro = f"Good evening, sir. {count} items to log before the day closes."
 
     await send_and_inject(bot, intro, inject_into_conversation=False)
 
@@ -884,6 +886,49 @@ async def attach_note(orchestrator, user_id: int, session: dict, note_text: str)
 
     except Exception:
         logger.warning("attach_note: unexpected error", exc_info=True)
+
+
+async def attach_skipreason_other_note(orchestrator, user_id: int, session: dict, note_text: str) -> None:
+    """Attach the free-text reason from the "Other — tell me" skip path.
+
+    Called by the router when the user replies to the "What got in the way?" prompt
+    while an ``awaiting_skipreason_other`` session is open. Unlike ``attach_note``
+    (which records a *completed* session), this records a SKIP: ``completed=False``,
+    ``skipped_reason="other"``, with the user's free text as ``notes``. Then deletes
+    the pending session (Pitfall 3 terminal transition).
+
+    Args:
+        orchestrator: AgentOrchestrator.
+        user_id:      Telegram user ID.
+        session:      The pending_prompts document dict.
+        note_text:    The user's free-text reason.
+    """
+    try:
+        session_key = session.get("session_key", "")
+        if not session_key:
+            logger.warning("attach_skipreason_other_note: session missing session_key — skipping")
+            return
+
+        event_date = session.get("event_date", session_key.split("_")[0])
+
+        tls = TrainingLogStore()
+        tls.log_session(
+            date=event_date,
+            slot=session_key.split("_", 1)[1] if "_" in session_key else session_key,
+            session_type=session.get("session_type"),
+            planned=True,
+            completed=False,
+            skipped_reason="other",
+            notes=note_text,
+            source="telegram",
+        )
+
+        # Terminal: delete pending session (Pitfall 3)
+        pps = PendingPromptStore()
+        pps.delete(session_key)
+
+    except Exception:
+        logger.warning("attach_skipreason_other_note: unexpected error", exc_info=True)
 
 
 # ------------------------------------------------------------------ #

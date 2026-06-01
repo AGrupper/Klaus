@@ -187,3 +187,25 @@ class TestPhase20ToolRegistration:
         assert hasattr(tools, "_handle_get_training_history")
         assert callable(tools._handle_log_training)
         assert callable(tools._handle_get_training_history)
+
+    def test_log_training_derives_unique_manual_slot(self, monkeypatch):
+        """CR-02 regression: with no explicit slot, the handler derives a unique
+        timestamped manual_HHMMSS slot — never the literal 'manual' (which would
+        collide on {date}_manual and overwrite a prior same-day chat log)."""
+        from unittest.mock import patch as _patch
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        captured = {}
+
+        class _FakeTLS:
+            def __init__(self, **kwargs):
+                pass
+
+            def log_session(self, **kwargs):
+                captured.update(kwargs)
+
+        with _patch("memory.firestore_db.TrainingLogStore", _FakeTLS):
+            tools._handle_log_training(date="2026-06-01", session_type="run", rpe=6)
+
+        slot = captured.get("slot")
+        assert slot is not None and slot != "manual", captured
+        assert slot.startswith("manual_") and len(slot) == len("manual_HHMMSS"), slot

@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 
 from googleapiclient.errors import HttpError
 
@@ -1400,9 +1400,11 @@ def _handle_log_training(**kwargs) -> str:
         project_id=os.environ["GCP_PROJECT_ID"],
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    # Derive slot from explicit slot kwarg, else from date (manual_chat off-grid log)
+    # Derive slot from explicit slot kwarg, else a unique timestamped manual slot.
+    # A literal "manual" slot collides on {date}_manual, so a second same-day
+    # free-form chat log would overwrite the first via merge=True (data loss).
     if "slot" not in kwargs or not kwargs.get("slot"):
-        kwargs["slot"] = "manual"
+        kwargs["slot"] = datetime.now(timezone.utc).strftime("manual_%H%M%S")
     try:
         store.log_session(**kwargs)
         return json.dumps({"ok": True})

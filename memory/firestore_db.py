@@ -1008,7 +1008,10 @@ class PendingPromptStore:
             now = datetime.now(timezone.utc)
             for snap in snaps:
                 data = snap.to_dict() or {}
-                if data.get("state") != "awaiting_notes":
+                # Both states wait on a free-text reply-to: awaiting_notes (after an
+                # RPE log) and awaiting_skipreason_other (after the "Other — tell me"
+                # skip reason). The router dispatches on state to the right handler.
+                if data.get("state") not in ("awaiting_notes", "awaiting_skipreason_other"):
                     continue
                 if data.get("user_id") != user_id:
                     continue

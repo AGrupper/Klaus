@@ -218,7 +218,15 @@ class MessageRouter:
                 return False
 
             note_text = update.message.text or update.message.caption or ""
-            await _checkin.attach_note(self.orchestrator, user_id, session, note_text)
+            # Dispatch by state: the "Other — tell me" skip path records a SKIP
+            # (completed=False, skipped_reason=other), the notes path records a
+            # completed session. Both arrive as a reply-to here.
+            if session.get("state") == "awaiting_skipreason_other":
+                await _checkin.attach_skipreason_other_note(
+                    self.orchestrator, user_id, session, note_text
+                )
+            else:
+                await _checkin.attach_note(self.orchestrator, user_id, session, note_text)
             return True
 
         except Exception:

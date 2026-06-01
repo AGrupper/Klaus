@@ -258,6 +258,26 @@ def test_get_open_note_session_returns_matching_session():
     assert result["session_key"] == "key_match"
 
 
+def test_get_open_note_session_matches_skipreason_other_state():
+    """CR-01 regression: get_open_note_session also returns an
+    awaiting_skipreason_other session (the 'Other — tell me' free-text reply)."""
+    s = _store()
+    user_id = 42
+    snap = MagicMock()
+    snap.to_dict.return_value = {
+        "session_key": "key_other_reason",
+        "user_id": user_id,
+        "state": "awaiting_skipreason_other",
+        "expires_at": _future_expires_at(),
+    }
+    s._col.stream.return_value = [snap]
+
+    result = s.get_open_note_session(user_id)
+
+    assert result is not None
+    assert result["session_key"] == "key_other_reason"
+
+
 def test_get_open_note_session_returns_none_when_no_open_session():
     """get_open_note_session returns None when no awaiting_notes session for user."""
     s = _store()

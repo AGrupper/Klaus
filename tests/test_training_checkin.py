@@ -1014,5 +1014,52 @@ class TestAttachNote(unittest.IsolatedAsyncioTestCase):
         # (either no call, or an exception before writing is acceptable)
 
 
+class TestAttachSkipreasonOtherNote(unittest.IsolatedAsyncioTestCase):
+    """attach_skipreason_other_note: records a SKIP (completed=False,
+    skipped_reason=other, notes=<free text>) + deletes the pending session.
+    Regression for CR-01 — the 'Other — tell me' free-text reply was previously
+    never captured (get_open_note_session matched only awaiting_notes)."""
+
+    @patch("core.training_checkin.PendingPromptStore")
+    @patch("core.training_checkin.TrainingLogStore")
+    async def test_records_skip_with_reason_other_and_deletes(self, MockTLS, MockPPS):
+        import core.training_checkin as tc
+
+        session_key = f"{_TODAY_ISO}_evt_gym"
+        session = {
+            "session_key": session_key,
+            "state": "awaiting_skipreason_other",
+            "event_date": _TODAY_ISO,
+            "event_summary": "Gym",
+            "session_type": "gym",
+            "user_id": 12345,
+            "message_id": 300,
+        }
+        pps_instance = MagicMock()
+        MockPPS.return_value = pps_instance
+        tls_instance = MagicMock()
+        MockTLS.return_value = tls_instance
+
+        await tc.attach_skipreason_other_note(MagicMock(), 12345, session, "stuck at work late")
+
+        tls_instance.log_session.assert_called_once()
+        kw = tls_instance.log_session.call_args.kwargs
+        assert kw.get("completed") is False, kw
+        assert kw.get("skipped_reason") == "other", kw
+        assert kw.get("notes") == "stuck at work late", kw
+        assert kw.get("source") == "telegram", kw
+        # Pitfall 3: terminal transition must delete
+        pps_instance.delete.assert_called_once_with(session_key)
+
+    @patch("core.training_checkin.PendingPromptStore")
+    @patch("core.training_checkin.TrainingLogStore")
+    async def test_missing_session_key_no_write(self, MockTLS, MockPPS):
+        import core.training_checkin as tc
+        tls_instance = MagicMock()
+        MockTLS.return_value = tls_instance
+        await tc.attach_skipreason_other_note(MagicMock(), 12345, {}, "note")
+        tls_instance.log_session.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
