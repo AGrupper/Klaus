@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: — Project Shifu
 status: executing
-last_updated: "2026-05-31T11:29:22.467Z"
-last_activity: 2026-05-31 -- Phase 20 planning complete
+last_updated: "2026-06-01T08:53:04.444Z"
+last_activity: 2026-06-01 -- Phase 20 execution started
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 17
   completed_plans: 11
-  percent: 65
+  percent: 40
 ---
 
 # State — Klaus
@@ -19,19 +19,19 @@ progress:
 
 Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
 Phases shipped: Phase 19 ✓ + Phase 19.1 ✓ + 19.2 (fiber) & 19.3 (meal-read repoint) fixed inline ✓ (Phase 20 pending)
-Phase: 19.1 — **COMPLETE & VERIFIED LIVE** (UAT 6/6). Server-side flat-samples aggregator live; Phase 19 SC #2 closed.
+Phase: 20 (accountability-crons-recovery-briefing) — EXECUTING
 19.2 (fiber threaded end-to-end) + 19.3 (both meal READ paths repointed off dead Google Fit → MealStore.get_day()) fixed inline 2026-05-30/31 — 627 tests pass, commits 0088aca + a46431f (serialization fix), deployed green. **Verified live 2026-05-31 09:27**: Klaus returned the real HealthKit breakfast (1113 kcal / 44P / 156C / 34F / 19.7g fiber) from MealStore on Telegram.
-Plan: `/clear` then begin Phase 20 (`/gsd-discuss-phase 20` or `/gsd-plan-phase 20`).
-Status: Ready to execute
+Plan: 1 of 7
+Status: Executing Phase 20
 Resume file: .planning/phases/20-accountability-crons-recovery-briefing/20-UI-SPEC.md
-Last activity: 2026-05-31 -- Phase 20 planning complete
+Last activity: 2026-06-01 -- Phase 20 execution started
 
 ## Project Reference
 
 See: `.planning/PROJECT.md` (updated 2026-05-25)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 19 — Training Awareness & Multimodal Audit (Postgres schema + Garmin ingestion + UserProfileStore + ACWR + meal-photo critique)
+**Current focus:** Phase 20 — accountability-crons-recovery-briefing
 
 ## Accumulated Context
 
