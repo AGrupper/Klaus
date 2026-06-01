@@ -95,6 +95,18 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         bot:         Telegram Bot instance (from _application.bot in web_server).
         target_date: YYYY-MM-DD of the day to scan (typically tomorrow).
     """
+    # Phase 20 — D-09: training check-in folded into the 21:30 proactive-alerts cron.
+    # Runs BEFORE the dedup gate below so a same-evening retry is not blocked (Pitfall 5).
+    # Idempotent via TrainingLogStore merge=True (Pitfall 4). Scans TODAY's training,
+    # whereas the alert scan below targets target_date (tomorrow).
+    try:
+        from core.training_checkin import run_training_checkin
+        today = datetime.now(_TZ).date().isoformat()
+        await run_training_checkin(bot, today)
+    except Exception:
+        logger.warning("proactive_alerts: training check-in failed", exc_info=True)
+        # Non-fatal — alert composition continues regardless
+
     if _already_sent(target_date):
         logger.info("Proactive alerts: already processed for %s — skipping", target_date)
         return
