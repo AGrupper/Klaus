@@ -28,6 +28,10 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# compute_acwr_from_db imported at module level so tests can patch it
+# (garmin_tool is heavy; the actual Garmin client is only built on first call)
+from mcp_tools.garmin_tool import compute_acwr_from_db  # noqa: F401 (used in compute_recovery_concern)
+
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
@@ -52,6 +56,180 @@ _SESSION_NOT_FOUND_COPY = (
     "The log entry may have already been closed. "
     "Reply with your RPE and I'll update the log."
 )
+
+
+# ------------------------------------------------------------------ #
+# Recovery concern thresholds (RECOVERY-02, Phase 20 Plan 05)        #
+# ------------------------------------------------------------------ #
+
+RECOVERY_THRESHOLDS = {
+    # v0 heuristics — tune after ~2 weeks of journaled training_log + biometrics data.
+    # Keys map to severity levels ("mild" or "strong"). RECOVERY-02.
+    "acwr_mild":   1.5,   # ACWR >= 1.5 + any high-intensity session today → mild
+    "acwr_strong": 1.8,   # ACWR >= 1.8 + high-intensity → strong
+    "sleep_low":   70,    # Garmin sleep score < 70 (D-15)
+    "consecutive_low_sleep_nights": 2,        # 2 consecutive nights below sleep_low (D-15)
+    "intensity_keywords_high": ("heavy", "intervals", "speed", "long run", "hiit"),
+    "intensity_keywords_moderate": ("gym", "run", "bike", "five fingers"),
+    "hrv_flag_values": ("unbalanced", "low"),  # Garmin HRV status strings (A4 assumption)
+}
+
+
+def _recent_sleep_scores(today_iso: str, n: int = 2) -> list[int | None]:
+    """Read the last n nights' sleep scores from Postgres daily_biometrics.
+
+    Open Question 3 (RESEARCH): use Postgres, NOT a second Garmin call.
+    Returns a list of sleep scores (may be None per row) or [] on any failure.
+    Mirrors compute_acwr_from_db lazy psycopg2 import + never-raises sentinel.
+
+    Args:
+        today_iso: YYYY-MM-DD reference date (today; reads nights ending on or before today).
+        n: number of nights to fetch (default 2 for consecutive-sleep check).
+    """
+    try:
+        import psycopg2
+        dsn = os.environ.get("DATABASE_URL") or os.environ.get("PG_CONNECTION_STRING")
+        if not dsn:
+            return []
+        from datetime import date, timedelta
+        today = date.fromisoformat(today_iso)
+        cutoff = (today - timedelta(days=n)).isoformat()
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT date, sleep_score FROM daily_biometrics "
+                    "WHERE date >= %s ORDER BY date DESC LIMIT %s",
+                    (cutoff, n),
+                )
+                rows = cur.fetchall()
+        return [r[1] for r in rows]  # list of sleep_score values (may include None)
+    except Exception:
+        logger.warning("_recent_sleep_scores failed", exc_info=True)
+        return []
+
+
+def _classify_intensity(events: list[dict]) -> str:
+    """Classify today's planned intensity from event titles (D-14).
+
+    Returns "high", "moderate", or "none".
+    - Empty events list → "none" (no workout planned; no concern triggered).
+    - Event with no matching keyword → "moderate" (unknown → moderate per D-14).
+
+    Args:
+        events: list of Training calendar event dicts with "summary" key.
+    """
+    if not events:
+        return "none"   # no Training events today → no workout, no concern
+
+    titles = " ".join(
+        (e.get("summary") or "").lower() for e in events
+    )
+    for keyword in RECOVERY_THRESHOLDS["intensity_keywords_high"]:
+        if keyword.lower() in titles:
+            return "high"
+    for keyword in RECOVERY_THRESHOLDS["intensity_keywords_moderate"]:
+        if keyword.lower() in titles:
+            return "moderate"
+    return "moderate"  # D-14: unknown title → moderate
+
+
+def compute_recovery_concern(
+    garmin_data: dict | None,
+    today_iso: str,
+) -> dict | None:
+    """Compute a recovery concern flag from ACWR, HRV, sleep, and today's training intensity.
+
+    Implements D-12 mild/strong severity logic (RECOVERY-01):
+      - Calls compute_acwr_from_db() for ACWR ratio (lazy, never-raises sentinel).
+      - Reads HRV status + sleep score from garmin_data (already fetched by caller).
+      - Reads consecutive nights' sleep from Postgres via _recent_sleep_scores
+        (Open Q3: no second Garmin call, uses daily_biometrics table).
+      - Classifies today's planned intensity from Training calendar events (D-14).
+
+    Severity rules (D-12):
+      strong: (ACWR >= acwr_strong AND intensity == "high")
+              OR (HRV flagged AND sleep_score < sleep_low AND intensity == "high")
+      mild:   (ACWR >= acwr_mild AND intensity in {"high", "moderate"})
+              OR (>= consecutive_low_sleep_nights nights below sleep_low
+                  AND intensity in {"high", "moderate"})
+      None:   none of the above
+
+    Returns:
+        None when no trigger is found (D-13 silent omit — the prompt relies on
+        the key being absent when there is no concern).
+        dict with keys: level, acwr, hrv_status, sleep_score, intensity
+        when a concern is triggered. No prescriptive numeric targets (D-13).
+
+    Args:
+        garmin_data: dict from fetch_garmin_today (may be None or have state=2).
+        today_iso:   YYYY-MM-DD reference date.
+    """
+    thresholds = RECOVERY_THRESHOLDS
+
+    # 1. Classify today's planned intensity (D-14); best-effort on calendar failure.
+    try:
+        today_events = _get_todays_training_events(today_iso)
+    except Exception:
+        logger.warning("compute_recovery_concern: calendar fetch failed", exc_info=True)
+        today_events = []
+    intensity = _classify_intensity(today_events)
+
+    # 2. ACWR ratio (module-level import, never-raises sentinel).
+    acwr_result = compute_acwr_from_db()
+    ratio = acwr_result.get("ratio")  # None when insufficient baseline
+
+    # 3. HRV status + sleep score from garmin_data (already fetched by caller).
+    garmin = garmin_data or {}
+    hrv_status = (garmin.get("hrv_status") or "").lower()
+    sleep_score = garmin.get("sleep_score")  # int or None
+
+    # 4. Consecutive-sleep Postgres read (Open Q3 — no 2nd Garmin call).
+    recent_scores = _recent_sleep_scores(today_iso, n=thresholds["consecutive_low_sleep_nights"])
+
+    # 5. Determine severity (D-12).
+    hrv_flagged = hrv_status in thresholds["hrv_flag_values"]
+    sleep_low = thresholds["sleep_low"]
+    acwr_mild = thresholds["acwr_mild"]
+    acwr_strong = thresholds["acwr_strong"]
+    consec_nights = thresholds["consecutive_low_sleep_nights"]
+
+    # Count consecutive low-sleep nights (recent_scores is ordered DESC by date).
+    low_sleep_nights = sum(
+        1 for s in recent_scores
+        if s is not None and s < sleep_low
+    )
+    has_consecutive_low_sleep = low_sleep_nights >= consec_nights
+
+    level: str | None = None
+
+    # No concern when no training events today (rest day).
+    if intensity == "none":
+        return None
+
+    # Strong trigger.
+    if intensity == "high":
+        if (ratio is not None and ratio >= acwr_strong):
+            level = "strong"
+        elif (hrv_flagged and sleep_score is not None and sleep_score < sleep_low):
+            level = "strong"
+
+    # Mild trigger (only if not already strong).
+    if level is None and intensity in ("high", "moderate"):
+        if (ratio is not None and ratio >= acwr_mild):
+            level = "mild"
+        elif has_consecutive_low_sleep:
+            level = "mild"
+
+    if level is None:
+        return None
+
+    return {
+        "level": level,
+        "acwr": ratio,
+        "hrv_status": garmin.get("hrv_status"),
+        "sleep_score": sleep_score,
+        "intensity": intensity,
+    }
 
 
 # ------------------------------------------------------------------ #
