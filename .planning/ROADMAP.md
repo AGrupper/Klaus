@@ -23,7 +23,7 @@ session via `UserProfileStore` writes.
 - [x] **Phase 19.1: HealthKit Nutrition Bridge** — Gap-closure for Phase 19 SC #2 on iOS. iOS Personal Automation on Lifesum-close emits flat per-quantity HealthKit samples → `POST /cron/healthkit-sync` (shared-secret bearer) → server-side aggregation by (start_date, food_item) → normalize → existing `MealStore.upsert`. Live UAT verified 2026-05-30 01:11 — real Lifesum meal landed in Firestore with correct macros.
 - [x] **Phase 19.2: Fiber Through Reasoning Layer** *(INSERTED)* — Post-ship follow-up to 19.1. The HealthKit Shortcut already emits `DietaryFiber_g` but the normalizer drops it; persist fiber through the meal pipeline (normalizer + `MealStore`) and surface it in Klaus's reasoning/briefings. Explicitly requested by Amit (2026-05-29). **Fixed inline 2026-05-30:** `fiber_g` threaded through `healthkit_tool._normalize_healthkit_sample` (10-key dict) + `google_fit_tool._normalize_point` + `MealStore.get_day_aggregate` totals + `meal_audit.md` fiber heuristic. Code-complete + tested (638 pass); live re-verify pending deploy.
 - [x] **Phase 19.3: Meal Read Paths → iOS HealthKit (MealStore)** *(INSERTED)* — Post-ship follow-up to 19.1. BOTH meal *read* paths still query the dead Google Fit source (returns `[]` on iOS), so HealthKit-ingested meals are invisible to Klaus: (a) the brain-direct `fetch_recent_meals` tool at `core/tools.py:1267` (`_handle_fetch_recent_meals` → `google_fit_tool.fetch_recent_meals`) — confirmed live 2026-05-30 16:07 ("no entries in Google Fit or Lifesum"); (b) the mid-day autonomous tick at `core/autonomous.py:319` (`sync_recent_meals()`). Redirect both to read the shared `MealStore` (where `/cron/healthkit-sync` writes), matching the morning briefing's already-correct `MealStore` path. Found during 19.1 UAT (2026-05-30).
-- [ ] **Phase 20: Accountability Crons & Recovery Briefing** — `TrainingLogStore`, evidence-first training check-in cron (Garmin-RPE-aware), weekly training review cron, `recovery_concern` flag in morning briefing, Cloud Scheduler bootstrap.
+- [x] **Phase 20: Accountability Crons & Recovery Briefing** — `TrainingLogStore`, evidence-first training check-in cron (Garmin-RPE-aware), weekly training review cron, `recovery_concern` flag in morning briefing, Cloud Scheduler bootstrap. (completed 2026-06-01)
 
 ### Phase Details
 
@@ -105,7 +105,7 @@ session via `UserProfileStore` writes.
 - [x] 20-02-PLAN.md — Reconcile REQUIREMENTS/ROADMAP for D-09 + D-21 (CHECKIN-01/06, REVIEW-02, CRON-01)
 - [x] 20-03-PLAN.md — send_and_inject reply_markup + router callback_query dispatch + Training-calendar read (CHECKIN-04)
 - [x] 20-04-PLAN.md — core/training_checkin.py (silent Garmin sync + branch + callbacks) folded into proactive-alerts (CHECKIN-01..06)
-- [ ] 20-05-PLAN.md — RECOVERY_THRESHOLDS + compute_recovery_concern + morning_briefing/proactive_alert tone shift (RECOVERY-01..03)
+- [x] 20-05-PLAN.md — RECOVERY_THRESHOLDS + compute_recovery_concern + morning_briefing/proactive_alert tone shift (RECOVERY-01..03)
 - [x] 20-06-PLAN.md — Weekly-review cron route + brain compose module + prompt + heartbeat staleness key (REVIEW-01..04)
 - [x] 20-07-PLAN.md — bootstrap_shifu_crons.sh + DEPLOYMENT.md Phase Shifu + SELF.md regen (CRON-01, CRON-02)
 **UI hint**: yes
@@ -118,7 +118,7 @@ session via `UserProfileStore` writes.
 | 19.1. HealthKit Nutrition Bridge | 5/5 | Complete | 2026-05-30 |
 | 19.2. Fiber Through Reasoning Layer *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
 | 19.3. Meal Read Paths → iOS HealthKit (MealStore) *(INSERTED)* | inline | Code-complete (fixed inline; live re-verify pending) | 2026-05-30 |
-| 20. Accountability Crons & Recovery Briefing | 6/7 | In Progress|  |
+| 20. Accountability Crons & Recovery Briefing | 7/7 | Complete   | 2026-06-01 |
 
 Detail: full per-phase plans land in `.planning/phases/19-*/` and
 `.planning/phases/20-*/` once `/gsd-plan-phase` runs. Archived to
