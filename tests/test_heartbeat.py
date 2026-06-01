@@ -204,7 +204,11 @@ def test_autonomous_tick_staleness_threshold_is_one_hour():
 
 
 def test_all_cron_jobs_have_staleness_entry():
-    """Sanity: all known job-ids are reasonably tight (< 48h) and autonomous-tick is present."""
+    """Sanity: all known job-ids are registered and have plausible thresholds.
+
+    Updated in Phase 20: weekly-training-review uses 170h (7d + 2h slack) so
+    the upper bound is raised from 100h to 200h to accommodate weekly crons.
+    """
     from core.heartbeat import _CRON_MAX_STALENESS_HOURS
     # The new entry must exist alongside the existing 5.
     expected_subset = {
@@ -213,11 +217,28 @@ def test_all_cron_jobs_have_staleness_entry():
     }
     missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not missing, f"Missing staleness entries: {missing}"
-    # All thresholds should be reasonable (< 120h is plenty of head-room for any cron).
+    # All thresholds should be reasonable (0 < h <= 200 covers weekly crons up to 8d slack).
     for job_id, hours in _CRON_MAX_STALENESS_HOURS.items():
-        assert 0 < hours <= 100, (
-            f"{job_id} threshold {hours} is implausible (must be 0 < h <= 100)"
+        assert 0 < hours <= 200, (
+            f"{job_id} threshold {hours} is implausible (must be 0 < h <= 200)"
         )
+
+
+def test_weekly_training_review_staleness_threshold():
+    """Phase 20 REVIEW-04: _CRON_MAX_STALENESS_HOURS['weekly-training-review'] == 170.
+
+    170h = 7 days + 2h slack — catches a broken Sunday job within the
+    second weekly window without spurious alerts during a normal week gap.
+    """
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert "weekly-training-review" in _CRON_MAX_STALENESS_HOURS, (
+        "weekly-training-review must be registered in _CRON_MAX_STALENESS_HOURS "
+        "(Phase 20 — heartbeat must detect a missed Sunday review)."
+    )
+    threshold = _CRON_MAX_STALENESS_HOURS["weekly-training-review"]
+    assert threshold == 170, (
+        f"weekly-training-review threshold must be 170h (7d + 2h slack); got {threshold!r}"
+    )
 
 
 def test_check_code_detects_drift_and_todos(tmp_path):
