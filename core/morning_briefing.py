@@ -232,6 +232,19 @@ def _gather_data(today_iso: str) -> dict:
             exc_info=True,
         )
 
+    # Phase 20 — RECOVERY-01: compute recovery concern from ACWR + HRV + sleep + today's intensity
+    try:
+        from core.training_checkin import compute_recovery_concern
+        rc = compute_recovery_concern(
+            garmin_data=data.get("garmin"),
+            today_iso=today_iso,
+        )
+        if rc:
+            data["recovery_concern"] = rc
+    except Exception:
+        logger.warning("morning_briefing: recovery_concern computation failed", exc_info=True)
+        # silent omit — no "all clear" placeholder (D-13 guardrail)
+
     # TickTick tasks
     try:
         from mcp_tools.ticktick_tool import get_today_tasks
