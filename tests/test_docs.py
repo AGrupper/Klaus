@@ -179,3 +179,29 @@ def test_healthkit_shortcut_runbook_complete():
     # Cross-references to other docs
     assert "DEPLOYMENT.md" in content
     assert "klaus-healthkit-webhook-token" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 20 REVIEW-03 — prompts/weekly_training_review.md existence + structure
+# ---------------------------------------------------------------------------
+
+WEEKLY_REVIEW_PROMPT_PATH = os.path.join(
+    os.path.dirname(__file__), os.pardir, "prompts", "weekly_training_review.md"
+)
+
+
+def test_weekly_training_review_prompt_exists():
+    """REVIEW-03 — prompts/weekly_training_review.md exists with required structure."""
+    assert os.path.exists(WEEKLY_REVIEW_PROMPT_PATH), (
+        "prompts/weekly_training_review.md must exist"
+    )
+    with open(WEEKLY_REVIEW_PROMPT_PATH, encoding="utf-8") as f:
+        content = f.read()
+    # Required placeholder
+    assert "{today_date}" in content, "prompt must contain {today_date} placeholder"
+    # Scorecard emoji set (D-18)
+    assert "✅" in content, "prompt must reference ✅ scorecard emoji (D-18)"
+    assert "❌" in content, "prompt must reference ❌ scorecard emoji (D-18)"
+    assert "⚠️" in content, "prompt must reference ⚠️ scorecard emoji (D-18)"
+    # D-24 sparse-week copy
+    assert "Quiet week" in content, "prompt must contain D-24 sparse-week copy"

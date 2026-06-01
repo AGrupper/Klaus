@@ -206,6 +206,143 @@ class TestCronAutonomousTick:
 
 
 # --------------------------------------------------------------------------- #
+# TestCronWeeklyTrainingReview — Phase 20 REVIEW-01 + REVIEW-04                #
+# --------------------------------------------------------------------------- #
+
+
+class TestCronWeeklyTrainingReview:
+    """Behavioral tests for the POST /cron/weekly-training-review endpoint.
+
+    Mirrors TestCronAutonomousTick: OIDC gate + _application guard +
+    run_weekly_review invocation + _log_cron_run ledger writes on both paths.
+    Covers REVIEW-01 + REVIEW-04.
+    """
+
+    def test_returns_200_with_dev_bypass_and_app_present(self, monkeypatch):
+        """Dev bypass + initialised _application + run_weekly_review succeeds → 200."""
+        stubs = _stub_web_server_imports()
+
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            with patch.dict(os.environ, _BASE_ENV):
+                fake_app = MagicMock(name="Application")
+                fake_app.bot = MagicMock(name="bot")
+                ws._application = fake_app  # type: ignore[attr-defined]
+
+                async_mock = AsyncMock(return_value=None)
+                with patch("core.weekly_training_review.run_weekly_review", async_mock):
+                    client = TestClient(ws.app, raise_server_exceptions=True)
+                    resp = client.post("/cron/weekly-training-review")
+
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        assert resp.json() == {"ok": True}
+        async_mock.assert_awaited_once()
+        # First positional arg must be _application.bot
+        args, _kwargs = async_mock.await_args
+        assert args[0] is fake_app.bot, "run_weekly_review must receive _application.bot"
+
+    def test_returns_401_without_bearer(self, monkeypatch):
+        """No bypass + no Authorization header → 401 from _verify_cron_request."""
+        stubs = _stub_web_server_imports()
+
+        env = dict(_BASE_ENV)
+        env["CRON_DEV_BYPASS"] = "false"
+
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            monkeypatch.delenv("CLOUD_RUN_URL", raising=False)
+            monkeypatch.delenv("CLOUD_SCHEDULER_SA_EMAIL", raising=False)
+            with patch.dict(os.environ, env):
+                client = TestClient(ws.app)
+                resp = client.post("/cron/weekly-training-review")
+
+        assert resp.status_code == 401
+
+    def test_returns_500_when_application_is_none(self, monkeypatch):
+        """Dev bypass + _application is None → 500 from the singleton guard."""
+        stubs = _stub_web_server_imports()
+
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            with patch.dict(os.environ, _BASE_ENV):
+                ws._application = None  # type: ignore[attr-defined]
+                client = TestClient(ws.app, raise_server_exceptions=False)
+                resp = client.post("/cron/weekly-training-review")
+
+        assert resp.status_code == 500
+        body = resp.json()
+        assert "detail" in body
+
+    def test_logs_cron_run_ok_true_on_success(self, monkeypatch):
+        """On a clean success path, _log_cron_run('weekly-training-review', ok=True) is called."""
+        stubs = _stub_web_server_imports()
+        calls: list[dict] = []
+
+        def _fake_log(job_id: str, ok: bool, **kwargs) -> None:
+            calls.append({"job_id": job_id, "ok": ok, "kwargs": kwargs})
+
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            with patch.dict(os.environ, _BASE_ENV):
+                fake_app = MagicMock(name="Application")
+                fake_app.bot = MagicMock(name="bot")
+                ws._application = fake_app  # type: ignore[attr-defined]
+                ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
+
+                async_mock = AsyncMock(return_value=None)
+                with patch("core.weekly_training_review.run_weekly_review", async_mock):
+                    client = TestClient(ws.app, raise_server_exceptions=True)
+                    resp = client.post("/cron/weekly-training-review")
+
+        assert resp.status_code == 200
+        relevant = [c for c in calls if c["job_id"] == "weekly-training-review"]
+        assert relevant, f"_log_cron_run('weekly-training-review', ...) must be called; got {calls}"
+        assert relevant[-1]["ok"] is True, (
+            f"Expected ok=True on success, got {relevant}"
+        )
+
+    def test_logs_cron_run_ok_false_on_exception(self, monkeypatch):
+        """If run_weekly_review raises, _log_cron_run called with ok=False AND exception propagates."""
+        stubs = _stub_web_server_imports()
+        calls: list[dict] = []
+
+        def _fake_log(job_id: str, ok: bool, **kwargs) -> None:
+            calls.append({"job_id": job_id, "ok": ok, "kwargs": kwargs})
+
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            with patch.dict(os.environ, _BASE_ENV):
+                fake_app = MagicMock(name="Application")
+                fake_app.bot = MagicMock(name="bot")
+                ws._application = fake_app  # type: ignore[attr-defined]
+                ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
+
+                async_mock = AsyncMock(side_effect=RuntimeError("weekly review blew up"))
+                with patch("core.weekly_training_review.run_weekly_review", async_mock):
+                    client = TestClient(ws.app, raise_server_exceptions=False)
+                    resp = client.post("/cron/weekly-training-review")
+
+        assert resp.status_code == 500, (
+            f"Unhandled exception in the route must surface as 500; got {resp.status_code}"
+        )
+        relevant = [c for c in calls if c["job_id"] == "weekly-training-review"]
+        assert relevant, f"_log_cron_run('weekly-training-review', ...) must be called; got {calls}"
+        assert relevant[-1]["ok"] is False, (
+            f"Expected ok=False on exception, got {relevant}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # TestCronHealthkitSync — Phase 19.1 HEALTHKIT-04 / HEALTHKIT-05               #
 # --------------------------------------------------------------------------- #
 
