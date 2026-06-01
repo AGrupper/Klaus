@@ -696,6 +696,166 @@ class MealStore:
         }
 
 
+class TrainingLogStore:
+    """Per-session training log stored in Firestore (Phase 20 — LOG-01/LOG-02).
+
+    Collection: training_log
+    Document ID: {YYYY-MM-DD}_{slot}
+
+    Idempotency:
+        Garmin silent sync may write before the user replies; merge=True on the
+        doc_id key prevents duplicate rows (Pitfall 4 / LOG-01).
+
+    RPE normalisation (Pitfall 7):
+        Garmin stores perceived_exertion in steps of 10 (10..100 for 1..10 scale).
+        log_session normalises values > 10 that are multiples of 10 to the 1..10
+        scale by integer division.  Values already in 1..10 are left unchanged.
+
+    Read discipline (LOG-02):
+        get_recent / get_by_date / get_range — never raise on Firestore errors;
+        return [] so callers (weekly review, morning briefing) can degrade
+        gracefully.
+
+    Write discipline (LOG-01):
+        log_session re-raises on Firestore write failures so callers know the
+        sync failed (matches UserProfileStore.update / MealStore.upsert convention).
+    """
+
+    _COLLECTION = "training_log"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def log_session(
+        self,
+        date: str,                              # YYYY-MM-DD
+        slot: str,                              # calendar event id or YYYYMMDDHHmm
+        session_type: str | None = None,
+        planned: bool = False,
+        completed: bool = False,
+        skipped_reason: str | None = None,      # rest_recovery | sick_injured | too_busy | other
+        rpe: int | None = None,                 # 1–10 (normalised here from Garmin raw)
+        feel: int | None = None,                # Garmin feel value, verbatim
+        notes: str | None = None,
+        source: str = "telegram",               # garmin | telegram | manual_chat
+        garmin_activity_id: str | None = None,
+    ) -> None:
+        """Write one training session to training_log/{date}_{slot}.
+
+        Idempotent via merge=True — safe to call multiple times for the same
+        (date, slot) pair (e.g. Garmin silent sync then user Telegram reply).
+
+        Pitfall 7: normalises Garmin raw RPE (steps-of-10, 10..100) to 1..10.
+        Values already in 1..10 are left unchanged.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+        """
+        doc_id = f"{date}_{slot}"
+        # Pitfall 7: normalise Garmin raw RPE (steps-of-10, 10..100) to 1..10
+        if rpe is not None and rpe > 10 and rpe % 10 == 0:
+            rpe = rpe // 10
+        payload = {
+            "date": date,
+            "slot": slot,
+            "type": session_type,
+            "planned": planned,
+            "completed": completed,
+            "skipped_reason": skipped_reason,
+            "rpe": rpe,
+            "feel": feel,
+            "notes": notes,
+            "source": source,
+            "garmin_activity_id": garmin_activity_id,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        try:
+            self._col.document(doc_id).set(payload, merge=True)   # merge=True — idempotent
+        except Exception:
+            logger.error("TrainingLogStore.log_session(%r) failed", doc_id, exc_info=True)
+            raise
+
+    def get_recent(self, days: int) -> list[dict]:
+        """Return sessions with date >= today-{days}, sorted date desc, with doc_id.
+
+        Never raises — returns [] on any Firestore error (LOG-02).
+
+        Args:
+            days: Number of calendar days to look back (inclusive).
+
+        Returns:
+            List of session dicts, each with a ``doc_id`` field, sorted by date
+            descending.  Empty list on any Firestore error.
+        """
+        try:
+            from datetime import date as _date, timedelta
+            cutoff = (_date.today() - timedelta(days=days)).isoformat()
+            snaps = list(self._col.stream())
+            results = []
+            for snap in snaps:
+                d = snap.to_dict() or {}
+                d["doc_id"] = snap.id
+                if d.get("date", "") >= cutoff:
+                    results.append(d)
+            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+            return results
+        except Exception:
+            logger.warning("TrainingLogStore.get_recent failed", exc_info=True)
+            return []
+
+    def get_by_date(self, date_str: str) -> list[dict]:
+        """Return all sessions whose doc_id starts with date_str.
+
+        Never raises — returns [] on any Firestore error (LOG-02).
+
+        Args:
+            date_str: YYYY-MM-DD date prefix.
+
+        Returns:
+            List of matching session dicts (each with doc_id).  Empty on error.
+        """
+        try:
+            snaps = list(self._col.stream())
+            return [
+                {**snap.to_dict(), "doc_id": snap.id}
+                for snap in snaps
+                if snap.id.startswith(date_str)
+            ]
+        except Exception:
+            logger.warning("TrainingLogStore.get_by_date(%r) failed", date_str, exc_info=True)
+            return []
+
+    def get_range(self, start_date: str, end_date: str) -> list[dict]:
+        """Return all sessions in [start_date, end_date] (inclusive), sorted date desc.
+
+        Never raises — returns [] on any Firestore error (LOG-02).
+
+        Args:
+            start_date: YYYY-MM-DD start of range (inclusive).
+            end_date:   YYYY-MM-DD end of range (inclusive).
+
+        Returns:
+            List of session dicts with doc_id, sorted date desc.  Empty on error.
+        """
+        try:
+            snaps = list(self._col.stream())
+            results = []
+            for snap in snaps:
+                d = snap.to_dict() or {}
+                d["doc_id"] = snap.id
+                if start_date <= d.get("date", "") <= end_date:
+                    results.append(d)
+            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+            return results
+        except Exception:
+            logger.warning(
+                "TrainingLogStore.get_range(%r, %r) failed",
+                start_date, end_date, exc_info=True,
+            )
+            return []
+
+
 class FollowupStore:
     """Persists scheduled follow-ups for Klaus's self-managed check-backs.
 
