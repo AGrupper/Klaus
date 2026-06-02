@@ -8,23 +8,28 @@ Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task
 
 Klaus should act as a genuinely intelligent, proactive companion that surfaces the right thing at the right time — while knowing exactly what he is and what he can do.
 
-## Current Milestone: v3.0 — Project Shifu (Training, Recovery & Nutrition Coach)
+## Current State
 
-**Goal:** Give Klaus athletic coaching capability — read his own training data, audit meals via Telegram photos, hold the user accountable to logged sessions, and let recovery state shape the morning briefing.
+**Shipped:** v3.0 — Project Shifu (2026-06-02). Klaus now has athletic-coaching
+capability: he reads his own 3-year Garmin history + Lifesum nutrition (via the iOS
+HealthKit bridge → `MealStore`), runs an evidence-first 21:30 training check-in with
+inline-keyboard logging, surfaces recovery state (ACWR / HRV / sleep) in the morning
+briefing and evening alert, and sends a Sunday weekly training review. The
+accountability **loop** is live and verified end-to-end (19/19 + live UAT). Personalized
+targets are intentionally deferred — the `UserProfileStore` scaffold is still empty, so
+coaching stays *qualitative* under the D-13 no-fabrication guard.
 
-**Target features:**
-- `UserProfileStore` (empty scaffold; personalized rules/targets deferred to a later session)
-- Extended Garmin reads — training status, recent activities, RPE/Feel ingest into Postgres
-- ACWR plumbing — schema migration + Python computation tool
-- Nutrition tracking via Google Fit (Lifesum sync) → `MealStore`; autonomous-tick mid-day coaching + morning recap
-- `TrainingLogStore` + evidence-first training check-in cron (21:00 Israel)
-- Weekly training review cron (Sun 10:00 Israel)
-- Recovery-aware morning briefing (`recovery_concern` flag, v0 thresholds)
-- 3-year historical Garmin backfill into Postgres (one-shot, manual)
+**Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
+(2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
 
-**Approach:** Two phases — Phase 19 (data + awareness) then Phase 20 (accountability crons + recovery-aware briefing). Postgres infrastructure shipped in commit `2c8be7a` is now wired into the runtime.
+## Next Milestone Goals: v4.0 — Personalized Training & Nutrition Plan
 
-**Last shipped:** v2.0 Consciousness & Autonomy on 2026-05-23 (5 phases, 24 plans, 41/41 requirements). See `.planning/MILESTONES.md § v2.0` for the closure summary.
+Turn Klaus from a *qualitative* coach into a *prescriptive* one. Ingest Amit's goals
+document, collide it with his real data (3yr Garmin, nutrition, and the now-flowing
+`training_log`), populate `UserProfileStore` with concrete **data-grounded** targets,
+and release the D-13 "no invented numbers" guard so recovery advice, the weekly review,
+and check-ins can name real numbers. Likely also: the recurring "daily review" skill
+(check-in persistence / re-surfacing). **Not yet scoped** — `/gsd-new-milestone` defines it.
 
 ## Requirements
 
@@ -53,17 +58,22 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 - ✓ Daily reflection cron writes journal entries + updates self-state (Phase 17)
 - ✓ Autonomous tick engine fires every 20 min, 7-21, with judgment + repeat-suppression (Phase 18)
 - ✓ Judgment eval harness scores tick-brain on labeled fixtures (Phase 18)
+- ✓ Training/recovery data layer: Postgres schema + 3yr Garmin backfill, ACWR, `MealStore` — v3.0 (Phase 19)
+- ✓ iOS HealthKit nutrition bridge (Lifesum → `MealStore`), fiber threaded + meal reads repointed off Google Fit — v3.0 (Phases 19.1–19.3)
+- ✓ Evidence-first training check-in + `TrainingLogStore` (inline-keyboard logging, folded into 21:30 cron) — v3.0 (Phase 20)
+- ✓ Recovery-aware morning briefing + evening alert (`compute_recovery_concern`, no-fabrication guard) — v3.0 (Phase 20)
+- ✓ Sunday weekly training review cron (brain-composed scorecard) — v3.0 (Phase 20)
+- ✓ Workouts Klaus creates route to the `Training` calendar; `get_training_history` JSON-safe — v3.0 (post-ship UAT fixes)
 
-### Active (v3.0 — Project Shifu)
+### Active (v4.0 — Personalized Training & Nutrition Plan)
 
-See `.planning/REQUIREMENTS.md` for the full REQ-ID list. Headline scope:
-- Klaus can read his own Garmin training status, recent activities, and historical biometrics from Postgres
-- Lifesum-logged meals flow to Klaus via Google Fit; mid-day proactive coaching on notable meals; morning briefing recaps yesterday's macros
-- Training sessions get logged (auto from Garmin RPE when present; Telegram fallback when missing)
-- Morning briefing surfaces a recovery concern when ACWR / sleep / HRV trend warrants it
+To be defined at `/gsd-new-milestone` scoping. Headline direction: populate
+`UserProfileStore` with data-grounded goals/targets → prescriptive coaching.
 
-**Deferred from v2.0 (not addressed in v3.0):**
-- Live-staging verification of SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
+**Deferred (carried forward):**
+- Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
+- Stale Phase 19 verification/UAT sign-off paperwork (functionality verified live)
+- Recurring "daily review" skill (check-in persistence); `MealAuditStore` (persisted nutrition critique)
 
 ### Out of Scope
 
@@ -74,14 +84,15 @@ See `.planning/REQUIREMENTS.md` for the full REQ-ID list. Headline scope:
 
 ## Context
 
-- **Stack:** Python 3.11+, Cloud Run, Firestore, Pinecone, FastAPI, Telegram Bot API
-- **Brain model:** `gemini-3-flash-preview` — stale JARVIS/Claude comments fixed in Phase 14
-- **Worker model:** `gemini-2.5-flash`
-- **Fallback:** `claude-haiku-4-5` (Anthropic, triggered only on brain failure)
+- **Stack:** Python 3.11 (prod Dockerfile) / 3.13 (local venv), Cloud Run, Firestore, Pinecone, Postgres, FastAPI, Telegram Bot API
+- **Brain model:** `gemini-3.5-flash` (Gemini AI Studio)
+- **Worker model:** `deepseek-v4-flash` (OpenAI-compat, DeepSeek API)
+- **Fallback:** `claude-haiku-4-5` (Anthropic, inline on brain failure)
+- **Tick-brain:** `qwen3-32b` (Groq, free) with `gemini-3.5-flash` fallback
 - **Embeddings:** `gemini-embedding-2` via AI Studio (NOT Vertex — AI Studio only)
-- **Seven existing cron jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), five-fingers-morning (Wed/Sun 10:30), five-fingers-evening (Wed/Sun 21:15), ingest-chats (04:00), ingest-chat-exports (04:30)
-- **Memory:** Klaus's `_OpenAIBackend` already wired in `llm_client.py` — Groq just needs a `base_url` param thread
-- **Pinecone valid kinds today:** `{"fact","chunk","chat"}` — Phase 17 adds `"self"`
+- **Cron jobs (8):** heartbeat (hourly), proactive-alerts (21:30, now also runs the training check-in), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), klaus-reflect (22:00), klaus-autonomous-tick (*/20 7-21), klaus-weekly-training-review (Sun 10:00). Plus push-driven `/cron/healthkit-sync`. *(Five Fingers crons removed; Google Fit deprecated — commit `91e218e`.)*
+- **Pinecone kinds:** `{"fact","chunk","chat","self"}`
+- **Test env note:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, 3.13 + 3.14) — verify per-file. See `feedback_python_version` + `feedback_firestore_timestamp_json` memories.
 
 ## Constraints
 
@@ -99,8 +110,12 @@ See `.planning/REQUIREMENTS.md` for the full REQ-ID list. Headline scope:
 | Groq/Qwen3-32B for tick-brain | Free tier, fast, doesn't train on data, OpenAI-compat | ✓ Implemented Phase 14 |
 | No spend cap | "I want him to be able to do whatever he wants" — explicit user choice | ✓ Implemented Phase 14 |
 | Outbound Telegram-only | Clean scope; email send is a fast-follow | ✓ Good |
-| `kind="self"` in Pinecone | Journal entries need their own namespace distinct from facts/chat | — Pending |
-| Tick every 20 min, 7-21 | ≈42 ticks/day; balances proactivity with quiet hours | — Pending |
+| `kind="self"` in Pinecone | Journal entries need their own namespace distinct from facts/chat | ✓ Implemented Phase 17 |
+| Tick every 20 min, 7-21 | ≈42 ticks/day; balances proactivity with quiet hours | ✓ Implemented Phase 18 |
+| HealthKit bridge over Google Fit (iOS) | Lifesum writes to HealthKit on iPhone; Google Fit returns nothing | ✓ Good — v3.0 (19.1) |
+| Training check-in folds into 21:30 cron (D-09, no separate job) | Avoids a redundant scheduler job; runs before the dedup gate so retries aren't blocked | ✓ Good — v3.0 |
+| No invented numbers until profile populated (D-13) | Honest coaching with an empty profile; releases at v4.0 | ✓ Good — v3.0 |
+| No `MealAuditStore` (live `MealStore` 7-day totals, D-21) | Avoid premature persistence; brain critiques at read time | ✓ Good — v3.0 (revisit if nutrition history reporting matters) |
 
 ## Evolution
 
@@ -120,4 +135,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-25 — Milestone v3.0 (Project Shifu) started; Phase 19 + 20 scoped*
+*Last updated: 2026-06-02 after v3.0 (Project Shifu) milestone — shipped Phases 19–20; v4.0 (Personalized Training & Nutrition Plan) is next, unscoped.*
