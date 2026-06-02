@@ -308,3 +308,122 @@ def test_reply_to_message_falls_through_when_not_pending_note():
 
     router._check_pending_note_reply.assert_awaited_once_with(update)
     router._handle_text_message.assert_awaited_once()
+
+
+def test_plain_typed_message_checks_pending_note_without_reply_gesture():
+    """A plain text message (no reply gesture) still routes through the pending-
+    note check first, so a typed answer to a prompt is captured."""
+    router, _ = _make_router()
+    router._check_pending_note_reply = AsyncMock(return_value=True)
+    router._handle_text_message = AsyncMock()
+
+    update = _make_message_update(user_id=123456, text="got home late", reply_to=None)
+    asyncio.run(router.handle_update(update))
+
+    router._check_pending_note_reply.assert_awaited_once_with(update)
+    router._handle_text_message.assert_not_awaited()
+
+
+def test_slash_skip_dismisses_open_pending_note():
+    """'/skip' with an open session routes to _handle_skip_pending_note and not text."""
+    router, _ = _make_router()
+    router._handle_skip_pending_note = AsyncMock(return_value=True)
+    router._handle_text_message = AsyncMock()
+
+    update = _make_message_update(user_id=123456, text="/skip")
+    asyncio.run(router.handle_update(update))
+
+    router._handle_skip_pending_note.assert_awaited_once_with(123456)
+    router._handle_text_message.assert_not_awaited()
+
+
+def test_slash_skip_falls_through_without_open_session():
+    """'/skip' with no open session falls through to normal handling."""
+    router, _ = _make_router()
+    router._handle_skip_pending_note = AsyncMock(return_value=False)
+    router._handle_text_message = AsyncMock()
+
+    update = _make_message_update(user_id=123456, text="/skip")
+    asyncio.run(router.handle_update(update))
+
+    router._handle_skip_pending_note.assert_awaited_once_with(123456)
+    router._handle_text_message.assert_awaited_once()
+
+
+def _patch_store(session):
+    store = MagicMock()
+    store.get_open_note_session.return_value = session
+    return MagicMock(return_value=store)
+
+
+def test_check_pending_note_reply_captures_plain_typed_skipreason_other():
+    """Plain typed answer (no reply gesture) to an awaiting_skipreason_other
+    session dispatches to attach_skipreason_other_note."""
+    router, _ = _make_router()
+    session = {
+        "session_key": "2026-06-02_evt1",
+        "state": "awaiting_skipreason_other",
+        "message_id": 555,
+        "event_date": "2026-06-02",
+    }
+    fake_checkin = MagicMock()
+    fake_checkin.attach_skipreason_other_note = AsyncMock()
+    fake_checkin.attach_note = AsyncMock()
+
+    update = _make_message_update(user_id=123456, text="got home late", reply_to=None)
+    with patch("memory.firestore_db.PendingPromptStore", _patch_store(session)), \
+         patch.dict(sys.modules, {"core.training_checkin": fake_checkin}):
+        result = asyncio.run(router._check_pending_note_reply(update))
+
+    assert result is True
+    fake_checkin.attach_skipreason_other_note.assert_awaited_once()
+    fake_checkin.attach_note.assert_not_awaited()
+
+
+def test_check_pending_note_reply_captures_notes_state():
+    """awaiting_notes session dispatches to attach_note."""
+    router, _ = _make_router()
+    session = {"session_key": "2026-06-02_evt1", "state": "awaiting_notes", "message_id": 9}
+    fake_checkin = MagicMock()
+    fake_checkin.attach_skipreason_other_note = AsyncMock()
+    fake_checkin.attach_note = AsyncMock()
+
+    update = _make_message_update(user_id=123456, text="felt great", reply_to=None)
+    with patch("memory.firestore_db.PendingPromptStore", _patch_store(session)), \
+         patch.dict(sys.modules, {"core.training_checkin": fake_checkin}):
+        result = asyncio.run(router._check_pending_note_reply(update))
+
+    assert result is True
+    fake_checkin.attach_note.assert_awaited_once()
+    fake_checkin.attach_skipreason_other_note.assert_not_awaited()
+
+
+def test_check_pending_note_reply_no_session_returns_false():
+    """No open session → returns False so the message falls through to the brain."""
+    router, _ = _make_router()
+    fake_checkin = MagicMock()
+    update = _make_message_update(user_id=123456, text="what's the weather", reply_to=None)
+    with patch("memory.firestore_db.PendingPromptStore", _patch_store(None)), \
+         patch.dict(sys.modules, {"core.training_checkin": fake_checkin}):
+        result = asyncio.run(router._check_pending_note_reply(update))
+
+    assert result is False
+
+
+def test_check_pending_note_reply_reply_gesture_requires_matching_message_id():
+    """With an explicit reply gesture, a mismatched message_id is NOT captured
+    (the user replied to some other/older message)."""
+    router, _ = _make_router()
+    session = {"session_key": "k", "state": "awaiting_notes", "message_id": 100}
+    fake_checkin = MagicMock()
+    fake_checkin.attach_note = AsyncMock()
+
+    reply_to = MagicMock()
+    reply_to.message_id = 999  # does not match session message_id 100
+    update = _make_message_update(user_id=123456, text="note", reply_to=reply_to)
+    with patch("memory.firestore_db.PendingPromptStore", _patch_store(session)), \
+         patch.dict(sys.modules, {"core.training_checkin": fake_checkin}):
+        result = asyncio.run(router._check_pending_note_reply(update))
+
+    assert result is False
+    fake_checkin.attach_note.assert_not_awaited()

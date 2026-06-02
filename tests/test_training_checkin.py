@@ -1020,9 +1020,10 @@ class TestAttachSkipreasonOtherNote(unittest.IsolatedAsyncioTestCase):
     Regression for CR-01 — the 'Other — tell me' free-text reply was previously
     never captured (get_open_note_session matched only awaiting_notes)."""
 
+    @patch("core.training_checkin.send_and_inject", new_callable=AsyncMock)
     @patch("core.training_checkin.PendingPromptStore")
     @patch("core.training_checkin.TrainingLogStore")
-    async def test_records_skip_with_reason_other_and_deletes(self, MockTLS, MockPPS):
+    async def test_records_skip_with_reason_other_and_deletes(self, MockTLS, MockPPS, mock_send):
         import core.training_checkin as tc
 
         session_key = f"{_TODAY_ISO}_evt_gym"
@@ -1050,10 +1051,13 @@ class TestAttachSkipreasonOtherNote(unittest.IsolatedAsyncioTestCase):
         assert kw.get("source") == "telegram", kw
         # Pitfall 3: terminal transition must delete
         pps_instance.delete.assert_called_once_with(session_key)
+        # User gets a confirmation that the skip was recorded.
+        mock_send.assert_awaited_once()
 
+    @patch("core.training_checkin.send_and_inject", new_callable=AsyncMock)
     @patch("core.training_checkin.PendingPromptStore")
     @patch("core.training_checkin.TrainingLogStore")
-    async def test_missing_session_key_no_write(self, MockTLS, MockPPS):
+    async def test_missing_session_key_no_write(self, MockTLS, MockPPS, mock_send):
         import core.training_checkin as tc
         tls_instance = MagicMock()
         MockTLS.return_value = tls_instance

@@ -884,6 +884,10 @@ async def attach_note(orchestrator, user_id: int, session: dict, note_text: str)
         pps = PendingPromptStore()
         pps.delete(session_key)
 
+        # Brief confirmation so the user knows the note landed.
+        bot = _bot_from_orchestrator_or_cq(orchestrator, None)
+        await send_and_inject(bot, "Logged, sir — note saved.", inject_into_conversation=False)
+
     except Exception:
         logger.warning("attach_note: unexpected error", exc_info=True)
 
@@ -927,6 +931,10 @@ async def attach_skipreason_other_note(orchestrator, user_id: int, session: dict
         pps = PendingPromptStore()
         pps.delete(session_key)
 
+        # Brief confirmation so the user knows the skip + reason were recorded.
+        bot = _bot_from_orchestrator_or_cq(orchestrator, None)
+        await send_and_inject(bot, "Noted, sir — recorded as skipped.", inject_into_conversation=False)
+
     except Exception:
         logger.warning("attach_skipreason_other_note: unexpected error", exc_info=True)
 
@@ -950,6 +958,8 @@ async def handle_skip_note(bot, session_key: str) -> None:
         pps = PendingPromptStore()
         pps.delete(session_key)
         logger.info("training_checkin: notes skipped for %s", session_key)
+        if bot is not None:
+            await send_and_inject(bot, "Understood, sir — note skipped.", inject_into_conversation=False)
     except Exception:
         logger.warning("handle_skip_note: unexpected error", exc_info=True)
 

@@ -110,13 +110,19 @@ class MessageRouter:
             except Exception as e:
                 logger.exception("Failed to download Telegram photo: %s", e)
 
-        # Phase 20: reply-to detection for notes step.
-        # WHY: when the user replies to a pending notes prompt, the message carries
-        # reply_to_message with the message_id of the prompt we sent.  We route this
-        # to the pending-note path BEFORE the normal command/text path.
-        if update.message.reply_to_message is not None:
-            handled = await self._check_pending_note_reply(update)
-            if handled:
+        # Phase 20: capture a reply to a pending notes / skip-reason prompt BEFORE
+        # the normal command/text path. The user may use Telegram's reply gesture
+        # OR simply type the answer (the common case), so we check for an open
+        # pending session on any plain-text message — not only explicit replies.
+        # "/skip" dismisses an open notes prompt, keeping any RPE entry valid.
+        if message_text == "/skip":
+            if await self._handle_skip_pending_note(telegram_user_id):
+                return
+            # else fall through (no open session) — treat as a normal message
+        elif update.message.reply_to_message is not None or (
+            message_text and not message_text.startswith("/")
+        ):
+            if await self._check_pending_note_reply(update):
                 return
             # else fall through to normal text handling
 
@@ -192,8 +198,6 @@ class MessageRouter:
             through to normal text handling.
         """
         try:
-            replied_to_id = update.message.reply_to_message.message_id
-
             from memory.firestore_db import PendingPromptStore
             project_id = os.environ["GCP_PROJECT_ID"]
             database = os.getenv("FIRESTORE_DATABASE", "(default)")
@@ -204,11 +208,15 @@ class MessageRouter:
             if session is None:
                 return False
 
-            # Match by message_id
-            if session.get("message_id") != replied_to_id:
+            # If the user used Telegram's explicit reply gesture, require it to
+            # match the prompt we sent (guards against replying to an old message).
+            # If they simply typed their answer (no reply gesture — the common
+            # case), accept it as the reply to the open session.
+            replied = update.message.reply_to_message
+            if replied is not None and session.get("message_id") != replied.message_id:
                 return False
 
-            # Route to attach_note — lazy import so Plan 03 ships independently
+            # Route to the note handler — lazy import so Plan 03 ships independently
             try:
                 import core.training_checkin as _checkin
             except ImportError:
@@ -232,6 +240,40 @@ class MessageRouter:
         except Exception:
             logger.warning(
                 "_check_pending_note_reply: unexpected error — falling through",
+                exc_info=True,
+            )
+            return False
+
+    async def _handle_skip_pending_note(self, user_id: int) -> bool:
+        """Handle ``/skip`` while a notes/skip-reason prompt is open.
+
+        Dismisses the open pending session (keeping any already-logged RPE entry
+        valid) and acknowledges. Returns True if a session was dismissed, False if
+        there was no open session (so the caller treats ``/skip`` as a normal
+        message).
+        """
+        try:
+            from memory.firestore_db import PendingPromptStore
+            project_id = os.environ["GCP_PROJECT_ID"]
+            database = os.getenv("FIRESTORE_DATABASE", "(default)")
+            store = PendingPromptStore(project_id=project_id, database=database)
+
+            session = store.get_open_note_session(user_id)
+            if session is None:
+                return False
+
+            try:
+                import core.training_checkin as _checkin
+            except ImportError:
+                logger.warning("_handle_skip_pending_note: training_checkin module unavailable")
+                return False
+
+            bot = getattr(self.orchestrator, "bot", None)
+            await _checkin.handle_skip_note(bot, session.get("session_key", ""))
+            return True
+        except Exception:
+            logger.warning(
+                "_handle_skip_pending_note: unexpected error — falling through",
                 exc_info=True,
             )
             return False
