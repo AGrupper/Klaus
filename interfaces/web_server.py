@@ -96,6 +96,11 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
     # from disk — doing this at startup avoids per-request latency on the first
     # real message while still not blocking the health probe.
     _orchestrator = AgentOrchestrator()
+    # Phase 20: expose the Bot on the orchestrator so non-callback code paths can
+    # send messages. Button taps get the bot from the callback query, but a typed
+    # training-note reply (core.training_checkin.attach_note /
+    # attach_skipreason_other_note) reaches the bot only via the orchestrator.
+    _orchestrator.bot = _application.bot
     logger.info("AgentOrchestrator initialised.")
 
     # Build the router with the allow-listed user IDs from the environment.
