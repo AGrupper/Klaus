@@ -87,7 +87,7 @@ def _get_memory_store():
         from memory.pinecone_db import MemoryStore
         _memory_store = MemoryStore(
             api_key=os.environ["PINECONE_API_KEY"],
-            index_name=os.getenv("PINECONE_INDEX_NAME", "Klaus-memory"),
+            index_name=os.getenv("PINECONE_INDEX_NAME", "klaus-memory"),
         )
     return _memory_store
 

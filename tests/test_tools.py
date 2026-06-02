@@ -439,3 +439,37 @@ class TestPhase19ToolRegistration:
         monkeypatch.setattr(garmin_tool, "compute_acwr_from_db", lambda: sentinel)
         result = tools._HANDLERS["get_acwr"]({})
         assert json.loads(result) == sentinel
+
+
+class TestMemorySingletonsConstruct:
+    """Regression: long-term memory singletons must be constructible.
+
+    Guards against the d5cd895 regression, where a Five-Fingers prune deleted
+    the `MemoryStore`/`MemoryTool` imports from core/tools.py. Because
+    `from __future__ import annotations` defers the module-level type hints to
+    strings, the module still imported cleanly — but the first conversational
+    recall/remember raised `NameError: name 'MemoryTool' is not defined` at
+    instantiation time, breaking long-term memory in production for days.
+
+    These build no network clients (Pinecone + Gemini are lazy in MemoryStore),
+    so a bare PINECONE_API_KEY is all that's needed.
+    """
+
+    def test_get_memory_store_constructs_without_nameerror(self, monkeypatch):
+        from memory.pinecone_db import MemoryStore
+
+        monkeypatch.setenv("PINECONE_API_KEY", "test-key")
+        monkeypatch.setattr(tools, "_memory_store", None)
+
+        store = tools._get_memory_store()
+        assert isinstance(store, MemoryStore)
+
+    def test_get_memory_tool_constructs_without_nameerror(self, monkeypatch):
+        from mcp_tools.memory import MemoryTool
+
+        monkeypatch.setenv("PINECONE_API_KEY", "test-key")
+        monkeypatch.setattr(tools, "_memory_store", None)
+        monkeypatch.setattr(tools, "_memory_tool", None)
+
+        tool = tools._get_memory_tool()
+        assert isinstance(tool, MemoryTool)

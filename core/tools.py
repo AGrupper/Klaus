@@ -872,6 +872,8 @@ from mcp_tools.notion_tool import (                     # noqa: E402
     create_page as _notion_create_page,
     append_blocks as _notion_append_blocks,
 )
+from memory.pinecone_db import MemoryStore              # noqa: E402
+from mcp_tools.memory import MemoryTool                 # noqa: E402
 import os                                               # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None
