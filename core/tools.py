@@ -1419,7 +1419,9 @@ def _handle_get_training_history(days: int = 7) -> str:
         project_id=os.environ["GCP_PROJECT_ID"],
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    return json.dumps(store.get_recent(days))
+    # default=str guards against any non-JSON-serialisable Firestore value
+    # (e.g. a server timestamp) slipping through the store's normalisation.
+    return json.dumps(store.get_recent(days), default=str)
 
 
 # ------------------------------------------------------------------ #

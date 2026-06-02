@@ -696,6 +696,28 @@ class MealStore:
         }
 
 
+def _jsonsafe_doc(d: dict) -> dict:
+    """Return a copy of a Firestore doc dict with non-JSON-serialisable values
+    coerced to strings, so the result round-trips through ``json.dumps``.
+
+    ``log_session`` stamps ``updated_at`` with ``firestore.SERVER_TIMESTAMP``,
+    which reads back as a ``DatetimeWithNanoseconds`` — ``json.dumps`` raises on
+    it. ``get_training_history`` json-encodes its result, so the timestamp is
+    converted to ISO-8601 here (any other datetime-like value is handled too).
+    """
+    out: dict = {}
+    for k, v in d.items():
+        iso = getattr(v, "isoformat", None)
+        if callable(iso):
+            try:
+                out[k] = iso()
+            except Exception:
+                out[k] = str(v)
+        else:
+            out[k] = v
+    return out
+
+
 class TrainingLogStore:
     """Per-session training log stored in Firestore (Phase 20 — LOG-01/LOG-02).
 
@@ -794,7 +816,7 @@ class TrainingLogStore:
             snaps = list(self._col.stream())
             results = []
             for snap in snaps:
-                d = snap.to_dict() or {}
+                d = _jsonsafe_doc(snap.to_dict() or {})
                 d["doc_id"] = snap.id
                 if d.get("date", "") >= cutoff:
                     results.append(d)
@@ -818,7 +840,7 @@ class TrainingLogStore:
         try:
             snaps = list(self._col.stream())
             return [
-                {**snap.to_dict(), "doc_id": snap.id}
+                {**_jsonsafe_doc(snap.to_dict() or {}), "doc_id": snap.id}
                 for snap in snaps
                 if snap.id.startswith(date_str)
             ]
@@ -842,7 +864,7 @@ class TrainingLogStore:
             snaps = list(self._col.stream())
             results = []
             for snap in snaps:
-                d = snap.to_dict() or {}
+                d = _jsonsafe_doc(snap.to_dict() or {})
                 d["doc_id"] = snap.id
                 if start_date <= d.get("date", "") <= end_date:
                     results.append(d)

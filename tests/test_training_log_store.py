@@ -298,3 +298,58 @@ def test_get_by_date_returns_empty_on_exception():
     s = _store()
     s._col.stream.side_effect = RuntimeError("down")
     assert s.get_by_date("2026-06-01") == []
+
+
+def _snap_with_timestamp():
+    """A snap whose to_dict carries an updated_at datetime (like a resolved
+    Firestore SERVER_TIMESTAMP)."""
+    from datetime import datetime
+    today = date.today().isoformat()
+    snap = MagicMock()
+    snap.id = f"{today}_evt"
+    snap.to_dict.return_value = {
+        "date": today,
+        "slot": "evt",
+        "completed": False,
+        "skipped_reason": "other",
+        "notes": "got home late",
+        "updated_at": datetime(2026, 6, 2, 22, 0, 0),
+    }
+    return snap
+
+
+def test_get_recent_json_serialisable_with_server_timestamp():
+    """Regression: updated_at (SERVER_TIMESTAMP) is coerced to a string so
+    json.dumps(get_recent(...)) — as get_training_history does — never raises."""
+    import json
+    s = _store()
+    s._col.stream.return_value = [_snap_with_timestamp()]
+
+    result = s.get_recent(7)
+
+    assert len(result) == 1
+    assert isinstance(result[0]["updated_at"], str)
+    json.dumps(result)  # must not raise
+
+
+def test_get_by_date_json_serialisable_with_server_timestamp():
+    import json
+    s = _store()
+    s._col.stream.return_value = [_snap_with_timestamp()]
+
+    result = s.get_by_date(date.today().isoformat())
+
+    assert isinstance(result[0]["updated_at"], str)
+    json.dumps(result)  # must not raise
+
+
+def test_get_range_json_serialisable_with_server_timestamp():
+    import json
+    s = _store()
+    s._col.stream.return_value = [_snap_with_timestamp()]
+    today = date.today().isoformat()
+
+    result = s.get_range(today, today)
+
+    assert isinstance(result[0]["updated_at"], str)
+    json.dumps(result)  # must not raise
