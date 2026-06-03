@@ -11,7 +11,94 @@ This file is a compact milestone summary. Per-milestone phase detail lives in
 - ✅ **v1.0 — Foundation & Integrations** — Phases 1–13 (shipped 2026-05-18)
 - ✅ **v2.0 — Consciousness & Autonomy** — Phases 14–18 (shipped 2026-05-23)
 - ✅ **v3.0 — Project Shifu** — Phases 19–20 (shipped 2026-06-02)
-- 📋 **v4.0 — Personalized Training & Nutrition Plan** — next (not yet scoped)
+- 🚧 **v4.0 — Specific Training & Nutrition Coaching** — Phases 21–25 (in progress)
+
+---
+
+## v4.0 — Specific Training & Nutrition Coaching (Phases 21–25)
+
+**Milestone Goal:** Transform Klaus from a qualitative coach into a genuinely expert, specific
+hybrid-athlete coach — grounded in Amit's blueprint + real data, driving facet-by-facet
+improvement in training blocks, proven by end-of-block benchmarks toward dated Oct/Nov goals.
+
+**20 requirements** (PLAN-01..03, COACH-01..07, BLOCK-01..03, NUTR-01..03, PROG-01..04) across 5 phases.
+
+## Phases
+
+- [ ] **Phase 21: Living Plan Ingestion** - Populate `UserProfileStore` with Amit's blueprint as structured fields (dated goals, weekly split, fueling timeline, supplements); add `update_plan` tool; gate that unblocks all downstream coaching specificity
+- [ ] **Phase 22: Expert Coaching Knowledge + D-13 Release** - Author `docs/COACHING_GUIDE.md`, wire it into every coaching prompt, replace the D-13 qualitative guard with the Tier A / Tier B data-presence contract; Klaus starts naming real numbers
+- [ ] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic
+- [ ] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability
+- [ ] **Phase 25: Progress Projection + Benchmark Trend Reporting** - Pace-to-deadline trend projection against Oct/Nov goals; per-facet benchmark improvement surfaced in weekly review
+
+## Phase Details
+
+### Phase 21: Living Plan Ingestion
+**Goal**: Amit's Hybrid Athlete blueprint lives in `UserProfileStore` as structured fields that every cron and brain-direct tool can read; the plan is encoded as a flexible weekly template (volume/trend targets, not day-by-day prescriptions); Amit can update it at any time via the `update_plan` tool
+**Depends on**: Nothing (first v4.0 phase)
+**Requirements**: PLAN-01, PLAN-02, PLAN-03
+**Success Criteria** (what must be TRUE):
+  1. `UserProfileStore.load()` returns non-empty `dated_goals`, `weekly_split`, `nutrition_targets`, `supplement_schedule`, `fueling_timeline`, and `plan_start_date` — not a raw markdown blob
+  2. The weekly split is stored as a template with session priorities and block-level volume targets, not per-session boolean attendance flags (asking "did Klaus nag about a single missed session?" is the regression test)
+  3. Amit can say "update my bench goal to 105kg" or "change Thursday to rest day" and Klaus reasons against the updated plan on the very next turn
+  4. The `training_profile` section in the smart agent prompt reflects blueprint fields and frames them as a coaching reference guide, not a rigid contract
+**Plans**: TBD
+
+### Phase 22: Expert Coaching Knowledge + D-13 Release
+**Goal**: Klaus carries curated, source-tier-tagged hybrid-athlete coaching knowledge in his reasoning substrate; the D-13 no-fabrication guard is replaced with a two-tier data-presence contract (Tier A = blueprint targets, always citable; Tier B = measured results, citable only within a recency window); coaching output names specific sessions, loads, and rationales instead of generic advice; Klaus critiques suboptimal plan elements rather than treating the blueprint as gospel
+**Depends on**: Phase 21
+**Requirements**: COACH-01, COACH-06, COACH-02, COACH-07
+**Success Criteria** (what must be TRUE):
+  1. A coaching query when `TrainingLogStore` has no recent bench data returns "I don't have a recent bench logged, Sir" — not an invented number; blueprint goal is cited as "your target" not "your current performance"
+  2. The morning briefing and evening alert name the specific scheduled session and load/pace target from the blueprint when producing a coaching point
+  3. When asked about a training session, Klaus names the session type, the plan load, and the rationale — never "do your strength session" as a complete coaching message
+  4. Klaus identifies at least one structural element of the blueprint or Amit's habits as worth questioning (e.g. protein target, supplement timing), explains the reasoning, and recommends a specific alternative without silently rewriting the plan
+**Plans**: TBD
+**UI hint**: no
+
+### Phase 23: Block + Benchmark Tracking
+**Goal**: Klaus tracks the current training block (week number, phase, dates) and surfaces that context in all coaching messages; at block end he prompts a standardized benchmark test session with a biometric validity gate; results are recorded per-facet and compared across blocks to show improvement over time
+**Depends on**: Phase 21
+**Requirements**: BLOCK-01, BLOCK-02, BLOCK-03
+**Success Criteria** (what must be TRUE):
+  1. `BlockStore.get_current()` returns the active block with the correct week number derived from `plan_start_date` (2026-06-21); cron messages include "Week N of 16, [phase name]" framing
+  2. The end-of-block benchmark prompt fires within 3 days of stored `block_end_date` via the existing 21:30 cron — no new cron job created
+  3. The benchmark prompt includes a biometric validity gate: it defers (with explanation) when HRV is below 70% of 7-day baseline or ACWR is above 1.2
+  4. Klaus records a benchmark result via `log_benchmark` and can surface a facet's history across blocks (e.g., "bench press: 80kg Block 1 → 85kg Block 2")
+**Plans**: TBD
+
+### Phase 24: Strict Coaching Integration + Nutrition Accountability
+**Goal**: Expert, specific coaching is folded into every existing coaching touchpoint (morning briefing, 21:30 training check-in + evening alert, Sunday weekly review, and chat); coaching is proactive and reactive; a cross-cron dedup gate ensures the same topic fires at most once per day across all crons; nutrition macro adherence and fueling-slot accountability and supplement timing are part of the 21:30 check-in; session quality rating is captured at log time
+**Depends on**: Phase 22, Phase 23
+**Requirements**: COACH-03, COACH-04, COACH-05, NUTR-01, NUTR-02, NUTR-03, PROG-01, PROG-03, PROG-04
+**Success Criteria** (what must be TRUE):
+  1. A skipped session triggers pushback that names the session, the volume deficit in concrete units (km or sets), and the consequence for the goal timeline — no softening language
+  2. A recovery-vs-plan conflict produces: biometric fact with number + plan conflict + single ranked recommendation + explicit "your call, Sir" — never dictating and never hedging
+  3. The same coaching topic (e.g., protein miss, skipped session) does not appear in both the morning briefing and the evening check-in on the same day
+  4. The 21:30 check-in flags structural fueling-slot misses (e.g., missed post-AM-run reload) using `MealStore` timestamps mapped to the 6 blueprint slots — not marginal macro adjustments
+  5. The morning briefing frames today's named session, recovery state, and relevant fueling reminder as one integrated block
+  6. The Sunday weekly review reports per-facet progress (strength top-set trend, threshold volume vs target, ACWR) with block-relative framing, and surfaces session quality trends from the annotated log
+**Plans**: TBD
+
+### Phase 25: Progress Projection + Benchmark Trend Reporting
+**Goal**: Klaus projects strength and pace trends against the dated Oct/Nov goals and reports on-track or behind; per-facet benchmark results are surfaced as improvement trajectories in the Sunday weekly review; this is the highest dependency-chain feature in the milestone
+**Depends on**: Phase 23, Phase 24
+**Requirements**: PROG-02
+**Success Criteria** (what must be TRUE):
+  1. Klaus answers "am I on track for my October bench target?" by computing a trend from `TrainingLogStore` top-set history (or `BenchmarkStore` results) and projecting it to the deadline — not by citing the goal alone
+  2. The Sunday weekly review surfaces a pace-to-deadline status for at least one goal facet: "current trend puts you at [X] by [date] — on track / N weeks behind"
+  3. The projection explicitly distinguishes blueprint target (Tier A) from current measured trend (Tier B) — no fabricated convergence claims
+**Plans**: TBD
+
+## Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 21. Living Plan Ingestion | 0/TBD | Not started | - |
+| 22. Expert Coaching Knowledge + D-13 Release | 0/TBD | Not started | - |
+| 23. Block + Benchmark Tracking | 0/TBD | Not started | - |
+| 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
+| 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
 
 ---
 
@@ -38,11 +125,6 @@ coaching is qualitative under the D-13 no-fabrication guard).
 
 Detail: see `.planning/milestones/v3.0-ROADMAP.md` and
 `.planning/milestones/v3.0-REQUIREMENTS.md`.
-
-**Post-ship hardening** (found in live UAT 2026-06-02, all fixed + deployed):
-typed training-note capture (not just reply-gesture), orchestrator Bot wiring for
-confirmations, `training_log` JSON serialization (`SERVER_TIMESTAMP`), and routing
-of Klaus-created workouts to the `Training` calendar (+ bare "Practice" detection).
 
 ---
 
@@ -76,18 +158,3 @@ Detail: see `.planning/MILESTONES.md § v1.0`.
 ## Backlog
 
 (none recorded)
-
----
-
-## Next Milestone
-
-**v4.0 — Personalized Training & Nutrition Plan (next).** Take Amit's goals
-document + Klaus's real data (3yr Garmin history, nutrition, and the now-flowing
-`training_log`) → populate `UserProfileStore` with concrete, **data-grounded**
-targets and unlock prescriptive coaching (releases the D-13 "no invented numbers"
-guard so recovery advice, the weekly review, and check-ins can name real numbers).
-Not yet scoped — start with `/gsd-new-milestone`.
-
-Other deferred candidates: recurring "daily review" skill (check-in persistence /
-re-surfacing unanswered prompts), `MealAuditStore` (persisted nutrition critique),
-deferred email-send, WhatsApp outbound, multi-user.

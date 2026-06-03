@@ -73,32 +73,32 @@ Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PLAN-01 | — | Pending |
-| PLAN-02 | — | Pending |
-| PLAN-03 | — | Pending |
-| COACH-01 | — | Pending |
-| COACH-02 | — | Pending |
-| COACH-03 | — | Pending |
-| COACH-04 | — | Pending |
-| COACH-05 | — | Pending |
-| COACH-06 | — | Pending |
-| COACH-07 | — | Pending |
-| BLOCK-01 | — | Pending |
-| BLOCK-02 | — | Pending |
-| BLOCK-03 | — | Pending |
-| NUTR-01 | — | Pending |
-| NUTR-02 | — | Pending |
-| NUTR-03 | — | Pending |
-| PROG-01 | — | Pending |
-| PROG-02 | — | Pending |
-| PROG-03 | — | Pending |
-| PROG-04 | — | Pending |
+| PLAN-01 | Phase 21 | Pending |
+| PLAN-02 | Phase 21 | Pending |
+| PLAN-03 | Phase 21 | Pending |
+| COACH-01 | Phase 22 | Pending |
+| COACH-02 | Phase 22 | Pending |
+| COACH-06 | Phase 22 | Pending |
+| COACH-07 | Phase 22 | Pending |
+| BLOCK-01 | Phase 23 | Pending |
+| BLOCK-02 | Phase 23 | Pending |
+| BLOCK-03 | Phase 23 | Pending |
+| COACH-03 | Phase 24 | Pending |
+| COACH-04 | Phase 24 | Pending |
+| COACH-05 | Phase 24 | Pending |
+| NUTR-01 | Phase 24 | Pending |
+| NUTR-02 | Phase 24 | Pending |
+| NUTR-03 | Phase 24 | Pending |
+| PROG-01 | Phase 24 | Pending |
+| PROG-03 | Phase 24 | Pending |
+| PROG-04 | Phase 24 | Pending |
+| PROG-02 | Phase 25 | Pending |
 
 **Coverage:**
 - v1 requirements: 20 total
-- Mapped to phases: 0 (roadmap pending)
-- Unmapped: 20 ⚠️
+- Mapped to phases: 20 (100%)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-03*
-*Last updated: 2026-06-03 after initial v4.0 definition*
+*Last updated: 2026-06-03 — traceability filled after roadmap creation*

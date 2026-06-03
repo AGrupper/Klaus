@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
 status: planning
-last_updated: "2026-06-03T11:23:40.027Z"
+last_updated: "2026-06-03"
 last_activity: 2026-06-03
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,67 +17,69 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 21 of 25 (Living Plan Ingestion) — ready to plan
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-03 — Milestone v4.0 started
+Status: Roadmap defined; ready for `/gsd:plan-phase 21`
+Last activity: 2026-06-03 — v4.0 roadmap created (5 phases, 20 requirements)
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-06-02)
+See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Planning v4.0 — ingest Amit's goals doc + populate `UserProfileStore` with data-grounded targets → prescriptive coaching. Start with `/gsd-new-milestone`.
+**Current focus:** Phase 21 — Living Plan Ingestion. Master gate: populate `UserProfileStore` with structured blueprint fields before any downstream coaching specificity can ship.
 
 ## Architecture (current)
 
 - Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
-- Postgres holds the 3-year Garmin backfill (`activities` + `daily_biometrics`, ACWR columns); `MealStore` (Firestore) holds nutrition; `TrainingLogStore` holds sessions
-- LLM costs metered via `LLMUsageStore`; `compute_cost()` in `core/pricing.py`
-- `_get_orchestrator()` is a process-wide singleton; `orchestrator.bot` is set at startup (v3.0 fix, for typed-note confirmations)
-- Full per-phase implementation notes: phase `*-SUMMARY.md` files + `.planning/milestones/v{1,2,3}.0-*`
+- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` in Firestore; `UserProfileStore` scaffold exists but is empty (this is the Phase 21 target)
+- 8 cron jobs deployed (see Notes below); no new cron jobs planned for v4.0
 
-## Cron jobs (8 deployed)
+## Accumulated Context
 
-1. heartbeat — `0 * * * *`
-2. proactive-alerts — `30 21 * * *` (also runs the 21:30 training check-in, v3.0)
-3. morning-briefing-tick — `*/10 6-10 * * *`
-4. chat-ingest — `0 4 * * *`
-5. chat-export-ingest — `30 4 * * *`
-6. klaus-reflect — `0 22 * * *`
-7. klaus-autonomous-tick — `*/20 7-21 * * *`
-8. klaus-weekly-training-review — `0 10 * * 0` (v3.0)
+### Decisions
 
-Plus push-driven `/cron/healthkit-sync`. *(Five Fingers crons removed; Google Fit deprecated — commit `91e218e`.)*
+Recent decisions affecting v4.0 (full log in PROJECT.md):
 
-## Blockers
+- [v4.0 research]: `docs/COACHING_GUIDE.md` injected as `{coaching_guide}` via `_load_coaching_guide()` — same startup-cache pattern as `_load_self_md()`. NOT Pinecone RAG.
+- [v4.0 research]: D-13 release is prompt-only. Tier A (blueprint goals) citable as targets; Tier B (measured data) citable only within recency window (lifts ≤14d, pace ≤7d, nutrition ≤2d). Same commit as guard removal.
+- [v4.0 research]: Block-end benchmark trigger via `benchmark_due` flag in `BlockStore` checked by the existing 21:30 cron — no 8th scheduler job.
+- [v4.0 research]: `BlockStore` + `BenchmarkStore` as dedicated Firestore stores (not extending `TrainingLogStore`). Doc ID `{date}_{facet}` makes benchmark logging idempotent.
+- [v4.0 research]: Cross-cron coaching dedup via `OutreachLogStore` extension (or thin `CoachingTouchStore`), covering morning briefing + evening check-in + weekly review + autonomous tick. Not just the autonomous tick.
+- [v4.0 research]: Plan_start_date = 2026-06-21 (Week 1 anchor). Week number always derived from `(today - plan_start_date).days // 7 + 1` — never hardcoded.
+
+### Pending Todos
+
+None captured yet.
+
+### Blockers/Concerns
 
 None.
 
-## Notes
-
-- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf cyclic-GC, on Python 3.13 **and** 3.14) — verify **per-file**. `conftest.py` disables GC to prevent the hard crash; ~100 pre-existing cross-test-isolation failures remain (separate cleanup). See `feedback_python_version` memory.
-- **Firestore `SERVER_TIMESTAMP`** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool (bit `MealStore` + `TrainingLogStore`; helper `memory/firestore_db.py::_jsonsafe_doc`). See `feedback_firestore_timestamp_json` memory.
-- **Security:** the GitHub PAT currently sits in `.git/config`'s remote URL in plaintext — rotate it and move the remote to SSH or a credential helper.
-
 ## Deferred Items
 
-Items acknowledged and deferred at milestone close. None are code defects; all are
-live-staging blockers (need real services), stale sign-off paperwork (functionality
-verified live), or local dev-env hygiene.
+Carried forward from v3.0 close:
 
 | Category | Item | Status | Resolves when |
 |----------|------|--------|---------------|
-| verification-gap | 19-VERIFICATION.md status `human_needed` | acknowledged at v3.0 close | Phase 19 functionality verified live (SC#2 closed by 19.1, meal paths 2026-05-31); paperwork sign-off only |
-| uat-gap | 19-HUMAN-UAT.md (status resolved, 0 pending scenarios) | acknowledged at v3.0 close | no action — already resolved |
-| feature-followup | Weekly review reports "Garmin activities unavailable" | open (low priority) | confirm whether the 14-day activities/biometrics fetch is failing vs genuinely empty (no workouts logged on the watch) |
-| verification-gap | v2.0 SC-1/SC-2/SC-4 live-staging verification (16-/18-VERIFICATION.md) | acknowledged at v2.0 close | operator triggers staging crons with real Telegram + Cloud Run + Groq key |
-| code-quality | 18-REVIEW.md M-2..M-4 + L-1..L-5 (8 findings) | open (housekeeping) | `.planning/phases/18-autonomous-engine/deferred-items.md` § Post-review backlog |
-| docs-drift | `docs/TECHNICAL_PLAN.md` stops before v2.0 Phases 15–18 | open (low priority) | next docs sweep |
+| verification-gap | 19-VERIFICATION.md `human_needed` | acknowledged | Phase 19 functionality verified live; paperwork only |
+| feature-followup | Weekly review "Garmin activities unavailable" | open (low priority) | confirm 14-day fetch vs genuinely empty watch |
+| verification-gap | v2.0 SC-1/SC-2/SC-4 live-staging | acknowledged | operator triggers staging crons |
+| code-quality | 18-REVIEW.md M-2..M-4 + L-1..L-5 | open (housekeeping) | next housekeeping sprint |
+| docs-drift | `docs/TECHNICAL_PLAN.md` stops before v2.0 | open (low priority) | next docs sweep |
 
-## Operator Next Steps
+## Notes
 
-- Start v4.0 with `/gsd-new-milestone` (have the goals document ready as input).
-- Optional, any time: rotate the GitHub token; investigate the weekly-review Garmin gap; the ~100 pre-existing test-isolation failures.
+- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 630+ passing baseline must hold after every v4.0 phase.
+- **Firestore SERVER_TIMESTAMP** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool. See `_jsonsafe_doc` helper in `memory/firestore_db.py`.
+- **Cron jobs (8):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00). Plus push-driven `/cron/healthkit-sync`.
+
+## Session Continuity
+
+Last session: 2026-06-03
+Stopped at: Roadmap created, requirements traceability filled, STATE.md initialized
+Resume file: None — start with `/gsd:plan-phase 21`
