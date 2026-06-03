@@ -11,7 +11,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Living Plan & Profile (PLAN)
 
-- [ ] **PLAN-01**: Klaus ingests Amit's Hybrid Athlete blueprint into `UserProfileStore` as **structured fields** (dated goals, AM/PM weekly split, 16-week aerobic progression table, 6-slot fueling architecture, supplement schedule) — never as a raw markdown blob.
+- [ ] **PLAN-01**: Klaus ingests Amit's Hybrid Athlete blueprint into `UserProfileStore` as **structured fields** (dated goals, AM/PM weekly split *shape*, 6-slot fueling architecture, supplement schedule) — never as a raw markdown blob. **Two kickoff narrowings:** (a) the 16-week aerobic pace/volume table is **loose directional reference only, NOT a tracked target table** — Amit expects to change it freely, so its specific paces/volumes are never treated as contracts; (b) **current-performance baselines are never hand-seeded** — Klaus derives them from real Garmin / `TrainingLogStore` data at read time (Tier B). The profile holds *targets* (Tier A); measured numbers always come from live data.
 - [ ] **PLAN-02**: The plan is represented as a **flexible guide** (block-level volume / trend targets), not a rigid day-by-day attendance contract.
 - [ ] **PLAN-03**: Amit can update the plan/profile (goals, split, targets, dates) and Klaus reasons against the updated guide on the next turn.
 
