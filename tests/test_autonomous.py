@@ -146,14 +146,14 @@ def _install_firestore_mock() -> None:
     _safe_mock_module("dotenv")
 
 
-_install_firestore_mock()
-
-
-# Imported AFTER the firestore mock is installed.
-import core.autonomous as autonomous  # noqa: E402
-
-
 _TZ = ZoneInfo("Asia/Jerusalem")
+
+
+# Bound per-test by the autouse fixture below. We deliberately do NOT install the
+# mock or import core.autonomous at module/collection time — that leaks fake
+# google.* / memory.firestore_db modules into sys.modules for the whole session
+# and breaks sibling test files.
+autonomous = None  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -161,8 +161,16 @@ _TZ = ZoneInfo("Asia/Jerusalem")
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
-def reset_orchestrator_singleton():
-    """Reset the module singleton between tests (BLOCKER 5a state hygiene)."""
+def reset_orchestrator_singleton(isolated_modules):
+    """Install stubs + import core.autonomous against them, then reset the module
+    singleton between tests (BLOCKER 5a state hygiene). isolated_modules reverts
+    every sys.modules mutation on teardown."""
+    global autonomous
+    import importlib
+    _install_firestore_mock()
+    sys.modules.pop("core.autonomous", None)
+    sys.modules.pop("memory.firestore_db", None)  # re-bind against the mocked google
+    autonomous = importlib.import_module("core.autonomous")
     autonomous._orchestrator_singleton = None
     yield
     autonomous._orchestrator_singleton = None

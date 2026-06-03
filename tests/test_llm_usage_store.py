@@ -96,28 +96,26 @@ def _install_firestore_mock():
             del sys.modules[key]
 
 
-_install_firestore_mock()
-
-# Now import the module (with mocks in place)
-from memory.firestore_db import (  # noqa: E402
-    LLMUsageStore,
-    _make_firestore_client,
-    _HEARTBEAT_CONFIG_DEFAULTS,
-)
-
 import pytest
 
+# Bound per-test by the autouse fixture below. We deliberately do NOT install
+# the mock or import memory.firestore_db at module/collection time — that leaks
+# fake google.* modules into sys.modules for the whole session and breaks
+# sibling test files.
+LLMUsageStore = None  # type: ignore[assignment]
+_make_firestore_client = None  # type: ignore[assignment]
+_HEARTBEAT_CONFIG_DEFAULTS = None  # type: ignore[assignment]
+
+
 @pytest.fixture(autouse=True)
-def setup_firestore_mock():
+def setup_firestore_mock(isolated_modules):
     _install_firestore_mock()
-    import sys
     import importlib
-    import memory.firestore_db
-    importlib.reload(memory.firestore_db)
+    mod = importlib.import_module("memory.firestore_db")
     global LLMUsageStore, _make_firestore_client, _HEARTBEAT_CONFIG_DEFAULTS
-    LLMUsageStore = memory.firestore_db.LLMUsageStore
-    _make_firestore_client = memory.firestore_db._make_firestore_client
-    _HEARTBEAT_CONFIG_DEFAULTS = memory.firestore_db._HEARTBEAT_CONFIG_DEFAULTS
+    LLMUsageStore = mod.LLMUsageStore
+    _make_firestore_client = mod._make_firestore_client
+    _HEARTBEAT_CONFIG_DEFAULTS = mod._HEARTBEAT_CONFIG_DEFAULTS
 
 
 def _make_mock_client():

@@ -127,24 +127,19 @@ def _install_firestore_mock() -> None:
             del sys.modules[key]
 
 
-_install_firestore_mock()
-
-
-# Import after mocks are installed. We import the module object (not symbols)
-# so that the autouse fixture below can refresh the binding when other test
-# files in the suite re-mock google.cloud.firestore.
-import memory.firestore_db as firestore_db  # noqa: E402
+# Bound per-test by the autouse fixture below. We deliberately do NOT install
+# the mock or import memory.firestore_db at module/collection time — doing so
+# leaks fake google.* modules into sys.modules for the whole session and breaks
+# sibling test files. The fixture installs the mock at test time, guarded by
+# isolated_modules so every key is restored on teardown.
+firestore_db = None  # type: ignore[assignment]
 
 
 @pytest.fixture(autouse=True)
-def _refresh_firestore_mock():
-    """Re-install the firestore mock and re-import memory.firestore_db before
-    each test in case a sibling test file mutated sys.modules. Matches the
-    pattern in test_llm_usage_store.py but uses import_module rather than
-    importlib.reload — because _install_firestore_mock() deletes
-    memory.firestore_db from sys.modules to force a clean re-bind to the new
-    mock sentinels, reload() can't be used (it requires the module to still
-    be in sys.modules)."""
+def _refresh_firestore_mock(isolated_modules):
+    """Install the firestore mock and import memory.firestore_db against it
+    before each test. isolated_modules reverts every sys.modules mutation on
+    teardown so nothing leaks into later tests."""
     global firestore_db
     import importlib
     _install_firestore_mock()

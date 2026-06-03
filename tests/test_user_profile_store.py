@@ -80,9 +80,20 @@ def _install_firestore_mock() -> MagicMock:
     return firestore_mock
 
 
-_FS = _install_firestore_mock()
+# Bound per-test by the autouse fixture below. We deliberately do NOT install
+# the mock or import memory.firestore_db at module/collection time — that leaks
+# fake google.* modules into sys.modules for the whole session and breaks
+# sibling test files.
+UserProfileStore = None  # type: ignore[assignment]
+_FS = None  # type: ignore[assignment]
 
-from memory.firestore_db import UserProfileStore  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _firestore_mock(isolated_modules):
+    global UserProfileStore, _FS
+    import importlib
+    _FS = _install_firestore_mock()
+    UserProfileStore = importlib.import_module("memory.firestore_db").UserProfileStore
 
 
 # ---------------------------------------------------------------------------
