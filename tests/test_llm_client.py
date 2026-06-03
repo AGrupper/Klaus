@@ -154,6 +154,11 @@ def test_calendar_manager_get_ready_no_workout():
     mock_insert = MagicMock()
     mock_insert.execute = mock_execute
     mock_service.events().insert.return_value = mock_insert
+    # Workouts resolve the Training calendar via get_calendar_id_by_name, which
+    # paginates calendarList until nextPageToken is falsy. A bare MagicMock returns
+    # a truthy nextPageToken forever (infinite loop + unbounded call recording).
+    # Give it a terminating page, exactly as a real API would.
+    mock_service.calendarList.return_value.list.return_value.execute.return_value = {"items": []}
 
     manager = GoogleCalendarManager(mock_auth)
 
@@ -201,6 +206,11 @@ def test_calendar_manager_is_workout_explicit_overrides():
     mock_insert = MagicMock()
     mock_insert.execute = mock_execute
     mock_service.events().insert.return_value = mock_insert
+    # Workouts resolve the Training calendar via get_calendar_id_by_name, which
+    # paginates calendarList until nextPageToken is falsy. A bare MagicMock returns
+    # a truthy nextPageToken forever (infinite loop + unbounded call recording).
+    # Give it a terminating page, exactly as a real API would.
+    mock_service.calendarList.return_value.list.return_value.execute.return_value = {"items": []}
 
     manager = GoogleCalendarManager(mock_auth)
 
