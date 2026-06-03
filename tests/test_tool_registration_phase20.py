@@ -107,8 +107,21 @@ def _install_tools_mocks() -> None:
             del sys.modules[m]
 
 
-_install_tools_mocks()
-import core.tools as tools  # noqa: E402
+import pytest
+
+# Bound per-test by the autouse fixture below. We deliberately do NOT install the
+# stubs or import core.tools at module/collection time — that leaks fake
+# core.auth_google / googleapiclient / google.* modules into sys.modules for the
+# whole session and breaks sibling test files.
+tools = None  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _tools(isolated_modules):
+    global tools
+    import importlib
+    _install_tools_mocks()  # also evicts core.tools + memory.firestore_db
+    tools = importlib.import_module("core.tools")
 
 
 class TestPhase20ToolRegistration:

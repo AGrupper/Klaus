@@ -14,17 +14,29 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 
 # ------------------------------------------------------------------ #
-# Mock googleapiclient BEFORE importing the tool                     #
+# Mock googleapiclient + import the tool inside a fixture so the      #
+# sys.modules stubbing runs at TEST time (not collection time) and is #
+# fully reverted by isolated_modules — otherwise the fake             #
+# googleapiclient leaks into every later test in the session.         #
 # ------------------------------------------------------------------ #
-if "googleapiclient" not in sys.modules:
-    gapi = MagicMock()
-    gapi.discovery = MagicMock()
-    sys.modules["googleapiclient"] = gapi
-    sys.modules["googleapiclient.discovery"] = gapi.discovery
+gft = None  # type: ignore[assignment]  # bound per-test by the fixture below
 
-from mcp_tools import google_fit_tool as gft  # noqa: E402
+
+@pytest.fixture(autouse=True)
+def _gft(isolated_modules):
+    global gft
+    import importlib
+    if "googleapiclient" not in sys.modules:
+        gapi = MagicMock()
+        gapi.discovery = MagicMock()
+        sys.modules["googleapiclient"] = gapi
+        sys.modules["googleapiclient.discovery"] = gapi.discovery
+    sys.modules.pop("mcp_tools.google_fit_tool", None)
+    gft = importlib.import_module("mcp_tools.google_fit_tool")
 
 
 # ------------------------------------------------------------------ #

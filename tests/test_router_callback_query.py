@@ -23,10 +23,20 @@ import pytest
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(autouse=True)
-def env(monkeypatch):
+def env(monkeypatch, isolated_modules):
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456")
     monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
     monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+    # The router resolves the handler via `import core.training_checkin as _checkin`,
+    # which (CPython IMPORT_FROM) reads the `training_checkin` attribute on the `core`
+    # package and only falls back to sys.modules if that attribute is absent. When an
+    # earlier test imported the real module, that attribute is set, so a per-test
+    # `patch.dict(sys.modules, {"core.training_checkin": fake})` would be bypassed.
+    # Evict both here (restored by isolated_modules on teardown) so the patch wins.
+    sys.modules.pop("core.training_checkin", None)
+    core_pkg = sys.modules.get("core")
+    if core_pkg is not None and hasattr(core_pkg, "training_checkin"):
+        delattr(core_pkg, "training_checkin")
 
 
 @pytest.fixture

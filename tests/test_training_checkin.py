@@ -20,6 +20,8 @@ import unittest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch, call
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Minimal stubs so the module can be imported without live GCP / Telegram deps
 # ---------------------------------------------------------------------------
@@ -31,56 +33,8 @@ def _stub_module(name: str, **attrs) -> types.ModuleType:
     return mod
 
 
-# Stub google.cloud.firestore (needed by memory.firestore_db)
-if "google" not in sys.modules:
-    google_mod = types.ModuleType("google")
-    sys.modules["google"] = google_mod
-if "google.cloud" not in sys.modules:
-    google_cloud = types.ModuleType("google.cloud")
-    sys.modules["google.cloud"] = google_cloud
-    setattr(sys.modules["google"], "cloud", google_cloud)
-if "google.cloud.firestore" not in sys.modules:
-    fs_mod = _stub_module(
-        "google.cloud.firestore",
-        SERVER_TIMESTAMP="__server_ts__",
-        Client=MagicMock,
-    )
-    sys.modules["google.cloud.firestore"] = fs_mod
-    setattr(sys.modules["google.cloud"], "firestore", fs_mod)
-
-# Stub google.auth
-for _name in ["google.auth", "google.auth.transport", "google.auth.transport.requests"]:
-    if _name not in sys.modules:
-        sys.modules[_name] = types.ModuleType(_name)
-
-# Stub google.oauth2.credentials
-for _name in ["google.oauth2", "google.oauth2.credentials"]:
-    if _name not in sys.modules:
-        mod = types.ModuleType(_name)
-        if _name == "google.oauth2.credentials":
-            mod.Credentials = MagicMock
-        sys.modules[_name] = mod
-
-# Stub google.auth.oauthlib
-for _name in ["google_auth_oauthlib", "google_auth_oauthlib.flow"]:
-    if _name not in sys.modules:
-        sys.modules[_name] = types.ModuleType(_name)
-
-# Stub googleapiclient
-for _name in ["googleapiclient", "googleapiclient.discovery", "googleapiclient.errors"]:
-    if _name not in sys.modules:
-        mod = types.ModuleType(_name)
-        if _name == "googleapiclient.errors":
-            mod.HttpError = Exception
-        sys.modules[_name] = mod
-
-# Stub telegram
-# Install a *functional* telegram fake whose keyboard classes record callback_data
-# (the keyboard-layout tests below assert on it). Reuse any telegram module another
-# test file already registered, but ALWAYS (re)assign these functional classes —
-# otherwise, depending on collection order, a bare-MagicMock stub from another file
-# (e.g. test_recovery_concern) would win and break the keyboard assertions when the
-# whole suite runs in one process (test pollution).
+# Functional telegram fake whose keyboard classes record callback_data (the
+# keyboard-layout tests below assert on it).
 class _FakeInlineKeyboardButton:
     def __init__(self, text, callback_data=None, **kwargs):
         self.text = text
@@ -105,25 +59,80 @@ class _FakeCallbackQuery:
     async def answer(self):
         pass
 
-telegram_mod = sys.modules.get("telegram") or types.ModuleType("telegram")
-telegram_mod.InlineKeyboardButton = _FakeInlineKeyboardButton
-telegram_mod.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
-telegram_mod.Bot = _FakeBot
-telegram_mod.Message = _FakeMessage
-telegram_mod.CallbackQuery = _FakeCallbackQuery
-sys.modules["telegram"] = telegram_mod
 
-# Stub core.auth_google
-if "core.auth_google" not in sys.modules:
+def _install_stubs() -> None:
+    """Install all heavy-dependency stubs into sys.modules.
+
+    Called from an autouse fixture guarded by ``isolated_modules`` so every
+    mutation is reverted on teardown — installing these at module/collection time
+    instead leaks fakes into the whole session and breaks sibling test files
+    (the test-isolation bug this conversion fixes).
+    """
+    # google.cloud.firestore (needed by memory.firestore_db)
+    if "google" not in sys.modules:
+        sys.modules["google"] = types.ModuleType("google")
+    if "google.cloud" not in sys.modules:
+        google_cloud = types.ModuleType("google.cloud")
+        sys.modules["google.cloud"] = google_cloud
+        setattr(sys.modules["google"], "cloud", google_cloud)
+    if "google.cloud.firestore" not in sys.modules:
+        fs_mod = _stub_module(
+            "google.cloud.firestore",
+            SERVER_TIMESTAMP="__server_ts__",
+            Client=MagicMock,
+        )
+        sys.modules["google.cloud.firestore"] = fs_mod
+        setattr(sys.modules["google.cloud"], "firestore", fs_mod)
+
+    # google.auth
+    for _name in ["google.auth", "google.auth.transport", "google.auth.transport.requests"]:
+        if _name not in sys.modules:
+            sys.modules[_name] = types.ModuleType(_name)
+
+    # google.oauth2.credentials
+    for _name in ["google.oauth2", "google.oauth2.credentials"]:
+        if _name not in sys.modules:
+            mod = types.ModuleType(_name)
+            if _name == "google.oauth2.credentials":
+                mod.Credentials = MagicMock
+            sys.modules[_name] = mod
+
+    # google.auth.oauthlib
+    for _name in ["google_auth_oauthlib", "google_auth_oauthlib.flow"]:
+        if _name not in sys.modules:
+            sys.modules[_name] = types.ModuleType(_name)
+
+    # googleapiclient
+    for _name in ["googleapiclient", "googleapiclient.discovery", "googleapiclient.errors"]:
+        if _name not in sys.modules:
+            mod = types.ModuleType(_name)
+            if _name == "googleapiclient.errors":
+                mod.HttpError = Exception
+            sys.modules[_name] = mod
+
+    # telegram — always install a fresh functional fake module so the keyboard
+    # classes are present regardless of collection order; isolated_modules reverts
+    # the whole module object on teardown.
+    telegram_mod = types.ModuleType("telegram")
+    telegram_mod.InlineKeyboardButton = _FakeInlineKeyboardButton
+    telegram_mod.InlineKeyboardMarkup = _FakeInlineKeyboardMarkup
+    telegram_mod.Bot = _FakeBot
+    telegram_mod.Message = _FakeMessage
+    telegram_mod.CallbackQuery = _FakeCallbackQuery
+    sys.modules["telegram"] = telegram_mod
+
+    # core / memory stubs
     sys.modules["core.auth_google"] = _stub_module("core.auth_google", GoogleAuthManager=MagicMock)
-
-# Stub core.main
-if "core.main" not in sys.modules:
     sys.modules["core.main"] = _stub_module("core.main", AgentOrchestrator=MagicMock)
-
-# Stub pinecone_db
-if "memory.pinecone_db" not in sys.modules:
     sys.modules["memory.pinecone_db"] = _stub_module("memory.pinecone_db")
+
+
+@pytest.fixture(autouse=True)
+def _training_checkin_stubs(isolated_modules):
+    """Install stubs + force a clean re-import of core.training_checkin per test."""
+    _install_stubs()
+    sys.modules.pop("core.training_checkin", None)
+    yield
 
 
 # ---------------------------------------------------------------------------
