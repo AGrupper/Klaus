@@ -1,26 +1,26 @@
 ---
 gsd_state_version: 1.0
-milestone: v3.0
-milestone_name: — Project Shifu
-status: Awaiting next milestone
-last_updated: "2026-06-02T19:35:10.251Z"
-last_activity: 2026-06-02 — Milestone v3.0 completed and archived
+milestone: v4.0
+milestone_name: Specific Training & Nutrition Coaching
+status: planning
+last_updated: "2026-06-03T11:23:40.027Z"
+last_activity: 2026-06-03
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 17
-  completed_plans: 17
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Phase: Milestone v3.0 (Project Shifu) complete — Phases 19–20 shipped + live-UAT verified
+Phase: Not started (defining requirements)
 Plan: —
-Status: Between milestones — v4.0 (Personalized Training & Nutrition Plan) not yet scoped
-Last activity: 2026-06-02 — v3.0 completed, archived, tagged
+Status: Defining requirements
+Last activity: 2026-06-03 — Milestone v4.0 started
 
 ## Project Reference
 

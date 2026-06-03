@@ -22,14 +22,37 @@ coaching stays *qualitative* under the D-13 no-fabrication guard.
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
 
-## Next Milestone Goals: v4.0 — Personalized Training & Nutrition Plan
+## Current Milestone: v4.0 — Specific Training & Nutrition Coaching
 
-Turn Klaus from a *qualitative* coach into a *prescriptive* one. Ingest Amit's goals
-document, collide it with his real data (3yr Garmin, nutrition, and the now-flowing
-`training_log`), populate `UserProfileStore` with concrete **data-grounded** targets,
-and release the D-13 "no invented numbers" guard so recovery advice, the weekly review,
-and check-ins can name real numbers. Likely also: the recurring "daily review" skill
-(check-in persistence / re-surfacing). **Not yet scoped** — `/gsd-new-milestone` defines it.
+**Goal:** Transform Klaus from a *qualitative* coach into a genuinely *expert, specific*
+hybrid-athlete coach — grounded in Amit's blueprint + real data, driving facet-by-facet
+improvement in training blocks, proven by end-of-block benchmarks toward dated goals.
+
+**Target features:**
+- Ingest Amit's Hybrid Athlete blueprint → populate `UserProfileStore` as a *living guide*:
+  dated goals (Oct: 100kg bench / 120kg squat / 1:25 HM; Nov: 125 push-ups / 35 pull-ups /
+  9:30 3k / 55s 400m), the facets/priorities, the AM/PM weekly split, the nutrition framework
+  (150g protein / 350g carbs + 6-part fueling timeline), and the supplement schedule.
+- Curated **expert coaching knowledge** (concurrent strength/endurance, interference effect,
+  periodization, how to execute the specific sessions, fueling science) baked into Klaus's
+  coaching reasoning so it is genuinely expert, not generic.
+- Release the **D-13 "no invented numbers" guard** — Klaus names real numbers grounded in
+  data: current lifts/paces, trends, macro & supplement adherence.
+- **Training blocks + benchmark testing** — track the current block, prompt a benchmark
+  session at block end, record results, compare across blocks to show per-facet improvement.
+- **Specific, strict, proactive + reactive coaching** folded into the existing crons
+  (morning briefing, evening check-in, weekly review) + chat: names specific sessions,
+  pushes Amit to train hard, critiques off-plan training/nutrition/supplements, flags
+  recovery-vs-plan conflicts (Amit decides), holds macro accountability.
+- **Progress toward dated goals** — trend-based per-facet improvement + pace-to-deadline
+  awareness against the Oct/Nov targets.
+
+**Key context:**
+- Goals are dated but the philosophy is *facet-mastery, not goal-cramming*. Testing is at
+  block ends + the deadlines, not periodic.
+- On recovery-vs-plan conflicts Klaus *advises, Amit decides* (not coach-override).
+- Builds on v3.0 plumbing: `UserProfileStore` scaffold, `MealStore`, `TrainingLogStore`,
+  Garmin/ACWR, recovery crons.
 
 ## Requirements
 
@@ -65,10 +88,13 @@ and check-ins can name real numbers. Likely also: the recurring "daily review" s
 - ✓ Sunday weekly training review cron (brain-composed scorecard) — v3.0 (Phase 20)
 - ✓ Workouts Klaus creates route to the `Training` calendar; `get_training_history` JSON-safe — v3.0 (post-ship UAT fixes)
 
-### Active (v4.0 — Personalized Training & Nutrition Plan)
+### Active (v4.0 — Specific Training & Nutrition Coaching)
 
-To be defined at `/gsd-new-milestone` scoping. Headline direction: populate
-`UserProfileStore` with data-grounded goals/targets → prescriptive coaching.
+To be defined at requirements scoping (this milestone). Headline direction: ingest the
+blueprint as a living guide, give Klaus curated expert coaching knowledge, release the
+D-13 guard for data-grounded specificity, manage training blocks with end-of-block
+benchmark testing, and make coaching strict/specific (proactive + reactive) across
+training, nutrition, and supplements.
 
 **Deferred (carried forward):**
 - Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
@@ -135,4 +161,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-02 after v3.0 (Project Shifu) milestone — shipped Phases 19–20; v4.0 (Personalized Training & Nutrition Plan) is next, unscoped.*
+*Last updated: 2026-06-03 — v4.0 (Specific Training & Nutrition Coaching) milestone scoped and started.*
