@@ -16,5 +16,54 @@ We intentionally do NOT re-enable GC at session end — the crash also fires at
 interpreter shutdown, so the collector stays off through teardown.
 """
 import gc
+import sys
+
+import pytest
 
 gc.disable()
+
+
+@pytest.fixture
+def isolated_modules():
+    """Snapshot ``sys.modules``; on teardown drop keys the test added and restore
+    keys it overwrote or deleted.
+
+    Several test files stub heavy dependencies (``google.cloud.firestore``,
+    ``googleapiclient``, ``telegram``, …) by writing into ``sys.modules`` and then
+    importing the unit under test against those stubs. Done at module/collection
+    time with no teardown, the first-collected file "wins" those slots for the
+    whole session and later tests grab the leftover MagicMock — causing
+    order-dependent failures and, with ``gc.disable()`` active, a cumulative
+    MagicMock-cycle memory blow-up. Wrapping that stubbing in a fixture guarded by
+    this one guarantees ``sys.modules`` is exactly as it was before the test.
+    """
+    snapshot = dict(sys.modules)
+    try:
+        yield
+    finally:
+        added = [k for k in sys.modules if k not in snapshot]
+        for key in added:
+            del sys.modules[key]
+        for key, mod in snapshot.items():
+            sys.modules[key] = mod
+        # Re-align parent-package attributes with the restored submodules. A test
+        # that does `sys.modules.pop("a.b"); importlib.import_module("a.b")` rebinds
+        # the `b` attribute on package `a` to the new module object. Restoring
+        # sys.modules alone leaves that attribute stale, so `import a.b as c` (reads
+        # the parent attribute) and `from a.b import x` (reads sys.modules) diverge.
+        # Restore snapshot submodules onto their parents, and drop attributes for
+        # submodules that were added during the test.
+        for key, mod in snapshot.items():
+            parent, _, child = key.rpartition(".")
+            if parent and parent in sys.modules and getattr(sys.modules[parent], child, None) is not mod:
+                try:
+                    setattr(sys.modules[parent], child, mod)
+                except (AttributeError, TypeError):
+                    pass
+        for key in added:
+            parent, _, child = key.rpartition(".")
+            if parent and parent in sys.modules and hasattr(sys.modules[parent], child):
+                try:
+                    delattr(sys.modules[parent], child)
+                except (AttributeError, TypeError):
+                    pass
