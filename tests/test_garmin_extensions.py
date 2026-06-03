@@ -196,3 +196,63 @@ def test_write_today_biometrics_handles_missing_keys(monkeypatch):
     # date is required; everything else should be None
     assert params[0] == "2026-05-26"
     assert all(p is None or p == "2026-05-26" for p in params)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_hrv — numeric HRV extraction (regression: daily_biometrics persistence)
+# ---------------------------------------------------------------------------
+
+def test_fetch_hrv_returns_numeric_overnight_and_baseline():
+    """hrvSummary numeric fields map to hrv_overnight (lastNightAvg) and
+    hrv_baseline (weeklyAvg) so write_today_biometrics_to_postgres can persist
+    them. Regression for the weekly-review 'biometrics empty' bug."""
+    fake_api = MagicMock()
+    fake_api.get_hrv_data.return_value = {
+        "hrvSummary": {"status": "BALANCED", "lastNightAvg": 81, "weeklyAvg": 92}
+    }
+    result = gt._fetch_hrv(fake_api, "2026-06-02")
+    assert result == {
+        "hrv_status": "BALANCED",
+        "hrv_overnight": 81,
+        "hrv_baseline": 92,
+    }
+
+
+def test_fetch_hrv_swallows_errors_to_none():
+    """API failure → all three HRV keys None, never raises (per-field resilience)."""
+    fake_api = MagicMock()
+    fake_api.get_hrv_data.side_effect = RuntimeError("net down")
+    result = gt._fetch_hrv(fake_api, "2026-06-02")
+    assert result == {"hrv_status": None, "hrv_overnight": None, "hrv_baseline": None}
+
+
+def test_write_today_biometrics_maps_sleep_hours_to_sleep_duration(monkeypatch):
+    """fetch_garmin_today emits 'sleep_hours'; the daily write must persist it
+    into the sleep_duration column (regression: sleep_duration was always NULL)."""
+    import sys
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_conn = MagicMock()
+    fake_cursor = MagicMock()
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.return_value = fake_conn
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+    # Exactly what fetch_garmin_today produces — note 'sleep_hours', not 'sleep_duration'.
+    garmin = {
+        "date": "2026-06-02",
+        "resting_hr": 40,
+        "sleep_score": 81,
+        "sleep_hours": 7.8,
+        "hrv_status": "BALANCED",
+        "hrv_overnight": 81,
+        "hrv_baseline": 92,
+    }
+    gt.write_today_biometrics_to_postgres(garmin)
+    args, _ = fake_cursor.execute.call_args
+    params = args[1]
+    # params order: date, resting_hr, hrv_baseline, hrv_overnight, sleep_score,
+    #               sleep_duration, body_battery_max, training_readiness, vo2_max
+    assert params[2] == 92      # hrv_baseline
+    assert params[3] == 81      # hrv_overnight
+    assert params[5] == 7.8     # sleep_duration (mapped from sleep_hours)

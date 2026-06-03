@@ -12,7 +12,7 @@ You will be given a JSON object containing:
 - `training_log` — list of TrainingLogStore entries for this week (may be empty)
 - `activities` — Garmin activities this week (may be None or empty if Garmin unavailable)
 - `last_week_activities` — Garmin activities the prior week (for trend comparison)
-- `biometrics_this_week` — list of daily_biometrics rows (date, hrv_status, resting_hr, sleep_hours, sleep_score) — may be None
+- `biometrics_this_week` — list of daily_biometrics rows (date, resting_hr, hrv_baseline, hrv_overnight, sleep_duration, sleep_score) — may be None
 - `biometrics_last_week` — same, prior week
 - `nutrition_7day` — dict with 7-day MealStore totals: calories, protein_g, carbs_g, fat_g, fiber_g (may be empty dict when no meals logged)
 - `athletic_goals` — list of goal strings from UserProfileStore (may be empty)

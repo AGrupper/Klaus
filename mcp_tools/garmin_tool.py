@@ -134,6 +134,8 @@ def fetch_garmin_today() -> dict:
             "sleep_score":         int | None,
             "sleep_hours":         float | None,
             "hrv_status":          str | None  (e.g. "BALANCED", "LOW"),
+            "hrv_overnight":       int | None  (overnight average HRV, ms),
+            "hrv_baseline":        int | None  (7-day average HRV, ms),
             "body_battery_morning": int | None  (0-100),
             "resting_hr":          int | None,
         }
@@ -182,11 +184,20 @@ def _fetch_hrv(api, today: str) -> dict:
         data = api.get_hrv_data(today)
         summary = (data or {}).get("hrvSummary") or {}
         hrv_status = summary.get("status")
+        # Numeric HRV for daily_biometrics persistence. Matches zip-ingest
+        # semantics: hrv_overnight = overnight average (lastNightAvg),
+        # hrv_baseline = the rolling 7-day average (weeklyAvg).
+        hrv_overnight = summary.get("lastNightAvg")
+        hrv_baseline = summary.get("weeklyAvg")
     except Exception:
         logger.warning("Garmin: could not fetch HRV data", exc_info=True)
-        hrv_status = None
+        hrv_status = hrv_overnight = hrv_baseline = None
 
-    return {"hrv_status": hrv_status}
+    return {
+        "hrv_status": hrv_status,
+        "hrv_overnight": hrv_overnight,
+        "hrv_baseline": hrv_baseline,
+    }
 
 
 def _fetch_body_battery(api, today: str) -> dict:
@@ -458,7 +469,7 @@ def write_today_biometrics_to_postgres(garmin: dict) -> None:
             garmin.get("hrv_baseline"),
             garmin.get("hrv_overnight"),
             garmin.get("sleep_score"),
-            garmin.get("sleep_duration"),
+            garmin.get("sleep_duration") or garmin.get("sleep_hours"),
             garmin.get("body_battery_max"),
             garmin.get("training_readiness"),
             garmin.get("vo2_max"),

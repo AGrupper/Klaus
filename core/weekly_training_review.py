@@ -120,7 +120,8 @@ def _gather_week_data(today_iso: str) -> dict:
         from mcp_tools.database_tool import query_health_database
         last_start_str = (week_start - timedelta(days=7)).isoformat()
         sql = (
-            "SELECT date, hrv_status, resting_hr, sleep_hours, sleep_score "
+            "SELECT date, resting_hr, hrv_baseline, hrv_overnight, "
+            "sleep_duration, sleep_score "
             "FROM daily_biometrics "
             f"WHERE date >= '{last_start_str}' AND date <= '{week_end.isoformat()}' "
             "ORDER BY date ASC"
