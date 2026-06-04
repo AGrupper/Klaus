@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
-status: ready_to_plan
-stopped_at: Phase 21 complete (4/4) — ready to discuss Phase 22
-last_updated: 2026-06-04T08:04:22.869Z
-last_activity: 2026-06-04 -- Phase 21 execution started
+status: planning
+stopped_at: Phase 22 context gathered
+last_updated: "2026-06-04T08:48:33.326Z"
+last_activity: 2026-06-04
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 4
   completed_plans: 4
-  percent: 0
+  percent: 20
 ---
 
 # State — Klaus
@@ -81,6 +81,6 @@ Carried forward from v3.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-03
-Stopped at: Roadmap created, requirements traceability filled, STATE.md initialized
-Resume file: None — start with `/gsd:plan-phase 21`
+Last session: 2026-06-04T08:48:33.323Z
+Stopped at: Phase 22 context gathered
+Resume file: .planning/phases/22-expert-coaching-knowledge-d-13-release/22-CONTEXT.md
