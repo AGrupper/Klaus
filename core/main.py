@@ -311,7 +311,14 @@ class AgentOrchestrator:
                         label = g.get("goal_label", "Goal")
                         date = g.get("target_date", "")
                         metrics = g.get("metrics") or []
-                        metric_str = ", ".join(str(m) for m in metrics) if metrics else ""
+                        # metrics is a dict {metric_name: target} per the ingest
+                        # contract (scripts/ingest_blueprint.py); a list of strings
+                        # is also accepted for forward-compat. Iterating a dict
+                        # directly would drop every target value (CR-21-01).
+                        if isinstance(metrics, dict):
+                            metric_str = ", ".join(f"{k} {v}" for k, v in metrics.items())
+                        else:
+                            metric_str = ", ".join(str(m) for m in metrics) if metrics else ""
                         line = f"  - {label}"
                         if date:
                             line += f" ({date})"
@@ -355,6 +362,12 @@ class AgentOrchestrator:
                             parts.append(f"{carbs_g}g carbs")
                         macro_str = " / ".join(parts) if parts else str(nutrition_targets)
                         lines.append(f"Daily targets: {macro_str}")
+                        # Directional aerobic note deliberately preserved during
+                        # ingest (the locked v4.0 narrowing) — surface it so it is
+                        # not silently dropped (WR-21-01).
+                        aerobic_note = nutrition_targets.get("aerobic_reference_note")
+                        if aerobic_note:
+                            lines.append(f"  Aerobic reference: {aerobic_note}")
                         fueling_slots = nutrition_targets.get("fueling_slots")
                         if fueling_slots:
                             lines.append(f"  Fueling slots: {', '.join(str(s) for s in fueling_slots)}")

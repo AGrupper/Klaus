@@ -739,17 +739,26 @@ def _jsonsafe_doc(d: dict) -> dict:
     it. ``get_training_history`` json-encodes its result, so the timestamp is
     converted to ISO-8601 here (any other datetime-like value is handled too).
     """
-    out: dict = {}
-    for k, v in d.items():
-        iso = getattr(v, "isoformat", None)
-        if callable(iso):
-            try:
-                out[k] = iso()
-            except Exception:
-                out[k] = str(v)
-        else:
-            out[k] = v
-    return out
+    return {k: _jsonsafe_value(v) for k, v in d.items()}
+
+
+def _jsonsafe_value(v):
+    """Coerce a single value to a JSON-serialisable form, recursing into nested
+    dicts and lists. The v4.0 user profile (Phase 21) nests dicts/lists several
+    levels deep, so a shallow top-level pass would miss a datetime buried inside
+    ``weekly_split`` or ``fueling_timeline`` (WR-21-03).
+    """
+    if isinstance(v, dict):
+        return {k: _jsonsafe_value(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_jsonsafe_value(x) for x in v]
+    iso = getattr(v, "isoformat", None)
+    if callable(iso):
+        try:
+            return iso()
+        except Exception:
+            return str(v)
+    return v
 
 
 class TrainingLogStore:

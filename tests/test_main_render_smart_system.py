@@ -333,6 +333,41 @@ class TestPhase21CoachingReferenceRendering:
         assert "Oct peak" in result
         assert "Nov peak" in result
 
+    def test_dated_goals_renders_dict_metric_values(self):
+        """dated_goals.metrics as a dict (the ingest contract) renders names AND
+        values — guards against CR-21-01 where dict iteration dropped every target."""
+        orch = self._make_orch_with_profile({
+            "dated_goals": [
+                {
+                    "goal_label": "Oct peak",
+                    "target_date": "2026-10-31",
+                    "metrics": {"bench_press_kg": 100, "half_marathon_time": "1:25:00"},
+                },
+            ],
+        })
+        result = orch.render_smart_system("{training_profile}")
+        # The numeric target value MUST survive into the prompt, not just the key.
+        assert "100" in result
+        assert "1:25:00" in result
+        assert "bench_press_kg" in result
+
+    def test_real_ingest_payload_renders_all_targets(self):
+        """Integration guard (WR-21-02): feed the actual build_profile_dict()
+        output through the renderer and assert every Tier A target survives.
+        This is the cross-plan check that the per-plan fixtures missed."""
+        from scripts.ingest_blueprint import build_profile_dict
+        orch = self._make_orch_with_profile(build_profile_dict())
+        result = orch.render_smart_system("{training_profile}")
+        # October peak numeric targets from the blueprint.
+        assert "100" in result          # bench_press_kg
+        assert "120" in result          # squat_kg
+        assert "1:25:00" in result      # half_marathon_time
+        # November peak targets.
+        assert "125" in result          # push_ups
+        assert "35" in result           # pull_ups
+        # Block anchor must render.
+        assert "2026-06-21" in result
+
     def test_weekly_split_renders_day_and_modality(self):
         """weekly_split renders a per-day line with label and modality."""
         orch = self._make_orch_with_profile({
