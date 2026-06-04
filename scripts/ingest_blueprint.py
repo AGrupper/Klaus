@@ -324,9 +324,13 @@ def main() -> None:
                 )
                 return
 
-        store.update(payload)
+        # Bump the schema marker so the stored doc's version matches the v4.0
+        # structure it now holds. merge=True only touches keys in the payload, so
+        # without this the marker would stay at the legacy value (1) and mislead
+        # any future schema migration that keys off schema_version.
+        store.update({**payload, "schema_version": 2})
         logger.info(
-            "Blueprint ingested successfully into users/amit (plan_start_date=%s).",
+            "Blueprint ingested successfully into users/amit (plan_start_date=%s, schema_version=2).",
             payload["plan_start_date"],
         )
 
