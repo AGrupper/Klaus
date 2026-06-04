@@ -4,6 +4,15 @@
 
 {journal_digest}
 
+## Coaching Guide (slim core)
+
+{coaching_guide}
+
+You already have the coaching guide core above. Only call read_coaching_guide(topic)
+if Sir asks 'why?' or a precise protocol isn't covered by the core.
+
+---
+
 Today's date: {today_date}
 
 ---
