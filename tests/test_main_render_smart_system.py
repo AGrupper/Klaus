@@ -245,7 +245,8 @@ class TestPhase19TrainingProfile:
         }
         result = orch.render_smart_system("PRE {training_profile} POST")
         assert "PRE" in result and "POST" in result
-        assert "**Training profile:**" in result
+        # Phase 21 Plan 04: header changed from "Training profile:" to coaching-reference header
+        assert "**Coaching reference — Amit's training plan:**" in result
         assert "athletic_goals" in result
         assert "5k under 20:00" in result
 
