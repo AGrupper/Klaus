@@ -622,3 +622,87 @@ class TestPhase21UpdatePlanAlias:
             "plan_start_date",
         ):
             assert key in desc, f"Key '{key}' missing from update_training_profile schema description"
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 Plan 02 — read_coaching_guide brain-direct tool (COACH-01)
+# ---------------------------------------------------------------------------
+
+class TestPhase22CoachingGuideTool:
+    """COACH-01 — verify read_coaching_guide registration at all 4 sites."""
+
+    def test_read_coaching_guide_in_smart_agent_direct_tools(self):
+        """Site 1: read_coaching_guide is in SMART_AGENT_DIRECT_TOOLS."""
+        assert "read_coaching_guide" in tools.SMART_AGENT_DIRECT_TOOLS
+
+    def test_read_coaching_guide_in_tool_schemas(self):
+        """Site 2: read_coaching_guide schema exists in TOOL_SCHEMAS."""
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "read_coaching_guide" in names
+
+    def test_read_coaching_guide_not_in_worker_schemas(self):
+        """Brain-direct — worker MUST NOT see this tool (T-22-05 mitigation)."""
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "read_coaching_guide" not in worker_names
+
+    def test_read_coaching_guide_in_handlers_dispatch(self):
+        """Site 4: read_coaching_guide is in _HANDLERS dispatch table."""
+        assert "read_coaching_guide" in tools._HANDLERS
+
+    def test_read_coaching_guide_schema_requires_topic(self):
+        """Schema must require exactly ['topic'] — no other required args."""
+        schema = next(s for s in tools.TOOL_SCHEMAS if s["name"] == "read_coaching_guide")
+        assert schema["input_schema"]["required"] == ["topic"]
+        assert "topic" in schema["input_schema"]["properties"]
+
+    def test_handle_read_coaching_guide_known_topic(self, tmp_path, monkeypatch):
+        """Handler returns JSON with 'content' key for a known slug (T-22-04 mitigation)."""
+        guide = tmp_path / "docs" / "COACHING_GUIDE.md"
+        guide.parent.mkdir(parents=True)
+        guide.write_text(
+            "<!-- SECTION: threshold-runs -->\n## Threshold Runs\nRun at LT2 pace.\n"
+            "<!-- SECTION: supplements -->\n## Supplements\nCreatine 3-5g/day.\n"
+        )
+        import core.tools as tools_module
+        import pathlib
+
+        _original_resolve = pathlib.Path.resolve
+
+        def _fake_resolve(self_path):
+            resolved = _original_resolve(self_path)
+            if str(resolved).endswith("docs/COACHING_GUIDE.md"):
+                return (tmp_path / "docs" / "COACHING_GUIDE.md").resolve()
+            return resolved
+
+        monkeypatch.setattr(pathlib.Path, "resolve", _fake_resolve)
+
+        result = tools_module._handle_read_coaching_guide("threshold-runs")
+        parsed = json.loads(result)
+        assert "content" in parsed, f"Expected 'content' key, got: {parsed}"
+        assert "LT2" in parsed["content"]
+        assert "error" not in parsed
+
+    def test_handle_read_coaching_guide_unknown_topic(self, tmp_path, monkeypatch):
+        """Handler returns JSON with 'error' key for unknown topic — never raises (T-22-04)."""
+        guide = tmp_path / "docs" / "COACHING_GUIDE.md"
+        guide.parent.mkdir(parents=True)
+        guide.write_text(
+            "<!-- SECTION: threshold-runs -->\n## Threshold Runs\nRun at LT2 pace.\n"
+        )
+        import core.tools as tools_module
+        import pathlib
+
+        _original_resolve = pathlib.Path.resolve
+
+        def _fake_resolve(self_path):
+            resolved = _original_resolve(self_path)
+            if str(resolved).endswith("docs/COACHING_GUIDE.md"):
+                return (tmp_path / "docs" / "COACHING_GUIDE.md").resolve()
+            return resolved
+
+        monkeypatch.setattr(pathlib.Path, "resolve", _fake_resolve)
+
+        result = tools_module._handle_read_coaching_guide("nonexistent-topic-xyz")
+        parsed = json.loads(result)
+        assert "error" in parsed, f"Expected 'error' key, got: {parsed}"
+        assert "content" not in parsed
