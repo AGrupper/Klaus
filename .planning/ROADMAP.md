@@ -25,7 +25,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 
 ## Phases
 
-- [ ] **Phase 21: Living Plan Ingestion** - Populate `UserProfileStore` with Amit's blueprint as structured fields (dated goals, weekly split, fueling timeline, supplements); add `update_plan` tool; gate that unblocks all downstream coaching specificity
+- [x] **Phase 21: Living Plan Ingestion** - Populate `UserProfileStore` with Amit's blueprint as structured fields (dated goals, weekly split, fueling timeline, supplements); add `update_plan` tool; gate that unblocks all downstream coaching specificity (completed 2026-06-04)
 - [ ] **Phase 22: Expert Coaching Knowledge + D-13 Release** - Author `docs/COACHING_GUIDE.md`, wire it into every coaching prompt, replace the D-13 qualitative guard with the Tier A / Tier B data-presence contract; Klaus starts naming real numbers
 - [ ] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic
 - [ ] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability
@@ -44,9 +44,9 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   4. The `training_profile` section in the smart agent prompt reflects blueprint fields and frames them as a coaching reference guide, not a rigid contract
 **Plans**: 4 plans
 - [x] 21-01-PLAN.md — Expand UserProfileStore schema to v4.0 structured fields (dated_goals, weekly_split, nutrition_targets, supplement_schedule, fueling_timeline, plan_start_date)
-- [ ] 21-02-PLAN.md — update_plan tool + extended update schema + JSON-safe get_training_profile handler
-- [ ] 21-03-PLAN.md — scripts/ingest_blueprint.py: idempotent blueprint → structured Firestore ingest (dry-run/force)
-- [ ] 21-04-PLAN.md — Coaching-reference prose rendering + prompt reframe + v3.0 cron-regression check
+- [x] 21-02-PLAN.md — update_plan tool + extended update schema + JSON-safe get_training_profile handler
+- [x] 21-03-PLAN.md — scripts/ingest_blueprint.py: idempotent blueprint → structured Firestore ingest (dry-run/force)
+- [x] 21-04-PLAN.md — Coaching-reference prose rendering + prompt reframe + v3.0 cron-regression check
 
 ### Phase 22: Expert Coaching Knowledge + D-13 Release
 **Goal**: Klaus carries curated, source-tier-tagged hybrid-athlete coaching knowledge in his reasoning substrate; the D-13 no-fabrication guard is replaced with a two-tier data-presence contract (Tier A = blueprint targets, always citable; Tier B = measured results, citable only within a recency window); coaching output names specific sessions, loads, and rationales instead of generic advice; Klaus critiques suboptimal plan elements rather than treating the blueprint as gospel
@@ -98,7 +98,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 21. Living Plan Ingestion | 1/4 | In Progress|  |
+| 21. Living Plan Ingestion | 4/4 | Complete   | 2026-06-04 |
 | 22. Expert Coaching Knowledge + D-13 Release | 0/TBD | Not started | - |
 | 23. Block + Benchmark Tracking | 0/TBD | Not started | - |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
