@@ -52,6 +52,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     # Phase 19 Plan 02 — brain-direct training-profile tools (PROFILE-04)
     "get_training_profile",
     "update_training_profile",
+    # Phase 21 Plan 02 — update_plan alias (PLAN-03 / SC-3)
+    "update_plan",
     # Phase 20 — brain-direct training log (LOG-03)
     "log_training",
 })
@@ -667,6 +669,34 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Merge new fields into Sir's stored training profile. Brain-direct. "
             "Always confirm with Sir before recording. Recognized top-level keys: "
+            "athletic_goals (list), training_constraints (list), recovery_preferences (object), "
+            "dated_goals (list), weekly_split (object), nutrition_targets (object), "
+            "supplement_schedule (list), fueling_timeline (list), plan_start_date (string)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "object",
+                    "description": (
+                        "Dict of fields to merge into users/amit. Top-level keys: "
+                        "athletic_goals, training_constraints, recovery_preferences, "
+                        "dated_goals, weekly_split, nutrition_targets, "
+                        "supplement_schedule, fueling_timeline, plan_start_date."
+                    ),
+                },
+            },
+            "required": ["patch"],
+        },
+    },
+    {
+        "name": "update_plan",
+        "description": (
+            "Update Sir's living training plan (goals, weekly split, nutrition targets, "
+            "dates). Brain-direct. Always confirm with Sir before recording. "
+            "Same structured keys as update_training_profile: "
+            "dated_goals (list), weekly_split (object), nutrition_targets (object), "
+            "supplement_schedule (list), fueling_timeline (list), plan_start_date (string), "
             "athletic_goals (list), training_constraints (list), recovery_preferences (object)."
         ),
         "input_schema": {
@@ -676,6 +706,8 @@ TOOL_SCHEMAS: list[dict] = [
                     "type": "object",
                     "description": (
                         "Dict of fields to merge into users/amit. Top-level keys: "
+                        "dated_goals, weekly_split, nutrition_targets, "
+                        "supplement_schedule, fueling_timeline, plan_start_date, "
                         "athletic_goals, training_constraints, recovery_preferences."
                     ),
                 },
@@ -1284,13 +1316,18 @@ def _handle_cancel_followup(id: str) -> str:
 # ------------------------------------------------------------------ #
 
 def _handle_get_training_profile() -> str:
-    """PROFILE-04 brain-direct: return the user training profile dict as JSON."""
-    from memory.firestore_db import UserProfileStore
+    """PROFILE-04 brain-direct: return the user training profile dict as JSON.
+
+    Uses _jsonsafe_doc to ISO-convert any DatetimeWithNanoseconds values
+    (e.g. updated_at, bootstrapped_at) before json.dumps so this handler
+    never raises a TypeError on a real Firestore doc.  T-21-04 mitigation.
+    """
+    from memory.firestore_db import UserProfileStore, _jsonsafe_doc
     store = UserProfileStore(
         project_id=os.environ["GCP_PROJECT_ID"],
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    return json.dumps(store.load())
+    return json.dumps(_jsonsafe_doc(store.load()))
 
 
 def _handle_update_training_profile(patch: dict) -> str:
@@ -1454,6 +1491,8 @@ _HANDLERS: dict[str, object] = {
     # Phase 19 Plan 02 — training profile + Garmin live
     "get_training_profile":    lambda args: _handle_get_training_profile(),
     "update_training_profile": lambda args: _handle_update_training_profile(**args),
+    # Phase 21 Plan 02 — update_plan alias (PLAN-03 / SC-3): same handler as above
+    "update_plan":             lambda args: _handle_update_training_profile(**args),
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     "get_acwr":                lambda args: _handle_get_acwr(),
