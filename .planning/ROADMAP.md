@@ -57,7 +57,11 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   2. The morning briefing and evening alert name the specific scheduled session and load/pace target from the blueprint when producing a coaching point
   3. When asked about a training session, Klaus names the session type, the plan load, and the rationale â never "do your strength session" as a complete coaching message
   4. Klaus identifies at least one structural element of the blueprint or Amit's habits as worth questioning (e.g. protein target, supplement timing), explains the reasoning, and recommends a specific alternative without silently rewriting the plan
-**Plans**: TBD
+**Plans**: 4 plans
+- [ ] 22-01-PLAN.md — Author docs/COACHING_GUIDE.md (slim core + 10 anchored deep sections, applied to Amit's blueprint)
+- [ ] 22-02-PLAN.md — Slim-core loader + render injection + brain-direct read_coaching_guide tool (4-site) + Wave-0 tests
+- [ ] 22-03-PLAN.md — Wire {coaching_guide} into morning briefing / evening alert / autonomous crons (compose-time injection + cost bias)
+- [ ] 22-04-PLAN.md — smart_agent.md: D-13 guard release → Tier A/B recency contract + specificity bar + critique posture (human-verify gate)
 **UI hint**: no
 
 ### Phase 23: Block + Benchmark Tracking
@@ -99,7 +103,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
-| 22. Expert Coaching Knowledge + D-13 Release | 0/TBD | Not started | - |
+| 22. Expert Coaching Knowledge + D-13 Release | 0/4 | Not started | - |
 | 23. Block + Benchmark Tracking | 0/TBD | Not started | - |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
