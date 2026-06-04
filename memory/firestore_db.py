@@ -91,9 +91,10 @@ def increment_fallback_counter() -> None:
 
 
 class UserProfileStore:
-    """Read/write the user's static profile + scheduling rules in Firestore.
+    """Read/write the user's static profile + coaching plan in Firestore.
 
     PHASE 19 (Plan 02): filled in (was a Phase-5 stub raising NotImplementedError).
+    PHASE 21 (Plan 01): _SCAFFOLD expanded to v4.0 structured-field contract.
     Mirrors SelfStateStore discipline (this module's `class SelfStateStore` below):
       - Reads NEVER raise — return {} on any error.
       - Writes (update) re-raise after logger.error, caller decides.
@@ -101,20 +102,53 @@ class UserProfileStore:
       - Every merge write stamps `updated_at: firestore.SERVER_TIMESTAMP`.
 
     Singleton document at collection='users', document='amit'.
-    Scaffold fields seeded on first run:
-        athletic_goals: []
-        training_constraints: []
-        recovery_preferences: {}
-        schema_version: 1
+
+    v4.0 structured fields (schema_version 2):
+        dated_goals       (list)  — Tier A peak targets: [{target_date, goal_label, metrics}].
+                                    Populated by ingest_blueprint.py. NEVER contains current
+                                    performance baselines (Tier B — derived from Garmin at
+                                    read time).
+        weekly_split      (dict)  — Flexible AM/PM session template keyed by day name.
+                                    Each day: {"am": {label, modality, priority},
+                                               "pm": {label, modality, priority}}.
+                                    This is a TEMPLATE, not an attendance contract.
+                                    Per-session done/attendance booleans are STRUCTURALLY
+                                    ABSENT — Klaus must never nag about a single missed session.
+        nutrition_targets (dict)  — Daily macro targets: {protein_g, carbs_g, ...}.
+        supplement_schedule (list)— Ordered supplement slots: [{slot, items}].
+        fueling_timeline  (list)  — Ordered 6-slot fueling architecture: [{slot, timing, ...}].
+        plan_start_date   (str)   — ISO date "2026-06-21" (Block Week 1 anchor).
+                                    Phase 23 derives block/week numbers from this field.
+        schema_version    (int)   — 2 (bumped from 1 at Phase 21).
+
+    Legacy fields retained for backward compatibility:
+        athletic_goals    (list)  — Read by core/weekly_training_review.py:188 (Sunday cron).
+                                    Do NOT remove — removing breaks `data["athletic_goals"]`.
+                                    v4.0 primary is `dated_goals`; this stays for v3.0 compat.
+        training_constraints (list)  — Kept for forward-compat (may be used by future phases).
+        recovery_preferences (dict)  — Kept for forward-compat.
+
+    JSON serialization note: `updated_at` and `bootstrapped_at` are Firestore
+    SERVER_TIMESTAMPs (DatetimeWithNanoseconds) — strip them before json.dumps.
+    Use _jsonsafe_doc() helper or the render_smart_system non_empty filter.
     """
 
     _COLLECTION = "users"
     _DOCUMENT_ID = "amit"
     _SCAFFOLD = {
-        "athletic_goals": [],
-        "training_constraints": [],
-        "recovery_preferences": {},
-        "schema_version": 1,
+        # v4.0 structured fields (primary coaching reference — Tier A targets only)
+        "dated_goals": [],            # [{target_date, goal_label, metrics}] — Oct/Nov peaks
+        "weekly_split": {},           # {day: {am: {label, modality, priority}, pm: {...}}}
+                                      # Template shape — NO attendance/done/completed booleans
+        "nutrition_targets": {},      # {protein_g, carbs_g, ...} daily macro targets
+        "supplement_schedule": [],    # [{slot, items}] ordered supplement list
+        "fueling_timeline": [],       # [{slot, timing, content, notes}] 6-slot fueling arch
+        "plan_start_date": "",        # "2026-06-21" — Block Week 1 anchor for Phase 23
+        "schema_version": 2,          # bumped from 1 → 2 at Phase 21
+        # Legacy fields — retained for backward compatibility
+        "athletic_goals": [],         # read by weekly_training_review.py:188 — do NOT remove
+        "training_constraints": [],   # kept for forward-compat
+        "recovery_preferences": {},   # kept for forward-compat
     }
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:
