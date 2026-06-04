@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
 status: executing
 stopped_at: Phase 22 context gathered
-last_updated: "2026-06-04T16:28:34.090Z"
-last_activity: 2026-06-04 -- Phase 22 planning complete
+last_updated: "2026-06-04T17:00:19.312Z"
+last_activity: 2026-06-04 -- Phase 22 execution started
 progress:
   total_phases: 5
   completed_phases: 1
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 22
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-04 -- Phase 22 planning complete
+Phase: 22 (expert-coaching-knowledge-d-13-release) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 22
+Last activity: 2026-06-04 -- Phase 22 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -30,7 +30,7 @@ Progress: [░░░░░░░░░░] 0%
 See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 22 — expert coaching knowledge + d 13 release
+**Current focus:** Phase 22 — expert-coaching-knowledge-d-13-release
 
 ## Architecture (current)
 
