@@ -522,44 +522,88 @@ def test_load_coaching_guide_slim_size_guard():
     assert len(result) < 15_000, f"slim core too large: {len(result)} chars (limit 15000)"
 
 
-def test_load_coaching_guide_slim_missing_markers(tmp_path, monkeypatch):
+def test_load_coaching_guide_slim_missing_markers(monkeypatch):
     """When SLIM_CORE markers are absent from the guide, loader returns '' with a warning."""
-    import pathlib
     import core.main as main_module
 
-    guide = tmp_path / "docs" / "COACHING_GUIDE.md"
-    guide.parent.mkdir(parents=True)
-    guide.write_text("# No markers here\nJust plain content.\n")
+    # Patch read_text to return content without markers
+    _content_no_markers = "# No markers here\nJust plain content.\n"
 
-    _original_resolve = pathlib.Path.resolve
+    class _FakePath:
+        def __init__(self, *args, **kwargs):
+            import pathlib
+            self._inner = pathlib.Path(*args, **kwargs)
 
-    def _fake_resolve(self):
-        resolved = _original_resolve(self)
-        parts = resolved.parts
-        if "docs" in parts and parts[-1] == "COACHING_GUIDE.md":
-            return pathlib.Path(tmp_path / "docs" / "COACHING_GUIDE.md").resolve()
-        return resolved
+        def __truediv__(self, other):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner / other
+            return result
 
-    monkeypatch.setattr(pathlib.Path, "resolve", _fake_resolve)
+        def resolve(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.resolve()
+            return result
+
+        @property
+        def parent(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.parent
+            return result
+
+        @property
+        def parts(self):
+            return self._inner.parts
+
+        def read_text(self, encoding="utf-8"):
+            if "COACHING_GUIDE.md" in str(self._inner):
+                return _content_no_markers
+            return self._inner.read_text(encoding=encoding)
+
+        def __str__(self):
+            return str(self._inner)
+
+    monkeypatch.setattr(main_module, "Path", _FakePath)
     result = main_module._load_coaching_guide_slim()
     assert result == "", f"Expected '' for missing markers, got: {result!r}"
 
 
-def test_load_coaching_guide_slim_file_absent(tmp_path, monkeypatch):
+def test_load_coaching_guide_slim_file_absent(monkeypatch):
     """When COACHING_GUIDE.md is absent, loader returns '' (no exception raised)."""
-    import pathlib
     import core.main as main_module
 
-    _original_resolve = pathlib.Path.resolve
+    class _FakePath:
+        def __init__(self, *args, **kwargs):
+            import pathlib
+            self._inner = pathlib.Path(*args, **kwargs)
 
-    def _fake_resolve(self):
-        resolved = _original_resolve(self)
-        parts = resolved.parts
-        if "docs" in parts and parts[-1] == "COACHING_GUIDE.md":
-            return pathlib.Path(tmp_path / "docs" / "COACHING_GUIDE.md").resolve()
-        return resolved
+        def __truediv__(self, other):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner / other
+            return result
 
-    monkeypatch.setattr(pathlib.Path, "resolve", _fake_resolve)
-    # Note: guide file does NOT exist in tmp_path — OSError path
+        def resolve(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.resolve()
+            return result
+
+        @property
+        def parent(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.parent
+            return result
+
+        @property
+        def parts(self):
+            return self._inner.parts
+
+        def read_text(self, encoding="utf-8"):
+            if "COACHING_GUIDE.md" in str(self._inner):
+                raise OSError("file not found")
+            return self._inner.read_text(encoding=encoding)
+
+        def __str__(self):
+            return str(self._inner)
+
+    monkeypatch.setattr(main_module, "Path", _FakePath)
     result = main_module._load_coaching_guide_slim()
     assert result == "", f"Expected '' for missing file, got: {result!r}"
