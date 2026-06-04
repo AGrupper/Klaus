@@ -177,17 +177,58 @@ def test_update_reraises_on_error():
 # ---------------------------------------------------------------------------
 
 def test_bootstrap_creates_when_missing():
-    """PROFILE-03: missing doc → write empty scaffold once."""
+    """PROFILE-03: missing doc → write empty scaffold once.
+
+    Phase 21 Plan 01: schema_version bumped to 2; v4.0 structured keys present.
+    """
     store, doc_ref = _build_store(snap_exists=False)
     store.bootstrap_if_empty()
     args, _ = doc_ref.set.call_args
     written = args[0]
+    # v3.0 legacy fields retained for backward compat
     assert written["athletic_goals"] == []
     assert written["training_constraints"] == []
     assert written["recovery_preferences"] == {}
-    assert written["schema_version"] == 1
+    # v4.0 schema version
+    assert written["schema_version"] == 2
+    # Firestore sentinel stamps
     assert written["bootstrapped_at"] is _FS.SERVER_TIMESTAMP
     assert written["updated_at"] is _FS.SERVER_TIMESTAMP
+
+
+def test_bootstrap_seeds_v4_structured_keys():
+    """PROFILE-03 v4.0: bootstrapped doc must contain all six v4.0 structured keys."""
+    store, doc_ref = _build_store(snap_exists=False)
+    store.bootstrap_if_empty()
+    args, _ = doc_ref.set.call_args
+    written = args[0]
+
+    v4_keys = {
+        "dated_goals",
+        "weekly_split",
+        "nutrition_targets",
+        "supplement_schedule",
+        "fueling_timeline",
+        "plan_start_date",
+    }
+    missing = v4_keys - written.keys()
+    assert not missing, f"Bootstrapped doc missing v4.0 keys: {missing}"
+
+
+def test_bootstrap_seeds_weekly_split_as_empty_dict():
+    """PROFILE-03 v4.0: weekly_split must be an empty dict — template, not attendance flags.
+
+    Guards the PLAN-02 rigidity-drift invariant: per-session attendance/done/completed
+    booleans must be structurally absent from the scaffold default.
+    """
+    store, doc_ref = _build_store(snap_exists=False)
+    store.bootstrap_if_empty()
+    args, _ = doc_ref.set.call_args
+    written = args[0]
+
+    ws = written.get("weekly_split")
+    assert isinstance(ws, dict), "weekly_split must be a dict"
+    assert ws == {}, "weekly_split scaffold default must be an empty dict (template shape)"
 
 
 def test_bootstrap_skips_when_present():
