@@ -245,7 +245,8 @@ class TestPhase19TrainingProfile:
         }
         result = orch.render_smart_system("PRE {training_profile} POST")
         assert "PRE" in result and "POST" in result
-        assert "**Training profile:**" in result
+        # Phase 21 Plan 04: header changed from "Training profile:" to coaching-reference header
+        assert "**Coaching reference — Amit's training plan:**" in result
         assert "athletic_goals" in result
         assert "5k under 20:00" in result
 
@@ -291,6 +292,135 @@ class TestPhase19TrainingProfile:
         orch._user_profile_store = None
         result = orch.render_smart_system("X{training_profile}Y")
         assert result == "XY"
+
+
+class TestPhase21CoachingReferenceRendering:
+    """Phase 21 Plan 04 — coaching-reference prose rendering of structured profile fields."""
+
+    def _make_orch_with_profile(self, profile_data: dict):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = MagicMock()
+        orch._user_profile_store.load.return_value = profile_data
+        return orch
+
+    def test_coaching_reference_header(self):
+        """Structured profile renders with new coaching header, not 'Training profile:'."""
+        orch = self._make_orch_with_profile({
+            "dated_goals": [
+                {"goal_label": "Oct peak", "target_date": "2026-10-01", "metrics": ["100kg bench", "120kg squat"]}
+            ],
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "**Coaching reference — Amit's training plan:**" in result
+        assert "**Training profile:**" not in result
+
+    def test_dated_goals_renders_metric_bullets(self):
+        """dated_goals renders one bullet per goal including the metric values."""
+        orch = self._make_orch_with_profile({
+            "dated_goals": [
+                {"goal_label": "Oct peak", "target_date": "2026-10-01", "metrics": ["100kg bench", "120kg squat"]},
+                {"goal_label": "Nov peak", "target_date": "2026-11-01", "metrics": ["125 push-ups", "35 pull-ups"]},
+            ],
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "100kg bench" in result
+        assert "120kg squat" in result
+        assert "125 push-ups" in result
+        assert "Oct peak" in result
+        assert "Nov peak" in result
+
+    def test_weekly_split_renders_day_and_modality(self):
+        """weekly_split renders a per-day line with label and modality."""
+        orch = self._make_orch_with_profile({
+            "weekly_split": {
+                "Monday": {
+                    "am": {"label": "Upper strength", "modality": "lift", "priority": "high"},
+                    "pm": {"label": "Easy run", "modality": "run", "priority": "medium"},
+                },
+                "Tuesday": {
+                    "am": {"label": "Rest", "modality": "rest", "priority": "low"},
+                    "pm": {"label": "Lower strength", "modality": "lift", "priority": "high"},
+                },
+            },
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "Monday" in result
+        assert "lift" in result
+        assert "run" in result
+        assert "Upper strength" in result
+
+    def test_weekly_split_no_attendance_words(self):
+        """weekly_split rendered snippet contains NO attendance-tracking words."""
+        orch = self._make_orch_with_profile({
+            "weekly_split": {
+                "Wednesday": {
+                    "am": {"label": "Calisthenics", "modality": "calisthenics", "priority": "high"},
+                    "pm": {"label": "Rest", "modality": "rest", "priority": "low"},
+                },
+            },
+        })
+        result = orch.render_smart_system("{training_profile}")
+        for forbidden in ("attendance", "completed", "missed"):
+            assert forbidden not in result, f"'{forbidden}' should not appear in weekly_split rendering"
+
+    def test_plan_start_date_renders_block_anchor(self):
+        """plan_start_date renders as 'Block anchor: YYYY-MM-DD (Block Week 1)'."""
+        orch = self._make_orch_with_profile({
+            "plan_start_date": "2026-06-21",
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "Block anchor: 2026-06-21 (Block Week 1)" in result
+
+    def test_nutrition_targets_renders_macros(self):
+        """nutrition_targets renders daily macro targets as readable text."""
+        orch = self._make_orch_with_profile({
+            "nutrition_targets": {
+                "protein_g": 150,
+                "carbs_g": 350,
+                "fueling_slots": ["pre-workout", "post-workout"],
+            },
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "150" in result
+        assert "350" in result
+
+    def test_unknown_key_falls_back_to_generic_format(self):
+        """An unknown key not in the known-key set renders as '- key: value' (forward-compat)."""
+        orch = self._make_orch_with_profile({
+            "future_experimental_key": "some value",
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "- future_experimental_key:" in result
+        assert "some value" in result
+
+    def test_meta_keys_still_excluded(self):
+        """updated_at/bootstrapped_at/schema_version are never rendered."""
+        orch = self._make_orch_with_profile({
+            "plan_start_date": "2026-06-21",
+            "schema_version": 2,
+            "updated_at": "some-timestamp",
+            "bootstrapped_at": "some-timestamp",
+        })
+        result = orch.render_smart_system("{training_profile}")
+        assert "schema_version" not in result
+        assert "updated_at" not in result
+        assert "bootstrapped_at" not in result
+        # plan_start_date is still rendered
+        assert "Block anchor" in result
+
+    def test_empty_profile_still_renders_empty(self):
+        """Empty profile after non_empty filter → empty snippet (existing guard preserved)."""
+        orch = self._make_orch_with_profile({
+            "schema_version": 2,
+            "updated_at": "ts",
+            "dated_goals": [],
+        })
+        result = orch.render_smart_system("A{training_profile}B")
+        assert result == "AB"
 
 
 def test_handle_message_uses_render_smart_system():

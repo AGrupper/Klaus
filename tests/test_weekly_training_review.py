@@ -120,3 +120,79 @@ def test_garmin_activities_failure_sets_error_flag(patched_sources):
     assert data["last_week_activities"] is None
     # Other sources are unaffected — the gather is best-effort per-source.
     assert "biometrics_this_week" in data
+
+
+# ---------------------------------------------------------------------------
+# v3.0 cron regression — Phase 21 Plan 04 guard
+# ---------------------------------------------------------------------------
+
+def test_weekly_review_athletic_goals_from_full_v4_schema(patched_sources):
+    """Weekly review gather resolves athletic_goals from a full v4.0 schema profile
+    without raising. The new structured keys (dated_goals, weekly_split, etc.) must
+    not break the athletic_goals fetch path.
+
+    Regression guard: Plan 21 expanded UserProfileStore._SCAFFOLD with new structured
+    fields. The weekly review reads only profile.get("athletic_goals") — it must
+    tolerate all new keys silently (athletic_goals retained per Plan 01).
+    """
+    full_v4_profile = {
+        "athletic_goals": ["Run half-marathon under 1:30", "100kg bench press"],
+        "dated_goals": [
+            {"goal_label": "Oct peak", "target_date": "2026-10-01",
+             "metrics": ["100kg bench", "120kg squat", "1:25 HM"]},
+            {"goal_label": "Nov peak", "target_date": "2026-11-01",
+             "metrics": ["125 push-ups", "35 pull-ups", "9:30 3k", "55s 400m"]},
+        ],
+        "weekly_split": {
+            "Monday": {
+                "am": {"label": "Upper strength", "modality": "lift", "priority": "high"},
+                "pm": {"label": "Easy run", "modality": "run", "priority": "medium"},
+            },
+            "Tuesday": {
+                "am": {"label": "Rest", "modality": "rest", "priority": "low"},
+                "pm": {"label": "Lower strength", "modality": "lift", "priority": "high"},
+            },
+        },
+        "nutrition_targets": {
+            "protein_g": 150,
+            "carbs_g": 350,
+            "fueling_slots": ["pre-workout", "intra-workout", "post-workout"],
+        },
+        "supplement_schedule": [
+            {"slot": "morning", "items": ["creatine", "vitamin D"]},
+            {"slot": "pre-workout", "items": ["beta-alanine"]},
+        ],
+        "fueling_timeline": [
+            {"timing": "07:00", "food": "oats + protein shake"},
+            {"timing": "pre-workout", "food": "banana + energy gel"},
+            {"timing": "post-workout", "food": "rice + chicken"},
+        ],
+        "plan_start_date": "2026-06-21",
+        "training_constraints": ["no back squats during deload"],
+        "recovery_preferences": {"min_sleep_hours": 7},
+        "schema_version": 2,
+    }
+    patched_sources["user_profile"].return_value.load.return_value = full_v4_profile
+
+    # Should not raise; athletic_goals resolves correctly from the full schema
+    data = wtr._gather_week_data("2026-06-07")
+
+    assert "athletic_goals" in data
+    assert data["athletic_goals"] == ["Run half-marathon under 1:30", "100kg bench press"]
+
+
+def test_weekly_review_athletic_goals_absent_in_v4_schema(patched_sources):
+    """If profile has v4.0 structured fields but no athletic_goals key,
+    the gather returns an empty list (default) without raising — defensive .get().
+    """
+    v4_profile_no_legacy = {
+        "dated_goals": [{"goal_label": "Oct peak", "target_date": "2026-10-01", "metrics": []}],
+        "plan_start_date": "2026-06-21",
+        "schema_version": 2,
+    }
+    patched_sources["user_profile"].return_value.load.return_value = v4_profile_no_legacy
+
+    data = wtr._gather_week_data("2026-06-07")
+
+    # athletic_goals absent → defaults to [] without KeyError
+    assert data["athletic_goals"] == []

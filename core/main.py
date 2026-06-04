@@ -281,9 +281,13 @@ class AgentOrchestrator:
                 journal_digest = "\n".join(lines)
             # else: leave "" — empty-state rule omits the block entirely
 
-        # PHASE 19 — training profile block (PROMPT-01)
+        # PHASE 19/21 — training profile block (PROMPT-01, reframed in Plan 21-04)
         # Same omit-empty discipline as self_state: empty profile → empty snippet,
         # NOT a literal placeholder. The prompt instructs "ask the user" when blank.
+        # Phase 21 Plan 04: replaced raw k:v dump with coaching-reference prose that
+        # formats structured fields (dated_goals, weekly_split, nutrition_targets,
+        # plan_start_date, supplement_schedule, fueling_timeline) as a readable guide.
+        # Unknown/future keys fall back to the generic "- k: v" line (forward-compat).
         training_profile_snippet = ""
         if getattr(self, "_user_profile_store", None) is not None:
             profile = self._user_profile_store.load()
@@ -292,9 +296,108 @@ class AgentOrchestrator:
                 if k not in ("updated_at", "bootstrapped_at", "schema_version") and v
             }
             if non_empty:
-                lines = ["**Training profile:**"]
+                # Known structured keys — rendered as coaching-reference prose.
+                _KNOWN_KEYS = frozenset({
+                    "dated_goals", "weekly_split", "nutrition_targets",
+                    "supplement_schedule", "fueling_timeline", "plan_start_date",
+                    # v3.0 legacy fields — rendered via fallback below if still present
+                })
+                lines = ["**Coaching reference — Amit's training plan:**"]
+
+                # dated_goals — Tier A peak targets: one bullet per goal
+                if dated_goals := non_empty.get("dated_goals"):
+                    lines.append("Goals:")
+                    for g in dated_goals:
+                        label = g.get("goal_label", "Goal")
+                        date = g.get("target_date", "")
+                        metrics = g.get("metrics") or []
+                        metric_str = ", ".join(str(m) for m in metrics) if metrics else ""
+                        line = f"  - {label}"
+                        if date:
+                            line += f" ({date})"
+                        if metric_str:
+                            line += f": {metric_str}"
+                        lines.append(line)
+
+                # weekly_split — flexible template (label + modality + priority, no attendance)
+                if weekly_split := non_empty.get("weekly_split"):
+                    lines.append("Weekly split (template — label / modality / priority):")
+                    for day, slots in weekly_split.items():
+                        am = slots.get("am") or {} if isinstance(slots, dict) else {}
+                        pm = slots.get("pm") or {} if isinstance(slots, dict) else {}
+                        am_label = am.get("label", "—")
+                        am_mod = am.get("modality", "")
+                        am_pri = am.get("priority", "")
+                        pm_label = pm.get("label", "—")
+                        pm_mod = pm.get("modality", "")
+                        pm_pri = pm.get("priority", "")
+                        am_str = am_label
+                        if am_mod:
+                            am_str += f" [{am_mod}]"
+                        if am_pri:
+                            am_str += f" · {am_pri}"
+                        pm_str = pm_label
+                        if pm_mod:
+                            pm_str += f" [{pm_mod}]"
+                        if pm_pri:
+                            pm_str += f" · {pm_pri}"
+                        lines.append(f"  {day}: AM {am_str} / PM {pm_str}")
+
+                # nutrition_targets — daily macro targets + fueling slots
+                if nutrition_targets := non_empty.get("nutrition_targets"):
+                    if isinstance(nutrition_targets, dict):
+                        protein_g = nutrition_targets.get("protein_g", "")
+                        carbs_g = nutrition_targets.get("carbs_g", "")
+                        parts = []
+                        if protein_g:
+                            parts.append(f"{protein_g}g protein")
+                        if carbs_g:
+                            parts.append(f"{carbs_g}g carbs")
+                        macro_str = " / ".join(parts) if parts else str(nutrition_targets)
+                        lines.append(f"Daily targets: {macro_str}")
+                        fueling_slots = nutrition_targets.get("fueling_slots")
+                        if fueling_slots:
+                            lines.append(f"  Fueling slots: {', '.join(str(s) for s in fueling_slots)}")
+                    else:
+                        lines.append(f"  Nutrition targets: {nutrition_targets}")
+
+                # fueling_timeline — ordered slot list
+                if fueling_timeline := non_empty.get("fueling_timeline"):
+                    lines.append("Fueling timeline:")
+                    for i, slot in enumerate(fueling_timeline, 1):
+                        if isinstance(slot, dict):
+                            timing = slot.get("timing", "")
+                            food = slot.get("food", "")
+                            slot_str = f"  Slot {i}"
+                            if timing:
+                                slot_str += f" — {timing}"
+                            if food:
+                                slot_str += f": {food}"
+                            lines.append(slot_str)
+                        else:
+                            lines.append(f"  Slot {i}: {slot}")
+
+                # supplement_schedule — ordered slot list
+                if supplement_schedule := non_empty.get("supplement_schedule"):
+                    lines.append("Supplements:")
+                    for s in supplement_schedule:
+                        if isinstance(s, dict):
+                            slot = s.get("slot", "")
+                            items = s.get("items") or []
+                            item_str = ", ".join(str(i) for i in items) if items else str(s)
+                            lines.append(f"  {slot}: {item_str}" if slot else f"  {item_str}")
+                        else:
+                            lines.append(f"  {s}")
+
+                # plan_start_date — block anchor
+                if plan_start_date := non_empty.get("plan_start_date"):
+                    lines.append(f"Block anchor: {plan_start_date} (Block Week 1)")
+
+                # Forward-compat fallback: any key not in _KNOWN_KEYS renders as "- k: v"
                 for k, v in non_empty.items():
-                    lines.append(f"- {k}: {v}")
+                    if k not in _KNOWN_KEYS:
+                        lines.append(f"- {k}: {v}")
+
                 training_profile_snippet = "\n".join(lines)
 
         return (
