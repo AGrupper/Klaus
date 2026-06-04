@@ -20,7 +20,9 @@ findings:
   warning: 3
   info: 2
   total: 6
-status: issues_found
+status: resolved
+resolved_in: fafcc69
+resolution_note: "CR-21-01 (dict metrics dropped), WR-21-01 (aerobic note), WR-21-02 (test fixture mismatch + integration test), WR-21-03 (recursive _jsonsafe_doc) fixed and committed. IN-01/IN-02 acknowledged as pre-existing/low-risk."
 ---
 
 # Phase 21: Code Review Report
