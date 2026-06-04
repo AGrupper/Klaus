@@ -15,6 +15,7 @@ import json
 import logging
 import threading
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from googleapiclient.errors import HttpError
 
@@ -56,6 +57,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "update_plan",
     # Phase 20 — brain-direct training log (LOG-03)
     "log_training",
+    # Phase 22 — brain-direct coaching guide on-demand lookup (COACH-01)
+    "read_coaching_guide",
 })
 
 # ------------------------------------------------------------------ #
@@ -664,6 +667,34 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # ============ PHASE 22 — COACHING GUIDE ON-DEMAND LOOKUP (COACH-01) ============
+    {
+        "name": "read_coaching_guide",
+        "description": (
+            "Read a deep section of the coaching knowledge guide. Brain-direct. "
+            "Call when Sir asks 'why?' about a training concept, or when the slim "
+            "core digest (already in your system prompt) is not detailed enough. "
+            "Returns the full section text for the requested topic. "
+            "Do NOT call for routine coaching messages — the slim core covers those."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": (
+                        "Section to retrieve. Use one of: 'interference-effect', "
+                        "'block-periodization', 'threshold-runs', 'top-set-strength', "
+                        "'calisthenics-progressions', 'intervals-vo2max', "
+                        "'peri-workout-fueling', 'protein-timing', "
+                        "'carb-periodization', 'supplements'. "
+                        "Free-text also accepted — nearest section slug is matched."
+                    ),
+                },
+            },
+            "required": ["topic"],
+        },
+    },
     {
         "name": "update_training_profile",
         "description": (
@@ -880,6 +911,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "update_training_profile",
         # Phase 20 Plan 01 — brain-direct training log (get_training_history STAYS in worker)
         "log_training",
+        # Phase 22 — brain-direct coaching guide (COACH-01, T-22-05)
+        "read_coaching_guide",
     }
 ]
 
@@ -1330,6 +1363,52 @@ def _handle_get_training_profile() -> str:
     return json.dumps(_jsonsafe_doc(store.load()))
 
 
+def _handle_read_coaching_guide(topic: str) -> str:
+    """COACH-01 brain-direct: return the coaching guide section for the requested topic.
+
+    Reads docs/COACHING_GUIDE.md, finds the <!-- SECTION: {slug} --> anchor,
+    and returns the section text as JSON. Fuzzy fallback on partial word match.
+
+    T-22-04 mitigation: topic is normalized to a slug and used ONLY inside a regex
+    against authored <!-- SECTION: slug --> anchors in a hardcoded file path. It is
+    NEVER concatenated into a filesystem path. '..' / '/' / absolute paths fail to
+    match a slug and return error JSON — they cannot escape to the filesystem.
+    """
+    import re as _re
+    root = Path(__file__).resolve().parent.parent
+    guide_path = root / "docs" / "COACHING_GUIDE.md"
+    try:
+        content = guide_path.read_text(encoding="utf-8")
+    except OSError:
+        return json.dumps({"error": "COACHING_GUIDE.md not found"})
+
+    # Normalize topic slug: strip, lowercase, spaces/underscores -> hyphens
+    slug = topic.strip().lower().replace(" ", "-").replace("_", "-")
+
+    # Find section by exact anchor <!-- SECTION: slug -->
+    pattern = _re.compile(
+        r"<!-- SECTION: " + _re.escape(slug) + r" -->(.*?)(?=<!-- SECTION:|$)",
+        _re.DOTALL | _re.IGNORECASE,
+    )
+    m = pattern.search(content)
+    if m:
+        return json.dumps({"topic": slug, "content": m.group(1).strip()})
+
+    # Fuzzy fallback: first section whose anchor contains any word of the query
+    for word in slug.split("-"):
+        if not word:
+            continue
+        fallback = _re.compile(
+            r"<!-- SECTION: [^>]*" + _re.escape(word) + r"[^>]* -->(.*?)(?=<!-- SECTION:|$)",
+            _re.DOTALL | _re.IGNORECASE,
+        )
+        fm = fallback.search(content)
+        if fm:
+            return json.dumps({"topic": slug, "content": fm.group(1).strip()})
+
+    return json.dumps({"error": f"Section '{topic}' not found in COACHING_GUIDE.md"})
+
+
 def _handle_update_training_profile(patch: dict) -> str:
     """PROFILE-04 brain-direct: merge a patch into users/amit profile."""
     from memory.firestore_db import UserProfileStore
@@ -1493,6 +1572,8 @@ _HANDLERS: dict[str, object] = {
     "update_training_profile": lambda args: _handle_update_training_profile(**args),
     # Phase 21 Plan 02 — update_plan alias (PLAN-03 / SC-3): same handler as above
     "update_plan":             lambda args: _handle_update_training_profile(**args),
+    # Phase 22 — coaching guide on-demand lookup (COACH-01)
+    "read_coaching_guide":     lambda args: _handle_read_coaching_guide(**args),
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     "get_acwr":                lambda args: _handle_get_acwr(),

@@ -218,6 +218,11 @@ class AgentOrchestrator:
         # before dynamic content ({today_date}) for Gemini prompt caching.
         self._self_md_content = _load_self_md()
 
+        # Load slim coaching guide digest once at startup.
+        # Per D-04: only the slim core digest (~200-300 lines) is injected as a
+        # stable cached prefix. The full guide is read on-demand by read_coaching_guide().
+        self._coaching_guide_content = _load_coaching_guide_slim()
+
         # Bootstrap self_state in Firestore on first startup (D-04).
         # If the config/self_state doc doesn't exist, seed it with identity_summary
         # from SELF.md intro paragraph. Never blocks startup on failure.
@@ -413,13 +418,15 @@ class AgentOrchestrator:
 
                 training_profile_snippet = "\n".join(lines)
 
+        coaching_guide_content = getattr(self, "_coaching_guide_content", "")
         return (
             template
-            .replace("{self_md}", self._self_md_content)      # stable — benefits from cache
-            .replace("{self_state}", self_state_snippet)       # volatile — after stable
-            .replace("{journal_digest}", journal_digest)       # Phase 17 — smart-only (D-15)
-            .replace("{training_profile}", training_profile_snippet)  # PHASE 19 — PROMPT-01
-            .replace("{today_date}", today_label)              # dynamic — always last
+            .replace("{coaching_guide}", coaching_guide_content)         # PHASE 22 — stable, first
+            .replace("{self_md}", self._self_md_content)                 # stable — benefits from cache
+            .replace("{self_state}", self_state_snippet)                 # volatile — after stable
+            .replace("{journal_digest}", journal_digest)                 # Phase 17 — smart-only (D-15)
+            .replace("{training_profile}", training_profile_snippet)     # PHASE 19 — PROMPT-01
+            .replace("{today_date}", today_label)                        # dynamic — always last
         )
 
     def handle_message(
@@ -767,6 +774,49 @@ def _load_self_md() -> str:
     except OSError:
         logger.warning("SELF.md not found at %s — self-knowledge injection disabled", self_md_path)
         return ""
+
+
+def _load_coaching_guide_slim() -> str:
+    """Read the slim core digest block from docs/COACHING_GUIDE.md.
+
+    Extracts only the content between <!-- SLIM_CORE_START --> and
+    <!-- SLIM_CORE_END --> markers. Returns empty string if file absent
+    or markers not found. Called once at startup; stored on orchestrator.
+    Per D-04: only the slim core (~200-300 lines) is injected as a
+    stable cached prefix. Full guide is read on-demand by read_coaching_guide().
+    """
+    import re as _re
+    root = Path(__file__).resolve().parent.parent
+    guide_path = root / "docs" / "COACHING_GUIDE.md"
+    try:
+        content = guide_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning(
+            "COACHING_GUIDE.md not found at %s — coaching knowledge injection disabled",
+            guide_path,
+        )
+        return ""
+    # Extract slim core block between markers
+    m = _re.search(
+        r"<!-- SLIM_CORE_START -->(.*?)<!-- SLIM_CORE_END -->",
+        content,
+        _re.DOTALL,
+    )
+    if not m:
+        logger.warning(
+            "COACHING_GUIDE.md: <!-- SLIM_CORE_START/END --> markers not found — "
+            "returning empty coaching injection"
+        )
+        return ""
+    slim = m.group(1).strip()
+    # Sanity guard: warn if the slim core is suspiciously large (Pitfall 2)
+    if len(slim) > 10_000:
+        logger.warning(
+            "COACHING_GUIDE.md slim core is %d chars — larger than expected (~4000). "
+            "Check SLIM_CORE_START/END markers.",
+            len(slim),
+        )
+    return slim
 
 
 def _extract_intro_paragraph(self_md_content: str) -> str:

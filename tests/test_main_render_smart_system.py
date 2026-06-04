@@ -110,6 +110,7 @@ _install_firestore_mock()
 def _make_orchestrator(
     *,
     self_md: str = "SELF.MD-CONTENT",
+    coaching_guide_content: str = "COACHING-GUIDE-SLIM",  # Phase 22 addition
     self_state_store=None,
     journal_store=None,
 ):
@@ -122,6 +123,7 @@ def _make_orchestrator(
     from core.main import AgentOrchestrator
     orchestrator = AgentOrchestrator.__new__(AgentOrchestrator)
     orchestrator._self_md_content = self_md
+    orchestrator._coaching_guide_content = coaching_guide_content  # Phase 22
     orchestrator._self_state_store = self_state_store
     orchestrator._journal_store = journal_store
     orchestrator._smart_prompt_template = (
@@ -473,3 +475,135 @@ def test_handle_message_uses_render_smart_system():
     assert ".replace(\"{self_md}\"" not in source, (
         "handle_message still contains inline render — refactor incomplete"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 Plan 02 — coaching guide slim-core injection (COACH-01)
+# ---------------------------------------------------------------------------
+
+def test_render_substitutes_coaching_guide():
+    """{coaching_guide} is replaced with the orchestrator's _coaching_guide_content."""
+    orch = _make_orchestrator(coaching_guide_content="COACHING-SLIM-BLOCK")
+    out = orch.render_smart_system("Header\n{coaching_guide}\nFooter")
+    assert "COACHING-SLIM-BLOCK" in out
+    assert "{coaching_guide}" not in out
+
+
+def test_render_coaching_guide_empty_no_literal_placeholder():
+    """When _coaching_guide_content is '', {coaching_guide} resolves to '' not literal."""
+    orch = _make_orchestrator(coaching_guide_content="")
+    out = orch.render_smart_system("A\n{coaching_guide}\nB")
+    assert "{coaching_guide}" not in out
+
+
+def test_render_no_unresolved_placeholders_includes_coaching_guide():
+    """After rendering, {coaching_guide} (plus original 4 tokens) must not survive."""
+    orch = _make_orchestrator()
+    template = (
+        "{coaching_guide}\n{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n"
+    )
+    out = orch.render_smart_system(template)
+    for token in ("{coaching_guide}", "{self_md}", "{self_state}", "{journal_digest}", "{today_date}"):
+        assert token not in out, f"placeholder {token} survived render"
+
+
+def test_load_coaching_guide_slim_size_guard():
+    """_load_coaching_guide_slim against the real COACHING_GUIDE.md is < 350 lines / < 15000 chars.
+
+    This is the Pitfall-2 gate: ensures only the slim-core block (not the full guide)
+    is injected into every brain system prompt.
+    """
+    from core.main import _load_coaching_guide_slim
+    result = _load_coaching_guide_slim()
+    # Must return non-empty (markers present in docs/COACHING_GUIDE.md)
+    assert result != "", "slim core returned empty — SLIM_CORE_START/END markers missing or file absent"
+    lines = result.splitlines()
+    assert len(lines) < 350, f"slim core too large: {len(lines)} lines (limit 350)"
+    assert len(result) < 15_000, f"slim core too large: {len(result)} chars (limit 15000)"
+
+
+def test_load_coaching_guide_slim_missing_markers(monkeypatch):
+    """When SLIM_CORE markers are absent from the guide, loader returns '' with a warning."""
+    import core.main as main_module
+
+    # Patch read_text to return content without markers
+    _content_no_markers = "# No markers here\nJust plain content.\n"
+
+    class _FakePath:
+        def __init__(self, *args, **kwargs):
+            import pathlib
+            self._inner = pathlib.Path(*args, **kwargs)
+
+        def __truediv__(self, other):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner / other
+            return result
+
+        def resolve(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.resolve()
+            return result
+
+        @property
+        def parent(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.parent
+            return result
+
+        @property
+        def parts(self):
+            return self._inner.parts
+
+        def read_text(self, encoding="utf-8"):
+            if "COACHING_GUIDE.md" in str(self._inner):
+                return _content_no_markers
+            return self._inner.read_text(encoding=encoding)
+
+        def __str__(self):
+            return str(self._inner)
+
+    monkeypatch.setattr(main_module, "Path", _FakePath)
+    result = main_module._load_coaching_guide_slim()
+    assert result == "", f"Expected '' for missing markers, got: {result!r}"
+
+
+def test_load_coaching_guide_slim_file_absent(monkeypatch):
+    """When COACHING_GUIDE.md is absent, loader returns '' (no exception raised)."""
+    import core.main as main_module
+
+    class _FakePath:
+        def __init__(self, *args, **kwargs):
+            import pathlib
+            self._inner = pathlib.Path(*args, **kwargs)
+
+        def __truediv__(self, other):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner / other
+            return result
+
+        def resolve(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.resolve()
+            return result
+
+        @property
+        def parent(self):
+            result = _FakePath.__new__(_FakePath)
+            result._inner = self._inner.parent
+            return result
+
+        @property
+        def parts(self):
+            return self._inner.parts
+
+        def read_text(self, encoding="utf-8"):
+            if "COACHING_GUIDE.md" in str(self._inner):
+                raise OSError("file not found")
+            return self._inner.read_text(encoding=encoding)
+
+        def __str__(self):
+            return str(self._inner)
+
+    monkeypatch.setattr(main_module, "Path", _FakePath)
+    result = main_module._load_coaching_guide_slim()
+    assert result == "", f"Expected '' for missing file, got: {result!r}"
