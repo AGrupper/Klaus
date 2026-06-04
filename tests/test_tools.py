@@ -473,3 +473,152 @@ class TestMemorySingletonsConstruct:
 
         tool = tools._get_memory_tool()
         assert isinstance(tool, MemoryTool)
+
+
+# ============================================================
+# Phase 21 Plan 02 — update_plan alias + JSON-safe get handler
+# ============================================================
+
+
+class TestPhase21UpdatePlanAlias:
+    """PLAN-03: update_plan alias and JSON-safe get_training_profile.
+
+    Covers three behaviours:
+      1. _HANDLERS["update_plan"] dispatches to the same merge-write as
+         update_training_profile — store.update() is called with the patch.
+      2. A patch containing a new structured key (dated_goals) passes through
+         unchanged (no allow-list rejection).
+      3. _handle_get_training_profile returns parseable JSON even when
+         store.load() returns a dict whose updated_at is a datetime
+         (DatetimeWithNanoseconds-like) — json.loads succeeds and the value
+         is a str, not a raw datetime.
+
+    Mock strategy: patch UserProfileStore at the import site used by the
+    handler (memory.firestore_db.UserProfileStore) and set required env vars
+    via monkeypatch so the handler can construct the store.
+    """
+
+    def test_update_plan_in_handlers(self):
+        """update_plan must be present in _HANDLERS dispatch table."""
+        assert "update_plan" in tools._HANDLERS
+
+    def test_update_plan_in_smart_agent_direct_tools(self):
+        """update_plan must be a brain-direct tool (in SMART_AGENT_DIRECT_TOOLS)."""
+        assert "update_plan" in tools.SMART_AGENT_DIRECT_TOOLS
+
+    def test_update_plan_schema_registered(self):
+        """update_plan must have a schema entry in TOOL_SCHEMAS."""
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "update_plan" in names
+
+    def test_update_plan_schema_requires_patch(self):
+        """update_plan schema must require 'patch' argument."""
+        schema = next(s for s in tools.TOOL_SCHEMAS if s["name"] == "update_plan")
+        assert "patch" in schema["input_schema"]["required"]
+
+    def test_update_plan_calls_store_update(self, monkeypatch):
+        """_HANDLERS['update_plan'] calls UserProfileStore.update with the patch."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        mock_store = MagicMock()
+        mock_store_cls = MagicMock(return_value=mock_store)
+
+        with patch("memory.firestore_db.UserProfileStore", mock_store_cls):
+            result = tools._HANDLERS["update_plan"](
+                {"patch": {"dated_goals": [{"target_date": "2026-10-01", "goal_label": "bench", "metric": "100kg"}]}}
+            )
+
+        assert mock_store.update.called
+        call_args = mock_store.update.call_args[0][0]
+        assert "dated_goals" in call_args
+        parsed = json.loads(result)
+        assert parsed.get("ok") is True
+
+    def test_update_plan_new_structured_key_passes_through(self, monkeypatch):
+        """Patch with a new structured key (dated_goals list) passes through unchanged."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        mock_store = MagicMock()
+        mock_store_cls = MagicMock(return_value=mock_store)
+
+        patch_payload = {
+            "dated_goals": [
+                {"target_date": "2026-10-01", "goal_label": "bench", "metric": "100kg"}
+            ]
+        }
+
+        with patch("memory.firestore_db.UserProfileStore", mock_store_cls):
+            tools._HANDLERS["update_plan"]({"patch": patch_payload})
+
+        called_patch = mock_store.update.call_args[0][0]
+        assert called_patch == patch_payload
+
+    def test_update_plan_and_update_training_profile_identical_writes(self, monkeypatch):
+        """update_plan and update_training_profile must call store.update with the same patch."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        patch_payload = {"weekly_split": {"Monday": {"AM": "run", "PM": "rest"}}}
+
+        calls_utp: list = []
+        calls_up: list = []
+
+        mock_store_utp = MagicMock()
+        mock_store_utp.update.side_effect = lambda p: calls_utp.append(p)
+
+        mock_store_up = MagicMock()
+        mock_store_up.update.side_effect = lambda p: calls_up.append(p)
+
+        with patch("memory.firestore_db.UserProfileStore", MagicMock(return_value=mock_store_utp)):
+            tools._HANDLERS["update_training_profile"]({"patch": patch_payload})
+
+        with patch("memory.firestore_db.UserProfileStore", MagicMock(return_value=mock_store_up)):
+            tools._HANDLERS["update_plan"]({"patch": patch_payload})
+
+        assert calls_utp == calls_up
+
+    def test_get_training_profile_json_safe_with_datetime(self, monkeypatch):
+        """_handle_get_training_profile returns parseable JSON when updated_at is a datetime."""
+        from datetime import datetime, timezone
+
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        # Simulate a DatetimeWithNanoseconds-like value (a datetime with isoformat)
+        fake_updated_at = datetime(2026, 6, 4, 12, 0, 0, tzinfo=timezone.utc)
+        profile_doc = {
+            "athletic_goals": ["run a marathon"],
+            "dated_goals": [],
+            "updated_at": fake_updated_at,
+        }
+
+        mock_store = MagicMock()
+        mock_store.load.return_value = profile_doc
+        mock_store_cls = MagicMock(return_value=mock_store)
+
+        with patch("memory.firestore_db.UserProfileStore", mock_store_cls):
+            result = tools._handle_get_training_profile()
+
+        # Must not raise; must be valid JSON
+        parsed = json.loads(result)
+        # updated_at must be a string (ISO-converted), not a raw datetime
+        assert isinstance(parsed["updated_at"], str)
+        assert "2026" in parsed["updated_at"]
+
+    def test_update_training_profile_schema_has_new_keys(self):
+        """update_training_profile description must advertise the 6 new structured keys."""
+        schema = next(
+            s for s in tools.TOOL_SCHEMAS if s["name"] == "update_training_profile"
+        )
+        desc = schema["description"] + schema["input_schema"]["properties"]["patch"]["description"]
+        for key in (
+            "dated_goals",
+            "weekly_split",
+            "nutrition_targets",
+            "supplement_schedule",
+            "fueling_timeline",
+            "plan_start_date",
+        ):
+            assert key in desc, f"Key '{key}' missing from update_training_profile schema description"
