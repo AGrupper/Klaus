@@ -43,7 +43,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   3. Amit can say "update my bench goal to 105kg" or "change Thursday to rest day" and Klaus reasons against the updated plan on the very next turn
   4. The `training_profile` section in the smart agent prompt reflects blueprint fields and frames them as a coaching reference guide, not a rigid contract
 **Plans**: 4 plans
-- [ ] 21-01-PLAN.md — Expand UserProfileStore schema to v4.0 structured fields (dated_goals, weekly_split, nutrition_targets, supplement_schedule, fueling_timeline, plan_start_date)
+- [x] 21-01-PLAN.md — Expand UserProfileStore schema to v4.0 structured fields (dated_goals, weekly_split, nutrition_targets, supplement_schedule, fueling_timeline, plan_start_date)
 - [ ] 21-02-PLAN.md — update_plan tool + extended update schema + JSON-safe get_training_profile handler
 - [ ] 21-03-PLAN.md — scripts/ingest_blueprint.py: idempotent blueprint → structured Firestore ingest (dry-run/force)
 - [ ] 21-04-PLAN.md — Coaching-reference prose rendering + prompt reframe + v3.0 cron-regression check
@@ -98,7 +98,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 21. Living Plan Ingestion | 0/TBD | Not started | - |
+| 21. Living Plan Ingestion | 1/4 | In Progress|  |
 | 22. Expert Coaching Knowledge + D-13 Release | 0/TBD | Not started | - |
 | 23. Block + Benchmark Tracking | 0/TBD | Not started | - |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |

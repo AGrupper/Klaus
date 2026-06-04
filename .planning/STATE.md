@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
 status: executing
 stopped_at: Roadmap created, requirements traceability filled, STATE.md initialized
-last_updated: "2026-06-03T20:42:31.136Z"
-last_activity: 2026-06-03 -- Phase 21 planning complete
+last_updated: "2026-06-04T07:25:18.665Z"
+last_activity: 2026-06-04 -- Phase 21 execution started
 progress:
   total_phases: 5
   completed_phases: 0
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 21 of 25 (Living Plan Ingestion) — ready to plan
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-03 -- Phase 21 planning complete
+Phase: 21 (living-plan-ingestion) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 21
+Last activity: 2026-06-04 -- Phase 21 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -30,7 +30,7 @@ Progress: [░░░░░░░░░░] 0%
 See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 21 — Living Plan Ingestion. Master gate: populate `UserProfileStore` with structured blueprint fields before any downstream coaching specificity can ship.
+**Current focus:** Phase 21 — living-plan-ingestion
 
 ## Architecture (current)
 
