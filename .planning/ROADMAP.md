@@ -74,7 +74,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   3. The benchmark prompt includes a biometric validity gate: it defers (with explanation) when HRV is below 70% of 7-day baseline or ACWR is above 1.2
   4. Klaus records a benchmark result via `log_benchmark` and can surface a facet's history across blocks (e.g., "bench press: 80kg Block 1 → 85kg Block 2")
 **Plans**: 4 plans
-- [ ] 23-01-PLAN.md — BlockStore + BenchmarkStore + UserProfileStore.current_block_id + idempotent seed script + Wave-0 store tests (foundation)
+- [x] 23-01-PLAN.md — BlockStore + BenchmarkStore + UserProfileStore.current_block_id + idempotent seed script + Wave-0 store tests (foundation)
 - [ ] 23-02-PLAN.md — 6 brain-direct tools (get_plan, get_block_status, log_benchmark, get_benchmark_history, start_block, end_block) + registration tests
 - [ ] 23-03-PLAN.md — benchmark_due state machine + HRV/ACWR validity gate + re-prompt/stale-window in the 21:30 cron + proactive_alert.md rendering
 - [ ] 23-04-PLAN.md — Block-state gather + "Week N of 16" framing in morning briefing & Sunday weekly review (+ both prompt files)
@@ -108,7 +108,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 |-------|----------------|--------|-----------|
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
-| 23. Block + Benchmark Tracking | 0/4 | Planned | - |
+| 23. Block + Benchmark Tracking | 1/4 | In Progress|  |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
 
