@@ -15,9 +15,16 @@ capability: he reads his own 3-year Garmin history + Lifesum nutrition (via the 
 HealthKit bridge → `MealStore`), runs an evidence-first 21:30 training check-in with
 inline-keyboard logging, surfaces recovery state (ACWR / HRV / sleep) in the morning
 briefing and evening alert, and sends a Sunday weekly training review. The
-accountability **loop** is live and verified end-to-end (19/19 + live UAT). Personalized
-targets are intentionally deferred — the `UserProfileStore` scaffold is still empty, so
-coaching stays *qualitative* under the D-13 no-fabrication guard.
+accountability **loop** is live and verified end-to-end (19/19 + live UAT).
+
+**v4.0 in progress (2/5 phases):** Phase 21 ingested Amit's Hybrid Athlete blueprint
+into `UserProfileStore` as a structured living guide (editable via `update_plan`). Phase 22
+made Klaus a genuinely *expert, specific* coach: curated source-tier-tagged knowledge
+(`docs/COACHING_GUIDE.md`) on every brain call + cron, and **the D-13 no-fabrication guard
+is released** — replaced by a recency-windowed Tier A/B data-presence contract, so Klaus now
+names real numbers, prescribes specific session/load/rationale, and volunteers structural
+critique (recommend-not-rewrite). Verified live on Telegram 2026-06-05. Next: blocks +
+benchmarks (Phase 23).
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
@@ -87,6 +94,9 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated g
 - ✓ Recovery-aware morning briefing + evening alert (`compute_recovery_concern`, no-fabrication guard) — v3.0 (Phase 20)
 - ✓ Sunday weekly training review cron (brain-composed scorecard) — v3.0 (Phase 20)
 - ✓ Workouts Klaus creates route to the `Training` calendar; `get_training_history` JSON-safe — v3.0 (post-ship UAT fixes)
+- ✓ Blueprint ingested as a *living guide* in `UserProfileStore` (structured dated_goals / weekly_split / nutrition_targets / supplement_schedule / fueling_timeline / plan_start_date); `update_plan` tool edits it on the next turn — v4.0 (Phase 21) — PLAN-01/02/03
+- ✓ Curated expert coaching knowledge (`docs/COACHING_GUIDE.md`: slim core on every brain call + 10 anchored deep sections via brain-direct `read_coaching_guide`) wired into every coaching prompt + cron — v4.0 (Phase 22) — COACH-01
+- ✓ D-13 no-fabrication guard released → recency-windowed Tier A/B data-presence contract; Klaus names real numbers, specific session/load/rationale, and volunteers structural critique (recommend-not-rewrite) — verified live 2026-06-05 — v4.0 (Phase 22) — COACH-02/06/07
 
 ### Active (v4.0 — Specific Training & Nutrition Coaching)
 
