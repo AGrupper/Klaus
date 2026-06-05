@@ -145,6 +145,8 @@ class UserProfileStore:
         "fueling_timeline": [],       # [{slot, timing, content, notes}] 6-slot fueling arch
         "plan_start_date": "",        # "2026-06-21" — Block Week 1 anchor for Phase 23
         "schema_version": 2,          # bumped from 1 → 2 at Phase 21
+        # Phase 23 — block tracking FK
+        "current_block_id": None,     # FK → training_blocks doc id (primed by seed_training_blocks.py)
         # Legacy fields — retained for backward compatibility
         "athletic_goals": [],         # read by weekly_training_review.py:188 — do NOT remove
         "training_constraints": [],   # kept for forward-compat
@@ -1481,6 +1483,351 @@ class TickLogStore:
                 "TickLogStore.write(%r, %r) failed (non-fatal)",
                 date_str, tick_time, exc_info=True,
             )
+
+
+def get_week_num(plan_start_date: str, today: str) -> int | None:
+    """Return the 1-based week number for ``today`` relative to ``plan_start_date``.
+
+    Returns None when ``today`` is before ``plan_start_date`` (pre-cycle).
+
+    Formula (D-03): ``(today - start).days // 7 + 1``
+    Week 1 = days 0..6 inclusive; week 2 = days 7..13; etc.
+
+    Args:
+        plan_start_date: ISO date string "YYYY-MM-DD" (e.g. "2026-06-21").
+        today:           ISO date string "YYYY-MM-DD" representing today.
+
+    Returns:
+        1-based week number, or None if today < plan_start_date.
+    """
+    from datetime import date as _date
+    start = _date.fromisoformat(plan_start_date)
+    today_dt = _date.fromisoformat(today)
+    if today_dt < start:
+        return None
+    return (today_dt - start).days // 7 + 1
+
+
+# 5-facet closed set for benchmark validation (D-06 / T-23-01)
+_BENCHMARK_FACETS: frozenset[str] = frozenset({
+    "bench_press_1rm",
+    "squat_1rm",
+    "push_ups",
+    "pull_ups",
+    "threshold_pace",
+})
+
+
+class BlockStore:
+    """Training block tracking stored in Firestore (Phase 23 — BLOCK-01).
+
+    Collection: training_blocks
+    Document ID: {YYYY-MM-DD}_{label_slug} (e.g. "2026-06-21_aerobic_base")
+
+    Schema fields:
+        block_id:             str  — same as doc id: "{YYYY-MM-DD}_{label_slug}"
+        label:                str  — "Aerobic Base", "Capacity Build", etc.
+        start_date:           str  — YYYY-MM-DD (stored as string, not timestamp)
+        end_date:             str  — YYYY-MM-DD (stored as string, not timestamp)
+        focus_facets:         list — ["bench_press_1rm", "squat_1rm", ...]
+        weekly_split_override:dict|None — None for auto-seeded blocks
+        status:               str  — "active"|"complete"|"abandoned"|"pending"
+                                     BOOKKEEPING ONLY — get_current does NOT filter on status
+        notes:                str  — ""
+        benchmark_due:        bool — False until deload week triggers it
+        created_at:           SERVER_TIMESTAMP
+        updated_at:           SERVER_TIMESTAMP
+
+    get_current() resolution semantics (D-01 — the critical contract):
+        Resolves by DATE RANGE (start_date <= today <= end_date) across all seeded
+        blocks. Does NOT filter on status=active. This means Block 1 → Block 2
+        transitions are automatic as time advances, even if start_block() is never
+        called. The `status` field is bookkeeping for the current_block_id FK —
+        not a precondition of get_current's correctness.
+
+    Read discipline: get_current / get_all never raise (return None/[] on error).
+    Write discipline: upsert / set_benchmark_due / start_block / end_block re-raise.
+    """
+
+    _COLLECTION = "training_blocks"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def get_current(self, today: str | None = None) -> dict | None:
+        """Return the block whose date range contains today — or None if none matches.
+
+        Resolution is DATE-RANGE based (D-01): start_date <= today <= end_date.
+        Does NOT filter on status field — status is bookkeeping only.
+        If multiple blocks overlap (should not happen with contiguous seed), returns
+        the one with the earliest start_date.
+
+        Args:
+            today: ISO date string "YYYY-MM-DD". Defaults to current date when None.
+
+        Returns:
+            Block dict with doc_id attached, or None (pre/post-cycle or on error).
+            Never raises.
+        """
+        try:
+            if today is None:
+                from datetime import date as _date
+                today = _date.today().isoformat()
+            snaps = list(self._col.stream())
+            matches = []
+            for snap in snaps:
+                d = _jsonsafe_doc(snap.to_dict() or {})
+                d["doc_id"] = snap.id
+                start = d.get("start_date", "")
+                end = d.get("end_date", "")
+                if start and end and start <= today <= end:
+                    matches.append(d)
+            if not matches:
+                return None
+            # If multiple (shouldn't happen with contiguous seed), return earliest start
+            matches.sort(key=lambda b: b.get("start_date", ""))
+            return matches[0]
+        except Exception:
+            logger.warning("BlockStore.get_current() failed", exc_info=True)
+            return None
+
+    def get_all(self) -> list[dict]:
+        """Return all training block docs, unordered, with doc_id.
+
+        Never raises — returns [] on any Firestore error.
+        """
+        try:
+            snaps = list(self._col.stream())
+            results = []
+            for snap in snaps:
+                d = _jsonsafe_doc(snap.to_dict() or {})
+                d["doc_id"] = snap.id
+                results.append(d)
+            return results
+        except Exception:
+            logger.warning("BlockStore.get_all() failed", exc_info=True)
+            return []
+
+    def upsert(self, block: dict) -> None:
+        """Write or merge a block doc. Re-raises on Firestore failure.
+
+        Uses merge=True so partial updates (e.g. set_benchmark_due) are safe.
+        Stamps created_at and updated_at with SERVER_TIMESTAMP.
+
+        Args:
+            block: Block dict. Must include 'block_id' key (used as doc id).
+
+        Raises:
+            Exception: Re-raises any Firestore write failure.
+        """
+        doc_id = block["block_id"]
+        payload = {
+            **block,
+            "created_at": firestore.SERVER_TIMESTAMP,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        try:
+            self._col.document(doc_id).set(payload, merge=True)
+        except Exception:
+            logger.error("BlockStore.upsert(%r) failed", doc_id, exc_info=True)
+            raise
+
+    def set_benchmark_due(self, block_id: str, due: bool) -> None:
+        """Set or clear the benchmark_due flag on an existing block.
+
+        Uses merge=True — touches only benchmark_due and updated_at.
+
+        Args:
+            block_id: Block doc ID.
+            due:      True to mark benchmark due; False to clear.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure.
+        """
+        try:
+            self._col.document(block_id).set(
+                {"benchmark_due": due, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("BlockStore.set_benchmark_due(%r, %r) failed", block_id, due, exc_info=True)
+            raise
+
+    def start_block(self, block_id: str) -> None:
+        """Set status='active' on a block (bookkeeping — not a precondition of get_current).
+
+        Also updates the updated_at timestamp via merge.
+
+        Args:
+            block_id: Block doc ID.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure.
+        """
+        try:
+            self._col.document(block_id).set(
+                {"status": "active", "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("BlockStore.start_block(%r) failed", block_id, exc_info=True)
+            raise
+
+    def end_block(self, block_id: str) -> None:
+        """Set status='complete' on a block (bookkeeping — not a precondition of get_current).
+
+        Also updates the updated_at timestamp via merge.
+
+        Args:
+            block_id: Block doc ID.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure.
+        """
+        try:
+            self._col.document(block_id).set(
+                {"status": "complete", "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("BlockStore.end_block(%r) failed", block_id, exc_info=True)
+            raise
+
+
+class BenchmarkStore:
+    """Per-facet benchmark results stored in Firestore (Phase 23 — BLOCK-03).
+
+    Collection: benchmarks
+    Document ID: {YYYY-MM-DD}_{facet} (e.g. "2026-07-18_bench_press_1rm")
+
+    Schema fields:
+        date:       str   — YYYY-MM-DD
+        facet:      str   — one of the 5-facet closed set (D-06)
+        value:      float — numeric result
+        unit:       str   — "kg" | "reps" | "sec_per_km"
+        block_id:   str   — FK → training_blocks doc id
+        notes:      str   — optional note (e.g. "Epley estimate from 85kg×5")
+        updated_at: SERVER_TIMESTAMP
+
+    Idempotency: doc_id = "{date}_{facet}" — logging the same facet on the same date
+    merges (merge=True), so retries are safe.
+
+    Input validation (T-23-01): log_benchmark raises ValueError for any facet outside
+    the 5-facet closed set (_BENCHMARK_FACETS) — prevents arbitrary doc creation from
+    LLM-supplied facet strings.
+
+    Read discipline: get_facet_history / get_block_benchmarks never raise (return []).
+    Write discipline: log_benchmark re-raises on Firestore failure.
+    """
+
+    _COLLECTION = "benchmarks"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def log_benchmark(
+        self,
+        date: str,
+        facet: str,
+        value: float,
+        unit: str,
+        block_id: str,
+        notes: str = "",
+    ) -> None:
+        """Write one benchmark result to benchmarks/{date}_{facet}.
+
+        Idempotent via merge=True — safe to call multiple times for the same
+        (date, facet) pair (updates the value, e.g. on correction).
+
+        Args:
+            date:     YYYY-MM-DD date of the benchmark session.
+            facet:    One of the 5 valid facets (T-23-01 validation).
+            value:    Numeric result.
+            unit:     "kg" | "reps" | "sec_per_km"
+            block_id: FK to the training_blocks collection.
+            notes:    Optional context note.
+
+        Raises:
+            ValueError:  If facet is not in the 5-facet closed set (T-23-01).
+            Exception:   Re-raises any Firestore write failure.
+        """
+        if facet not in _BENCHMARK_FACETS:
+            raise ValueError(
+                f"Unknown facet {facet!r}. Valid facets: {sorted(_BENCHMARK_FACETS)}"
+            )
+        doc_id = f"{date}_{facet}"
+        payload = {
+            "date": date,
+            "facet": facet,
+            "value": value,
+            "unit": unit,
+            "block_id": block_id,
+            "notes": notes,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        try:
+            self._col.document(doc_id).set(payload, merge=True)
+        except Exception:
+            logger.error("BenchmarkStore.log_benchmark(%r) failed", doc_id, exc_info=True)
+            raise
+
+    def get_facet_history(self, facet: str, n: int = 10) -> list[dict]:
+        """Return the last n benchmark entries for a specific facet, sorted date-desc.
+
+        Streams all benchmark docs, filters by facet in Python, sorts, and caps.
+
+        Args:
+            facet: Facet to filter by (e.g. "bench_press_1rm").
+            n:     Maximum number of records to return (default 10).
+
+        Returns:
+            List of benchmark dicts, each with doc_id, sorted date desc.
+            Empty list on any error — never raises.
+        """
+        try:
+            snaps = list(self._col.stream())
+            results = []
+            for snap in snaps:
+                d = _jsonsafe_doc(snap.to_dict() or {})
+                d["doc_id"] = snap.id
+                if d.get("facet") == facet:
+                    results.append(d)
+            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+            return results[:n]
+        except Exception:
+            logger.warning("BenchmarkStore.get_facet_history(%r) failed", facet, exc_info=True)
+            return []
+
+    def get_block_benchmarks(self, block_id: str) -> list[dict]:
+        """Return all benchmarks for a given block, sorted date-desc.
+
+        Uses a server-side FieldFilter on block_id.
+
+        Args:
+            block_id: FK to the training_blocks collection.
+
+        Returns:
+            List of benchmark dicts with doc_id, sorted date desc.
+            Empty list on any error — never raises.
+        """
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            snaps = list(
+                self._col.where(filter=FieldFilter("block_id", "==", block_id)).stream()
+            )
+            results = [
+                {**_jsonsafe_doc(snap.to_dict() or {}), "doc_id": snap.id}
+                for snap in snaps
+            ]
+            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+            return results
+        except Exception:
+            logger.warning(
+                "BenchmarkStore.get_block_benchmarks(%r) failed", block_id, exc_info=True
+            )
+            return []
 
 
 def _smoke_test() -> int:

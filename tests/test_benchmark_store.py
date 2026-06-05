@@ -68,6 +68,18 @@ def _install_firestore_mock() -> MagicMock:
     sys.modules.setdefault("google.oauth2", MagicMock())
     sys.modules.setdefault("google.oauth2.service_account", MagicMock())
 
+    # Mock google.cloud.firestore_v1.base_query so FieldFilter imports succeed
+    # in BenchmarkStore.get_block_benchmarks (and BlockStore equivalents).
+    field_filter_cls = MagicMock()
+    base_query_mod = ModuleType("google.cloud.firestore_v1.base_query")
+    base_query_mod.FieldFilter = field_filter_cls  # type: ignore[attr-defined]
+    firestore_v1_mod = ModuleType("google.cloud.firestore_v1")
+    firestore_v1_mod.__path__ = []  # type: ignore[attr-defined]
+    firestore_v1_mod.base_query = base_query_mod  # type: ignore[attr-defined]
+    sys.modules["google.cloud.firestore_v1"] = firestore_v1_mod
+    sys.modules["google.cloud.firestore_v1.base_query"] = base_query_mod
+    setattr(google_cloud_mod, "firestore_v1", firestore_v1_mod)
+
     dotenv_mod = MagicMock()
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules.setdefault("dotenv", dotenv_mod)
