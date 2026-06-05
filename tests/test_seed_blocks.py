@@ -219,8 +219,9 @@ def test_blocks_remaining_status_pending():
 
 def test_seed_idempotent():
     """seed_if_absent with existing blocks and force=False returns False (no overwrite)."""
-    with patch("seed_training_blocks.BlockStore") as MockBlockStore, \
-         patch("seed_training_blocks.UserProfileStore"):
+    # BlockStore is imported inside seed_if_absent, so patch it at the source module.
+    with patch("memory.firestore_db.BlockStore") as MockBlockStore, \
+         patch("memory.firestore_db.UserProfileStore"):
         # Simulate BlockStore.get_all() returning existing blocks (non-empty)
         instance = MockBlockStore.return_value
         instance.get_all.return_value = [{"block_id": "existing"}]
@@ -238,11 +239,12 @@ def test_seed_idempotent():
 
 def test_seed_force_overwrites():
     """seed_if_absent with force=True upserts blocks even when they already exist."""
-    with patch("seed_training_blocks.BlockStore") as MockBlockStore, \
-         patch("seed_training_blocks.UserProfileStore") as MockUserProfileStore:
+    # BlockStore is imported inside seed_if_absent, so patch it at the source module.
+    with patch("memory.firestore_db.BlockStore") as MockBlockStore, \
+         patch("memory.firestore_db.UserProfileStore") as MockUserProfileStore:
         instance = MockBlockStore.return_value
         instance.get_all.return_value = [{"block_id": "existing"}]  # non-empty
-        profile_instance = MockUserProfileStore.return_value
+        profile_instance = MockUserProfileStore.return_value  # noqa: F841
 
         result = seed_if_absent(
             project_id="test-project",
