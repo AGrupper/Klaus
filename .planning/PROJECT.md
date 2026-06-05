@@ -171,4 +171,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-03 — v4.0 (Specific Training & Nutrition Coaching) milestone scoped and started.*
+*Last updated: 2026-06-05 — Phase 22 (Expert Coaching Knowledge + D-13 Release) complete; 2/5 v4.0 phases done.*
