@@ -584,19 +584,22 @@ FROM (
 
 ## Open Questions
 
-1. **HRV 7-day baseline: is it in `compute_recovery_concern()` return dict or must it be computed separately?**
+1. **HRV 7-day baseline: is it in `compute_recovery_concern()` return dict or must it be computed separately?** **(RESOLVED)**
    - What we know: `compute_recovery_concern()` in `core/training_checkin.py` returns a dict with `level`, `acwr`, `hrv_status`, `sleep_score`, `intensity`. `hrv_status` is likely a pass/fail string, not the raw baseline number.
    - What's unclear: Whether the dict exposes the raw 7-day HRV baseline needed to compute "HRV < 70% of baseline" numerically for the D-08 message ("HRV 61 — 78% of baseline, Sir").
    - Recommendation: Planner should read `core/training_checkin.py` `compute_recovery_concern()` return payload. If the baseline is not exposed, add it to the return dict (or compute it inline in the alert cron). The D-08 message template requires the numeric comparison.
+   - **(RESOLVED — Plan 03):** The categorical `compute_recovery_concern()` dict does NOT expose the raw baseline (and returns None on no-concern days). Plan 03 instead reads `mcp_tools.garmin_tool.fetch_garmin_today()` which returns `hrv_overnight` and `hrv_baseline` directly; the gate computes `hrv_overnight / hrv_baseline` and the D-08 message uses those literal numbers. The same `fetch_garmin_today()` call is reused for recovery_concern (no double fetch, Pitfall 5).
 
-2. **Threshold pace SQL schema: column names in Postgres `activities` table**
+2. **Threshold pace SQL schema: column names in Postgres `activities` table** **(RESOLVED — OUT OF SCOPE for Phase 23)**
    - What we know: `mcp_tools/database_tool.py` provides `query_health_database(sql)`. Garmin activities are in Postgres. The weekly review already queries `daily_biometrics`.
    - What's unclear: The exact column names for activity type and pace in the `activities` table.
    - Recommendation: Planner should grep existing SQL in `core/weekly_training_review.py` and `mcp_tools/garmin_tool.py` for table/column references, or run a `SHOW COLUMNS FROM activities` query in the dry-run test.
+   - **(RESOLVED — out of scope):** No Phase 23 plan computes threshold pace server-side. Per D-05, threshold pace is a brain-supplied value passed into `log_benchmark` (the brain reads the last 3 sessions and supplies the average); the server does not run the threshold-pace SQL. The `activities` column-name question is therefore deferred to whenever a server-side pace computation is actually built — not needed for this phase.
 
-3. **Auto-seed script vs. lazy-seed inside `get_current()`**
+3. **Auto-seed script vs. lazy-seed inside `get_current()`** **(RESOLVED — Plan 01)**
    - What we know: Claude's Discretion says either approach is acceptable as long as it's idempotent.
    - Recommendation: Script approach is strongly preferred. Writing inside a read path (`get_current()`) violates the never-raises read discipline — if the seed write fails, `get_current()` would need to either raise or return a half-valid state. The script pattern (like `ingest_blueprint.py`) is clean, testable, and the correct Klaus convention.
+   - **(RESOLVED — Plan 01):** Adopted the script approach — `scripts/seed_training_blocks.py` (mirrors `ingest_blueprint.py`: pure `build_blocks_list()` builder, `seed_if_absent(force=False)` idempotency gate, `--dry-run`/`--force` CLI). `get_current()` stays a pure date-range read with no write logic.
 
 ---
 
