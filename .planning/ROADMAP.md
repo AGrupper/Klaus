@@ -60,7 +60,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 **Plans**: 4 plans
 - [x] 22-01-PLAN.md — Author docs/COACHING_GUIDE.md (slim core + 10 anchored deep sections, applied to Amit's blueprint)
 - [x] 22-02-PLAN.md — Slim-core loader + render injection + brain-direct read_coaching_guide tool (4-site) + Wave-0 tests
-- [ ] 22-03-PLAN.md — Wire {coaching_guide} into morning briefing / evening alert / autonomous crons (compose-time injection + cost bias)
+- [x] 22-03-PLAN.md — Wire {coaching_guide} into morning briefing / evening alert / autonomous crons (compose-time injection + cost bias)
 - [ ] 22-04-PLAN.md — smart_agent.md: D-13 guard release → Tier A/B recency contract + specificity bar + critique posture (human-verify gate)
 **UI hint**: no
 
@@ -103,7 +103,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
-| 22. Expert Coaching Knowledge + D-13 Release | 2/4 | In Progress|  |
+| 22. Expert Coaching Knowledge + D-13 Release | 3/4 | In Progress|  |
 | 23. Block + Benchmark Tracking | 0/TBD | Not started | - |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
