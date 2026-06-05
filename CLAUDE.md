@@ -59,7 +59,8 @@ Klaus/
 │   ├── AGENT.md            # Klaus's persona + tone
 │   ├── CODING_STANDARDS.md # code style
 │   ├── SELF.md             # auto-generated capability manifest
-│   └── DEPLOYMENT.md       # ops runbook: Cloud Run, crons, secrets, indexes
+│   ├── DEPLOYMENT.md       # ops runbook: Cloud Run, crons, secrets, indexes
+│   └── healthkit_shortcut.md # iOS healthkit shortcut configuration
 ├── core/
 │   ├── main.py             # AgentOrchestrator, _run_smart_loop, render_smart_system
 │   ├── auth_google.py      # Google OAuth persistent token mgmt
@@ -94,6 +95,8 @@ Klaus/
 │   ├── routes_tool.py      # Google Routes API (traffic-aware drive time)
 │   ├── memory.py           # remember/recall (Pinecone-backed)
 │   ├── self_inspect.py     # list_own_files / read_own_source / search_own_source
+│   ├── healthkit_tool.py   # HealthKit integration tool (replaces Google Fit)
+│   └── google_fit_tool.py  # Google Fit integration tool (deprecated)
 ├── interfaces/
 │   ├── web_server.py       # FastAPI: Telegram webhook + /cron/* OIDC-protected routes
 │   ├── _router.py          # Telegram message router + photo download
@@ -107,7 +110,8 @@ Klaus/
 │   ├── morning_briefing.md # Morning briefing compose prompt
 │   ├── proactive_alert.md  # Evening alerts compose prompt
 │   ├── heartbeat.md        # Tick-brain heartbeat reasoning prompt
-│   └── chat_summary.md     # Chat-ingest summary prompt (Notion DB rows)
+│   ├── chat_summary.md     # Chat-ingest summary prompt (Notion DB rows)
+│   └── meal_audit.md       # Meal auditing prompt
 ├── scripts/
 │   ├── eval_tick_brain.py  # Measurement-only judgment eval runner
 │   ├── ticktick_oauth_bootstrap.py
@@ -116,10 +120,12 @@ Klaus/
 │   ├── upload_claude_logs.{sh,ps1}
 │   ├── upload_chat_export.sh
 │   ├── run_chat_export_backfill.sh
-│   └── smoke_test_{notion,chat_ingest,chat_export}.py
+│   ├── smoke_test_{notion,chat_ingest,chat_export}.py
+│   ├── probe_garmin_export_keys.py # Helper script for Garmin keys exploration
+│   └── test_healthkit_push.py # Sync payload test script
 ├── evals/
 │   └── tick_brain/         # 5 seed fixtures + README — judgment quality harness
-└── tests/                  # pytest — 465+ passing locally
+└── tests/                  # pytest — 630+ passing locally
 ```
 
 ## 5. Live infrastructure
