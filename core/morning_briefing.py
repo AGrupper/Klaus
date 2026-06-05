@@ -280,12 +280,19 @@ def _gather_data(today_iso: str) -> dict:
 def _compose_briefing(today_data: dict, today_iso: str) -> str:
     """Compose the briefing via LLM with plain-text fallback."""
     prompt_path = Path(__file__).parent.parent / "prompts" / "morning_briefing.md"
+    # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
+    # (stable-prefix before volatile — same ordering as render_smart_system).
+    # _get_orchestrator() is a process-wide singleton so no extra startup cost.
+    # Degrade gracefully: a first-call AgentOrchestrator() construction can raise
+    # non-OSError (e.g. missing SMART_AGENT_* env) — that must NOT crash the cron,
+    # so fetch the slim core independently of the prompt-file read below.
     try:
-        # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
-        # (stable-prefix before volatile — same ordering as render_smart_system).
-        # _get_orchestrator() is a process-wide singleton so no extra startup cost.
         from core.autonomous import _get_orchestrator
         coaching_guide_content = _get_orchestrator()._coaching_guide_content
+    except Exception:
+        logger.warning("morning_briefing: coaching guide unavailable — proceeding without it")
+        coaching_guide_content = ""
+    try:
         system_prompt = (
             prompt_path.read_text(encoding="utf-8")
             .replace("{coaching_guide}", coaching_guide_content)

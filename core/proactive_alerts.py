@@ -371,11 +371,19 @@ def _compose_alert(alerts_context: dict) -> str:
     prompt_path = Path(__file__).parent.parent / "prompts" / "proactive_alert.md"
     today_str = date.today().isoformat()
 
+    # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
+    # (stable-prefix before volatile — same ordering as render_smart_system).
+    # Degrade gracefully: a first-call AgentOrchestrator() construction can raise
+    # non-OSError (e.g. missing SMART_AGENT_* env) — that must NOT abort the alert
+    # send (which would also skip the dedup write), so fetch the slim core
+    # independently of the prompt-file read below.
     try:
-        # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
-        # (stable-prefix before volatile — same ordering as render_smart_system).
         from core.autonomous import _get_orchestrator
         coaching_guide_content = _get_orchestrator()._coaching_guide_content
+    except Exception:
+        logger.warning("proactive_alerts: coaching guide unavailable — proceeding without it")
+        coaching_guide_content = ""
+    try:
         system_prompt = (
             prompt_path.read_text(encoding="utf-8")
             .replace("{coaching_guide}", coaching_guide_content)
