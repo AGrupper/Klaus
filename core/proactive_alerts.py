@@ -372,8 +372,14 @@ def _compose_alert(alerts_context: dict) -> str:
     today_str = date.today().isoformat()
 
     try:
-        system_prompt = prompt_path.read_text(encoding="utf-8").replace(
-            "{today_date}", today_str
+        # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
+        # (stable-prefix before volatile — same ordering as render_smart_system).
+        from core.autonomous import _get_orchestrator
+        coaching_guide_content = _get_orchestrator()._coaching_guide_content
+        system_prompt = (
+            prompt_path.read_text(encoding="utf-8")
+            .replace("{coaching_guide}", coaching_guide_content)
+            .replace("{today_date}", today_str)
         )
     except OSError:
         system_prompt = "You are Klaus, composing a proactive evening alert for Sir."

@@ -281,8 +281,15 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
     """Compose the briefing via LLM with plain-text fallback."""
     prompt_path = Path(__file__).parent.parent / "prompts" / "morning_briefing.md"
     try:
-        system_prompt = prompt_path.read_text(encoding="utf-8").replace(
-            "{today_date}", today_iso
+        # PHASE 22 — COACH-01: inject slim coaching core before {today_date}
+        # (stable-prefix before volatile — same ordering as render_smart_system).
+        # _get_orchestrator() is a process-wide singleton so no extra startup cost.
+        from core.autonomous import _get_orchestrator
+        coaching_guide_content = _get_orchestrator()._coaching_guide_content
+        system_prompt = (
+            prompt_path.read_text(encoding="utf-8")
+            .replace("{coaching_guide}", coaching_guide_content)
+            .replace("{today_date}", today_iso)
         )
     except OSError:
         logger.warning("morning_briefing: prompt file missing — using fallback")

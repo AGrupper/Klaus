@@ -607,3 +607,103 @@ def test_load_coaching_guide_slim_file_absent(monkeypatch):
     monkeypatch.setattr(main_module, "Path", _FakePath)
     result = main_module._load_coaching_guide_slim()
     assert result == "", f"Expected '' for missing file, got: {result!r}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 22 Plan 03 — briefing/alert compose-time coaching guide injection
+# ---------------------------------------------------------------------------
+
+def test_briefing_no_literal_placeholder():
+    """`_compose_briefing` must not leave a literal {coaching_guide} in the system prompt.
+
+    Verifies the PHASE 22 COACH-01 injection: the slim core is substituted at
+    compose time via .replace("{coaching_guide}", ...) before the prompt reaches
+    the LLM. Pitfall 6 directly addressed.
+    """
+    import types
+
+    fake_coaching_content = "SLIM-CORE-CONTENT-FOR-TEST"
+    fake_orch = types.SimpleNamespace(_coaching_guide_content=fake_coaching_content)
+
+    captured_system_prompts: list[str] = []
+
+    class _FakeLLMClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, messages, system=""):
+            captured_system_prompts.append(system)
+            return {"text": "Good morning, sir."}
+
+    # Patch at the source module level so the `from core.llm_client import LLMClient`
+    # inside _compose_briefing picks up our fake when sys.modules is pre-populated.
+    fake_llm_module = MagicMock()
+    fake_llm_module.LLMClient = _FakeLLMClient
+
+    import core.morning_briefing as mb_module
+
+    with patch("core.autonomous._get_orchestrator", return_value=fake_orch), \
+         patch.dict("sys.modules", {"core.llm_client": fake_llm_module}), \
+         patch.dict(os.environ, {
+             "SMART_AGENT_BACKEND": "test",
+             "SMART_AGENT_MODEL": "test-model",
+             "SMART_AGENT_API_KEY": "test-key",
+         }):
+        mb_module._compose_briefing({}, "2026-06-05")
+
+    assert len(captured_system_prompts) == 1, "LLM was not called exactly once"
+    system_prompt = captured_system_prompts[0]
+
+    # Primary assertion: the literal placeholder must be gone.
+    assert "{coaching_guide}" not in system_prompt, (
+        "Literal {coaching_guide} survived _compose_briefing — inject is broken"
+    )
+    # Secondary assertion: the slim core content arrived.
+    assert fake_coaching_content in system_prompt, (
+        "Slim core content missing from briefing system prompt"
+    )
+
+
+def test_alert_no_literal_placeholder():
+    """`_compose_alert` must not leave a literal {coaching_guide} in the system prompt.
+
+    Mirror of `test_briefing_no_literal_placeholder` for the evening alert path.
+    """
+    import types
+
+    fake_coaching_content = "SLIM-CORE-ALERT-TEST"
+    fake_orch = types.SimpleNamespace(_coaching_guide_content=fake_coaching_content)
+
+    captured_system_prompts: list[str] = []
+
+    class _FakeLLMClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, messages, system=""):
+            captured_system_prompts.append(system)
+            return {"text": "Evening alert, sir."}
+
+    fake_llm_module = MagicMock()
+    fake_llm_module.LLMClient = _FakeLLMClient
+
+    import core.proactive_alerts as pa_module
+
+    with patch("core.autonomous._get_orchestrator", return_value=fake_orch), \
+         patch.dict("sys.modules", {"core.llm_client": fake_llm_module}), \
+         patch.dict(os.environ, {
+             "SMART_AGENT_BACKEND": "test",
+             "SMART_AGENT_MODEL": "test-model",
+             "SMART_AGENT_API_KEY": "test-key",
+         }):
+        pa_module._compose_alert({})
+
+    assert len(captured_system_prompts) == 1, "LLM was not called exactly once"
+    system_prompt = captured_system_prompts[0]
+
+    assert "{coaching_guide}" not in system_prompt, (
+        "Literal {coaching_guide} survived _compose_alert — inject is broken"
+    )
+    assert fake_coaching_content in system_prompt, (
+        "Slim core content missing from alert system prompt"
+    )
