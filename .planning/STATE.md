@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
-status: executing
-stopped_at: Phase 22 context gathered
-last_updated: "2026-06-04T17:00:19.312Z"
+status: ready_to_plan
+stopped_at: Phase 22 complete (4/4) — ready to discuss Phase 23
+last_updated: 2026-06-05T05:54:38.560Z
 last_activity: 2026-06-04 -- Phase 22 execution started
 progress:
   total_phases: 5
   completed_phases: 1
   total_plans: 8
-  completed_plans: 4
+  completed_plans: 8
   percent: 20
 ---
 
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 22 (expert-coaching-knowledge-d-13-release) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 22
-Last activity: 2026-06-04 -- Phase 22 execution started
+Phase: 23
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-05
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -30,7 +30,7 @@ Progress: [░░░░░░░░░░] 0%
 See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 22 — expert-coaching-knowledge-d-13-release
+**Current focus:** Phase 23 — block + benchmark tracking
 
 ## Architecture (current)
 

@@ -17,13 +17,13 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Expert Coaching Knowledge & Behavior (COACH)
 
-- [ ] **COACH-01**: Klaus carries curated **expert hybrid-athlete coaching knowledge** (concurrent strength/endurance & the interference effect, block periodization, how to execute the specific run/lift/calisthenics sessions, fueling science) injected into his reasoning substrate.
-- [ ] **COACH-02**: Klaus **names the specific session, the load/pace, and the rationale** in coaching messages instead of giving generic advice.
+- [x] **COACH-01**: Klaus carries curated **expert hybrid-athlete coaching knowledge** (concurrent strength/endurance & the interference effect, block periodization, how to execute the specific run/lift/calisthenics sessions, fueling science) injected into his reasoning substrate.
+- [x] **COACH-02**: Klaus **names the specific session, the load/pace, and the rationale** in coaching messages instead of giving generic advice.
 - [ ] **COACH-03**: Klaus is **strict** — when a session is skipped or a choice is off-plan he names the deficit and the consequence and pushes back, without softening/hedging.
 - [ ] **COACH-04**: On recovery-vs-plan conflicts Klaus **cites the data and presents explicit options, leaving the decision to Amit** (advise, never override).
 - [ ] **COACH-05**: Coaching is both **proactive** (initiated in the existing crons) and **reactive** (in chat), with **cross-cron de-duplication** so the same point isn't nagged from morning briefing + evening check-in + weekly review on the same day.
-- [ ] **COACH-06**: The **D-13 no-fabrication guard is released** under a data-presence contract: blueprint goals are citable as *targets* (Tier A); measured numbers (lifts, paces, macros, HRV) are citable only when a real recent record exists (Tier B). Klaus never invents a number.
-- [ ] **COACH-07**: Klaus treats the blueprint **and Amit's current habits as a critiqueable guide, not gospel**. When his expert knowledge or Amit's data shows part of the plan (training structure, nutrition targets/timing, supplements) is **suboptimal or wrong**, he says so, explains why, and recommends a specific better approach. He *recommends* changes — Amit decides whether to adopt them (via PLAN-03); Klaus never silently rewrites the plan. Critique is **structural** (design-level), not daily micro-tweaks.
+- [x] **COACH-06**: The **D-13 no-fabrication guard is released** under a data-presence contract: blueprint goals are citable as *targets* (Tier A); measured numbers (lifts, paces, macros, HRV) are citable only when a real recent record exists (Tier B). Klaus never invents a number.
+- [x] **COACH-07**: Klaus treats the blueprint **and Amit's current habits as a critiqueable guide, not gospel**. When his expert knowledge or Amit's data shows part of the plan (training structure, nutrition targets/timing, supplements) is **suboptimal or wrong**, he says so, explains why, and recommends a specific better approach. He *recommends* changes — Amit decides whether to adopt them (via PLAN-03); Klaus never silently rewrites the plan. Critique is **structural** (design-level), not daily micro-tweaks.
 
 ### Training Blocks & Benchmark Testing (BLOCK)
 
@@ -76,10 +76,10 @@ Populated during roadmap creation.
 | PLAN-01 | Phase 21 | Complete |
 | PLAN-02 | Phase 21 | Complete |
 | PLAN-03 | Phase 21 | Complete |
-| COACH-01 | Phase 22 | Pending |
-| COACH-02 | Phase 22 | Pending |
-| COACH-06 | Phase 22 | Pending |
-| COACH-07 | Phase 22 | Pending |
+| COACH-01 | Phase 22 | Complete |
+| COACH-02 | Phase 22 | Complete |
+| COACH-06 | Phase 22 | Complete |
+| COACH-07 | Phase 22 | Complete |
 | BLOCK-01 | Phase 23 | Pending |
 | BLOCK-02 | Phase 23 | Pending |
 | BLOCK-03 | Phase 23 | Pending |
