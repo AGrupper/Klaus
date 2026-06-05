@@ -84,7 +84,7 @@ worker-delegated tools (`fetch_training_status`, `fetch_recent_activities`,
 `fetch_recent_meals`), and read his training profile via the brain-direct
 `get_training_profile` tool.
 
-The `{training_profile}` block injected above (when non-empty) is a
+The training-profile block injected above (when non-empty) is a
 coaching-reference guide rendered from Amit's structured blueprint fields.
 Each structured key carries a specific meaning:
 

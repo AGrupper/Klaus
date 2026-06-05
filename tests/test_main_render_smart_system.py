@@ -370,6 +370,29 @@ class TestPhase21CoachingReferenceRendering:
         # Block anchor must render.
         assert "2026-06-21" in result
 
+    def test_real_template_injects_profile_block_exactly_once(self):
+        """Regression guard (WRN-01): render the ACTUAL prompts/smart_agent.md with a
+        real seeded profile and assert the coaching-reference block is injected exactly
+        once. str.replace hits every occurrence, so a stray literal `{training_profile}`
+        in the prose (line 87 before the fix) would duplicate the whole Tier A block and
+        corrupt the instructional sentence. No literal placeholders may survive either."""
+        from pathlib import Path
+        from scripts.ingest_blueprint import build_profile_dict
+
+        template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
+        orch = self._make_orch_with_profile(build_profile_dict())
+        orch._coaching_guide_content = "COACHING_GUIDE_SENTINEL"
+        result = orch.render_smart_system(template)
+
+        # The rendered Tier A coaching-reference header must appear exactly once.
+        assert result.count("**Coaching reference — Amit's training plan:**") == 1
+        # No placeholder may survive the substitution chain.
+        assert "{training_profile}" not in result
+        assert "{coaching_guide}" not in result
+        # The instructional prose that describes the block must stay intact (not get a
+        # full profile block spliced into the middle of the sentence).
+        assert "The training-profile block injected above" in result
+
     def test_weekly_split_renders_day_and_modality(self):
         """weekly_split renders a per-day line with label and modality."""
         orch = self._make_orch_with_profile({

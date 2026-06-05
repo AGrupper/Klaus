@@ -909,6 +909,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         # Phase 19 Plan 02 — brain-direct profile tools (fetch_* tools STAY in worker)
         "get_training_profile",
         "update_training_profile",
+        # Phase 21 — update_plan alias is brain-direct (WRN-02): exclude from worker
+        "update_plan",
         # Phase 20 Plan 01 — brain-direct training log (get_training_history STAYS in worker)
         "log_training",
         # Phase 22 — brain-direct coaching guide (COACH-01, T-22-05)
