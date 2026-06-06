@@ -59,6 +59,24 @@ _SESSION_NOT_FOUND_COPY = (
 
 
 # ------------------------------------------------------------------ #
+# Session-quality derivation constants (Phase 24 D-13, PROG-04)     #
+# ------------------------------------------------------------------ #
+
+# Garmin Feel scale: 0=Very Weak, 25=Weak, 50=Okay, 75=Strong, 100=Very Strong
+# Source: ingest_garmin_zip.py workoutFeel comment; garmin_tool.py directWorkoutFeel
+_GARMIN_FEEL_LABELS: dict[int, str] = {
+    100: "very_strong",
+    75: "strong",
+    50: "okay",
+    25: "weak",
+    0: "very_weak",
+}
+
+_QUALITY_STRONG_NOTES = ("pb", "pr", "personal record", "felt great", "best ever")
+_QUALITY_GRIND_NOTES = ("terrible", "awful", "cut short", "struggled", "could not")
+
+
+# ------------------------------------------------------------------ #
 # Recovery concern thresholds (RECOVERY-02, Phase 20 Plan 05)        #
 # ------------------------------------------------------------------ #
 
@@ -419,6 +437,65 @@ def _garmin_covers(event: dict, activities: list[dict]) -> dict | None:
 
 
 # ------------------------------------------------------------------ #
+# Session quality derivation (Phase 24 D-13, PROG-04)               #
+# ------------------------------------------------------------------ #
+
+def derive_session_quality(
+    rpe: int | None,
+    feel: int | None,       # Garmin raw: 0/25/50/75/100 — Pitfall 4: 0 is valid!
+    notes: str | None = None,
+) -> str | None:
+    """Return "strong" | "neutral" | "grind" | None.
+
+    D-13: derived from Garmin Feel + RPE + notes. No new user input required.
+
+    PITFALL 4: use 'is not None' checks, never truthiness, for feel.
+    feel == 0 (Very Weak) is falsy in Python but is a valid Garmin value;
+    if feel: would silently drop the worst sessions as if data were missing.
+
+    Args:
+        rpe:   Normalised RPE 1–10 (int) or None if not yet known.
+        feel:  Garmin raw feel value 0/25/50/75/100, or None if not synced.
+        notes: Optional notes text — scanned for keyword overrides.
+
+    Returns:
+        "strong" | "neutral" | "grind" | None.
+    """
+    # Pitfall 4: 'feel is not None' not 'if feel'
+    if rpe is None and feel is None:
+        return None
+
+    quality: str | None = None
+
+    if feel is not None:
+        # Feel takes precedence (Garmin self-eval is more reliable signal)
+        if feel >= 75:
+            quality = "strong" if (rpe is None or rpe >= 5) else "neutral"
+        elif feel == 50:
+            quality = "neutral"
+        else:  # 0 or 25 — Very Weak or Weak
+            quality = "grind"
+    else:
+        # RPE-only fallback (no Garmin feel available)
+        if rpe >= 8:
+            quality = "grind"
+        elif rpe <= 4:
+            quality = "strong"
+        else:
+            quality = "neutral"
+
+    # Notes override (simple keyword scan — applied last)
+    if notes:
+        notes_lower = notes.lower()
+        if any(k in notes_lower for k in _QUALITY_STRONG_NOTES):
+            quality = "strong"
+        elif any(k in notes_lower for k in _QUALITY_GRIND_NOTES):
+            quality = "grind"
+
+    return quality
+
+
+# ------------------------------------------------------------------ #
 # Session key helper                                                 #
 # ------------------------------------------------------------------ #
 
@@ -465,6 +542,10 @@ def _silent_garmin_sync(today_iso: str) -> None:
             if act_date_str != today_iso:
                 continue
             activity_id = str(act.get("activity_id", ""))
+            _feel = act.get("feel")
+            # D-13: derive quality here (Pitfall 4: feel=0 is valid — function uses 'is not None')
+            # Pitfall 6: derive quality in this path so Garmin-only sessions get a quality value
+            _quality = derive_session_quality(rpe=perceived_exertion, feel=_feel)
             store.log_session(
                 date=today_iso,
                 slot=activity_id,
@@ -472,7 +553,8 @@ def _silent_garmin_sync(today_iso: str) -> None:
                 planned=False,
                 completed=True,
                 rpe=perceived_exertion,
-                feel=act.get("feel"),
+                feel=_feel,
+                quality=_quality,
                 source="garmin",
                 garmin_activity_id=activity_id,
             )
@@ -695,6 +777,11 @@ async def handle_rpe_callback(orchestrator, user_id: int, cq, data: str) -> None
         rpe_value = int(value_str)
         event_date = session.get("event_date", session_key.split("_")[0])
 
+        # D-13: provisional quality from RPE alone (feel not yet available from Garmin).
+        # A subsequent _silent_garmin_sync will re-derive quality using both rpe + feel
+        # via merge=True — so this is a best-effort first label, not the final value.
+        _quality = derive_session_quality(rpe=rpe_value, feel=None)
+
         # Write RPE to training_log (source=telegram)
         tls = TrainingLogStore()
         tls.log_session(
@@ -704,6 +791,7 @@ async def handle_rpe_callback(orchestrator, user_id: int, cq, data: str) -> None
             planned=True,
             completed=True,
             rpe=rpe_value,
+            quality=_quality,
             source="telegram",
         )
 

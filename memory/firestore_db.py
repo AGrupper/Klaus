@@ -805,6 +805,7 @@ class TrainingLogStore:
         rpe: int | None = None,                 # 1–10 (normalised here from Garmin raw)
         feel: int | None = None,                # Garmin feel value, verbatim
         notes: str | None = None,
+        quality: str | None = None,             # "strong" | "neutral" | "grind" | None (D-13 Phase 24)
         source: str = "telegram",               # garmin | telegram | manual_chat
         garmin_activity_id: str | None = None,
     ) -> None:
@@ -815,6 +816,11 @@ class TrainingLogStore:
 
         Pitfall 7: normalises Garmin raw RPE (steps-of-10, 10..100) to 1..10.
         Values already in 1..10 are left unchanged.
+
+        quality: "strong" | "neutral" | "grind" | None — D-13 derived field.
+            Derived from Garmin Feel + RPE + notes by derive_session_quality in
+            core/training_checkin.py. Existing entries without quality remain
+            valid (merge=True handles backward compatibility).
 
         Raises:
             Exception: Re-raises any Firestore write failure after logging it.
@@ -833,6 +839,7 @@ class TrainingLogStore:
             "rpe": rpe,
             "feel": feel,
             "notes": notes,
+            "quality": quality,
             "source": source,
             "garmin_activity_id": garmin_activity_id,
             "updated_at": firestore.SERVER_TIMESTAMP,
