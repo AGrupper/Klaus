@@ -1403,6 +1403,119 @@ class OutreachLogStore:
         return [str(e.get("topic_key", "")) for e in entries if e.get("topic_key")]
 
 
+class CoachingTopicStore:
+    """Per-day coaching topic gate for cross-cron dedup (Phase 24 — COACH-05).
+
+    Collection: ``coaching_topics/{YYYY-MM-DD}``
+    Schema: { "date": str, "topics": list[str], "updated_at": SERVER_TIMESTAMP }
+
+    D-04: daily reset via date-keyed doc (same pattern as OutreachLogStore).
+    D-02: has_topic() hard-blocks; add_topic() writes only for proactive crons.
+    D-03: reactive chat never calls either method.
+
+    NOTE: store topic keys as a plain list[str]. DO NOT use list[dict] entries
+    with embedded timestamps. ArrayUnion compares by deep equality — dicts
+    containing SERVER_TIMESTAMP sentinels are NEVER equal (each sentinel is a
+    fresh object), which defeats dedup. See OutreachLogStore NOTE 2.
+
+    Reads (has_topic, topics_today) never raise — fail-open (return False / []).
+    Writes (add_topic) re-raise after logging — caller decides whether to abort.
+    """
+
+    _COLLECTION = "coaching_topics"   # lowercase — CLAUDE.md §6
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            database:   Firestore database name (defaults to "(default)").
+        """
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def has_topic(self, date_str: str, topic_key: str) -> bool:
+        """Hard-block check — returns True if topic_key was already raised today.
+
+        Never raises — fail-open: returns False on any Firestore error so a
+        read failure allows the topic to fire rather than silently suppressing it
+        (data-integrity bias: prefer false-positive delivery over silent omission).
+
+        Args:
+            date_str:  YYYY-MM-DD (Asia/Jerusalem calendar date).
+            topic_key: e.g. "protein-miss" or "skipped-session:threshold-run".
+
+        Returns:
+            True if the topic was already recorded for this date, False otherwise.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return False
+            topics = (snap.to_dict() or {}).get("topics") or []
+            return topic_key in topics
+        except Exception:
+            logger.warning("CoachingTopicStore.has_topic failed", exc_info=True)
+            return False  # fail-open: let the topic fire rather than silently suppress
+
+    def add_topic(self, date_str: str, topic_key: str) -> None:
+        """Atomically add topic_key to today's coaching_topics doc.
+
+        Uses ``firestore.ArrayUnion([topic_key])`` with ``merge=True`` so
+        concurrent crons cannot clobber each other and so the doc is created
+        on the first call of the day without a separate ``set``.
+
+        Call AFTER ``send_and_inject`` succeeds — mirrors Phase 18 D-10
+        OutreachLogStore.append invariant. A crash between write and send
+        creates a false-positive block; writing after send is the safer order.
+
+        Args:
+            date_str:  YYYY-MM-DD (Asia/Jerusalem calendar date).
+            topic_key: Plain string topic key — e.g. "protein-miss".
+                       MUST be a plain string, NOT a dict. ArrayUnion deep-
+                       equality breaks if the element contains SERVER_TIMESTAMP
+                       (see class-level NOTE and OutreachLogStore NOTE 2).
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "topics": firestore.ArrayUnion([topic_key]),  # plain string, NOT dict
+                    "updated_at": firestore.SERVER_TIMESTAMP,     # doc-level only
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error(
+                "CoachingTopicStore.add_topic(%r, %r) failed",
+                date_str,
+                topic_key,
+                exc_info=True,
+            )
+            raise
+
+    def topics_today(self, date_str: str) -> list[str]:
+        """Return today's raised topic_keys. Never raises.
+
+        Args:
+            date_str: YYYY-MM-DD (Asia/Jerusalem calendar date).
+
+        Returns:
+            List of topic_key strings raised for this date. Empty list when
+            the doc does not exist OR when Firestore is unreachable.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return []
+            return list((snap.to_dict() or {}).get("topics") or [])
+        except Exception:
+            logger.warning("CoachingTopicStore.topics_today failed", exc_info=True)
+            return []
+
+
 class TickLogStore:
     """Per-tick snapshot writer — supports retroactive eval-fixture labeling.
 
