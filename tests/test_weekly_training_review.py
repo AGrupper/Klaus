@@ -255,3 +255,157 @@ def test_gather_week_block_failure_sets_defaults(patched_sources):
     data = wtr._gather_week_data("2026-08-09")
     assert data["current_block"] is None
     assert data["block_benchmarks"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 24 Plan 05 — dedup gate + {coaching_guide} + per-facet + quality trend
+# (COACH-05, PROG-01, PROG-04, D-17)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def patched_sources_with_coaching(patched_sources, monkeypatch):
+    """Extend patched_sources with a CoachingTopicStore mock."""
+    coaching_store = MagicMock()
+    coaching_store.return_value.topics_today.return_value = []
+    patched_sources["coaching_topic_store"] = coaching_store
+    with patch("memory.firestore_db.CoachingTopicStore", coaching_store):
+        yield patched_sources
+
+
+def test_gather_week_includes_coaching_topics_today(patched_sources_with_coaching):
+    """COACH-05: _gather_week_data (or run_weekly_review) sets coaching_topics_today."""
+    patched_sources_with_coaching["coaching_topic_store"].return_value.topics_today.return_value = [
+        "structural-critique:protein-target"
+    ]
+    data = wtr._gather_week_data("2026-06-07")
+    assert "coaching_topics_today" in data
+    assert data["coaching_topics_today"] == ["structural-critique:protein-target"]
+
+
+def test_gather_week_coaching_topics_fail_open(patched_sources):
+    """COACH-05: CoachingTopicStore failure → coaching_topics_today = [] (fail-open)."""
+    with patch("memory.firestore_db.CoachingTopicStore", side_effect=RuntimeError("firestore down")):
+        data = wtr._gather_week_data("2026-06-07")
+    assert data.get("coaching_topics_today") == []
+
+
+def test_compose_review_injects_coaching_guide(patched_sources_with_coaching):
+    """PROG-01 / D-17: _compose_review injects {coaching_guide} into the system prompt."""
+    # Capture the system prompt sent to the LLM
+    captured_prompts = []
+
+    mock_client = MagicMock()
+    mock_client.chat.side_effect = lambda messages, system, **kw: (
+        captured_prompts.append(system) or {"text": "Review text", "tool_calls": [], "stop_reason": "end_turn"}
+    )
+
+    coaching_guide_content = "## Slim Coaching Core\nAll about periodization."
+
+    mock_orchestrator = MagicMock()
+    mock_orchestrator._coaching_guide_content = coaching_guide_content
+
+    with patch("core.llm_client.LLMClient", return_value=mock_client), \
+         patch("pathlib.Path.read_text", return_value="System prompt {coaching_guide} end"), \
+         patch("pathlib.Path.exists", return_value=False), \
+         patch("core.autonomous._get_orchestrator", return_value=mock_orchestrator):
+        wtr._compose_review({}, "2026-06-07")
+
+    assert captured_prompts, "No system prompt captured — _compose_review did not call LLM"
+    assert coaching_guide_content in captured_prompts[0], (
+        "{coaching_guide} placeholder was not replaced with coaching guide content"
+    )
+
+
+def test_run_weekly_review_writes_topics_after_send():
+    """T-24-17: add_topic called only after successful send_and_inject (write-after-send)."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    add_topic_calls = []
+
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = lambda d, t: add_topic_calls.append((d, t))
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    week_data_with_topics = {
+        "coaching_topics_today": [],
+        "coaching_topics_included": ["structural-critique:protein-target"],
+    }
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value=week_data_with_topics), \
+         patch("core.weekly_training_review._compose_review", return_value="Review text"), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_called_once()
+    assert len(add_topic_calls) == 1
+    assert ("2026-06-07", "structural-critique:protein-target") in add_topic_calls
+
+
+def test_run_weekly_review_no_topic_write_when_send_fails():
+    """T-24-17: add_topic must NOT be called if send_and_inject raises."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    add_topic_calls = []
+
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = lambda d, t: add_topic_calls.append((d, t))
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    week_data_with_topics = {
+        "coaching_topics_included": ["structural-critique:protein-target"],
+    }
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value=week_data_with_topics), \
+         patch("core.weekly_training_review._compose_review", return_value="Review text"), \
+         patch("core.scheduled_message.send_and_inject",
+               new_callable=AsyncMock, side_effect=RuntimeError("telegram down")), \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+        try:
+            asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+        except RuntimeError:
+            pass  # send failure propagates — that is expected
+
+    # No topic writes should have happened
+    assert add_topic_calls == []
+
+
+def test_weekly_review_prompt_has_per_facet_instruction():
+    """PROG-01 / D-17: prompt must instruct per-facet within-block reporting."""
+    content = open("prompts/weekly_training_review.md").read()
+    lower = content.lower()
+    assert any(kw in lower for kw in ["facet", "top-set", "acwr", "threshold volume"]), (
+        "prompts/weekly_training_review.md missing per-facet within-block framing"
+    )
+
+
+def test_weekly_review_prompt_has_quality_trend_instruction():
+    """PROG-04 / D-17: prompt must instruct session quality trend reporting."""
+    content = open("prompts/weekly_training_review.md").read()
+    lower = content.lower()
+    assert any(kw in lower for kw in ["quality", "strong", "neutral", "grind"]), (
+        "prompts/weekly_training_review.md missing session quality trend instruction"
+    )
+
+
+def test_weekly_review_prompt_forbids_dated_projection():
+    """Phase 25 fence: prompt must not introduce dated-projection language as instructions."""
+    content = open("prompts/weekly_training_review.md").read()
+    lower = content.lower()
+    # If "weeks behind" or "on track for" appears, it must be inside a "do NOT" prohibition
+    for phrase in ["weeks behind", "on track for"]:
+        if phrase in lower:
+            # Find the context — look for a nearby "do not" or "never" or "not project"
+            idx = lower.index(phrase)
+            context_window = lower[max(0, idx - 120):idx + 60]
+            assert any(neg in context_window for neg in ["do not", "never", "not project", "forbid", "prohibited"]), (
+                f"Dated projection phrase '{phrase}' found in prompt without a prohibition clause — "
+                "Phase 25 fence violated"
+            )
