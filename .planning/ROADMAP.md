@@ -28,7 +28,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 - [x] **Phase 21: Living Plan Ingestion** - Populate `UserProfileStore` with Amit's blueprint as structured fields (dated goals, weekly split, fueling timeline, supplements); add `update_plan` tool; gate that unblocks all downstream coaching specificity (completed 2026-06-04)
 - [x] **Phase 22: Expert Coaching Knowledge + D-13 Release** - Author `docs/COACHING_GUIDE.md`, wire it into every coaching prompt, replace the D-13 qualitative guard with the Tier A / Tier B data-presence contract; Klaus starts naming real numbers (completed 2026-06-05)
 - [x] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic (completed 2026-06-06)
-- [ ] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability
+- [x] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability (completed 2026-06-06)
 - [ ] **Phase 25: Progress Projection + Benchmark Trend Reporting** - Pace-to-deadline trend projection against Oct/Nov goals; per-facet benchmark improvement surfaced in weekly review
 
 ## Phase Details
@@ -94,8 +94,8 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 - [x] 24-01-PLAN.md — CoachingTopicStore dedup gate + derived session-quality field (foundation: COACH-05, PROG-04)
 - [x] 24-02-PLAN.md — Nutrition pure helpers: macro-gap, meal→fueling-slot mapping, slot-miss + supplement riders (NUTR-01/02/03)
 - [x] 24-03-PLAN.md — Folded fixes: read_coaching_guide WR-02 hardening + smart-loop double-send cap/fallback
-- [ ] 24-04-PLAN.md — 21:30 cron: nutrition gather + cross-cron dedup gate + strict-pushback/recovery prompts (proactive_alert.md, smart_agent.md)
-- [ ] 24-05-PLAN.md — Morning briefing integrated block + Sunday weekly review per-facet + quality trend (+ both prompts, dedup wiring)
+- [x] 24-04-PLAN.md — 21:30 cron: nutrition gather + cross-cron dedup gate + strict-pushback/recovery prompts (proactive_alert.md, smart_agent.md)
+- [x] 24-05-PLAN.md — Morning briefing integrated block + Sunday weekly review per-facet + quality trend (+ both prompts, dedup wiring)
 
 ### Phase 25: Progress Projection + Benchmark Trend Reporting
 **Goal**: Klaus projects strength and pace trends against the dated Oct/Nov goals and reports on-track or behind; per-facet benchmark results are surfaced as improvement trajectories in the Sunday weekly review; this is the highest dependency-chain feature in the milestone
@@ -114,7 +114,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
-| 24. Strict Coaching Integration + Nutrition Accountability | 3/5 | In Progress|  |
+| 24. Strict Coaching Integration + Nutrition Accountability | 5/5 | Complete   | 2026-06-06 |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
 
 ---
