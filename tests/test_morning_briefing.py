@@ -444,3 +444,87 @@ class TestPhase19MealAuditWiringMorningBriefing:
         assert ma.exists()
         body = ma.read_text(encoding="utf-8")
         assert body.strip(), "prompts/meal_audit.md is empty"
+
+
+# ====================================================================== #
+# Phase 23 Plan 04 — block state in the morning briefing (BLOCK-01/D-04)  #
+# ====================================================================== #
+
+from contextlib import contextmanager
+
+
+def _block_doc(label="Aerobic Base", end_date="2026-07-18",
+               start_date="2026-06-21", benchmark_due=False,
+               doc_id="2026-06-21_aerobic_base"):
+    return {
+        "doc_id": doc_id,
+        "block_id": doc_id,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "focus_facets": ["bench_press_1rm", "squat_1rm", "push_ups", "pull_ups", "threshold_pace"],
+        "status": "active",
+        "benchmark_due": benchmark_due,
+    }
+
+
+@contextmanager
+def _quiet_gather(block_store):
+    """Neutralize every heavy _gather_data collaborator so the block gather is the
+    only meaningful work — keeps these tests fast and deterministic."""
+    with patch("memory.firestore_db.BlockStore", block_store), \
+         patch("memory.firestore_db.MealStore") as ms, \
+         patch("core.tools._get_calendar_tool", side_effect=Exception("no cal")), \
+         patch("core.tools._get_gmail_tool", side_effect=Exception("no mail")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=Exception("no wx")), \
+         patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
+         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={}):
+        ms.return_value.get_day_aggregate.return_value = None
+        yield
+
+
+def test_gather_data_includes_block_state():
+    """BLOCK-01: an active block surfaces data['block'] with derived week_num."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = _block_doc()
+    with _quiet_gather(bs):
+        data = _gather_data("2026-06-28")
+    assert "block" in data
+    assert data["block"]["week_num"] == 2  # (28-21)//7 + 1
+    assert data["block"]["label"] == "Aerobic Base"
+    assert data["block"]["end_date"] == "2026-07-18"
+    assert "pre_cycle_countdown" not in data
+
+
+def test_gather_data_precycle_countdown():
+    """D-04: before the anchor with no active block, surface a pre-cycle countdown."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    with _quiet_gather(bs):
+        data = _gather_data("2026-06-12")
+    assert data.get("pre_cycle_countdown") == 9  # 21 - 12
+    assert "block" not in data
+
+
+def test_gather_data_block_failure_silent():
+    """Pitfall 4: a BlockStore failure sets neither key and never raises."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.side_effect = RuntimeError("firestore down")
+    with _quiet_gather(bs):
+        data = _gather_data("2026-06-28")
+    assert "block" not in data
+    assert "pre_cycle_countdown" not in data
+
+
+def test_gather_data_postcycle_no_active_silent():
+    """Post-cycle with no active block: neither key (silent omit)."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    with _quiet_gather(bs):
+        data = _gather_data("2026-11-01")
+    assert "block" not in data
+    assert "pre_cycle_countdown" not in data

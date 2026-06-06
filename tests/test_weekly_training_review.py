@@ -36,10 +36,15 @@ def patched_sources(monkeypatch):
         "query_health_database": MagicMock(return_value=[]),
         "meal_store": MagicMock(),
         "user_profile": MagicMock(),
+        # Phase 23 Plan 04 — block + benchmark stores (default: no active block)
+        "block_store": MagicMock(),
+        "benchmark_store": MagicMock(),
     }
     handles["training_log"].return_value.get_range.return_value = []
     handles["meal_store"].return_value.get_day_aggregate.return_value = None
     handles["user_profile"].return_value.load.return_value = {}
+    handles["block_store"].return_value.get_current.return_value = None
+    handles["benchmark_store"].return_value.get_block_benchmarks.return_value = []
 
     with patch("memory.firestore_db.TrainingLogStore", handles["training_log"]), \
          patch("mcp_tools.garmin_tool.fetch_garmin_activities",
@@ -47,7 +52,9 @@ def patched_sources(monkeypatch):
          patch("mcp_tools.database_tool.query_health_database",
                handles["query_health_database"]), \
          patch("memory.firestore_db.MealStore", handles["meal_store"]), \
-         patch("memory.firestore_db.UserProfileStore", handles["user_profile"]):
+         patch("memory.firestore_db.UserProfileStore", handles["user_profile"]), \
+         patch("memory.firestore_db.BlockStore", handles["block_store"]), \
+         patch("memory.firestore_db.BenchmarkStore", handles["benchmark_store"]):
         yield handles
 
 
@@ -196,3 +203,55 @@ def test_weekly_review_athletic_goals_absent_in_v4_schema(patched_sources):
 
     # athletic_goals absent → defaults to [] without KeyError
     assert data["athletic_goals"] == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 23 Plan 04 — block + benchmark gather (BLOCK-01 / BLOCK-03)
+# ---------------------------------------------------------------------------
+
+_FACETS = ["bench_press_1rm", "squat_1rm", "push_ups", "pull_ups", "threshold_pace"]
+
+
+def _wtr_block(label="Capacity Build", end_date="2026-08-15",
+               start_date="2026-07-19", doc_id="2026-07-19_capacity_build"):
+    return {
+        "doc_id": doc_id,
+        "block_id": doc_id,
+        "label": label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "focus_facets": list(_FACETS),
+        "status": "active",
+        "benchmark_due": False,
+    }
+
+
+def test_gather_week_includes_current_block(patched_sources):
+    """BLOCK-01/BLOCK-03: an active block surfaces current_block (with week_num)
+    and block_benchmarks from the store."""
+    patched_sources["block_store"].return_value.get_current.return_value = _wtr_block()
+    benches = [{"facet": "bench_press_1rm", "value": 92.0, "date": "2026-08-10"}]
+    patched_sources["benchmark_store"].return_value.get_block_benchmarks.return_value = benches
+    data = wtr._gather_week_data("2026-08-09")  # a Sunday inside Block 2
+    assert data["current_block"] is not None
+    assert data["current_block"]["label"] == "Capacity Build"
+    assert "week_num" in data["current_block"]
+    assert data["block_benchmarks"] == benches
+
+
+def test_gather_week_precycle(patched_sources):
+    """Pre-cycle (before 2026-06-21): pre_cycle_countdown set, current_block None."""
+    # default fixture get_current → None
+    data = wtr._gather_week_data("2026-06-07")  # a Sunday before the anchor
+    assert data["current_block"] is None
+    assert data.get("pre_cycle_countdown") == (
+        __import__("datetime").date(2026, 6, 21) - __import__("datetime").date(2026, 6, 7)
+    ).days
+
+
+def test_gather_week_block_failure_sets_defaults(patched_sources):
+    """Pitfall 4: a store failure defaults current_block None + block_benchmarks []."""
+    patched_sources["block_store"].return_value.get_current.side_effect = RuntimeError("down")
+    data = wtr._gather_week_data("2026-08-09")
+    assert data["current_block"] is None
+    assert data["block_benchmarks"] == []
