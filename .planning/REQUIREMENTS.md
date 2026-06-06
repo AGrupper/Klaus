@@ -27,9 +27,9 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Training Blocks & Benchmark Testing (BLOCK)
 
-- [ ] **BLOCK-01**: Klaus tracks the **current training block** (start date 2026-06-21, week number, phase name) and surfaces block context in coaching messages.
-- [ ] **BLOCK-02**: At **block ends** (deload weeks) Klaus prompts a **benchmark test session** with a standardized protocol and conditions — no periodic mid-block testing.
-- [ ] **BLOCK-03**: Klaus **records benchmark results** and compares them across blocks to show per-facet improvement over time.
+- [x] **BLOCK-01**: Klaus tracks the **current training block** (start date 2026-06-21, week number, phase name) and surfaces block context in coaching messages.
+- [x] **BLOCK-02**: At **block ends** (deload weeks) Klaus prompts a **benchmark test session** with a standardized protocol and conditions — no periodic mid-block testing.
+- [x] **BLOCK-03**: Klaus **records benchmark results** and compares them across blocks to show per-facet improvement over time.
 
 ### Nutrition & Supplement Accountability (NUTR)
 
@@ -80,9 +80,9 @@ Populated during roadmap creation.
 | COACH-02 | Phase 22 | Complete |
 | COACH-06 | Phase 22 | Complete |
 | COACH-07 | Phase 22 | Complete |
-| BLOCK-01 | Phase 23 | Pending |
-| BLOCK-02 | Phase 23 | Pending |
-| BLOCK-03 | Phase 23 | Pending |
+| BLOCK-01 | Phase 23 | Complete |
+| BLOCK-02 | Phase 23 | Complete |
+| BLOCK-03 | Phase 23 | Complete |
 | COACH-03 | Phase 24 | Pending |
 | COACH-04 | Phase 24 | Pending |
 | COACH-05 | Phase 24 | Pending |
