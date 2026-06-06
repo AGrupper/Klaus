@@ -85,6 +85,66 @@ def _make_firestore_client():
 
 
 # ------------------------------------------------------------------ #
+# Phase 23 — BLOCK-02 end-of-block benchmark state machine           #
+# ------------------------------------------------------------------ #
+
+def _evaluate_benchmark_state(
+    block: dict | None,
+    today_iso: str,
+    hrv_overnight: int | None,
+    hrv_baseline: int | None,
+    acwr_ratio: float | None,
+) -> dict | None:
+    """Pure end-of-block benchmark state machine (BLOCK-02 / D-02/D-07/D-08/D-09).
+
+    Returns one of three state dicts, or None when no benchmark applies:
+      - None: no block, Block 4 (race week — D-02), or end_date more than 3 days ahead.
+      - benchmark_stale:  today is past end_date (window closed) — one caveated prompt (D-09).
+      - benchmark_deferred: within window but biometrics red (HRV < 70% of baseline OR
+                            ACWR > 1.2) — defer with the numeric reason (D-07/D-08).
+      - benchmark_window_open: within window and the gate passes (gate-unknown → PASS,
+                            erring toward prompting).
+    """
+    if not block:
+        return None
+    end_date = block.get("end_date", "")
+    label = block.get("label", "")
+    if not end_date:
+        return None
+    # D-02: Block 4 race week is never benchmarked.
+    if "Race" in label or end_date == "2026-10-10":
+        return None
+    facets = block.get("focus_facets", [])
+    # Stale: the deload window has already closed — one final caveated prompt (D-09).
+    if today_iso > end_date:
+        return {"state": "benchmark_stale", "end_date": end_date, "facets": facets}
+    # Only fire within 3 days of the block end.
+    try:
+        days_left = (date.fromisoformat(end_date) - date.fromisoformat(today_iso)).days
+    except ValueError:
+        return None
+    if days_left > 3:
+        return None
+    # Validity gate (D-07): defer if HRV < 70% of baseline OR ACWR > 1.2.
+    hrv_pct = None
+    if hrv_overnight is not None and hrv_baseline:
+        hrv_pct = hrv_overnight / hrv_baseline
+    gate_fail = (hrv_pct is not None and hrv_pct < 0.70) or (
+        acwr_ratio is not None and acwr_ratio > 1.2
+    )
+    if gate_fail:
+        return {
+            "state": "benchmark_deferred",
+            "hrv_overnight": hrv_overnight,
+            "hrv_pct": round(hrv_pct * 100) if hrv_pct is not None else None,
+            "acwr": acwr_ratio,
+            "end_date": end_date,
+            "facets": facets,
+        }
+    return {"state": "benchmark_window_open", "end_date": end_date, "facets": facets}
+
+
+# ------------------------------------------------------------------ #
 # Public entry point                                                 #
 # ------------------------------------------------------------------ #
 
@@ -106,6 +166,33 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     except Exception:
         logger.warning("proactive_alerts: training check-in failed", exc_info=True)
         # Non-fatal — alert composition continues regardless
+
+    today_iso = datetime.now(_TZ).date().isoformat()
+
+    # Phase 23 — BLOCK-02: end-of-block benchmark trigger. The block-end check + the
+    # set_benchmark_due write run BEFORE the dedup gate (Pitfall 3 / T-23-11) so the
+    # flag is persisted even on a night the cron has already sent. Best-effort — the
+    # whole block is wrapped so a Firestore hiccup never crashes the cron.
+    current_block = None
+    try:
+        from memory.firestore_db import BlockStore
+        _bs = BlockStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        current_block = _bs.get_current()
+        if current_block and not current_block.get("benchmark_due"):
+            _end = current_block.get("end_date", "")
+            _label = current_block.get("label", "")
+            _is_block4 = "Race" in _label or _end == "2026-10-10"
+            if _end and not _is_block4:
+                _days_left = (date.fromisoformat(_end) - date.fromisoformat(today_iso)).days
+                if 0 <= _days_left <= 3:
+                    _bs.set_benchmark_due(
+                        current_block.get("doc_id") or current_block.get("block_id"), True
+                    )
+    except Exception:
+        logger.warning("proactive_alerts: block-end benchmark check failed", exc_info=True)
 
     if _already_sent(target_date):
         logger.info("Proactive alerts: already processed for %s — skipping", target_date)
@@ -133,7 +220,39 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     home = _home_address()
     travel_alerts = _detect_travel_issues(events, home) if home else []
 
-    if not weather_alerts and not overload_alert and not travel_alerts:
+    # Phase 23 — BLOCK-02: fetch today's Garmin ONCE (shared by the benchmark validity
+    # gate here and recovery_concern further down — Pitfall 5), then evaluate the
+    # benchmark state. Both are best-effort; gate-unknown errs toward prompting.
+    garmin_data = None
+    try:
+        from mcp_tools import garmin_tool as _garmin
+        garmin_data = _garmin.fetch_garmin_today()
+    except Exception:
+        logger.warning("proactive_alerts: Garmin fetch failed", exc_info=True)
+
+    benchmark_state = None
+    try:
+        _hrv_o = garmin_data.get("hrv_overnight") if garmin_data else None
+        _hrv_b = garmin_data.get("hrv_baseline") if garmin_data else None
+        _acwr = None
+        try:
+            from mcp_tools.garmin_tool import compute_acwr_from_db
+            _acwr = (compute_acwr_from_db() or {}).get("ratio")
+        except Exception:
+            logger.warning("proactive_alerts: ACWR fetch failed", exc_info=True)
+        benchmark_state = _evaluate_benchmark_state(
+            current_block, today_iso, _hrv_o, _hrv_b, _acwr
+        )
+    except Exception:
+        logger.warning("proactive_alerts: benchmark gate computation failed", exc_info=True)
+
+    # Widened no-alert early return (BLOCK-02 correctness): a benchmark-only deload
+    # night has no weather/overload/travel alert but must still send, so a non-None
+    # benchmark_state keeps the cron in the send path.
+    if (
+        not weather_alerts and not overload_alert and not travel_alerts
+        and benchmark_state is None
+    ):
         logger.info("Proactive alerts: no issues found for %s", target_date)
         _mark_processed(target_date, alert_sent=False)
         return
@@ -144,6 +263,8 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         "overload_alert": overload_alert,
         "travel_alerts": travel_alerts,
     }
+    if benchmark_state is not None:
+        alerts_context["benchmark"] = benchmark_state
 
     # Phase 20 — RECOVERY-03 / D-16: surface recovery_concern with full framing in the
     # evening alert too (equal weight with the morning briefing). Best-effort Pattern-C:
@@ -153,13 +274,7 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     # that is already firing; it does not by itself trigger an evening send.
     try:
         from core.training_checkin import compute_recovery_concern
-        garmin_data = None
-        try:
-            from mcp_tools.garmin_tool import fetch_garmin_today
-            garmin_data = fetch_garmin_today()
-        except Exception:
-            logger.warning("proactive_alerts: Garmin fetch for recovery_concern failed", exc_info=True)
-        today_iso = datetime.now(_TZ).date().isoformat()
+        # Reuse the single garmin_data fetched above (Pitfall 5 — no second Garmin call).
         rc = compute_recovery_concern(garmin_data=garmin_data, today_iso=today_iso)
         if rc:
             alerts_context["recovery_concern"] = rc

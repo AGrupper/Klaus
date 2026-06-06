@@ -13,6 +13,22 @@ os.environ.setdefault("TELEGRAM_ALLOWED_USER_IDS", "123456")
 import core.proactive_alerts  # noqa: E402  (side-effect import for patch resolution)
 
 
+@pytest.fixture(autouse=True)
+def _restore_environ():
+    """Snapshot/restore os.environ around every test.
+
+    run_proactive_alerts constructs Firestore-backed stores, and
+    _make_firestore_client runs load_dotenv(override=True) — which leaks
+    GCP_PROJECT_ID from .env into os.environ. Without this fixture that leak
+    bleeds into later tests whose training check-in then attempts real Firestore
+    I/O. Restoring the snapshot keeps each test isolated.
+    """
+    snap = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(snap)
+
+
 @pytest.fixture
 def mock_bot():
     bot = AsyncMock()
@@ -181,8 +197,9 @@ def test_no_recovery_concern_key_when_none(
 # Phase 23 Plan 03 — end-of-block benchmark trigger (BLOCK-02)            #
 # ====================================================================== #
 
-# The block-end check constructs BlockStore from env; ensure a project id exists.
-os.environ.setdefault("GCP_PROJECT_ID", "test-project")
+# NOTE: GCP_PROJECT_ID is deliberately NOT set at module scope — the existing tests
+# rely on it being unset so the top-of-function training check-in no-ops. The two
+# integration tests below scope it locally via patch.dict and neutralize the check-in.
 
 _FACETS = ["bench_press_1rm", "squat_1rm", "push_ups", "pull_ups", "threshold_pace"]
 
@@ -277,7 +294,9 @@ def test_benchmark_check_before_dedup_gate(mock_already_sent, mock_bot):
     so the flag is still set even when the cron already sent for this date."""
     mock_bs = MagicMock()
     mock_bs.return_value.get_current.return_value = _near_end_block1()
-    with patch("memory.firestore_db.BlockStore", mock_bs):
+    with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-project"}), \
+         patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+         patch("memory.firestore_db.BlockStore", mock_bs):
         from core.proactive_alerts import run_proactive_alerts
         asyncio.run(run_proactive_alerts(mock_bot, "2026-07-16"))
     mock_bs.return_value.set_benchmark_due.assert_called_once()
@@ -305,7 +324,9 @@ def test_benchmark_only_night_still_sends(
 
     mock_bs = MagicMock()
     mock_bs.return_value.get_current.return_value = _near_end_block1()
-    with patch("memory.firestore_db.BlockStore", mock_bs), \
+    with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-project"}), \
+         patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+         patch("memory.firestore_db.BlockStore", mock_bs), \
          patch("mcp_tools.garmin_tool.fetch_garmin_today",
                return_value={"hrv_overnight": 75, "hrv_baseline": 80}), \
          patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={"ratio": 1.0}), \
