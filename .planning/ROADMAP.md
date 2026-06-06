@@ -90,7 +90,12 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   4. The 21:30 check-in flags structural fueling-slot misses (e.g., missed post-AM-run reload) using `MealStore` timestamps mapped to the 6 blueprint slots — not marginal macro adjustments
   5. The morning briefing frames today's named session, recovery state, and relevant fueling reminder as one integrated block
   6. The Sunday weekly review reports per-facet progress (strength top-set trend, threshold volume vs target, ACWR) with block-relative framing, and surfaces session quality trends from the annotated log
-**Plans**: TBD
+**Plans**: 5 plans
+- [ ] 24-01-PLAN.md — CoachingTopicStore dedup gate + derived session-quality field (foundation: COACH-05, PROG-04)
+- [ ] 24-02-PLAN.md — Nutrition pure helpers: macro-gap, meal→fueling-slot mapping, slot-miss + supplement riders (NUTR-01/02/03)
+- [ ] 24-03-PLAN.md — Folded fixes: read_coaching_guide WR-02 hardening + smart-loop double-send cap/fallback
+- [ ] 24-04-PLAN.md — 21:30 cron: nutrition gather + cross-cron dedup gate + strict-pushback/recovery prompts (proactive_alert.md, smart_agent.md)
+- [ ] 24-05-PLAN.md — Morning briefing integrated block + Sunday weekly review per-facet + quality trend (+ both prompts, dedup wiring)
 
 ### Phase 25: Progress Projection + Benchmark Trend Reporting
 **Goal**: Klaus projects strength and pace trends against the dated Oct/Nov goals and reports on-track or behind; per-facet benchmark results are surfaced as improvement trajectories in the Sunday weekly review; this is the highest dependency-chain feature in the milestone
@@ -109,7 +114,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
-| 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
+| 24. Strict Coaching Integration + Nutrition Accountability | 0/5 | Planned | - |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
 
 ---
