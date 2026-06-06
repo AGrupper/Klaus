@@ -270,6 +270,34 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: meals aggregate failed", exc_info=True)
 
+    # PHASE 23 — BLOCK-01 / D-04: surface the active mesocycle block (date-range
+    # resolved, D-01) with a derived "Week N of 16" framing, or a pre-cycle countdown
+    # before the 2026-06-21 anchor. Best-effort + silent-omit (Pitfall 4): a None
+    # block post-cycle sets NEITHER key; week_num is derived from plan_start_date at
+    # gather time, never read from a stored field (D-03).
+    try:
+        from memory.firestore_db import BlockStore
+        bs = BlockStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        block = bs.get_current()
+        if block:
+            week_num = (date.fromisoformat(today_iso) - date.fromisoformat("2026-06-21")).days // 7 + 1
+            data["block"] = {
+                "label": block.get("label"),
+                "week_num": week_num,
+                "benchmark_due": block.get("benchmark_due", False),
+                "end_date": block.get("end_date"),
+                "block_id": block.get("block_id") or block.get("doc_id"),
+            }
+        else:
+            days_until = (date.fromisoformat("2026-06-21") - date.fromisoformat(today_iso)).days
+            if days_until > 0:
+                data["pre_cycle_countdown"] = days_until
+    except Exception:
+        logger.warning("morning_briefing: block state fetch failed", exc_info=True)
+
     return data
 
 

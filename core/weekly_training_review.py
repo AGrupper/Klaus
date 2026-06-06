@@ -190,6 +190,37 @@ def _gather_week_data(today_iso: str) -> dict:
         logger.warning("weekly_review: UserProfileStore fetch failed", exc_info=True)
         data["athletic_goals"] = []
 
+    # ------------------------------------------------------------------ #
+    # 6. BlockStore + BenchmarkStore — current block + this-block        #
+    #    benchmarks (BLOCK-01 / BLOCK-03). Best-effort; defaults to       #
+    #    None / [] on failure (Pitfall 4). week_num derived from the      #
+    #    2026-06-21 anchor at gather time (D-03), never stored. RAW        #
+    #    block-over-block deltas only — no projection (Phase 25).         #
+    # ------------------------------------------------------------------ #
+    try:
+        from memory.firestore_db import BlockStore, BenchmarkStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        block = BlockStore(project_id, database).get_current()
+        if block:
+            week_num = (today - date.fromisoformat("2026-06-21")).days // 7 + 1
+            data["current_block"] = {**block, "week_num": week_num}
+            block_id = block.get("block_id") or block.get("doc_id")
+            data["block_benchmarks"] = (
+                BenchmarkStore(project_id, database).get_block_benchmarks(block_id)
+                if block_id else []
+            )
+        else:
+            data["current_block"] = None
+            data["block_benchmarks"] = []
+            days_until = (date.fromisoformat("2026-06-21") - today).days
+            if days_until > 0:
+                data["pre_cycle_countdown"] = days_until
+    except Exception:
+        logger.warning("weekly_review: BlockStore/BenchmarkStore fetch failed", exc_info=True)
+        data["current_block"] = None
+        data["block_benchmarks"] = []
+
     return data
 
 
