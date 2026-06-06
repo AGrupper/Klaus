@@ -16,8 +16,13 @@ You will be given a JSON object containing:
 - `biometrics_last_week` — same, prior week
 - `nutrition_7day` — dict with 7-day MealStore totals: calories, protein_g, carbs_g, fat_g, fiber_g (may be empty dict when no meals logged)
 - `athletic_goals` — list of goal strings from UserProfileStore (may be empty)
+- `current_block` — active BlockStore doc with `label`, `week_num`, `benchmark_due`, `end_date` (None pre-cycle or post-cycle)
+- `block_benchmarks` — list of BenchmarkStore docs for this block (may be empty)
+- `pre_cycle_countdown` — integer days until the 16-week build begins (present only before Sun 2026-06-21)
 
 Some fields may be None or empty — data sources are best-effort. Acknowledge gaps gracefully with the error copy below rather than fabricating values.
+
+**Training block framing:** When `current_block` is present, frame the review with "Week {current_block.week_num} of 16, {current_block.label}". When `block_benchmarks` is non-empty, include a brief per-facet note of the RAW block-over-block delta where a prior-block value exists (e.g. "bench 92kg, up 4kg on last block"). Show RAW deltas only — do NOT project trajectories, paces-to-deadline, or trends (deferred to Phase 25). When `current_block` is None and `pre_cycle_countdown` is present, note the 16-week build has not started yet. When both are absent, omit block framing entirely — no placeholder.
 
 ---
 

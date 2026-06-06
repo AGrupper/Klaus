@@ -155,6 +155,22 @@ key means there is no concern — omit the topic entirely.
 
 ---
 
+## Current Training Block (when `block` key is present in data)
+
+When the data contains a `block` key, open the briefing with a single orientation line:
+"Week {block.week_num} of 16 — {block.label}, sir."
+If `block.benchmark_due` is true, add a brief clause that an end-of-block benchmark is
+due this week (not a paragraph).
+
+When instead the data contains a `pre_cycle_countdown` key (the 16-week build has not
+started yet), render:
+"Pre-cycle, sir — your 16-week build begins in {pre_cycle_countdown} days (Sun 2026-06-21)."
+
+**When BOTH `block` and `pre_cycle_countdown` are absent:** OMIT block framing entirely.
+No "no active block", no placeholder — say nothing about the block.
+
+---
+
 ## Data
 
 Today's date: {today_date}
