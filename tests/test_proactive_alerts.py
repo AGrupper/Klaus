@@ -647,3 +647,419 @@ class TestSlotMappingAndMissDetection:
         misses = _detect_slot_misses([], am, pm, "2026-06-06")
         assert isinstance(slot_map, dict)
         assert isinstance(misses, list)
+
+
+# ====================================================================== #
+# Phase 24 Plan 04 — Nutrition gather + dedup gate (NUTR-01/02/03, COACH-05)
+# Task 1: _gather_nutrition_data + dedup gate wiring in run_proactive_alerts #
+# ====================================================================== #
+
+
+class TestGatherNutritionData:
+    """Unit tests for _gather_nutrition_data — best-effort gather with MealStore mock."""
+
+    def test_gather_nutrition_data_function_exists(self):
+        """_gather_nutrition_data must be importable from core.proactive_alerts."""
+        from core.proactive_alerts import _gather_nutrition_data  # noqa: F401
+
+    def test_gather_nutrition_data_returns_dict(self):
+        """_gather_nutrition_data returns a dict with expected keys."""
+        from core.proactive_alerts import _gather_nutrition_data
+        from unittest.mock import MagicMock, patch
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = []
+        mock_ms.get_day_aggregate.return_value = {"totals": {}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups):
+            result = _gather_nutrition_data("2026-06-06", garmin_activities=[])
+
+        assert isinstance(result, dict)
+
+    def test_gather_nutrition_no_meal_day_returns_missing_data(self):
+        """On a no-meal day (get_day returns []), returns a missing-data context — no crash.
+
+        Pitfall 7: get_day returns [] not None on empty days.
+        """
+        from core.proactive_alerts import _gather_nutrition_data
+        from unittest.mock import MagicMock, patch
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = []          # Pitfall 7: empty list, not None
+        mock_ms.get_day_aggregate.return_value = {"totals": {}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups):
+            result = _gather_nutrition_data("2026-06-06", garmin_activities=[])
+
+        # Must not crash; meals key is present (empty list is valid)
+        assert "meals" in result
+        assert result["meals"] == []
+
+    def test_gather_nutrition_data_has_required_keys(self):
+        """_gather_nutrition_data returns all expected keys from the spec."""
+        from core.proactive_alerts import _gather_nutrition_data
+        from unittest.mock import MagicMock, patch
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = [
+            {"timestamp": "2026-06-06T08:00:00", "protein_g": 40, "carbs_g": 60}
+        ]
+        mock_ms.get_day_aggregate.return_value = {
+            "totals": {"protein_g": 40, "carbs_g": 60}
+        }
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups):
+            result = _gather_nutrition_data("2026-06-06", garmin_activities=[])
+
+        expected_keys = {"meals", "macro_totals", "macro_gaps", "slot_misses", "am_anchor", "pm_anchor"}
+        for key in expected_keys:
+            assert key in result, f"Expected key '{key}' missing from _gather_nutrition_data result"
+
+    def test_gather_nutrition_store_failure_no_crash(self):
+        """MealStore failure is handled best-effort — no crash (T-24-14 mitigation)."""
+        from core.proactive_alerts import _gather_nutrition_data
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("memory.firestore_db.MealStore", side_effect=Exception("Firestore down")):
+            # Must NOT raise
+            result = _gather_nutrition_data("2026-06-06", garmin_activities=[])
+
+        # Degraded result: meals defaults to []
+        assert isinstance(result, dict)
+        assert result.get("meals") == []
+
+
+class TestDedupGateWiring:
+    """Integration tests for CoachingTopicStore dedup gate in run_proactive_alerts.
+
+    Verifies: already-raised topic excluded from coaching_topics_new; add_topic called
+    only after send success; Jerusalem-time date key used.
+    """
+
+    def test_already_raised_topic_excluded_from_new_topics(self):
+        """Dedup gate: a topic in CoachingTopicStore.topics_today is excluded from
+        coaching_topics_new fed to compose (COACH-05)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_bot = AsyncMock()
+        captured = {}
+
+        def _capture(ctx):
+            captured["ctx"] = ctx
+            return "Alert text"
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = [
+            {"timestamp": "2026-06-06T08:00:00", "protein_g": 40, "carbs_g": 60}
+        ]
+        mock_ms.get_day_aggregate.return_value = {"totals": {"protein_g": 40, "carbs_g": 60}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+
+        # CoachingTopicStore: "protein-miss" already raised today
+        mock_cts = MagicMock()
+        mock_cts.has_topic.side_effect = lambda d, t: t == "protein-miss"
+        mock_cts.topics_today.return_value = ["protein-miss"]
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+             patch("core.proactive_alerts._already_sent", return_value=False), \
+             patch("core.proactive_alerts._get_calendar_tool") as mock_cal, \
+             patch("core.proactive_alerts._home_address", return_value=""), \
+             patch("core.proactive_alerts._detect_weather_conflicts", return_value=[
+                 {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+             ]), \
+             patch("core.proactive_alerts._detect_overloaded_day", return_value=None), \
+             patch("core.proactive_alerts._detect_travel_issues", return_value=[]), \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={}), \
+             patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups), \
+             patch("memory.firestore_db.CoachingTopicStore", return_value=mock_cts), \
+             patch("memory.firestore_db.BlockStore") as mock_bs_cls, \
+             patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+             patch("core.proactive_alerts._compose_alert", side_effect=_capture), \
+             patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}), \
+             patch("core.proactive_alerts._mark_processed"):
+            mock_cal.return_value.list_events.return_value = []
+            mock_bs_cls.return_value.get_current.return_value = None
+
+            asyncio.run(
+                __import__("core.proactive_alerts", fromlist=["run_proactive_alerts"])
+                .run_proactive_alerts(mock_bot, "2026-06-07")
+            )
+
+        ctx = captured.get("ctx", {})
+        # protein-miss must NOT appear in new topics (already raised)
+        new_topics = ctx.get("coaching_topics_new", [])
+        assert "protein-miss" not in new_topics, (
+            "protein-miss was already raised today — must not appear in coaching_topics_new"
+        )
+        already_raised = ctx.get("coaching_topics_already_raised", [])
+        assert "protein-miss" in already_raised
+
+    def test_add_topic_not_called_when_send_fails(self):
+        """Write-after-send discipline: add_topic must NOT be called when send fails
+        (T-24-12 mitigation — false dedup block on crash-between-write-and-send)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_bot = AsyncMock()
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = []
+        mock_ms.get_day_aggregate.return_value = {"totals": {}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+        mock_cts = MagicMock()
+        mock_cts.has_topic.return_value = False
+        mock_cts.topics_today.return_value = []
+
+        # send_and_inject raises — simulating a send failure
+        async def _fail_send(*args, **kwargs):
+            raise RuntimeError("Telegram down")
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+             patch("core.proactive_alerts._already_sent", return_value=False), \
+             patch("core.proactive_alerts._get_calendar_tool") as mock_cal, \
+             patch("core.proactive_alerts._home_address", return_value=""), \
+             patch("core.proactive_alerts._detect_weather_conflicts", return_value=[
+                 {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+             ]), \
+             patch("core.proactive_alerts._detect_overloaded_day", return_value=None), \
+             patch("core.proactive_alerts._detect_travel_issues", return_value=[]), \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={}), \
+             patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups), \
+             patch("memory.firestore_db.CoachingTopicStore", return_value=mock_cts), \
+             patch("memory.firestore_db.BlockStore") as mock_bs_cls, \
+             patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+             patch("core.proactive_alerts._compose_alert", return_value="Alert text"), \
+             patch("core.scheduled_message.send_and_inject", side_effect=_fail_send), \
+             patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}), \
+             patch("core.proactive_alerts._mark_processed"):
+            mock_cal.return_value.list_events.return_value = []
+            mock_bs_cls.return_value.get_current.return_value = None
+
+            try:
+                asyncio.run(
+                    __import__("core.proactive_alerts", fromlist=["run_proactive_alerts"])
+                    .run_proactive_alerts(mock_bot, "2026-06-07")
+                )
+            except RuntimeError:
+                pass  # expected — send failed
+
+        # add_topic must NOT have been called (write-before-send would be T-24-12)
+        mock_cts.add_topic.assert_not_called()
+
+    def test_add_topic_called_after_successful_send(self):
+        """Write-after-send discipline: add_topic IS called after send succeeds."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_bot = AsyncMock()
+
+        mock_ms = MagicMock()
+        # Return meals that will trigger a protein-miss detection
+        mock_ms.get_day.return_value = [
+            {"timestamp": "2026-06-06T08:00:00", "protein_g": 40, "carbs_g": 60}
+        ]
+        mock_ms.get_day_aggregate.return_value = {
+            "totals": {"protein_g": 40, "carbs_g": 60}  # 40g < 120g floor → protein-miss
+        }
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+        mock_cts = MagicMock()
+        mock_cts.has_topic.return_value = False   # nothing raised yet
+        mock_cts.topics_today.return_value = []
+
+        async def _ok_send(*args, **kwargs):
+            pass
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+             patch("core.proactive_alerts._already_sent", return_value=False), \
+             patch("core.proactive_alerts._get_calendar_tool") as mock_cal, \
+             patch("core.proactive_alerts._home_address", return_value=""), \
+             patch("core.proactive_alerts._detect_weather_conflicts", return_value=[
+                 {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+             ]), \
+             patch("core.proactive_alerts._detect_overloaded_day", return_value=None), \
+             patch("core.proactive_alerts._detect_travel_issues", return_value=[]), \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={}), \
+             patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups), \
+             patch("memory.firestore_db.CoachingTopicStore", return_value=mock_cts), \
+             patch("memory.firestore_db.BlockStore") as mock_bs_cls, \
+             patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+             patch("core.proactive_alerts._compose_alert", return_value="Alert text"), \
+             patch("core.scheduled_message.send_and_inject", side_effect=_ok_send), \
+             patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}), \
+             patch("core.proactive_alerts._mark_processed"):
+            mock_cal.return_value.list_events.return_value = []
+            mock_bs_cls.return_value.get_current.return_value = None
+
+            asyncio.run(
+                __import__("core.proactive_alerts", fromlist=["run_proactive_alerts"])
+                .run_proactive_alerts(mock_bot, "2026-06-07")
+            )
+
+        # add_topic MUST be called after successful send
+        assert mock_cts.add_topic.called, "add_topic must be called after successful send"
+
+    def test_dedup_gate_failure_is_fail_open(self):
+        """CoachingTopicStore failure (store raises) must not crash the cron — all
+        topics fire (fail-open per T-24-14 mitigation)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        mock_bot = AsyncMock()
+        captured = {}
+
+        def _capture(ctx):
+            captured["ctx"] = ctx
+            return "Alert text"
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = []
+        mock_ms.get_day_aggregate.return_value = {"totals": {}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+
+        # CoachingTopicStore constructor raises
+        async def _ok_send(*args, **kwargs):
+            pass
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+             patch("core.proactive_alerts._already_sent", return_value=False), \
+             patch("core.proactive_alerts._get_calendar_tool") as mock_cal, \
+             patch("core.proactive_alerts._home_address", return_value=""), \
+             patch("core.proactive_alerts._detect_weather_conflicts", return_value=[
+                 {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+             ]), \
+             patch("core.proactive_alerts._detect_overloaded_day", return_value=None), \
+             patch("core.proactive_alerts._detect_travel_issues", return_value=[]), \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={}), \
+             patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups), \
+             patch("memory.firestore_db.CoachingTopicStore",
+                   side_effect=Exception("Firestore down")), \
+             patch("memory.firestore_db.BlockStore") as mock_bs_cls, \
+             patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+             patch("core.proactive_alerts._compose_alert", side_effect=_capture), \
+             patch("core.scheduled_message.send_and_inject", side_effect=_ok_send), \
+             patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}), \
+             patch("core.proactive_alerts._mark_processed"):
+            mock_cal.return_value.list_events.return_value = []
+            mock_bs_cls.return_value.get_current.return_value = None
+
+            # Must NOT raise — fail-open means cron continues
+            asyncio.run(
+                __import__("core.proactive_alerts", fromlist=["run_proactive_alerts"])
+                .run_proactive_alerts(mock_bot, "2026-06-07")
+            )
+
+        # Compose was still called (cron continued despite CoachingTopicStore failure)
+        assert "ctx" in captured, "compose must still be called when dedup gate fails"
+
+    def test_jerusalem_time_used_for_coaching_topic_key(self):
+        """The Jerusalem-time date key is used for CoachingTopicStore calls (not UTC)."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from zoneinfo import ZoneInfo
+
+        mock_bot = AsyncMock()
+
+        mock_ms = MagicMock()
+        mock_ms.get_day.return_value = []
+        mock_ms.get_day_aggregate.return_value = {"totals": {}}
+        mock_ups = MagicMock()
+        mock_ups.load.return_value = {
+            "nutrition_targets": {"protein_g": 150, "carbs_g": 350},
+            "weekly_split": {},
+        }
+        mock_cts = MagicMock()
+        mock_cts.has_topic.return_value = False
+        mock_cts.topics_today.return_value = []
+
+        import datetime as _dt_mod
+        il_date_today = _dt_mod.datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+        async def _ok_send(*args, **kwargs):
+            pass
+
+        with patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}), \
+             patch("core.training_checkin.run_training_checkin", new=AsyncMock()), \
+             patch("core.proactive_alerts._already_sent", return_value=False), \
+             patch("core.proactive_alerts._get_calendar_tool") as mock_cal, \
+             patch("core.proactive_alerts._home_address", return_value=""), \
+             patch("core.proactive_alerts._detect_weather_conflicts", return_value=[
+                 {"event_summary": "Run", "event_time": "07:00", "issue": "rain 40%"}
+             ]), \
+             patch("core.proactive_alerts._detect_overloaded_day", return_value=None), \
+             patch("core.proactive_alerts._detect_travel_issues", return_value=[]), \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value={}), \
+             patch("mcp_tools.garmin_tool.compute_acwr_from_db", return_value={}), \
+             patch("memory.firestore_db.MealStore", return_value=mock_ms), \
+             patch("memory.firestore_db.UserProfileStore", return_value=mock_ups), \
+             patch("memory.firestore_db.CoachingTopicStore", return_value=mock_cts), \
+             patch("memory.firestore_db.BlockStore") as mock_bs_cls, \
+             patch("core.training_checkin.compute_recovery_concern", return_value=None), \
+             patch("core.proactive_alerts._compose_alert", return_value="Alert text"), \
+             patch("core.scheduled_message.send_and_inject", side_effect=_ok_send), \
+             patch("mcp_tools.weather_tool.fetch_weather", return_value={"tomorrow": {}}), \
+             patch("core.proactive_alerts._mark_processed"):
+            mock_cal.return_value.list_events.return_value = []
+            mock_bs_cls.return_value.get_current.return_value = None
+
+            asyncio.run(
+                __import__("core.proactive_alerts", fromlist=["run_proactive_alerts"])
+                .run_proactive_alerts(mock_bot, "2026-06-07")
+            )
+
+        # Any call to has_topic or topics_today must use the Israel-time date
+        all_calls = (
+            list(mock_cts.has_topic.call_args_list)
+            + list(mock_cts.topics_today.call_args_list)
+        )
+        for call in all_calls:
+            date_arg = call.args[0] if call.args else call.kwargs.get("date_str")
+            assert date_arg == il_date_today, (
+                f"CoachingTopicStore called with '{date_arg}', "
+                f"expected Jerusalem-time date '{il_date_today}'"
+            )
