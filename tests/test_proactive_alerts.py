@@ -1082,3 +1082,167 @@ class TestDedupGateWiring:
                 f"CoachingTopicStore called with '{date_arg}', "
                 f"expected Jerusalem-time date '{il_date_today}'"
             )
+
+
+# ====================================================================== #
+# Phase 24 Plan 04 — Task 2: Prompt content assertions                   #
+# proactive_alert.md + smart_agent.md strict-coaching, nutrition, dedup  #
+# ====================================================================== #
+
+
+class TestPromptContent:
+    """Assert the critical coaching-behavior markers are present in the prompt files.
+
+    These tests are purely structural (file-read assertions) — they do not invoke
+    the LLM. They verify that the required behaviors were not accidentally omitted
+    or overwritten during editing.
+    """
+
+    @staticmethod
+    def _read_prompt(name: str) -> str:
+        """Read a prompt file from the prompts/ directory."""
+        from pathlib import Path
+        path = Path(__file__).parent.parent / "prompts" / name
+        return path.read_text(encoding="utf-8")
+
+    # ------------------------------------------------------------------ #
+    # proactive_alert.md assertions                                       #
+    # ------------------------------------------------------------------ #
+
+    def test_proactive_alert_has_your_call_sir(self):
+        """Recovery-conflict block must include 'your call, Sir' — the SC-2/COACH-04
+        single-ranked-recommendation hand-off (D-07)."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        assert "your call, sir" in content, (
+            "proactive_alert.md must contain 'your call, Sir' for the recovery-conflict "
+            "single-ranked-recommendation hand-off (COACH-04 / D-07)"
+        )
+
+    def test_proactive_alert_has_one_ranked_rec_instruction(self):
+        """Recovery-conflict block must forbid menus — exactly one ranked recommendation."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        # At least one of: "one ranked", "exactly one", "single rec", "one recommendation"
+        markers = ["one ranked", "exactly one", "single rec", "one recommendation",
+                   "one rec", "single ranked"]
+        assert any(m in content for m in markers), (
+            "proactive_alert.md must explicitly instruct exactly one ranked recommendation "
+            "(COACH-04 / D-07 — never a menu)"
+        )
+
+    def test_proactive_alert_no_softening_skip_pushback(self):
+        """Skip-pushback block must forbid softening/hedging (COACH-03 / D-05)."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        markers = ["no softening", "no hedging", "forbid hedge", "without hedging",
+                   "without softening", "do not hedge", "do not soften", "strict",
+                   "no hedge"]
+        assert any(m in content for m in markers), (
+            "proactive_alert.md must explicitly forbid softening/hedging in skip-pushback "
+            "(COACH-03 / D-05)"
+        )
+
+    def test_proactive_alert_forbids_dated_projection(self):
+        """Skip-pushback block must NOT introduce dated projection language —
+        'N weeks behind' / 'on track for' is Phase 25 scope."""
+        content = self._read_prompt("proactive_alert.md")
+        content_lower = content.lower()
+        # If the phrase appears, it MUST be in a prohibition (e.g. "do NOT say '...'")
+        for phrase in ["weeks behind", "on track for"]:
+            if phrase in content_lower:
+                # Acceptable only if the surrounding text forbids it
+                idx = content_lower.find(phrase)
+                window = content_lower[max(0, idx - 80): idx + 80]
+                assert any(neg in window for neg in [
+                    "do not", "never", "not", "forbid", "avoid", "no dated"
+                ]), (
+                    f"proactive_alert.md contains '{phrase}' without a prohibition — "
+                    f"dated projection is Phase 25 scope, not Phase 24"
+                )
+
+    def test_proactive_alert_has_supplement_riders(self):
+        """Nutrition block must reference the supplement riders (NUTR-03 / D-11):
+        D3+K2/Omega-3 (post-am-run), Creatine (pm-post-lift), Mg-Glycinate (pre-bed)."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        # Check for at least two of the three supplements (flex for spelling variants)
+        supplements = ["d3", "omega-3", "omega3", "creatine",
+                       "mg-glycinate", "mg glycinate", "magnesium glycinate",
+                       "zinc", "copper", "k2"]
+        found = sum(1 for s in supplements if s in content)
+        assert found >= 2, (
+            f"proactive_alert.md must reference supplement riders (D3+K2/Omega-3, "
+            f"Creatine, Mg-Glycinate) — found {found} of the expected supplement names"
+        )
+
+    def test_proactive_alert_references_structural_miss(self):
+        """Nutrition block must frame misses as structural, not daily micro-optimization."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        markers = ["structural", "structurally", "structural miss"]
+        assert any(m in content for m in markers), (
+            "proactive_alert.md must frame fueling/macro misses as 'structural' — "
+            "not daily micro-optimization (NUTR-01 / D-12)"
+        )
+
+    def test_proactive_alert_has_dedup_semantics(self):
+        """Dedup semantics must be present: already-raised topics not repeated (COACH-05)."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        markers = [
+            "already", "coaching_topics_already_raised", "already_raised",
+            "already raised", "not repeat", "do not repeat", "skip", "suppress",
+            "already said", "already flagged",
+        ]
+        assert any(m in content for m in markers), (
+            "proactive_alert.md must include dedup semantics — instructions not to repeat "
+            "topics already raised today (COACH-05)"
+        )
+
+    def test_proactive_alert_has_nutrition_section(self):
+        """Nutrition accountability section must exist in proactive_alert.md (NUTR-01/02)."""
+        content = self._read_prompt("proactive_alert.md").lower()
+        markers = ["nutrition", "macro", "protein", "fueling", "carb"]
+        assert any(m in content for m in markers), (
+            "proactive_alert.md must include a nutrition accountability section (NUTR-01/02)"
+        )
+
+    # ------------------------------------------------------------------ #
+    # smart_agent.md assertions                                           #
+    # ------------------------------------------------------------------ #
+
+    def test_smart_agent_reactive_never_suppressed(self):
+        """smart_agent.md must state reactive chat is never suppressed by cron topics
+        (COACH-05 / D-03)."""
+        content = self._read_prompt("smart_agent.md").lower()
+        markers = [
+            "reactive", "never suppress", "always answer", "not suppress",
+            "never suppressed", "always answer", "reactive chat", "reactive coaching",
+        ]
+        assert any(m in content for m in markers), (
+            "smart_agent.md must state that reactive chat answers are never suppressed "
+            "by cron topics (COACH-05 / D-03)"
+        )
+
+    def test_smart_agent_has_strict_pushback_format(self):
+        """smart_agent.md must include the strict-pushback/single-rec format for
+        reactive coaching queries (COACH-03/04 / D-05/06/07)."""
+        content = self._read_prompt("smart_agent.md").lower()
+        # Accept any of these as evidence of the reactive strict-coaching format
+        markers = [
+            "your call, sir",
+            "one ranked",
+            "exactly one",
+            "single rec",
+            "skip pushback",
+            "strict.*pushback",
+            "reactive.*strict",
+            "named.*session",
+            "named session",
+            "concrete.*deficit",
+            "concrete deficit",
+        ]
+        import re
+        assert any(
+            (re.search(m, content) is not None if ".*" in m else m in content)
+            for m in markers
+        ), (
+            "smart_agent.md must include the strict-pushback format for reactive coaching "
+            "queries — named session, deficit in concrete units, single ranked rec, "
+            "'your call, Sir' (COACH-03/04)"
+        )
