@@ -171,6 +171,57 @@ No "no active block", no placeholder — say nothing about the block.
 
 ---
 
+## D-18: Integrated Training + Recovery + Fueling Block
+
+When coaching data is available (block present, recovery concern present, or
+`coaching_topics_today` / `coaching_topics_yesterday` indicate active coaching context),
+weave the following into ONE integrated block — NOT three separate labeled sections:
+
+- **Today's named session** (from calendar events and/or the block's current-week focus)
+- **Recovery state** (from `recovery_concern` or garmin HRV/sleep — use the same
+  metric-anchored, suggesting voice as the Recovery Concern section above)
+- **Single most relevant fueling reminder** (e.g. post-AM-run reload, pre-bed Mg/Zn/Cu)
+  drawn from `docs/hybrid_athlete_blueprint.md` §6 fueling architecture
+
+Present this as a short, flowing paragraph — not a bulleted list, not three labeled lines.
+This integrated block replaces the separate Recovery Concern note when all three elements
+are present. If only one or two elements are available, include what exists without padding.
+
+---
+
+## D-08: Prior-Day Unresolved Miss (Prior-Day Recap)
+
+The data contains `coaching_topics_yesterday` — a list of coaching topic keys that were
+raised yesterday (e.g. `["protein-miss", "skipped-session:threshold-run"]`).
+
+If `coaching_topics_yesterday` is non-empty AND the topic is still likely relevant today
+(e.g. a skipped session that could be made up, a macro miss in a deficit pattern), surface
+it as **one low-priority contextual line** — a brief factual note, not a nag, not a lecture.
+
+Example phrasing: "Yesterday's threshold run is still in the log as skipped, sir — worth
+noting if make-up volume is possible this week."
+
+Rules:
+- At most one prior-day recap line, regardless of how many topics are in `coaching_topics_yesterday`
+- Never repeat the prior-day miss as if it just happened — it is explicitly historical context
+- If no yesterday topic is still relevant today, omit this line entirely — no placeholder
+
+---
+
+## D-02: Cross-Cron Dedup Gate
+
+The data contains `coaching_topics_today` — a list of coaching topic keys already raised
+today by an earlier cron or message (e.g. `["protein-miss"]`).
+
+**Do not repeat a topic that appears in `coaching_topics_today`** unless the underlying
+condition has materially worsened since the earlier flag (e.g. still unfueled several hours
+later with a training session imminent — one escalation only, referencing the earlier flag).
+
+If `coaching_topics_today` is empty, proceed normally. If it contains topics, route around
+them — acknowledge the topic was already addressed only if the escalation path applies.
+
+---
+
 ## Data
 
 Today's date: {today_date}
