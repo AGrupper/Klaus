@@ -290,8 +290,12 @@ def test_gather_week_coaching_topics_fail_open(patched_sources):
     assert data.get("coaching_topics_today") == []
 
 
-def test_compose_review_injects_coaching_guide(patched_sources_with_coaching):
+def test_compose_review_injects_coaching_guide(patched_sources_with_coaching, monkeypatch):
     """PROG-01 / D-17: _compose_review injects {coaching_guide} into the system prompt."""
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-haiku-4-5-20251001")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+
     # Capture the system prompt sent to the LLM
     captured_prompts = []
 
@@ -317,10 +321,13 @@ def test_compose_review_injects_coaching_guide(patched_sources_with_coaching):
     )
 
 
-def test_run_weekly_review_writes_topics_after_send():
+def test_run_weekly_review_writes_topics_after_send(monkeypatch):
     """T-24-17: add_topic called only after successful send_and_inject (write-after-send)."""
     import asyncio
     from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
 
     add_topic_calls = []
 
@@ -346,10 +353,13 @@ def test_run_weekly_review_writes_topics_after_send():
     assert ("2026-06-07", "structural-critique:protein-target") in add_topic_calls
 
 
-def test_run_weekly_review_no_topic_write_when_send_fails():
+def test_run_weekly_review_no_topic_write_when_send_fails(monkeypatch):
     """T-24-17: add_topic must NOT be called if send_and_inject raises."""
     import asyncio
     from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
 
     add_topic_calls = []
 
