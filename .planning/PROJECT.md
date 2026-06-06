@@ -17,14 +17,20 @@ inline-keyboard logging, surfaces recovery state (ACWR / HRV / sleep) in the mor
 briefing and evening alert, and sends a Sunday weekly training review. The
 accountability **loop** is live and verified end-to-end (19/19 + live UAT).
 
-**v4.0 in progress (2/5 phases):** Phase 21 ingested Amit's Hybrid Athlete blueprint
+**v4.0 in progress (3/5 phases):** Phase 21 ingested Amit's Hybrid Athlete blueprint
 into `UserProfileStore` as a structured living guide (editable via `update_plan`). Phase 22
 made Klaus a genuinely *expert, specific* coach: curated source-tier-tagged knowledge
 (`docs/COACHING_GUIDE.md`) on every brain call + cron, and **the D-13 no-fabrication guard
 is released** — replaced by a recency-windowed Tier A/B data-presence contract, so Klaus now
 names real numbers, prescribes specific session/load/rationale, and volunteers structural
-critique (recommend-not-rewrite). Verified live on Telegram 2026-06-05. Next: blocks +
-benchmarks (Phase 23).
+critique (recommend-not-rewrite). Verified live on Telegram 2026-06-05. Phase 23 added
+**block + benchmark tracking**: `BlockStore` (date-range resolution, automatic inter-block
+transition) + `BenchmarkStore` (5-facet closed set) Firestore stores, an idempotent 4-block
+16-week seed, 6 new brain-direct tools (`get_plan`/`get_block_status`/`log_benchmark`/
+`get_benchmark_history`/`start_block`/`end_block`), "Week N of 16" framing in the morning
+briefing + Sunday weekly review, and an end-of-block benchmark trigger in the existing 21:30
+cron behind an HRV/ACWR validity gate (window-open / deferred / stale). Verified 4/4
+2026-06-06. Next: strict coaching integration + nutrition accountability (Phase 24).
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
@@ -97,6 +103,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated g
 - ✓ Blueprint ingested as a *living guide* in `UserProfileStore` (structured dated_goals / weekly_split / nutrition_targets / supplement_schedule / fueling_timeline / plan_start_date); `update_plan` tool edits it on the next turn — v4.0 (Phase 21) — PLAN-01/02/03
 - ✓ Curated expert coaching knowledge (`docs/COACHING_GUIDE.md`: slim core on every brain call + 10 anchored deep sections via brain-direct `read_coaching_guide`) wired into every coaching prompt + cron — v4.0 (Phase 22) — COACH-01
 - ✓ D-13 no-fabrication guard released → recency-windowed Tier A/B data-presence contract; Klaus names real numbers, specific session/load/rationale, and volunteers structural critique (recommend-not-rewrite) — verified live 2026-06-05 — v4.0 (Phase 22) — COACH-02/06/07
+- ✓ Block + benchmark tracking: `BlockStore` (date-range resolution, auto inter-block transition) + `BenchmarkStore` (5-facet closed set), 4-block 16-week seed, 6 brain-direct tools, "Week N of 16" framing in morning briefing + weekly review, end-of-block benchmark trigger in the 21:30 cron behind an HRV/ACWR validity gate (window-open/deferred/stale) — verified 4/4 2026-06-06 — v4.0 (Phase 23) — BLOCK-01/02/03
 
 ### Active (v4.0 — Specific Training & Nutrition Coaching)
 
@@ -171,4 +178,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-05 — Phase 22 (Expert Coaching Knowledge + D-13 Release) complete; 2/5 v4.0 phases done.*
+*Last updated: 2026-06-06 — Phase 23 (Block + Benchmark Tracking) complete; 3/5 v4.0 phases done.*
