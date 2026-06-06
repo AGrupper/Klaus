@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: Specific Training & Nutrition Coaching
-status: ready_to_plan
-stopped_at: Phase 23 complete (4/4) — ready to discuss Phase 24
-last_updated: 2026-06-06T09:08:16.203Z
-last_activity: 2026-06-05 -- Phase 23 execution started
+status: planning
+stopped_at: Phase 24 context gathered
+last_updated: "2026-06-06T10:56:32.238Z"
+last_activity: 2026-06-06
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 12
   completed_plans: 12
-  percent: 40
+  percent: 60
 ---
 
 # State — Klaus
@@ -81,6 +81,6 @@ Carried forward from v3.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-05T09:43:29.310Z
-Stopped at: Phase 23 context gathered
-Resume file: .planning/phases/23-block-benchmark-tracking/23-CONTEXT.md
+Last session: 2026-06-06T10:56:32.235Z
+Stopped at: Phase 24 context gathered
+Resume file: .planning/phases/24-strict-coaching-integration-nutrition-accountability/24-CONTEXT.md
