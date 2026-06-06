@@ -528,3 +528,174 @@ def test_gather_data_postcycle_no_active_silent():
         data = _gather_data("2026-11-01")
     assert "block" not in data
     assert "pre_cycle_countdown" not in data
+
+
+# ====================================================================== #
+# Phase 24 Plan 05 — coaching topic dedup + prior-day recap (COACH-05)   #
+# ====================================================================== #
+
+
+@contextmanager
+def _quiet_gather_with_topics(block_store, coaching_topic_store):
+    """Neutralize all heavy collaborators, leaving only block + coaching topic gather."""
+    with patch("memory.firestore_db.BlockStore", block_store), \
+         patch("memory.firestore_db.CoachingTopicStore", coaching_topic_store), \
+         patch("memory.firestore_db.MealStore") as ms, \
+         patch("core.tools._get_calendar_tool", side_effect=Exception("no cal")), \
+         patch("core.tools._get_gmail_tool", side_effect=Exception("no mail")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=Exception("no wx")), \
+         patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
+         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={}):
+        ms.return_value.get_day_aggregate.return_value = None
+        yield
+
+
+def test_gather_data_includes_coaching_topics_today_and_yesterday():
+    """COACH-05 / D-08: _gather_data sets coaching_topics_today and coaching_topics_yesterday."""
+    from core.morning_briefing import _gather_data
+
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+
+    cts = MagicMock()
+    # topics_today called twice: once for today, once for yesterday
+    cts.return_value.topics_today.side_effect = [
+        ["protein-miss"],   # today
+        ["skipped-session:threshold-run"],  # yesterday
+    ]
+
+    with _quiet_gather_with_topics(bs, cts):
+        data = _gather_data("2026-06-28")
+
+    assert "coaching_topics_today" in data
+    assert "coaching_topics_yesterday" in data
+    assert data["coaching_topics_today"] == ["protein-miss"]
+    assert data["coaching_topics_yesterday"] == ["skipped-session:threshold-run"]
+
+
+def test_gather_data_coaching_topics_fail_open():
+    """COACH-05: CoachingTopicStore failure → both keys set to [] (fail-open, never raises)."""
+    from core.morning_briefing import _gather_data
+
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+
+    cts = MagicMock()
+    cts.side_effect = RuntimeError("firestore down")
+
+    with _quiet_gather_with_topics(bs, cts):
+        data = _gather_data("2026-06-28")
+
+    assert data.get("coaching_topics_today") == []
+    assert data.get("coaching_topics_yesterday") == []
+
+
+def test_gather_data_coaching_topics_today_empty_when_no_topics():
+    """When CoachingTopicStore has no topics for today or yesterday, both keys are []."""
+    from core.morning_briefing import _gather_data
+
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+
+    cts = MagicMock()
+    cts.return_value.topics_today.return_value = []
+
+    with _quiet_gather_with_topics(bs, cts):
+        data = _gather_data("2026-06-28")
+
+    assert data["coaching_topics_today"] == []
+    assert data["coaching_topics_yesterday"] == []
+
+
+def test_run_morning_briefing_writes_topics_after_send(bot):
+    """T-24-17: add_topic is called only AFTER successful send_and_inject (write-after-send discipline)."""
+    add_topic_calls = []
+
+    def fake_add_topic(date_str, topic):
+        add_topic_calls.append((date_str, topic))
+
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = fake_add_topic
+
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    today_data_with_topics = {
+        "coaching_topics_today": [],
+        "coaching_topics_yesterday": [],
+        "coaching_topics_included": ["protein-miss", "skipped-session:threshold-run"],
+    }
+
+    with patch("core.morning_briefing._get_state", return_value={}), \
+         patch("core.morning_briefing._set_state"), \
+         patch("core.morning_briefing._gather_data", return_value=today_data_with_topics), \
+         patch("core.morning_briefing._compose_briefing", return_value="Briefing text"), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+        from core.morning_briefing import run_morning_briefing
+        import asyncio
+        asyncio.run(run_morning_briefing(bot, "2026-06-28", dedup=False))
+
+    # send was called
+    mock_send.assert_called_once()
+    # add_topic was called for each included topic
+    assert len(add_topic_calls) == 2
+    assert ("2026-06-28", "protein-miss") in add_topic_calls
+    assert ("2026-06-28", "skipped-session:threshold-run") in add_topic_calls
+
+
+def test_run_morning_briefing_no_topic_write_when_send_fails(bot):
+    """T-24-17: add_topic must NOT be called if send_and_inject raises (write-after-send)."""
+    add_topic_calls = []
+
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = lambda d, t: add_topic_calls.append((d, t))
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    today_data_with_topics = {
+        "coaching_topics_included": ["protein-miss"],
+    }
+
+    with patch("core.morning_briefing._get_state", return_value={}), \
+         patch("core.morning_briefing._set_state"), \
+         patch("core.morning_briefing._gather_data", return_value=today_data_with_topics), \
+         patch("core.morning_briefing._compose_briefing", return_value="Briefing"), \
+         patch("core.scheduled_message.send_and_inject",
+               new_callable=AsyncMock, side_effect=RuntimeError("telegram down")), \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+        from core.morning_briefing import run_morning_briefing
+        import asyncio
+        try:
+            asyncio.run(run_morning_briefing(bot, "2026-06-28", dedup=False))
+        except RuntimeError:
+            pass  # send failure propagates — that's fine
+
+    # No topic writes should have happened
+    assert add_topic_calls == []
+
+
+def test_morning_briefing_prompt_integrated_block_instruction():
+    """D-18: the morning briefing prompt must instruct an integrated session+recovery+fueling block."""
+    content = open("prompts/morning_briefing.md").read()
+    lower = content.lower()
+    # Check for integrated block instruction keywords
+    assert any(kw in lower for kw in ["integrated", "one block", "single block", "weave"]), (
+        "prompts/morning_briefing.md missing D-18 integrated block instruction"
+    )
+
+
+def test_morning_briefing_prompt_prior_day_recap_instruction():
+    """D-08: the morning briefing prompt must instruct prior-day unresolved-miss recap."""
+    content = open("prompts/morning_briefing.md").read()
+    lower = content.lower()
+    assert any(kw in lower for kw in ["prior", "yesterday", "prior-day"]), (
+        "prompts/morning_briefing.md missing D-08 prior-day recap instruction"
+    )
+
+
+def test_morning_briefing_prompt_dedup_instruction():
+    """D-02: the morning briefing prompt must instruct dedup (don't repeat today's topics)."""
+    content = open("prompts/morning_briefing.md").read()
+    lower = content.lower()
+    assert any(kw in lower for kw in ["coaching_topics_today", "dedup", "already raised", "do not repeat"]), (
+        "prompts/morning_briefing.md missing D-02 dedup instruction"
+    )

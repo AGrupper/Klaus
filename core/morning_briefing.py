@@ -139,6 +139,24 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
     from core.scheduled_message import send_and_inject
     await send_and_inject(bot, text, inject_into_conversation=True)
 
+    # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
+    # briefing to CoachingTopicStore AFTER send succeeds — never before.
+    # Write-after-send discipline mirrors OutreachLogStore.append (Phase 18 D-10).
+    # Best-effort: a topic write failure is non-fatal (dedup won't fire for that
+    # topic on the next cron, but that is preferable to crashing the send path).
+    try:
+        _topics_included = today_data.get("coaching_topics_included") or []
+        if _topics_included:
+            from memory.firestore_db import CoachingTopicStore
+            _cts = CoachingTopicStore(
+                project_id=os.environ["GCP_PROJECT_ID"],
+                database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+            )
+            for _topic in _topics_included:
+                _cts.add_topic(today_iso, _topic)
+    except Exception:
+        logger.warning("morning_briefing: coaching topic record failed", exc_info=True)
+
     # Store structured data alongside the state doc for follow-up replies.
     # Note: status is the caller's responsibility — do NOT set it here.
     _set_state(today_iso, {
@@ -297,6 +315,25 @@ def _gather_data(today_iso: str) -> dict:
                 data["pre_cycle_countdown"] = days_until
     except Exception:
         logger.warning("morning_briefing: block state fetch failed", exc_info=True)
+
+    # PHASE 24 — COACH-05 / D-08: gather today's and yesterday's raised coaching
+    # topics for cross-cron dedup and prior-day unresolved-miss recap. Both keys
+    # fail-open to [] on any error — the cron must never crash on a topic fetch
+    # failure (T-24-18 mitigated). yesterday's topics drive the D-08 prior-day recap.
+    try:
+        from memory.firestore_db import CoachingTopicStore
+        _cts = CoachingTopicStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        yesterday_iso = (date.fromisoformat(today_iso) - timedelta(days=1)).isoformat()
+        data["coaching_topics_today"] = _cts.topics_today(today_iso)
+        data["coaching_topics_yesterday"] = _cts.topics_today(yesterday_iso)
+        # D-08: yesterday's topics surfaced so morning briefing can recap unresolved prior-day misses
+    except Exception:
+        logger.warning("morning_briefing: coaching topics fetch failed", exc_info=True)
+        data["coaching_topics_today"] = []
+        data["coaching_topics_yesterday"] = []
 
     return data
 

@@ -221,6 +221,24 @@ def _gather_week_data(today_iso: str) -> dict:
         data["current_block"] = None
         data["block_benchmarks"] = []
 
+    # ------------------------------------------------------------------ #
+    # 7. CoachingTopicStore — today's raised topics for COACH-05 dedup   #
+    #    (D-12: structural-critique topics not repeated if already today) #
+    #    Best-effort; fail-open to [] (T-24-18 mitigated).               #
+    #    NOTE: quality is NOT gathered here — it is already present on   #
+    #    training_log entries written by TrainingLogStore.log_session     #
+    #    (Plan 01 / PROG-04); no new gather code needed (Finding 10).    #
+    # ------------------------------------------------------------------ #
+    try:
+        from memory.firestore_db import CoachingTopicStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        _cts = CoachingTopicStore(project_id, database)
+        data["coaching_topics_today"] = _cts.topics_today(today_iso)
+    except Exception:
+        logger.warning("weekly_review: coaching topics fetch failed", exc_info=True)
+        data["coaching_topics_today"] = []
+
     return data
 
 
@@ -240,9 +258,21 @@ def _compose_review(week_data: dict, today_iso: str) -> str:
         Composed message string — never empty (fallback ensures something is sent).
     """
     prompt_path = Path(__file__).parent.parent / "prompts" / "weekly_training_review.md"
+    # PHASE 24 — COACH-01 / D-17: inject slim coaching core before {today_date}.
+    # Mirrors morning_briefing._compose_briefing (lines 317–328) and
+    # proactive_alerts._compose_alert patterns. Fail-open: a guide fetch failure
+    # must NOT crash the weekly review cron (T-24-18 mitigated).
     try:
-        system_prompt = prompt_path.read_text(encoding="utf-8").replace(
-            "{today_date}", today_iso
+        from core.autonomous import _get_orchestrator
+        coaching_guide_content = _get_orchestrator()._coaching_guide_content
+    except Exception:
+        logger.warning("weekly_review: coaching guide unavailable — proceeding without it")
+        coaching_guide_content = ""
+    try:
+        system_prompt = (
+            prompt_path.read_text(encoding="utf-8")
+            .replace("{coaching_guide}", coaching_guide_content)
+            .replace("{today_date}", today_iso)
         )
     except OSError:
         logger.warning(
@@ -311,3 +341,21 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     message = _compose_review(week_data, today_iso)
     from core.scheduled_message import send_and_inject
     await send_and_inject(bot, message, inject_into_conversation=True)  # D-24 always send
+
+    # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
+    # review to CoachingTopicStore AFTER send succeeds — never before.
+    # Write-after-send discipline mirrors morning_briefing post-send topic write
+    # and OutreachLogStore.append (Phase 18 D-10). Best-effort: a write failure
+    # is non-fatal (dedup just won't fire for that topic on the next cron).
+    try:
+        _topics_included = week_data.get("coaching_topics_included") or []
+        if _topics_included:
+            from memory.firestore_db import CoachingTopicStore
+            _cts = CoachingTopicStore(
+                project_id=os.environ["GCP_PROJECT_ID"],
+                database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+            )
+            for _topic in _topics_included:
+                _cts.add_topic(today_iso, _topic)
+    except Exception:
+        logger.warning("weekly_review: coaching topic record failed", exc_info=True)
