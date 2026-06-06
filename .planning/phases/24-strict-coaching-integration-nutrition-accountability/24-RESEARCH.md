@@ -852,7 +852,7 @@ def _detect_slot_misses(
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Pre-bed supplement slot (#6): only after 21:30?**
    - What we know: the 21:30 cron is the only opportunity to flag this same evening.
