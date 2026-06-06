@@ -497,6 +497,155 @@ def _evaluate_benchmark_state(
 
 
 # ------------------------------------------------------------------ #
+# Phase 24 — NUTR-01/02/03: Nutrition data gather helper             #
+# ------------------------------------------------------------------ #
+
+def _gather_nutrition_data(today_iso: str, garmin_activities: list[dict] | None = None) -> dict:
+    """Gather meal totals, fueling-slot miss detection, and anchor times for today.
+
+    Best-effort: each sub-gather is wrapped; failures return {} / [] / None.
+    garmin_activities: pass the already-fetched list to avoid a second API call
+    (RESEARCH Open Question 2 — reuse the garmin_activities already fetched).
+
+    Pitfall 7: MealStore.get_day returns [] not None on empty days — guard with
+    "if not meals" but always return the result (empty list is valid context).
+
+    Returns:
+        {
+            "meals": list[dict],           # raw from MealStore.get_day
+            "macro_totals": dict,          # totals sub-dict from get_day_aggregate
+            "macro_gaps": list[dict],      # from _macro_gap_check
+            "slot_misses": list[str],      # from _detect_slot_misses
+            "am_anchor": str | None,       # ISO datetime string of AM run start
+            "pm_anchor": str | None,       # ISO datetime string of PM lift start
+        }
+
+    Pure gather — no LLM calls. T-24-14 mitigation: each source wrapped best-effort.
+    """
+    result: dict = {
+        "meals": [],
+        "macro_totals": {},
+        "macro_gaps": [],
+        "slot_misses": [],
+        "am_anchor": None,
+        "pm_anchor": None,
+    }
+
+    # --- Meals + macro aggregate (MealStore) ---
+    # Pitfall 7: get_day returns [] on empty days (not None); guard and continue.
+    meals: list[dict] = []
+    macro_totals: dict = {}
+    try:
+        from memory.firestore_db import MealStore
+        ms = MealStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        meals = ms.get_day(today_iso) or []
+        result["meals"] = meals
+        agg = ms.get_day_aggregate(today_iso)
+        macro_totals = (agg or {}).get("totals") or {}
+        result["macro_totals"] = macro_totals
+    except Exception:
+        logger.warning("proactive_alerts: nutrition meal fetch failed", exc_info=True)
+        result["meals"] = []
+        result["macro_totals"] = {}
+
+    # --- Nutrition targets from UserProfileStore (Tier-A, always citable) ---
+    nutrition_targets: dict = {"protein_g": 150, "carbs_g": 350}  # blueprint fallback
+    day_type: str = "normal"
+    try:
+        from memory.firestore_db import UserProfileStore
+        ups = UserProfileStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        profile = ups.load() or {}
+        nt = profile.get("nutrition_targets") or {}
+        if nt:
+            nutrition_targets = nt
+        # Derive day_type from weekly_split or Garmin distance (long-run heuristic).
+        # Long-run day: any running activity today with distance > 16km or duration > 70min.
+        _acts = garmin_activities or []
+        for act in _acts:
+            atype = (act.get("type") or "").lower()
+            dist_m = act.get("distance_m") or 0
+            dur_s = act.get("duration_sec") or 0
+            if atype in _GARMIN_AM_TYPES and (dist_m > 16000 or dur_s > 4200):
+                day_type = "long_run"
+                break
+    except Exception:
+        logger.warning("proactive_alerts: nutrition targets fetch failed", exc_info=True)
+
+    # --- Anchor resolution (reuses garmin_activities already fetched) ---
+    # calendar_events for today's date: not directly available here (cron fetches
+    # target_date = tomorrow). Anchor resolution uses garmin_activities only (no calendar
+    # fallback at this point — the caller passes the already-fetched garmin list).
+    am_anchor: datetime | None = None
+    pm_anchor: datetime | None = None
+    try:
+        am_anchor, pm_anchor = _resolve_anchor_times(
+            today_iso,
+            garmin_activities=garmin_activities or [],
+            calendar_events=[],  # no today-calendar available in this gather path
+        )
+        result["am_anchor"] = am_anchor.isoformat() if am_anchor else None
+        result["pm_anchor"] = pm_anchor.isoformat() if pm_anchor else None
+    except Exception:
+        logger.warning("proactive_alerts: anchor resolution failed", exc_info=True)
+
+    # --- Slot miss detection (NUTR-02 HARD slots: #2, #5, #6) ---
+    try:
+        slot_misses = _detect_slot_misses(meals, am_anchor, pm_anchor, today_iso)
+        result["slot_misses"] = slot_misses
+    except Exception:
+        logger.warning("proactive_alerts: slot miss detection failed", exc_info=True)
+        result["slot_misses"] = []
+
+    # --- Macro gap check (NUTR-01) ---
+    try:
+        macro_gaps = _macro_gap_check(macro_totals, day_type, nutrition_targets)
+        result["macro_gaps"] = macro_gaps
+    except Exception:
+        logger.warning("proactive_alerts: macro gap check failed", exc_info=True)
+        result["macro_gaps"] = []
+
+    return result
+
+
+def _collect_detected_topics(alerts_context: dict) -> list[str]:
+    """Derive the list of topic_key strings from the composed alerts_context.
+
+    Topic keys follow the D-01 category:subject pattern. This is a pure function
+    that reads alerts_context keys to produce canonical topic_key strings for the
+    coaching dedup gate.
+
+    Returns:
+        List of topic_key strings derived from the context. May be empty.
+    """
+    topics: list[str] = []
+
+    # Nutrition macro gaps → topic keys from the gap flag dicts
+    nutrition = alerts_context.get("nutrition") or {}
+    for gap in nutrition.get("macro_gaps") or []:
+        tk = gap.get("topic_key")
+        if tk:
+            topics.append(tk)
+
+    # Fueling slot misses → fueling-miss:{slot} topic keys (NUTR-02)
+    for slot_miss in nutrition.get("slot_misses") or []:
+        topics.append(f"fueling-miss:{slot_miss}")
+
+    # Recovery concern → recovery-conflict:{level} (existing context)
+    rc = alerts_context.get("recovery_concern")
+    if rc and isinstance(rc, dict):
+        level = rc.get("level") or "moderate"
+        topics.append(f"recovery-conflict:{level}")
+
+    return topics
+
+
+# ------------------------------------------------------------------ #
 # Public entry point                                                 #
 # ------------------------------------------------------------------ #
 
@@ -634,10 +783,65 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         logger.warning("proactive_alerts: recovery_concern computation failed", exc_info=True)
         # silent omit — no "all clear" placeholder (D-13 guardrail)
 
+    # Phase 24 — NUTR-01/02/03: nutrition + fueling-slot gather.
+    # Fetch today's Garmin activities (separate from biometric garmin_data) for anchor resolution.
+    # Wrapped best-effort — a Garmin failure just means no activity-anchored slot checking.
+    _garmin_activities: list[dict] = []
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_activities
+        _garmin_activities = fetch_garmin_activities(days=1) or []
+    except Exception:
+        logger.warning("proactive_alerts: garmin activities fetch for nutrition failed", exc_info=True)
+
+    try:
+        nutrition_data = _gather_nutrition_data(today_iso, garmin_activities=_garmin_activities)
+        if nutrition_data:
+            alerts_context["nutrition"] = nutrition_data
+    except Exception:
+        logger.warning("proactive_alerts: nutrition gather failed", exc_info=True)
+        # silent omit — no fabrication (D-13 guardrail)
+
+    # Phase 24 — COACH-05: coaching topic dedup gate.
+    # Filter detected topics to only un-raised ones before compose context.
+    # Fail-open: on any store error, let all topics fire (T-24-14 / T-24-16 mitigation).
+    _cts = None
+    _today_il = datetime.now(_TZ).date().isoformat()
+    _new_topics: list[str] = []
+    try:
+        from memory.firestore_db import CoachingTopicStore
+        _cts = CoachingTopicStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        _detected_topics = _collect_detected_topics(alerts_context)
+        _new_topics = [t for t in _detected_topics if not _cts.has_topic(_today_il, t)]
+        alerts_context["coaching_topics_new"] = _new_topics
+        alerts_context["coaching_topics_already_raised"] = [
+            t for t in _detected_topics if t not in _new_topics
+        ]
+    except Exception:
+        logger.warning("proactive_alerts: coaching dedup gate failed", exc_info=True)
+        # fail-open: all topics fire; _cts remains None so post-send write is skipped
+
     message = _compose_alert(alerts_context)
 
     from core.scheduled_message import send_and_inject
     await send_and_inject(bot, message, inject_into_conversation=False)
+
+    # Phase 24 — COACH-05 post-send write discipline (T-24-12 mitigation):
+    # CoachingTopicStore.add_topic called ONLY after send_and_inject succeeds.
+    # A crash between write and send would create a false-positive block.
+    # Non-fatal: a write failure degrades dedup for this topic on the next cron.
+    if _cts is not None and _new_topics:
+        try:
+            for _topic in _new_topics:
+                _cts.add_topic(_today_il, _topic)
+        except Exception:
+            logger.warning(
+                "proactive_alerts: coaching topic write failed — dedup may not fire next cron",
+                exc_info=True,
+            )
+
     _mark_processed(target_date, alert_sent=True)
     logger.info("Proactive alerts: sent alert for %s", target_date)
 
