@@ -52,6 +52,358 @@ def _gap_min() -> int:
 
 
 # ------------------------------------------------------------------ #
+# Phase 24 — NUTR-01/02/03: Nutrition accountability constants       #
+# ------------------------------------------------------------------ #
+
+# Blueprint targets (Tier-A, §6 of hybrid_athlete_blueprint.md):
+#   150g protein / 350g carbs daily.
+#
+# MACRO_THRESHOLDS encodes the "structurally meaningful shortfall" floors (D-09).
+# Protein floor: 120g = 80% of 150g target — below this, amino acid availability
+#   for muscle protein synthesis at Amit's training volume is meaningfully compromised.
+# Carb floors by day_type — below these, glycogen replenishment is compromised:
+#   normal:   250g (≈71% of 350g)
+#   long_run: 300g (≈86% of 350g) — stricter floor for high-volume run days
+#   deload:   200g — lower volume day, but still structural
+#   rest:     200g — same relaxed floor as deload (no workout to fuel)
+MACRO_THRESHOLDS: dict = {
+    "protein": {
+        "floor_g": 120,           # < 120g → protein-miss flag
+        "target_g": 150,          # Tier-A blueprint target
+    },
+    "carbs": {
+        "normal":   {"floor_g": 250, "target_g": 350},
+        "long_run": {"floor_g": 300, "target_g": 350},
+        "deload":   {"floor_g": 200, "target_g": 350},
+        "rest":     {"floor_g": 200, "target_g": 350},
+    },
+}
+
+# SLOT_SUPPLEMENTS (D-11 / NUTR-03): supplement riders tied to their carrier fueling slot.
+# Pre-bed (slot #6) is standalone (has no macro footprint); the others ride on their
+# slot miss and are surfaced at compose time by Plan 04 callers.
+# Source: hybrid_athlete_blueprint.md §6
+SLOT_SUPPLEMENTS: dict[str, str] = {
+    "post-am-run": "D3+K2/Omega-3",
+    "pm-post-lift": "Creatine",
+    "pre-bed": "Mg-Glycinate/Zinc/Copper",
+}
+
+# Slot-window definitions for the 6 named fueling slots (D-10, Finding 3).
+# Hard slots (#2, #5, #6) are flagged on miss; soft slots (#1, #3, #4) are not nagged.
+# Windows for anchor-relative slots: offset_min and window_min from the anchor start.
+_HARD_SLOT_AM: dict = {"offset_min": 15, "window_min": 90}   # post-am-run (#2)
+_HARD_SLOT_PM: dict = {"offset_min": 15, "window_min": 90}   # pm-post-lift (#5)
+_PRE_BED_START_HOUR = 21   # 21:00–23:59 fixed window (slot #6)
+
+# AM types recognised as running activities (Garmin type field).
+_GARMIN_AM_TYPES: frozenset[str] = frozenset(
+    {"running", "trail_running", "treadmill_running"}
+)
+# PM types recognised as strength/gym activities (Garmin type field).
+_GARMIN_PM_TYPES: frozenset[str] = frozenset(
+    {"strength_training", "fitness_equipment"}
+)
+# Calendar event keywords for anchor resolution (priority 2 fallback).
+_CALENDAR_AM_KEYWORDS: tuple[str, ...] = ("run",)
+_CALENDAR_PM_KEYWORDS: tuple[str, ...] = ("gym", "lower body", "upper body")
+
+
+# ------------------------------------------------------------------ #
+# Phase 24 — NUTR-01: Macro-gap check (pure, no I/O)                 #
+# ------------------------------------------------------------------ #
+
+def _macro_gap_check(
+    totals: dict,
+    day_type: str,
+    targets: dict,
+) -> list[dict]:
+    """Check daily macro totals against structurally meaningful shortfall floors.
+
+    Args:
+        totals:   {"protein_g": N, "carbs_g": N, ...} — today's MealStore aggregate.
+        day_type: "long_run" | "normal" | "deload" | "rest" — determines carb floor.
+        targets:  {"protein_g": N, "carbs_g": N} — Tier-A blueprint targets for description.
+
+    Returns:
+        List of flag dicts [{"topic_key", "description", "severity"}].
+        Empty list when all macros meet their floors (no flag for marginal shortfall — D-09).
+
+    Pure function — no Firestore, no Garmin calls, no I/O.
+    """
+    flags: list[dict] = []
+
+    protein_actual = totals.get("protein_g") or 0
+    carbs_actual = totals.get("carbs_g") or 0
+    protein_target = targets.get("protein_g") or MACRO_THRESHOLDS["protein"]["target_g"]
+    protein_floor = MACRO_THRESHOLDS["protein"]["floor_g"]
+
+    # Protein check: only flag when below the meaningful floor (D-09 — no micro-optimization).
+    if protein_actual < protein_floor:
+        flags.append({
+            "topic_key": "protein-miss",
+            "description": (
+                f"Protein today: {protein_actual}g vs {protein_target}g target "
+                f"(floor {protein_floor}g — 80% of blueprint target). "
+                f"Structurally meaningful shortfall for muscle protein synthesis."
+            ),
+            "severity": "high",
+        })
+
+    # Carb check: day-type-aware floor.
+    carb_cfg = MACRO_THRESHOLDS["carbs"].get(day_type, MACRO_THRESHOLDS["carbs"]["normal"])
+    carb_floor = carb_cfg["floor_g"]
+    carb_target = targets.get("carbs_g") or carb_cfg["target_g"]
+
+    if carbs_actual < carb_floor:
+        topic_key = "carb-miss:long-run-day" if day_type == "long_run" else "carb-miss"
+        flags.append({
+            "topic_key": topic_key,
+            "description": (
+                f"Carbs today: {carbs_actual}g vs {carb_target}g target "
+                f"(floor {carb_floor}g for {day_type} day — glycogen replenishment compromised)."
+            ),
+            "severity": "high" if day_type == "long_run" else "medium",
+        })
+
+    return flags
+
+
+# ------------------------------------------------------------------ #
+# Phase 24 — NUTR-02: Fueling-slot helpers (pure, no I/O)            #
+# ------------------------------------------------------------------ #
+
+def _resolve_anchor_times(
+    today_iso: str,
+    garmin_activities: list[dict],
+    calendar_events: list[dict],
+) -> tuple[datetime | None, datetime | None]:
+    """Resolve the AM run and PM lift anchor datetimes for today.
+
+    Priority order for AM anchor:
+      1. Garmin activity where type in _GARMIN_AM_TYPES (running/trail_running/treadmill)
+      2. Calendar event with any _CALENDAR_AM_KEYWORDS in summary ("run")
+      3. None — do NOT fabricate an anchor on a true rest day (Pitfall 2, D-10).
+         The fallback to 07:30 is at the caller's discretion (plan 04 passes already-fetched data).
+
+    Priority order for PM anchor:
+      1. Garmin activity where type in _GARMIN_PM_TYPES (strength_training/fitness_equipment)
+      2. Calendar event with any _CALENDAR_PM_KEYWORDS in summary ("gym"/"lower body"/"upper body")
+      3. None — do NOT fabricate on a rest day.
+
+    Args:
+        today_iso:         YYYY-MM-DD string for date-matching calendar events.
+        garmin_activities: Already-fetched list from fetch_garmin_activities(days=1).
+                           Each dict has keys: "type", "date" (ISO string), "activity_id", etc.
+        calendar_events:   Already-fetched list from calendar tool for today_iso.
+                           Each dict has keys: "summary", "start" (ISO string), etc.
+
+    Returns:
+        (am_anchor, pm_anchor) — datetime or None for each.
+
+    Pure function — no I/O. Data is passed in as args (testable without mocks).
+    """
+    am_anchor: datetime | None = None
+    pm_anchor: datetime | None = None
+
+    # --- AM anchor (priority 1: Garmin running activity) ---
+    for act in (garmin_activities or []):
+        if (act.get("type") or "").lower() in _GARMIN_AM_TYPES:
+            try:
+                am_anchor = datetime.fromisoformat(act["date"])
+                break
+            except (KeyError, ValueError):
+                continue
+
+    # --- AM anchor (priority 2: calendar event with "run" in summary) ---
+    if am_anchor is None:
+        for event in (calendar_events or []):
+            summary_lower = (event.get("summary") or "").lower()
+            if any(kw in summary_lower for kw in _CALENDAR_AM_KEYWORDS):
+                start = event.get("start") or ""
+                if "T" in start:
+                    try:
+                        am_anchor = datetime.fromisoformat(start)
+                        break
+                    except ValueError:
+                        continue
+
+    # --- PM anchor (priority 1: Garmin strength activity) ---
+    for act in (garmin_activities or []):
+        if (act.get("type") or "").lower() in _GARMIN_PM_TYPES:
+            try:
+                pm_anchor = datetime.fromisoformat(act["date"])
+                break
+            except (KeyError, ValueError):
+                continue
+
+    # --- PM anchor (priority 2: calendar event with gym/lower body/upper body) ---
+    if pm_anchor is None:
+        for event in (calendar_events or []):
+            summary_lower = (event.get("summary") or "").lower()
+            if any(kw in summary_lower for kw in _CALENDAR_PM_KEYWORDS):
+                start = event.get("start") or ""
+                if "T" in start:
+                    try:
+                        pm_anchor = datetime.fromisoformat(start)
+                        break
+                    except ValueError:
+                        continue
+
+    return am_anchor, pm_anchor
+
+
+def _map_meals_to_slots(
+    meals: list[dict],
+    am_anchor: datetime | None,
+    pm_anchor: datetime | None,
+) -> dict[str, list[dict]]:
+    """Bucket meals into the 6 named fueling slots based on anchor-relative windows.
+
+    Slot definitions (D-10, Finding 3 table):
+      #1 pre-am-run:   [am_anchor - 90min, am_anchor - 15min] (soft, not flagged)
+      #2 post-am-run:  [am_anchor + 15min, am_anchor + 90min] (HARD — flag miss)
+      #3 midday:       fixed 12:00–14:30 (soft)
+      #4 pre-lift:     [pm_anchor - 90min, pm_anchor - 15min] (soft)
+      #5 pm-post-lift: [pm_anchor + 15min, pm_anchor + 90min] (HARD — flag miss)
+      #6 pre-bed:      fixed 21:00–23:59 (HARD — flag miss)
+
+    Args:
+        meals:     List of meal dicts from MealStore.get_day() — each has "timestamp" (ISO).
+        am_anchor: AM run start datetime (or None on rest day).
+        pm_anchor: PM lift start datetime (or None on rest day).
+
+    Returns:
+        dict keyed by slot name, value is list of meals in that slot.
+        Slots with no meals are still present (empty list).
+
+    Pure function — no I/O. T-24-05 mitigation: missing/malformed timestamp → meal skipped.
+    """
+    # Build all slot windows (start, end) — None means no anchor, slot window is empty.
+    slots: dict[str, tuple[datetime | None, datetime | None]] = {}
+
+    if am_anchor:
+        slots["pre-am-run"] = (
+            am_anchor - timedelta(minutes=90),
+            am_anchor - timedelta(minutes=15),
+        )
+        slots["post-am-run"] = (
+            am_anchor + timedelta(minutes=_HARD_SLOT_AM["offset_min"]),
+            am_anchor + timedelta(minutes=_HARD_SLOT_AM["offset_min"] + _HARD_SLOT_AM["window_min"]),
+        )
+
+    if pm_anchor:
+        slots["pre-lift"] = (
+            pm_anchor - timedelta(minutes=90),
+            pm_anchor - timedelta(minutes=15),
+        )
+        slots["pm-post-lift"] = (
+            pm_anchor + timedelta(minutes=_HARD_SLOT_PM["offset_min"]),
+            pm_anchor + timedelta(minutes=_HARD_SLOT_PM["offset_min"] + _HARD_SLOT_PM["window_min"]),
+        )
+
+    # Fixed-window slots (always present regardless of anchor).
+    try:
+        _today_date = datetime.fromisoformat(meals[0]["timestamp"]).date() if meals else date.today()
+    except (KeyError, ValueError, IndexError):
+        _today_date = date.today()
+
+    slots["midday"] = (
+        datetime.combine(_today_date, datetime.strptime("12:00", "%H:%M").time()),
+        datetime.combine(_today_date, datetime.strptime("14:30", "%H:%M").time()),
+    )
+    slots["pre-bed"] = (
+        datetime.combine(_today_date, datetime.strptime("21:00", "%H:%M").time()),
+        datetime.combine(_today_date, datetime.strptime("23:59", "%H:%M").time()),
+    )
+
+    # Bucket each meal into its slot(s) — T-24-05: skip on missing/malformed timestamp.
+    result: dict[str, list[dict]] = {name: [] for name in slots}
+    for meal in (meals or []):
+        ts_raw = meal.get("timestamp")
+        if not ts_raw:
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except (ValueError, TypeError):
+            continue
+        for slot_name, (lo, hi) in slots.items():
+            if lo is not None and hi is not None and lo <= ts <= hi:
+                result[slot_name].append(meal)
+
+    return result
+
+
+def _detect_slot_misses(
+    meals: list[dict],
+    am_anchor: datetime | None,
+    pm_anchor: datetime | None,
+    today_date: str,
+) -> list[str]:
+    """Detect missed HARD fueling slots (#2, #5, #6) for the nutrition alert.
+
+    Only evaluates a slot when its anchor resolved — Pitfall 2 guard (D-10):
+      - post-am-run: only when am_anchor is not None
+      - pm-post-lift: only when pm_anchor is not None
+      - pre-bed: always evaluated (fixed 21:00–23:59 window, slot #6)
+
+    Args:
+        meals:      List of meal dicts from MealStore.get_day() — each has "timestamp" (ISO).
+        am_anchor:  AM run start datetime or None.
+        pm_anchor:  PM lift start datetime or None.
+        today_date: YYYY-MM-DD string used to construct the pre-bed fixed window.
+
+    Returns:
+        List of missed hard-slot names: subset of ["post-am-run", "pm-post-lift", "pre-bed"].
+
+    Pure function — no I/O. T-24-05 mitigation: malformed timestamp → meal skipped.
+    T-24-07 mitigation (Pitfall 2): guards prevent spurious slot flags on rest days.
+    """
+    missed: list[str] = []
+
+    # Parse all meal timestamps, skipping malformed ones (T-24-05).
+    meal_timestamps: list[datetime] = []
+    for m in (meals or []):
+        ts_raw = m.get("timestamp")
+        if not ts_raw:
+            continue
+        try:
+            meal_timestamps.append(datetime.fromisoformat(ts_raw))
+        except (ValueError, TypeError):
+            continue
+
+    def _in_window(lo: datetime, hi: datetime) -> bool:
+        """Return True if any meal timestamp falls within [lo, hi] inclusive."""
+        return any(lo <= t <= hi for t in meal_timestamps)
+
+    # Slot #2 post-am-run: only when AM anchor resolved (Pitfall 2 guard).
+    if am_anchor is not None:
+        lo = am_anchor + timedelta(minutes=_HARD_SLOT_AM["offset_min"])
+        hi = am_anchor + timedelta(minutes=_HARD_SLOT_AM["offset_min"] + _HARD_SLOT_AM["window_min"])
+        if not _in_window(lo, hi):
+            missed.append("post-am-run")
+
+    # Slot #5 pm-post-lift: only when PM anchor resolved (Pitfall 2 guard).
+    if pm_anchor is not None:
+        lo = pm_anchor + timedelta(minutes=_HARD_SLOT_PM["offset_min"])
+        hi = pm_anchor + timedelta(minutes=_HARD_SLOT_PM["offset_min"] + _HARD_SLOT_PM["window_min"])
+        if not _in_window(lo, hi):
+            missed.append("pm-post-lift")
+
+    # Slot #6 pre-bed: always evaluated (fixed 21:00–23:59 window).
+    try:
+        _date_obj = date.fromisoformat(today_date)
+    except ValueError:
+        _date_obj = date.today()
+    prebed_lo = datetime.combine(_date_obj, datetime.strptime("21:00", "%H:%M").time())
+    prebed_hi = datetime.combine(_date_obj, datetime.strptime("23:59", "%H:%M").time())
+    if not _in_window(prebed_lo, prebed_hi):
+        missed.append("pre-bed")
+
+    return missed
+
+
+# ------------------------------------------------------------------ #
 # Small helpers                                                      #
 # ------------------------------------------------------------------ #
 
