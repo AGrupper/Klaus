@@ -27,7 +27,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 
 - [x] **Phase 21: Living Plan Ingestion** - Populate `UserProfileStore` with Amit's blueprint as structured fields (dated goals, weekly split, fueling timeline, supplements); add `update_plan` tool; gate that unblocks all downstream coaching specificity (completed 2026-06-04)
 - [x] **Phase 22: Expert Coaching Knowledge + D-13 Release** - Author `docs/COACHING_GUIDE.md`, wire it into every coaching prompt, replace the D-13 qualitative guard with the Tier A / Tier B data-presence contract; Klaus starts naming real numbers (completed 2026-06-05)
-- [ ] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic
+- [x] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic (completed 2026-06-06)
 - [ ] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability
 - [ ] **Phase 25: Progress Projection + Benchmark Trend Reporting** - Pace-to-deadline trend projection against Oct/Nov goals; per-facet benchmark improvement surfaced in weekly review
 
@@ -75,9 +75,9 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   4. Klaus records a benchmark result via `log_benchmark` and can surface a facet's history across blocks (e.g., "bench press: 80kg Block 1 → 85kg Block 2")
 **Plans**: 4 plans
 - [x] 23-01-PLAN.md — BlockStore + BenchmarkStore + UserProfileStore.current_block_id + idempotent seed script + Wave-0 store tests (foundation)
-- [ ] 23-02-PLAN.md — 6 brain-direct tools (get_plan, get_block_status, log_benchmark, get_benchmark_history, start_block, end_block) + registration tests
-- [ ] 23-03-PLAN.md — benchmark_due state machine + HRV/ACWR validity gate + re-prompt/stale-window in the 21:30 cron + proactive_alert.md rendering
-- [ ] 23-04-PLAN.md — Block-state gather + "Week N of 16" framing in morning briefing & Sunday weekly review (+ both prompt files)
+- [x] 23-02-PLAN.md — 6 brain-direct tools (get_plan, get_block_status, log_benchmark, get_benchmark_history, start_block, end_block) + registration tests
+- [x] 23-03-PLAN.md — benchmark_due state machine + HRV/ACWR validity gate + re-prompt/stale-window in the 21:30 cron + proactive_alert.md rendering
+- [x] 23-04-PLAN.md — Block-state gather + "Week N of 16" framing in morning briefing & Sunday weekly review (+ both prompt files)
 
 ### Phase 24: Strict Coaching Integration + Nutrition Accountability
 **Goal**: Expert, specific coaching is folded into every existing coaching touchpoint (morning briefing, 21:30 training check-in + evening alert, Sunday weekly review, and chat); coaching is proactive and reactive; a cross-cron dedup gate ensures the same topic fires at most once per day across all crons; nutrition macro adherence and fueling-slot accountability and supplement timing are part of the 21:30 check-in; session quality rating is captured at log time
@@ -108,7 +108,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 |-------|----------------|--------|-----------|
 | 21. Living Plan Ingestion | 4/4 | Complete    | 2026-06-04 |
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
-| 23. Block + Benchmark Tracking | 1/4 | In Progress|  |
+| 23. Block + Benchmark Tracking | 4/4 | Complete   | 2026-06-06 |
 | 24. Strict Coaching Integration + Nutrition Accountability | 0/TBD | Not started | - |
 | 25. Progress Projection + Benchmark Trend Reporting | 0/TBD | Not started | - |
 
