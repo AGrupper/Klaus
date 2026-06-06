@@ -342,3 +342,36 @@ def test_start_end_block_update_status():
     payload_end = call_args_end[0][0]
     assert payload_end.get("status") == "complete"
     assert call_args_end[1].get("merge") is True
+
+
+# ------------------------------------------------------------------ #
+# WR-02 — upsert must not clobber created_at on re-seed (merge=True)  #
+# ------------------------------------------------------------------ #
+
+def test_upsert_stamps_created_at_on_new_block():
+    """A brand-new block (doc does not yet exist) gets created_at stamped."""
+    s = _store()
+    doc_mock = MagicMock()
+    doc_mock.get.return_value.exists = False
+    s._col.document.return_value = doc_mock
+
+    s.upsert(dict(_BLOCKS[0]))
+
+    payload = doc_mock.set.call_args[0][0]
+    assert "created_at" in payload
+    assert "updated_at" in payload
+
+
+def test_upsert_preserves_created_at_on_existing_block():
+    """WR-02: re-seeding an existing block (merge) must NOT overwrite created_at,
+    but updated_at is always refreshed."""
+    s = _store()
+    doc_mock = MagicMock()
+    doc_mock.get.return_value.exists = True
+    s._col.document.return_value = doc_mock
+
+    s.upsert(dict(_BLOCKS[0]))
+
+    payload = doc_mock.set.call_args[0][0]
+    assert "created_at" not in payload
+    assert "updated_at" in payload

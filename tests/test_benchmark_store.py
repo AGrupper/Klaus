@@ -303,3 +303,16 @@ def test_benchmark_reads_never_raise_block_benchmarks():
     result = s.get_block_benchmarks(_BLOCK_ID)
 
     assert result == []
+
+
+def test_log_benchmark_rejects_bad_date_format():
+    """IN-02: a malformed date raises ValueError before touching Firestore."""
+    s = _store()
+    with pytest.raises(ValueError):
+        s.log_benchmark(
+            date="2026/07/18",  # slash-separated, not ISO
+            facet="bench_press_1rm",
+            value=92.5,
+            unit="kg",
+            block_id=_BLOCK_ID,
+        )

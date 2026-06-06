@@ -1624,11 +1624,17 @@ class BlockStore:
         doc_id = block["block_id"]
         payload = {
             **block,
-            "created_at": firestore.SERVER_TIMESTAMP,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
         try:
-            self._col.document(doc_id).set(payload, merge=True)
+            ref = self._col.document(doc_id)
+            # WR-02: only stamp created_at on the FIRST write. A --force re-seed
+            # uses merge=True, so unconditionally writing created_at would clobber
+            # the original creation timestamp on every re-run.
+            existing = ref.get()
+            if not getattr(existing, "exists", False):
+                payload["created_at"] = firestore.SERVER_TIMESTAMP
+            ref.set(payload, merge=True)
         except Exception:
             logger.error("BlockStore.upsert(%r) failed", doc_id, exc_info=True)
             raise
@@ -1757,6 +1763,14 @@ class BenchmarkStore:
             raise ValueError(
                 f"Unknown facet {facet!r}. Valid facets: {sorted(_BENCHMARK_FACETS)}"
             )
+        # IN-02: validate the date format before it becomes part of the doc id.
+        # A malformed LLM-supplied date would otherwise produce an opaque SDK
+        # error rather than a clean, catchable ValueError.
+        from datetime import date as _date
+        try:
+            _date.fromisoformat(date)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid date {date!r}; expected ISO YYYY-MM-DD")
         doc_id = f"{date}_{facet}"
         payload = {
             "date": date,
