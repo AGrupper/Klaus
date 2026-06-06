@@ -1074,5 +1074,232 @@ class TestAttachSkipreasonOtherNote(unittest.IsolatedAsyncioTestCase):
         tls_instance.log_session.assert_not_called()
 
 
+# ============================================================================
+# Phase 24 PROG-04 Tests: derive_session_quality pure function
+# ============================================================================
+
+
+class TestDeriveSessionQuality(unittest.TestCase):
+    """derive_session_quality pure function — Phase 24 PROG-04."""
+
+    def _fn(self):
+        import core.training_checkin as tc
+        return tc.derive_session_quality
+
+    def test_returns_none_when_both_rpe_and_feel_are_none(self):
+        """derive_session_quality(rpe=None, feel=None) returns None."""
+        fn = self._fn()
+        assert fn(rpe=None, feel=None) is None
+
+    def test_feel_zero_returns_grind(self):
+        """Pitfall 4: feel==0 (Very Weak) must return 'grind', not None.
+
+        feel==0 is falsy in Python; must use 'is not None' check.
+        """
+        fn = self._fn()
+        assert fn(rpe=None, feel=0) == "grind"
+        assert fn(rpe=7, feel=0) == "grind"
+
+    def test_feel_100_returns_strong(self):
+        """feel==100 (Very Strong) returns 'strong'."""
+        fn = self._fn()
+        assert fn(rpe=None, feel=100) == "strong"
+        assert fn(rpe=7, feel=100) == "strong"
+
+    def test_feel_75_high_rpe_returns_strong(self):
+        """feel==75 with rpe>=5 returns 'strong'."""
+        fn = self._fn()
+        assert fn(rpe=5, feel=75) == "strong"
+        assert fn(rpe=8, feel=75) == "strong"
+        assert fn(rpe=None, feel=75) == "strong"
+
+    def test_feel_75_low_rpe_returns_neutral(self):
+        """feel==75 with rpe<5 returns 'neutral' (strong feel but low effort)."""
+        fn = self._fn()
+        assert fn(rpe=3, feel=75) == "neutral"
+        assert fn(rpe=4, feel=75) == "neutral"
+
+    def test_feel_50_returns_neutral(self):
+        """feel==50 (Okay) returns 'neutral'."""
+        fn = self._fn()
+        assert fn(rpe=None, feel=50) == "neutral"
+        assert fn(rpe=7, feel=50) == "neutral"
+
+    def test_feel_25_returns_grind(self):
+        """feel==25 (Weak) returns 'grind'."""
+        fn = self._fn()
+        assert fn(rpe=None, feel=25) == "grind"
+
+    # ------------------------------------------------------------------ #
+    # RPE-only fallback (no feel)                                         #
+    # ------------------------------------------------------------------ #
+
+    def test_rpe_9_feel_none_returns_grind(self):
+        """rpe=9, feel=None (high effort, no Garmin) returns 'grind'."""
+        fn = self._fn()
+        assert fn(rpe=9, feel=None) == "grind"
+
+    def test_rpe_8_feel_none_returns_grind(self):
+        """rpe=8, feel=None returns 'grind'."""
+        fn = self._fn()
+        assert fn(rpe=8, feel=None) == "grind"
+
+    def test_rpe_3_feel_none_returns_strong(self):
+        """rpe=3, feel=None returns 'strong'."""
+        fn = self._fn()
+        assert fn(rpe=3, feel=None) == "strong"
+
+    def test_rpe_4_feel_none_returns_strong(self):
+        """rpe=4, feel=None returns 'strong'."""
+        fn = self._fn()
+        assert fn(rpe=4, feel=None) == "strong"
+
+    def test_rpe_6_feel_none_returns_neutral(self):
+        """rpe=6, feel=None returns 'neutral'."""
+        fn = self._fn()
+        assert fn(rpe=6, feel=None) == "neutral"
+
+    def test_rpe_7_feel_none_returns_neutral(self):
+        """rpe=7, feel=None returns 'neutral'."""
+        fn = self._fn()
+        assert fn(rpe=7, feel=None) == "neutral"
+
+    # ------------------------------------------------------------------ #
+    # Notes override                                                       #
+    # ------------------------------------------------------------------ #
+
+    def test_notes_pb_forces_strong(self):
+        """Notes containing 'pb' force quality to 'strong'."""
+        fn = self._fn()
+        result = fn(rpe=8, feel=25, notes="Hit a pb today!")
+        assert result == "strong"
+
+    def test_notes_cut_short_forces_grind(self):
+        """Notes containing 'cut short' force quality to 'grind'."""
+        fn = self._fn()
+        result = fn(rpe=3, feel=75, notes="Had to cut short due to cramp")
+        assert result == "grind"
+
+    def test_notes_override_applied_case_insensitive(self):
+        """Notes keyword matching is case-insensitive."""
+        fn = self._fn()
+        assert fn(rpe=7, feel=50, notes="PR on bench press today") == "strong"
+        assert fn(rpe=5, feel=75, notes="STRUGGLED throughout") == "grind"
+
+
+# ============================================================================
+# Phase 24 PROG-04 Tests: _silent_garmin_sync passes quality to log_session
+# ============================================================================
+
+
+class TestSilentGarminSyncQuality(unittest.IsolatedAsyncioTestCase):
+    """_silent_garmin_sync must derive and pass quality to log_session (Pitfall 6)."""
+
+    @patch("core.training_checkin.TrainingLogStore")
+    @patch("core.training_checkin.fetch_garmin_activities")
+    async def test_silent_garmin_sync_passes_quality_to_log_session(
+        self, mock_fetch, MockTrainingLogStore
+    ):
+        """Garmin-only sessions must get a quality value — not just Telegram sessions.
+
+        Pitfall 6: if quality derivation is only in the Telegram path, Garmin
+        sessions get quality=null in the weekly review.
+        """
+        import core.training_checkin as tc
+
+        # feel=75 + rpe=70 (normalises to 7) → strong
+        activity = _make_garmin_activity(
+            perceived_exertion=70,  # raw, normalises to 7 in log_session
+            feel=75,
+        )
+        mock_fetch.return_value = [activity]
+
+        mock_store_instance = MagicMock()
+        MockTrainingLogStore.return_value = mock_store_instance
+
+        tc._silent_garmin_sync(_TODAY_ISO)
+
+        mock_store_instance.log_session.assert_called_once()
+        call_kwargs = mock_store_instance.log_session.call_args.kwargs
+        assert "quality" in call_kwargs, (
+            "_silent_garmin_sync must pass quality= to log_session (Pitfall 6)"
+        )
+        # feel=75, rpe=70 (raw, >=5 after normalise) → quality should be "strong"
+        assert call_kwargs["quality"] == "strong", (
+            f"Expected 'strong' for feel=75 + rpe=70(raw), got {call_kwargs['quality']!r}"
+        )
+
+    @patch("core.training_checkin.TrainingLogStore")
+    @patch("core.training_checkin.fetch_garmin_activities")
+    async def test_silent_garmin_sync_feel_zero_is_grind(
+        self, mock_fetch, MockTrainingLogStore
+    ):
+        """feel==0 (Very Weak) must produce quality='grind', not None (Pitfall 4)."""
+        import core.training_checkin as tc
+
+        activity = _make_garmin_activity(
+            perceived_exertion=70,
+            feel=0,  # Very Weak — falsy in Python but valid
+        )
+        mock_fetch.return_value = [activity]
+
+        mock_store_instance = MagicMock()
+        MockTrainingLogStore.return_value = mock_store_instance
+
+        tc._silent_garmin_sync(_TODAY_ISO)
+
+        call_kwargs = mock_store_instance.log_session.call_args.kwargs
+        assert call_kwargs.get("quality") == "grind", (
+            f"feel=0 must produce 'grind', got {call_kwargs.get('quality')!r}"
+        )
+
+
+# ============================================================================
+# Phase 24 PROG-04: handle_rpe_callback passes quality to log_session
+# ============================================================================
+
+
+class TestHandleRpeCallbackQuality(unittest.IsolatedAsyncioTestCase):
+    """handle_rpe_callback must derive quality from RPE and pass it to log_session."""
+
+    @patch("core.training_checkin.send_and_inject", new_callable=AsyncMock)
+    @patch("core.training_checkin.PendingPromptStore")
+    @patch("core.training_checkin.TrainingLogStore")
+    async def test_handle_rpe_callback_passes_quality(
+        self, MockTLS, MockPPS, mock_send
+    ):
+        """RPE tap must derive provisional quality from RPE alone and write it."""
+        import core.training_checkin as tc
+
+        pps_instance = MagicMock()
+        pps_instance.get.return_value = {
+            "session_type": "gym",
+            "event_date": _TODAY_ISO,
+        }
+        MockPPS.return_value = pps_instance
+
+        tls_instance = MagicMock()
+        MockTLS.return_value = tls_instance
+
+        fake_msg = MagicMock()
+        fake_msg.message_id = 42
+        mock_send.return_value = fake_msg
+
+        cq = _FakeCallbackQuery(data=f"rpe:20260601_evt_abc:9")
+        cq.message = _FakeMessage()
+
+        await tc.handle_rpe_callback(MagicMock(), 12345, cq, f"rpe:20260601_evt_abc:9")
+
+        tls_instance.log_session.assert_called_once()
+        call_kwargs = tls_instance.log_session.call_args.kwargs
+        assert "quality" in call_kwargs, (
+            "handle_rpe_callback must pass quality= to log_session"
+        )
+        # rpe=9, feel=None → grind
+        assert call_kwargs["quality"] == "grind", (
+            f"rpe=9 + feel=None must produce 'grind', got {call_kwargs.get('quality')!r}"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

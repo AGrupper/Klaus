@@ -366,3 +366,64 @@ def test_get_range_json_serialisable_with_server_timestamp():
 
     assert isinstance(result[0]["updated_at"], str)
     json.dumps(result)  # must not raise
+
+
+# ------------------------------------------------------------------ #
+# Phase 24 PROG-04 — quality param                                    #
+# ------------------------------------------------------------------ #
+
+def test_log_session_accepts_quality_param():
+    """log_session accepts a quality keyword arg and writes it to the payload."""
+    s = _store()
+    doc_mock = MagicMock()
+    s._col.document.return_value = doc_mock
+
+    s.log_session(
+        date="2026-06-06",
+        slot="evt_abc",
+        rpe=8,
+        quality="grind",
+    )
+
+    args, kwargs = doc_mock.set.call_args
+    payload = args[0]
+    assert "quality" in payload, "payload must contain 'quality' key"
+    assert payload["quality"] == "grind"
+
+
+def test_log_session_quality_defaults_to_none():
+    """log_session quality defaults to None when not supplied."""
+    s = _store()
+    doc_mock = MagicMock()
+    s._col.document.return_value = doc_mock
+
+    s.log_session(date="2026-06-06", slot="evt_abc")
+
+    args, kwargs = doc_mock.set.call_args
+    payload = args[0]
+    assert "quality" in payload
+    assert payload["quality"] is None
+
+
+def test_log_session_quality_strong():
+    """quality='strong' is persisted as-is."""
+    s = _store()
+    doc_mock = MagicMock()
+    s._col.document.return_value = doc_mock
+
+    s.log_session(date="2026-06-06", slot="evt_abc", quality="strong")
+
+    args, _ = doc_mock.set.call_args
+    assert args[0]["quality"] == "strong"
+
+
+def test_log_session_quality_neutral():
+    """quality='neutral' is persisted as-is."""
+    s = _store()
+    doc_mock = MagicMock()
+    s._col.document.return_value = doc_mock
+
+    s.log_session(date="2026-06-06", slot="evt_abc", quality="neutral")
+
+    args, _ = doc_mock.set.call_args
+    assert args[0]["quality"] == "neutral"
