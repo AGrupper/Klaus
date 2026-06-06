@@ -706,3 +706,89 @@ class TestPhase22CoachingGuideTool:
         parsed = json.loads(result)
         assert "error" in parsed, f"Expected 'error' key, got: {parsed}"
         assert "content" not in parsed
+
+
+# ---------------------------------------------------------------------------
+# Phase 24 Plan 03 — WR-02: hardened read_coaching_guide fuzzy match (COACH-03)
+# ---------------------------------------------------------------------------
+
+class TestPhase24CoachingGuideFuzzyHardening:
+    """WR-02 — verify unambiguous-only fuzzy match in _handle_read_coaching_guide.
+
+    These tests patch pathlib.Path.read_text to inject an in-memory guide string
+    with multiple SECTION anchors so no real file dependency is required and the
+    fuzzy fallback can be exercised deterministically with controlled anchors.
+    """
+
+    # Guide with two sections sharing the word 'zymbal' — both anchors contain 'zymbal'
+    # so any query with 'zymbal' is ambiguous. 'creatine' appears in only one anchor.
+    MULTI_SECTION_GUIDE = (
+        "<!-- SECTION: zymbal-alpha -->\n"
+        "## Zymbal Alpha\nAlpha protocol. Creatine 3-5g/day.\n"
+        "<!-- SECTION: zymbal-beta -->\n"
+        "## Zymbal Beta\nBeta protocol. High volume.\n"
+        "<!-- SECTION: unique-creatine-section -->\n"
+        "## Creatine Supplementation\nCreatine 3-5g/day. Take with carbs.\n"
+    )
+
+    def _patch_read_text(self, monkeypatch, content: str):
+        """Patch Path.read_text so COACHING_GUIDE.md returns the provided content."""
+        import core.tools as tools_module
+        import pathlib
+
+        _original_read_text = pathlib.Path.read_text
+
+        def _fake_read_text(self_path, *args, **kwargs):
+            if self_path.name == "COACHING_GUIDE.md":
+                return content
+            return _original_read_text(self_path, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, "read_text", _fake_read_text)
+        return tools_module
+
+    def test_ambiguous_word_returns_not_found(self, monkeypatch):
+        """WR-02: a word that matches multiple section anchors returns not-found JSON.
+
+        'zymbal' appears in both 'zymbal-alpha' and 'zymbal-beta' anchors. A query
+        whose only ≥4-char word is 'zymbal' must return not-found, NOT 'zymbal-alpha'.
+        """
+        tools_module = self._patch_read_text(monkeypatch, self.MULTI_SECTION_GUIDE)
+        # Slug with no exact match; only fuzzy word is 'zymbal' which hits 2 anchors
+        result = tools_module._handle_read_coaching_guide("zymbal-query")
+        parsed = json.loads(result)
+        assert "error" in parsed, (
+            f"Expected not-found error for ambiguous word 'zymbal', got: {parsed}"
+        )
+        assert "content" not in parsed, "Ambiguous fuzzy match MUST NOT return content"
+
+    def test_short_word_skip_returns_not_found(self, monkeypatch):
+        """WR-02: short words (< 4 chars) are skipped and do not trigger fuzzy match."""
+        # Guide has one section; slug has only short words so fuzzy should not match
+        guide_content = (
+            "<!-- SECTION: threshold-runs -->\n"
+            "## Threshold Runs\nRun at LT2 pace.\n"
+        )
+        tools_module = self._patch_read_text(monkeypatch, guide_content)
+        # Query 'go-run-now': 'run' is 3 chars → skipped; 'now' is 3 chars → skipped
+        # 'go' is 2 chars → skipped; no 4+-char word → not-found
+        result = tools_module._handle_read_coaching_guide("go-run-now")
+        parsed = json.loads(result)
+        assert "error" in parsed, (
+            f"Expected not-found (all words < 4 chars skipped), got: {parsed}"
+        )
+        assert "content" not in parsed
+
+    def test_unambiguous_word_returns_correct_section(self, monkeypatch):
+        """WR-02: an unambiguous ≥4-char word that matches exactly one section returns it."""
+        tools_module = self._patch_read_text(monkeypatch, self.MULTI_SECTION_GUIDE)
+        # 'unique-creatine-section' slug: 'unique' (6 chars) → appears only in that one anchor
+        # No exact match for slug 'creatine-info'; 'creatine' → only in 'unique-creatine-section'
+        result = tools_module._handle_read_coaching_guide("creatine-info")
+        parsed = json.loads(result)
+        assert "content" in parsed, (
+            f"Expected content for unambiguous match 'creatine', got: {parsed}"
+        )
+        assert "error" not in parsed
+        assert "Creatine" in parsed["content"], (
+            f"Expected 'Creatine' in section content, got: {parsed['content']}"
+        )

@@ -41,7 +41,10 @@ logger = logging.getLogger(__name__)
 ISRAEL_TZ = ZoneInfo("Asia/Jerusalem")
 
 # Safety valve: abort tool-use loops after this many iterations.
-MAX_TOOL_ITERATIONS = 8
+# Raised from 8 → 12 for data-heavy Phase-24 coaching queries that legitimately
+# need ~6 tool calls (blueprint + block status + benchmark + nutrition + training
+# history + coaching guide) before the brain can compose a substantive answer.
+MAX_TOOL_ITERATIONS = 12
 
 # Per-user conversation history is capped at this many turns (user+assistant = 2 messages).
 MAX_CONVERSATION_TURNS = 50
@@ -540,6 +543,11 @@ class AgentOrchestrator:
 
         smart_tools = tool_registry.get_smart_schemas(user_message=last_user_text)
 
+        # Track the last substantive text produced by the brain alongside tool calls.
+        # Used at loop exhaustion to suppress the apologetic double-send fallback when
+        # the brain already produced a real answer (Phase 24 — double-send fix).
+        last_response_text: str = ""
+
         for iteration in range(MAX_TOOL_ITERATIONS):
             try:
                 response = self.smart_agent.chat(
@@ -577,6 +585,10 @@ class AgentOrchestrator:
 
             tool_calls = response["tool_calls"]
             response_text = response["text"]
+
+            # Track the last substantive text produced (for exhaustion double-send fix).
+            if response_text:
+                last_response_text = response_text
 
             # No tool calls → Smart Agent has produced its final response.
             if not tool_calls:
@@ -662,6 +674,21 @@ class AgentOrchestrator:
             "Smart loop exceeded MAX_TOOL_ITERATIONS (%d) without a final text response.",
             MAX_TOOL_ITERATIONS,
         )
+        # Double-send fix (Phase 24): when the brain produced a substantive answer
+        # alongside its final tool calls, return that answer directly instead of
+        # discarding it and emitting the apologetic fallback. The >100-char guard
+        # avoids returning trivially short fragments (e.g., "Understood." or "").
+        # Anti-fabrication SC-1 holds — the returned text was composed by the brain,
+        # not synthesized here. The sentinel string below is left intact so that
+        # tests/test_autonomous.py::test_sentinel_substring_matches_main_constant
+        # and the D-19 fallback detection in autonomous.py continue to work.
+        if last_response_text and len(last_response_text) > 100:
+            logger.warning(
+                "Returning last substantive brain response (%d chars) instead of "
+                "apologetic fallback to suppress double-send.",
+                len(last_response_text),
+            )
+            return last_response_text
         return (
             "Apologies, Sir. This request required more processing steps than expected. "
             "Please rephrase or break it into smaller parts."
