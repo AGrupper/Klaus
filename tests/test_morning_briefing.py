@@ -571,6 +571,9 @@ def test_gather_data_includes_coaching_topics_today_and_yesterday():
     assert "coaching_topics_yesterday" in data
     assert data["coaching_topics_today"] == ["protein-miss"]
     assert data["coaching_topics_yesterday"] == ["skipped-session:threshold-run"]
+    # COACH-05 conservative-writer producer: yesterday's unresolved misses are the
+    # topics the briefing recaps and records into today's doc post-send.
+    assert data["coaching_topics_included"] == ["skipped-session:threshold-run"]
 
 
 def test_gather_data_coaching_topics_fail_open():
@@ -588,6 +591,7 @@ def test_gather_data_coaching_topics_fail_open():
 
     assert data.get("coaching_topics_today") == []
     assert data.get("coaching_topics_yesterday") == []
+    assert data.get("coaching_topics_included") == []
 
 
 def test_gather_data_coaching_topics_today_empty_when_no_topics():
@@ -605,6 +609,8 @@ def test_gather_data_coaching_topics_today_empty_when_no_topics():
 
     assert data["coaching_topics_today"] == []
     assert data["coaching_topics_yesterday"] == []
+    # No prior-day misses → nothing to recap/record.
+    assert data["coaching_topics_included"] == []
 
 
 def test_run_morning_briefing_writes_topics_after_send(bot):

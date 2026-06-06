@@ -239,7 +239,37 @@ def _gather_week_data(today_iso: str) -> dict:
         logger.warning("weekly_review: coaching topics fetch failed", exc_info=True)
         data["coaching_topics_today"] = []
 
+    # COACH-05 (conservative-writer producer): derive the structural-critique topic keys this
+    # review deterministically raises from already-gathered data, recorded post-send so a later
+    # same-day cron hard-skips them (D-12 structural-critique dedup). Derivation is non-projective
+    # (current-state only, no Phase-25 deadline framing) and fail-open — never crash the cron.
+    try:
+        data["coaching_topics_included"] = _derive_structural_topics(data)
+    except Exception:
+        logger.warning("weekly_review: structural topic derivation failed", exc_info=True)
+        data["coaching_topics_included"] = []
+
     return data
+
+
+def _derive_structural_topics(week_data: dict) -> list[str]:
+    """Derive deterministic `structural-critique:*` topic keys from gathered week data.
+
+    Conservative-writer producer for COACH-05: maps clear, current-state signals the
+    review surfaces to canonical topic keys so they can be recorded for cross-cron dedup.
+    No projection (Phase 25) — only this-week movement. Order-stable, de-duplicated.
+
+    Currently derives:
+    - `structural-critique:session-quality` when any logged session this week graded "grind"
+      (the review's signature PROG-04 trend always comments on grind sessions when present).
+    """
+    topics: list[str] = []
+    training_log = week_data.get("training_log") or []
+    if any((entry or {}).get("quality") == "grind" for entry in training_log):
+        topics.append("structural-critique:session-quality")
+    # De-duplicate while preserving first-seen order.
+    seen: set[str] = set()
+    return [t for t in topics if not (t in seen or seen.add(t))]
 
 
 def _compose_review(week_data: dict, today_iso: str) -> str:

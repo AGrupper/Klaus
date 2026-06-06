@@ -290,6 +290,42 @@ def test_gather_week_coaching_topics_fail_open(patched_sources):
     assert data.get("coaching_topics_today") == []
 
 
+def test_derive_structural_topics_flags_grind_quality():
+    """COACH-05 producer: a grind-graded session this week yields structural-critique:session-quality."""
+    week_data = {"training_log": [
+        {"date": "2026-06-02", "quality": "strong"},
+        {"date": "2026-06-04", "quality": "grind"},
+    ]}
+    assert wtr._derive_structural_topics(week_data) == ["structural-critique:session-quality"]
+
+
+def test_derive_structural_topics_empty_without_grind():
+    """No grind sessions (incl. None/strong/neutral) → no structural-critique topics."""
+    week_data = {"training_log": [
+        {"date": "2026-06-02", "quality": "strong"},
+        {"date": "2026-06-04", "quality": None},
+        {"date": "2026-06-05"},
+    ]}
+    assert wtr._derive_structural_topics(week_data) == []
+
+
+def test_derive_structural_topics_deduplicates():
+    """Multiple grind sessions still yield a single session-quality key (order-stable, de-duped)."""
+    week_data = {"training_log": [
+        {"quality": "grind"}, {"quality": "grind"}, {"quality": "neutral"},
+    ]}
+    assert wtr._derive_structural_topics(week_data) == ["structural-critique:session-quality"]
+
+
+def test_gather_week_populates_coaching_topics_included(patched_sources_with_coaching):
+    """COACH-05: _gather_week_data sets coaching_topics_included from the structural producer."""
+    patched_sources_with_coaching["coaching_topic_store"].return_value.topics_today.return_value = []
+    data = wtr._gather_week_data("2026-06-07")
+    # Production data flow populates the key the post-send write path consumes (no mock injection).
+    assert "coaching_topics_included" in data
+    assert isinstance(data["coaching_topics_included"], list)
+
+
 def test_compose_review_injects_coaching_guide(patched_sources_with_coaching, monkeypatch):
     """PROG-01 / D-17: _compose_review injects {coaching_guide} into the system prompt."""
     monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")

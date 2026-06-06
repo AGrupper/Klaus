@@ -330,10 +330,17 @@ def _gather_data(today_iso: str) -> dict:
         data["coaching_topics_today"] = _cts.topics_today(today_iso)
         data["coaching_topics_yesterday"] = _cts.topics_today(yesterday_iso)
         # D-08: yesterday's topics surfaced so morning briefing can recap unresolved prior-day misses
+        # COACH-05 (conservative-writer producer): the unresolved prior-day misses the briefing
+        # recaps (D-08) are recorded into TODAY's doc post-send, so the 21:30 cron hard-skips the
+        # same accountability topic the same day (briefing→evening dedup direction). These keys
+        # share the 21:30 namespace (protein-miss / fueling-miss:* / recovery-conflict:*), so the
+        # write is the one that actually closes the cross-cron gap. Idempotent vs already-raised.
+        data["coaching_topics_included"] = list(data["coaching_topics_yesterday"])
     except Exception:
         logger.warning("morning_briefing: coaching topics fetch failed", exc_info=True)
         data["coaching_topics_today"] = []
         data["coaching_topics_yesterday"] = []
+        data["coaching_topics_included"] = []
 
     return data
 
