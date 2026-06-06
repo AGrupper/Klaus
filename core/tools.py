@@ -1528,15 +1528,26 @@ def _handle_read_coaching_guide(topic: str) -> str:
     if m:
         return json.dumps({"topic": slug, "content": m.group(1).strip()})
 
-    # Fuzzy fallback: first section whose anchor contains any word of the query
+    # Fuzzy fallback: unambiguous single-anchor match only (WR-02 hardening).
+    # For each word in the slug, skip short words (< 4 chars), then count how many
+    # section anchors contain that word. Only proceed when exactly one anchor matches
+    # (unambiguous). Ambiguous or zero matches skip to the next word.
     for word in slug.split("-"):
-        if not word:
+        if not word or len(word) < 4:
             continue
-        fallback = _re.compile(
+        anchor_re = _re.compile(
+            r"<!-- SECTION: [^>]*" + _re.escape(word) + r"[^>]* -->",
+            _re.IGNORECASE,
+        )
+        candidate_anchors = anchor_re.findall(content)
+        if len(candidate_anchors) != 1:
+            continue  # zero or multiple matches → ambiguous, skip this word
+        # Exactly one anchor matches → safe to return its section content
+        section_re = _re.compile(
             r"<!-- SECTION: [^>]*" + _re.escape(word) + r"[^>]* -->(.*?)(?=<!-- SECTION:|$)",
             _re.DOTALL | _re.IGNORECASE,
         )
-        fm = fallback.search(content)
+        fm = section_re.search(content)
         if fm:
             return json.dumps({"topic": slug, "content": fm.group(1).strip()})
 
