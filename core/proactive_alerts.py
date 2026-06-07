@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -173,6 +173,25 @@ def _macro_gap_check(
 # Phase 24 — NUTR-02: Fueling-slot helpers (pure, no I/O)            #
 # ------------------------------------------------------------------ #
 
+def _to_naive_local(value: str | datetime) -> datetime:
+    """Parse an ISO timestamp (or accept a datetime) → NAIVE Asia/Jerusalem datetime.
+
+    CR-01 (Phase 24): HealthKit meal timestamps carry a UTC offset
+    (``healthkit_tool._ensure_aware`` attaches Asia/Jerusalem, serialized via
+    ``.isoformat()``), while the fueling-slot windows are built naive via
+    ``datetime.combine``. Comparing an aware meal timestamp against a naive slot
+    window raises ``TypeError``, which the outer try/except in
+    ``_gather_nutrition_data`` swallows — silently dropping the entire nutrition
+    section whenever real meal data exists. Normalising every datetime to naive
+    local wall-clock time before comparison keeps the slot math correct and
+    offset-agnostic (anchors, meals, and fixed windows all in the same frame).
+    """
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(value)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_TZ).replace(tzinfo=None)
+    return dt
+
+
 def _resolve_anchor_times(
     today_iso: str,
     garmin_activities: list[dict],
@@ -210,7 +229,7 @@ def _resolve_anchor_times(
     for act in (garmin_activities or []):
         if (act.get("type") or "").lower() in _GARMIN_AM_TYPES:
             try:
-                am_anchor = datetime.fromisoformat(act["date"])
+                am_anchor = _to_naive_local(act["date"])
                 break
             except (KeyError, ValueError):
                 continue
@@ -223,7 +242,7 @@ def _resolve_anchor_times(
                 start = event.get("start") or ""
                 if "T" in start:
                     try:
-                        am_anchor = datetime.fromisoformat(start)
+                        am_anchor = _to_naive_local(start)
                         break
                     except ValueError:
                         continue
@@ -232,7 +251,7 @@ def _resolve_anchor_times(
     for act in (garmin_activities or []):
         if (act.get("type") or "").lower() in _GARMIN_PM_TYPES:
             try:
-                pm_anchor = datetime.fromisoformat(act["date"])
+                pm_anchor = _to_naive_local(act["date"])
                 break
             except (KeyError, ValueError):
                 continue
@@ -245,7 +264,7 @@ def _resolve_anchor_times(
                 start = event.get("start") or ""
                 if "T" in start:
                     try:
-                        pm_anchor = datetime.fromisoformat(start)
+                        pm_anchor = _to_naive_local(start)
                         break
                     except ValueError:
                         continue
@@ -304,7 +323,7 @@ def _map_meals_to_slots(
 
     # Fixed-window slots (always present regardless of anchor).
     try:
-        _today_date = datetime.fromisoformat(meals[0]["timestamp"]).date() if meals else date.today()
+        _today_date = _to_naive_local(meals[0]["timestamp"]).date() if meals else date.today()
     except (KeyError, ValueError, IndexError):
         _today_date = date.today()
 
@@ -313,8 +332,8 @@ def _map_meals_to_slots(
         datetime.combine(_today_date, datetime.strptime("14:30", "%H:%M").time()),
     )
     slots["pre-bed"] = (
-        datetime.combine(_today_date, datetime.strptime("21:00", "%H:%M").time()),
-        datetime.combine(_today_date, datetime.strptime("23:59", "%H:%M").time()),
+        datetime.combine(_today_date, time(_PRE_BED_START_HOUR, 0)),
+        datetime.combine(_today_date, time(23, 59)),
     )
 
     # Bucket each meal into its slot(s) — T-24-05: skip on missing/malformed timestamp.
@@ -324,7 +343,7 @@ def _map_meals_to_slots(
         if not ts_raw:
             continue
         try:
-            ts = datetime.fromisoformat(ts_raw)
+            ts = _to_naive_local(ts_raw)
         except (ValueError, TypeError):
             continue
         for slot_name, (lo, hi) in slots.items():
@@ -368,7 +387,7 @@ def _detect_slot_misses(
         if not ts_raw:
             continue
         try:
-            meal_timestamps.append(datetime.fromisoformat(ts_raw))
+            meal_timestamps.append(_to_naive_local(ts_raw))
         except (ValueError, TypeError):
             continue
 
@@ -395,8 +414,8 @@ def _detect_slot_misses(
         _date_obj = date.fromisoformat(today_date)
     except ValueError:
         _date_obj = date.today()
-    prebed_lo = datetime.combine(_date_obj, datetime.strptime("21:00", "%H:%M").time())
-    prebed_hi = datetime.combine(_date_obj, datetime.strptime("23:59", "%H:%M").time())
+    prebed_lo = datetime.combine(_date_obj, time(_PRE_BED_START_HOUR, 0))
+    prebed_hi = datetime.combine(_date_obj, time(23, 59))
     if not _in_window(prebed_lo, prebed_hi):
         missed.append("pre-bed")
 

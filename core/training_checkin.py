@@ -62,16 +62,9 @@ _SESSION_NOT_FOUND_COPY = (
 # Session-quality derivation constants (Phase 24 D-13, PROG-04)     #
 # ------------------------------------------------------------------ #
 
-# Garmin Feel scale: 0=Very Weak, 25=Weak, 50=Okay, 75=Strong, 100=Very Strong
+# Garmin Feel scale (numeric thresholds applied directly in derive_session_quality):
+#   0=Very Weak, 25=Weak, 50=Okay, 75=Strong, 100=Very Strong
 # Source: ingest_garmin_zip.py workoutFeel comment; garmin_tool.py directWorkoutFeel
-_GARMIN_FEEL_LABELS: dict[int, str] = {
-    100: "very_strong",
-    75: "strong",
-    50: "okay",
-    25: "weak",
-    0: "very_weak",
-}
-
 _QUALITY_STRONG_NOTES = ("pb", "pr", "personal record", "felt great", "best ever")
 _QUALITY_GRIND_NOTES = ("terrible", "awful", "cut short", "struggled", "could not")
 

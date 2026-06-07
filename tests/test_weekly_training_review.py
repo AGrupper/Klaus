@@ -414,10 +414,10 @@ def test_run_weekly_review_no_topic_write_when_send_fails(monkeypatch):
          patch("core.scheduled_message.send_and_inject",
                new_callable=AsyncMock, side_effect=RuntimeError("telegram down")), \
          patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
-        try:
+        # IN-02: assert the send failure actually propagates (a silent no-raise must fail
+        # this test, not pass it) — write-after-send means no topic write on failure.
+        with pytest.raises(RuntimeError):
             asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
-        except RuntimeError:
-            pass  # send failure propagates — that is expected
 
     # No topic writes should have happened
     assert add_topic_calls == []

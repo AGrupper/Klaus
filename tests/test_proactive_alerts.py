@@ -541,6 +541,49 @@ class TestSlotMappingAndMissDetection:
         assert am is None
         assert pm is None
 
+    # --- CR-01 regression: timezone-aware (HealthKit offset) timestamps ---
+
+    def test_map_meals_handles_offset_aware_timestamp(self):
+        """CR-01: a meal timestamp carrying a UTC offset (HealthKit) must bucket
+        correctly against the naive fixed pre-bed window, not raise TypeError."""
+        from core.proactive_alerts import _map_meals_to_slots
+        # 21:30 Asia/Jerusalem expressed with an explicit +03:00 offset (HealthKit form).
+        meal = self._make_meal("2026-06-06T21:30:00+03:00")
+        slot_map = _map_meals_to_slots([meal], None, None)
+        assert meal in slot_map["pre-bed"], "offset-aware meal must land in the pre-bed slot"
+
+    def test_detect_slot_misses_no_typeerror_on_offset_aware(self):
+        """CR-01: aware meal timestamps must not silently degrade _detect_slot_misses.
+        A pre-bed meal (offset form) means pre-bed is NOT missed."""
+        from core.proactive_alerts import _detect_slot_misses
+        meals = [self._make_meal("2026-06-06T22:00:00+03:00")]
+        misses = _detect_slot_misses(meals, None, None, "2026-06-06")
+        assert "pre-bed" not in misses
+
+    def test_resolve_anchor_offset_aware_normalised_to_naive(self):
+        """CR-01: an offset-carrying Garmin activity date resolves to a naive local
+        anchor so downstream anchor-relative windows compare cleanly."""
+        from core.proactive_alerts import _resolve_anchor_times
+        activities = [
+            {"type": "running", "date": "2026-06-06T07:15:00+03:00", "activity_id": "a1"},
+        ]
+        am, _ = _resolve_anchor_times("2026-06-06", activities, [])
+        assert am is not None
+        assert am.tzinfo is None, "anchor must be naive-local after normalisation"
+        assert am.hour == 7 and am.minute == 15
+
+    def test_map_meals_mixed_naive_and_aware_timestamps(self):
+        """CR-01: a mix of naive and offset-aware meal timestamps in one day must
+        not raise — both normalise to naive local before comparison."""
+        from core.proactive_alerts import _map_meals_to_slots
+        meals = [
+            self._make_meal("2026-06-06T12:30:00"),         # naive, midday
+            self._make_meal("2026-06-06T22:00:00+03:00"),   # aware, pre-bed
+        ]
+        slot_map = _map_meals_to_slots(meals, None, None)
+        assert len(slot_map["midday"]) == 1
+        assert len(slot_map["pre-bed"]) == 1
+
     # --- _detect_slot_misses ---
 
     def test_slot_miss_post_am_run_detected(self):
