@@ -30,7 +30,17 @@ transition) + `BenchmarkStore` (5-facet closed set) Firestore stores, an idempot
 `get_benchmark_history`/`start_block`/`end_block`), "Week N of 16" framing in the morning
 briefing + Sunday weekly review, and an end-of-block benchmark trigger in the existing 21:30
 cron behind an HRV/ACWR validity gate (window-open / deferred / stale). Verified 4/4
-2026-06-06. Next: strict coaching integration + nutrition accountability (Phase 24).
+2026-06-06. Phase 24 made coaching **strict + nutrition-accountable** (cross-cron
+de-dup, derived session quality, strict 21:30 prompts) — verified live 2026-06-07.
+Phase 25 (final) shipped **progress projection** — see below.
+
+**v4.0 final phase (Phase 25) complete 2026-06-08:** a deterministic pure-function
+projection helper (`core/projection.py`, stdlib least-squares trend, never raises,
+`today_iso`-only), surfaced both reactively (`get_goal_projection` brain-direct tool,
+D-04 dense Garmin pace vs sparse BenchmarkStore source selection) and proactively
+(Sunday weekly-review projection block, Phase-24 fence lifted). Klaus now projects
+strength/pace trends to the dated Oct/Nov deadlines and reports on-track / N-weeks-behind,
+Tier A target always distinguished from Tier B measured trend. Verified 3/3 2026-06-08.
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
@@ -104,6 +114,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated g
 - ✓ Curated expert coaching knowledge (`docs/COACHING_GUIDE.md`: slim core on every brain call + 10 anchored deep sections via brain-direct `read_coaching_guide`) wired into every coaching prompt + cron — v4.0 (Phase 22) — COACH-01
 - ✓ D-13 no-fabrication guard released → recency-windowed Tier A/B data-presence contract; Klaus names real numbers, specific session/load/rationale, and volunteers structural critique (recommend-not-rewrite) — verified live 2026-06-05 — v4.0 (Phase 22) — COACH-02/06/07
 - ✓ Block + benchmark tracking: `BlockStore` (date-range resolution, auto inter-block transition) + `BenchmarkStore` (5-facet closed set), 4-block 16-week seed, 6 brain-direct tools, "Week N of 16" framing in morning briefing + weekly review, end-of-block benchmark trigger in the 21:30 cron behind an HRV/ACWR validity gate (window-open/deferred/stale) — verified 4/4 2026-06-06 — v4.0 (Phase 23) — BLOCK-01/02/03
+- ✓ Progress projection toward dated goals: deterministic pure-function `core/projection.py` (stdlib least-squares trend → on-track / N-weeks-behind, `today_iso`-only, never raises), reactive `get_goal_projection` brain tool (D-04 dense Garmin pace history vs sparse `BenchmarkStore`), and a Sunday weekly-review projection block with the Phase-24 fence lifted — Tier A target vs Tier B measured trend always distinguished — verified 3/3 2026-06-08 — v4.0 (Phase 25) — PROG-02
 
 ### Active (v4.0 — Specific Training & Nutrition Coaching)
 
@@ -178,4 +189,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-06 — Phase 23 (Block + Benchmark Tracking) complete; 3/5 v4.0 phases done.*
+*Last updated: 2026-06-08 — Phase 25 (Progress Projection + Benchmark Trend Reporting) complete; final v4.0 phase. All 5 v4.0 phases executed — ready for milestone close-out.*
