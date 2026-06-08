@@ -107,7 +107,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   3. The projection explicitly distinguishes blueprint target (Tier A) from current measured trend (Tier B) — no fabricated convergence claims
 **Plans**: 3 plans
 - [x] 25-01-PLAN.md — Deterministic projection helper core/projection.py + unit tests (Wave 1 foundation: pure-function trend/projection, direction-aware, today_iso injected)
-- [ ] 25-02-PLAN.md — Reactive get_goal_projection brain-direct tool in core/tools.py + smart_agent.md projection permission (Wave 2)
+- [x] 25-02-PLAN.md — Reactive get_goal_projection brain-direct tool in core/tools.py + smart_agent.md projection permission (Wave 2)
 - [ ] 25-03-PLAN.md — Sunday weekly-review projection block + COACH-05 dedup + weekly_training_review.md fence lift (Wave 2)
 
 ## Progress
@@ -118,7 +118,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
 | 24. Strict Coaching Integration + Nutrition Accountability | 5/5 | Complete   | 2026-06-06 |
-| 25. Progress Projection + Benchmark Trend Reporting | 1/3 | In Progress|  |
+| 25. Progress Projection + Benchmark Trend Reporting | 2/3 | In Progress|  |
 
 ---
 
