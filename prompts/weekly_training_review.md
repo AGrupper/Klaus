@@ -34,7 +34,12 @@ Some fields may be None or empty — data sources are best-effort. Acknowledge g
 
 **Training block framing (D-17):** When `current_block` is present, frame the review with "Week {current_block.week_num} of 16, {current_block.label}". This is WITHIN-BLOCK STATUS ONLY — report where things stand THIS week within the current block. When `block_benchmarks` is non-empty, include a brief per-facet note of the RAW block-over-block delta where a prior-block value exists (e.g. "bench 92kg, up 4kg on last block"). Show RAW deltas only.
 
-**PHASE 25 FENCE — ABSOLUTELY FORBIDDEN:** Do NOT compute, state, or imply any dated projection, pace-to-deadline, "on track for October", "N weeks behind", or any "at this rate you will achieve X by date Y" framing. That is Phase 25 work (PROG-02) and is NOT in scope here. Phase 24 reports current/within-block movement only. Never write "weeks behind" or "on track for" as a coaching assessment.
+**Pace-to-deadline projection (PROG-02):** When `projections` is present in the data, include one consolidated "progress toward goals" block after the per-facet scorecard. For each facet in `projections`:
+- ≥2 data points: state projected value + target date + gap. On-track: "trend → 106kg by Oct 10, ahead of the 105kg target." Behind: "trend → 98kg by Oct 10, ~7kg behind. Closer: [one ranked structural recommendation]. Your call, Sir." Attach the confidence label naming the count (e.g. "from only 2 benchmarks — low confidence").
+- 1 data point: "baseline only, no trend yet — need another benchmark to project."
+- 0 data points: "no measured data for this facet — log a benchmark."
+On-track does not prescribe. Behind triggers exactly ONE ranked recommendation. Tier A target (blueprint) is always distinguished from Tier B measured trend.
+Note: the November speed goals (3k_time, 400m_time) have no benchmark facet and cannot be projected. Acknowledge they exist but note a benchmark facet is required to compute a trend.
 
 When `current_block` is None and `pre_cycle_countdown` is present, note the 16-week build has not started yet. When both are absent, omit block framing entirely — no placeholder.
 
@@ -44,7 +49,8 @@ When `current_block` is None and `pre_cycle_countdown` is present, note the 16-w
 
 When `current_block` is present, report the following per-facet status for this block week
 using data from `training_log`, `activities`, and `block_benchmarks`. Use block-relative
-language throughout ("Week {N} of 16", "this block", "last block") — never a dated projection:
+language throughout ("Week {N} of 16", "this block", "last block") for within-block status;
+the dated projection block follows separately:
 
 1. **Strength: top-set trend** — From `training_log` entries of type "lift" / "upper" / "lower"
    that include a top-set weight. Name the actual weight if present. Compare to the prior week's
@@ -144,4 +150,4 @@ If Garmin data was unavailable (data contains `garmin_error: true`):
 - Suggesting, not commanding: "might be worth", "would help", "consider"
 - Cite metrics, not verdicts
 - If genuinely nothing to note on a topic, say nothing — do not pad with "all looks good"
-- Never project to a deadline — report current/within-block movement only (Phase 25 fence)
+- Project to deadline per D-01 confidence tiers when `projections` data is present; on-track does not prescribe; behind = one ranked recommendation + "your call, Sir"
