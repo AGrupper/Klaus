@@ -126,6 +126,30 @@ def test_garmin_activities_split_and_no_error(patched_sources):
     assert [a["date"][:10] for a in data["last_week_activities"]] == ["2026-05-26"]
 
 
+def test_gather_week_includes_strength_sessions(patched_sources):
+    """Hevy per-set strength data is gathered for this week + prior week (trend)."""
+    sstore = MagicMock()
+    this_week = [{"workout_id": "w1", "date": "2026-06-02",
+                  "exercises": [{"name": "Bench Press",
+                                 "top_set": {"weight_kg": 92.5, "reps": 3}}]}]
+    prev_week = [{"workout_id": "w0", "date": "2026-05-26", "exercises": []}]
+    sstore.return_value.get_range.side_effect = [this_week, prev_week]
+    with patch("memory.firestore_db.StrengthSessionStore", sstore):
+        data = wtr._gather_week_data("2026-06-07")
+    assert data["strength_sessions"] == this_week
+    assert data["strength_sessions_prev"] == prev_week
+
+
+def test_gather_week_strength_failure_fails_open(patched_sources):
+    """StrengthSessionStore raising → strength_sessions defaults to [] (gather still runs)."""
+    sstore = MagicMock()
+    sstore.return_value.get_range.side_effect = RuntimeError("firestore down")
+    with patch("memory.firestore_db.StrengthSessionStore", sstore):
+        data = wtr._gather_week_data("2026-06-07")
+    assert data["strength_sessions"] == []
+    assert data["strength_sessions_prev"] == []
+
+
 def test_garmin_activities_failure_sets_error_flag(patched_sources):
     """fetch_garmin_activities raising → garmin_error True, gather still returns."""
     patched_sources["fetch_garmin_activities"].side_effect = RuntimeError("garmin down")

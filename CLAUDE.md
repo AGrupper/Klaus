@@ -76,11 +76,12 @@ Klaus/
 │   ├── scheduled_message.py# Telegram send + Firestore conversation injection
 │   ├── self_manifest.py    # Auto-generates docs/SELF.md (CI runs on every deploy)
 │   ├── chat_ingest.py      # Daily 04:00: parse Claude Code JSONL → Pinecone + Notion
-│   └── chat_export_ingest.py # Daily 04:30: ChatGPT/Claude.ai/Gemini Takeout zips → same pipeline
+│   ├── chat_export_ingest.py # Daily 04:30: ChatGPT/Claude.ai/Gemini Takeout zips → same pipeline
+│   └── strength_ingest.py  # Daily 05:00: Hevy pull (backfill→delta) → StrengthSessionStore
 ├── memory/
 │   ├── firestore_conversation.py # Per-user conversation history
 │   ├── firestore_db.py     # All Firestore stores: LLMUsage, SelfState, Journal,
-│   │                       #   MorningBriefing, Followup, OutreachLog, TickLog
+│   │                       #   MorningBriefing, Followup, OutreachLog, TickLog, StrengthSession
 │   └── pinecone_db.py      # MemoryStore: remember/recall + chat upserts
 ├── mcp_tools/
 │   ├── database_tool.py    # Analytical PostgreSQL read-only queries
@@ -91,6 +92,7 @@ Klaus/
 │   ├── notion_tool.py      # 5 tools: search, get_page, query_db, create_page, append_blocks
 │   ├── weather_tool.py     # wttr.in
 │   ├── readwise_tool.py    # Daily reading highlights
+│   ├── hevy_tool.py        # Hevy strength API (full per-set workouts) + normalizer
 │   ├── garmin_tool.py      # Sleep, HRV, body battery, resting HR
 │   ├── routes_tool.py      # Google Routes API (traffic-aware drive time)
 │   ├── memory.py           # remember/recall (Pinecone-backed)
@@ -133,7 +135,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **7 Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**
+- **Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**
 
 ## 6. Invariants
 

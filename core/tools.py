@@ -68,6 +68,9 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "end_block",
     # Phase 25 — progress projection toward dated goals (PROG-02)
     "get_goal_projection",
+    # Hevy strength — full per-set progression + cross-domain coaching context
+    "get_strength_progress",
+    "get_training_context",
 })
 
 # ------------------------------------------------------------------ #
@@ -896,6 +899,61 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # ============ HEVY STRENGTH — full per-set progression + cross-domain context ============
+    {
+        "name": "get_strength_progress",
+        "description": (
+            "Read Sir's strength-training history synced from Hevy (full per-set "
+            "detail: every exercise, set, rep, weight_kg, RPE — plus derived "
+            "top_set, est_1rm, and volume_kg). Brain-direct. "
+            "Pass `exercise` (e.g. 'Bench Press') to get that lift's progression "
+            "over time for trend/stall analysis, or omit it for all recent "
+            "sessions. `days` defaults to 30. `detail` defaults to 'full'; pass "
+            "'summary' to drop per-set arrays and keep only derived metrics. "
+            "Reason over the data yourself — do not expect pre-computed verdicts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "exercise": {
+                    "type": "string",
+                    "description": "Exercise name to get the progression for (case-insensitive). Omit for all sessions.",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Days of history to return when no exercise is given. Default 30.",
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "'full' (every set) or 'summary' (derived metrics only). Default 'full'.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "get_training_context",
+        "description": (
+            "Get Sir's FULL cross-domain training picture in one call — strength "
+            "(Hevy per-set), session log, running/cardio + training load, ACWR, "
+            "Garmin training status/VO2, nutrition totals per day, and recovery "
+            "(HRV/RHR/sleep). Brain-direct. Use this when Sir asks open-ended "
+            "questions about how training is going or what to change, so you can "
+            "correlate ACROSS domains and surface non-obvious, individualized "
+            "insight rather than siloed per-metric readouts. `days` defaults to 14. "
+            "Nothing is filtered — you decide what matters."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Look-back window in days across all domains. Default 14.",
+                },
+            },
+            "required": [],
+        },
+    },
     # ============ PHASE 23 — BLOCK + BENCHMARK TRACKING (BLOCK-01/BLOCK-03) ============
     # All 6 are brain-direct (worker-excluded below). update_plan is NOT re-added.
     {
@@ -1076,6 +1134,9 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "end_block",
         # Phase 25 — projection is brain-direct only (PROG-02, T-25-08)
         "get_goal_projection",
+        # Hevy strength — read aggregators are brain-direct (Klaus reasons over them)
+        "get_strength_progress",
+        "get_training_context",
     }
 ]
 
@@ -1717,6 +1778,138 @@ def _handle_get_training_history(days: int = 7) -> str:
 
 
 # ------------------------------------------------------------------ #
+# Hevy strength — full per-set progression + cross-domain context    #
+# ------------------------------------------------------------------ #
+
+def _handle_get_strength_progress(
+    exercise: str | None = None, days: int = 30, detail: str = "full",
+) -> str:
+    """Brain-direct: read Hevy strength history from StrengthSessionStore.
+
+    With `exercise` → that lift's per-session progression (top_set/est_1rm/volume).
+    Without it → recent full sessions (every set unless detail='summary').
+    Returns a structured tool-result; never raises (errors become {"error": ...}).
+    """
+    from memory.firestore_db import StrengthSessionStore
+    try:
+        store = StrengthSessionStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        if exercise:
+            return json.dumps(
+                {"exercise": exercise, "history": store.get_exercise_history(exercise)},
+                default=str,
+            )
+        sessions = store.get_recent(days)
+        if detail != "full":
+            sessions = [
+                {
+                    "date": s.get("date"),
+                    "title": s.get("title"),
+                    "duration_min": s.get("duration_min"),
+                    "total_volume_kg": s.get("total_volume_kg"),
+                    "exercises": [
+                        {
+                            "name": e.get("name"),
+                            "top_set": e.get("top_set"),
+                            "est_1rm": e.get("est_1rm"),
+                            "volume_kg": e.get("volume_kg"),
+                            "set_count": e.get("set_count"),
+                        }
+                        for e in s.get("exercises") or []
+                    ],
+                }
+                for s in sessions
+            ]
+        return json.dumps({"window_days": days, "sessions": sessions}, default=str)
+    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_get_training_context(days: int = 14) -> str:
+    """Brain-direct: assemble the FULL cross-domain training picture in one call.
+
+    Reuses existing reads (strength, training log, Garmin activities/status, ACWR,
+    nutrition, biometrics). Every block is best-effort fail-open: one outage sets
+    that key to None rather than aborting the whole snapshot, so the brain always
+    gets as much of the picture as is available. Nothing is down-sampled.
+    """
+    from zoneinfo import ZoneInfo
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+    tz = ZoneInfo("Asia/Jerusalem")
+    today = datetime.now(tz).date()
+    ctx: dict = {"window_days": days}
+
+    try:
+        from memory.firestore_db import StrengthSessionStore
+        ctx["strength_sessions"] = StrengthSessionStore(project_id, database).get_recent(days)
+    except Exception:
+        logger.warning("get_training_context: strength fetch failed", exc_info=True)
+        ctx["strength_sessions"] = None
+
+    try:
+        from memory.firestore_db import TrainingLogStore
+        ctx["training_log"] = TrainingLogStore(project_id, database).get_recent(days)
+    except Exception:
+        logger.warning("get_training_context: training_log fetch failed", exc_info=True)
+        ctx["training_log"] = None
+
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_activities
+        ctx["garmin_activities"] = fetch_garmin_activities(days)
+    except Exception:
+        logger.warning("get_training_context: garmin activities failed", exc_info=True)
+        ctx["garmin_activities"] = None
+
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_training_status
+        ctx["training_status"] = fetch_garmin_training_status()
+    except Exception:
+        logger.warning("get_training_context: training status failed", exc_info=True)
+        ctx["training_status"] = None
+
+    try:
+        from mcp_tools.garmin_tool import compute_acwr_from_db
+        ctx["acwr"] = compute_acwr_from_db()
+    except Exception:
+        logger.warning("get_training_context: acwr failed", exc_info=True)
+        ctx["acwr"] = None
+
+    try:
+        from memory.firestore_db import MealStore
+        ms = MealStore(project_id, database)
+        nutrition: dict = {}
+        for i in range(days):
+            d = (today - timedelta(days=i)).isoformat()
+            agg = ms.get_day_aggregate(d)
+            if agg:
+                nutrition[d] = agg.get("totals", {})
+        ctx["nutrition_by_day"] = nutrition
+    except Exception:
+        logger.warning("get_training_context: nutrition failed", exc_info=True)
+        ctx["nutrition_by_day"] = None
+
+    try:
+        from mcp_tools.database_tool import query_health_database
+        start = (today - timedelta(days=days)).isoformat()
+        sql = (
+            "SELECT date, resting_hr, hrv_baseline, hrv_overnight, "
+            "sleep_duration, sleep_score FROM daily_biometrics "
+            f"WHERE date >= '{start}' ORDER BY date DESC"
+        )
+        rows = query_health_database(sql)
+        ctx["biometrics"] = rows if isinstance(rows, list) else None
+    except Exception:
+        logger.warning("get_training_context: biometrics failed", exc_info=True)
+        ctx["biometrics"] = None
+
+    return json.dumps(ctx, default=str)
+
+
+# ------------------------------------------------------------------ #
 # Phase 23 — block + benchmark tracking handlers (BLOCK-01/BLOCK-03) #
 # ------------------------------------------------------------------ #
 
@@ -1934,6 +2127,9 @@ _HANDLERS: dict[str, object] = {
     # Phase 20 Plan 01 — training log tools (LOG-03/LOG-04)
     "log_training":            lambda args: _handle_log_training(**args),
     "get_training_history":    lambda args: _handle_get_training_history(**args),
+    # Hevy strength — full per-set progression + cross-domain context (brain-direct)
+    "get_strength_progress":   lambda args: _handle_get_strength_progress(**args),
+    "get_training_context":    lambda args: _handle_get_training_context(**args),
     # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03), brain-direct
     "get_plan":                lambda args: _handle_get_plan(),
     "get_block_status":        lambda args: _handle_get_block_status(),

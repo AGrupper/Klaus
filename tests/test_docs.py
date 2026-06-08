@@ -48,11 +48,12 @@ class TestDeploymentCompleteness:
         assert "/cron/reflect" in content
 
     def test_gcloud_create_block_present_for_autonomous_tick(self):
+        # Assert the explicit create block exists rather than relying on a fragile
+        # char-distance window from the inventory table (which shifts as jobs are
+        # added). This checks the true property: autonomous-tick is documented with
+        # its own `gcloud scheduler jobs create` command.
         content = _content()
-        idx = content.find("klaus-autonomous-tick")
-        assert idx >= 0
-        window = content[max(0, idx - 200):idx + 1000]
-        assert "gcloud scheduler jobs create" in window
+        assert "gcloud scheduler jobs create http klaus-autonomous-tick" in content
 
     def test_groq_secret_documented(self):
         content = _content()

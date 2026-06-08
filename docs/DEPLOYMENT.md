@@ -1053,7 +1053,7 @@ Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.go
 
 ## 19. Cloud Scheduler — Full Job Inventory
 
-The following 8 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+The following 9 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
 use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
 are in `Asia/Jerusalem`.
 
@@ -1067,6 +1067,7 @@ are in `Asia/Jerusalem`.
 | 6 | klaus-reflect                | `0 22 * * *`          | `/cron/reflect`                   | 17             |
 | 7 | klaus-autonomous-tick        | `*/20 7-21 * * *`     | `/cron/autonomous-tick`           | 18             |
 | 8 | klaus-weekly-training-review | `0 10 * * 0`          | `/cron/weekly-training-review`    | 20 (Shifu)     |
+| 9 | klaus-strength-sync          | `0 5 * * *`           | `/cron/strength-sync`             | Hevy           |
 
 Note: There is no `klaus-training-checkin` scheduler job — the 21:30 training
 check-in folds into the existing `proactive-alerts` cron (D-09); no separate job is needed.
@@ -1116,6 +1117,28 @@ Pre-flight check before first deploy: `gcloud scheduler jobs list --project="${P
 --location="${REGION}" --filter="name~autonomous-tick"` — confirm the job does not
 already exist (no historical/staging collisions).
 
+### §19a. klaus-strength-sync (Hevy)
+
+Daily Hevy pull — runs `core/strength_ingest.py:run_one_batch()`, which on first run
+backfills full workout history over several ticks (each tick is page+time bounded) and
+thereafter applies incremental `/v1/workouts/events`. Pull-only; no orchestrator/LLM/Telegram.
+
+```bash
+gcloud scheduler jobs create http klaus-strength-sync \
+  --schedule="0 5 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/strength-sync" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+First-run backfill: re-invoke until the response shows `done: true`
+(`gcloud scheduler jobs run klaus-strength-sync --location="${REGION}"`), or just let the
+daily ticks drain it. Requires the `HEVY_API_KEY` secret bound (see §20a).
+
 ---
 
 ## 20. TICK_BRAIN_API_KEY (Groq) Secret
@@ -1156,6 +1179,28 @@ gcloud run services update klaus-service \
 Fallback behavior: if Groq is unavailable, `TickBrain.think()` falls back to Gemini
 3 Flash automatically (TICK-02 / Phase 14). The autonomous tick continues to operate
 on the fallback chain.
+
+### §20a. HEVY_API_KEY (Hevy) Secret
+
+The Hevy strength integration reads `HEVY_API_KEY` (a UUID from
+https://hevy.com/settings?developer — **Hevy Pro only**), sent as the `api-key` header.
+Used by `mcp_tools/hevy_tool.py` for the daily `/cron/strength-sync` pull and (indirectly)
+the `get_strength_progress` / `get_training_context` brain tools.
+
+```bash
+# Mint the secret (paste the UUID, then Ctrl-D):
+gcloud secrets create klaus-hevy-api-key --data-file=- --project="${PROJECT_ID}"
+
+# Bind to Cloud Run:
+gcloud run services update klaus-agent \
+  --set-secrets=HEVY_API_KEY=klaus-hevy-api-key:latest \
+  --region="${REGION}" --project="${PROJECT_ID}"
+```
+
+Lowercase `klaus-` naming per the GCP casing invariant. Rotation mirrors the tick-brain
+procedure above (`gcloud secrets versions add klaus-hevy-api-key`). If the key is unset
+or Hevy rejects it, `/cron/strength-sync` returns `{"ok": false, "error": ...}` and the
+read tools degrade to `{"error": ...}` — no crash.
 
 ---
 

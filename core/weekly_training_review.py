@@ -99,6 +99,24 @@ def _gather_week_data(today_iso: str) -> dict:
         data["training_log_error"] = True
 
     # ------------------------------------------------------------------ #
+    # 1b. StrengthSessionStore — full per-set Hevy detail, this week +    #
+    #     last week for the top-set / volume / est-1RM trend. Fail-open    #
+    #     to [] so the review still runs when Hevy sync is absent. This    #
+    #     populates the strength facet the prompt asks for (top_set etc.). #
+    # ------------------------------------------------------------------ #
+    try:
+        from memory.firestore_db import StrengthSessionStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        sstore = StrengthSessionStore(project_id, database)
+        data["strength_sessions"] = sstore.get_range(this_start_str, this_end_str)
+        data["strength_sessions_prev"] = sstore.get_range(last_start_str, last_end_str)
+    except Exception:
+        logger.warning("weekly_review: StrengthSessionStore fetch failed", exc_info=True)
+        data["strength_sessions"] = []
+        data["strength_sessions_prev"] = []
+
+    # ------------------------------------------------------------------ #
     # 2. Garmin activities — this week + last week for D-22 trend        #
     # ------------------------------------------------------------------ #
     try:
