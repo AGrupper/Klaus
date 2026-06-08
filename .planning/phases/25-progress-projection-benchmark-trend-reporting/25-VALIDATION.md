@@ -39,7 +39,7 @@ created: 2026-06-07
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 25-01-xx | 01 | 1 | PROG-02 | — | numbers computed server-side, never LLM-invented (anti-fabrication) | unit | `pytest tests/test_projection.py -q` | ❌ W0 | ⬜ pending |
-| 25-02-xx | 02 | 2 | PROG-02 | — | reactive answer projects a trend, not the goal alone | unit | `pytest tests/test_tools.py -k projection -q` | ❌ W0 | ⬜ pending |
+| 25-02-xx | 02 | 2 | PROG-02 | — | reactive answer projects a trend, not the goal alone | unit | `pytest tests/test_tool_registration_phase25.py -q` | ❌ W0 | ⬜ pending |
 | 25-03-xx | 03 | 2 | PROG-02 | — | Sunday block dedups via structural-critique:projection:<facet> | unit | `pytest tests/test_weekly_training_review.py -k projection -q` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*

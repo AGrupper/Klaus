@@ -762,22 +762,22 @@ This is already specified in CONTEXT.md D-02 — Phase 25 mirrors it in the proj
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Garmin `avg_pace` units in real export data**
    - What we know: the column exists, is NUMERIC(5,2), populated from `entry.get("averagePace")`
    - What's unclear: whether real Garmin exports produce min/km (e.g. 4.03) or sec/km (e.g. 241.8) for the `averagePace` JSON key
-   - Recommendation: use the derived formula `duration_sec / distance_m * 1000` and skip reading `avg_pace` entirely — resolves the ambiguity without needing to probe live data
+   - RESOLVED: use the derived formula `duration_sec / distance_m * 1000` and skip reading `avg_pace` entirely — resolves the ambiguity without needing to probe live data. This is the canonical pace-derivation for the D-04 dense path.
 
 2. **Block end dates for projection timeline context**
    - What we know: blocks have `end_date` in BlockStore; the projection needs the deadline date (Oct 31 / Nov 30) from `dated_goals`
    - What's unclear: whether the Sunday review prompt should also note "Block 1 ends 2026-07-18 → benchmark due" alongside "Oct target ~7kg away"
-   - Recommendation: the per-deadline projection is independent of block boundaries; the within-block framing already handles block end dates; the planner should not merge the two
+   - RESOLVED: the per-deadline projection is independent of block boundaries; the within-block "Week N of 16" framing already handles block end dates; the planner should NOT merge the two.
 
 3. **`3k_time` and `400m_time` November goals**
    - What we know: these appear in `dated_goals[1].metrics` but have no BenchmarkStore facet
    - What's unclear: whether the user expects Klaus to project these in Phase 25
-   - Recommendation: explicitly out of scope per CONTEXT.md ("no new benchmark facets" is deferred); Klaus should acknowledge the November speed goals exist but note they require a benchmark facet to project — flag in the weekly review prompt instruction
+   - RESOLVED: explicitly out of scope per CONTEXT.md ("no new benchmark facets" is deferred); Klaus should acknowledge the November speed goals exist but note they require a benchmark facet to project — flag in the weekly review prompt instruction.
 
 ---
 
