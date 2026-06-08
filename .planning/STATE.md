@@ -25,18 +25,18 @@ Last activity: 2026-06-08 — Milestone v4.0 completed and archived
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-06-03)
+See: `.planning/PROJECT.md` (updated 2026-06-08 after v4.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Milestone complete
+**Current focus:** v4.0 shipped + deployed (rev klaus-agent-00091-4vz). Planning next milestone — run `/gsd-new-milestone`.
 
 ## Architecture (current)
 
 - Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
-- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` in Firestore; `UserProfileStore` scaffold exists but is empty (this is the Phase 21 target)
-- 8 cron jobs deployed (see Notes below); no new cron jobs planned for v4.0
+- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
+- 8 cron jobs deployed; v4.0 added no new cron jobs (block/benchmark/projection ride the existing 21:30 + Sunday review)
 
 ## Accumulated Context
 
