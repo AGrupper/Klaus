@@ -4,13 +4,13 @@ milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
 status: executing
 stopped_at: Phase 25 context gathered
-last_updated: "2026-06-08T07:31:29.192Z"
-last_activity: 2026-06-08 -- Phase 25 planning complete
+last_updated: "2026-06-08T07:42:08.885Z"
+last_activity: 2026-06-08
 progress:
   total_phases: 5
   completed_phases: 4
   total_plans: 20
-  completed_plans: 17
+  completed_plans: 18
   percent: 80
 ---
 
@@ -18,19 +18,19 @@ progress:
 
 ## Current Position
 
-Phase: 24 — COMPLETE
-Plan: 1 of 5
+Phase: 25 (progress-projection-benchmark-trend-reporting) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-08 -- Phase 25 planning complete
+Last activity: 2026-06-08
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [█████████░] 90%
 
 ## Project Reference
 
 See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 24 — strict-coaching-integration-nutrition-accountability
+**Current focus:** Phase 25 — progress-projection-benchmark-trend-reporting
 
 ## Architecture (current)
 
@@ -52,6 +52,7 @@ Recent decisions affecting v4.0 (full log in PROJECT.md):
 - [v4.0 research]: `BlockStore` + `BenchmarkStore` as dedicated Firestore stores (not extending `TrainingLogStore`). Doc ID `{date}_{facet}` makes benchmark logging idempotent.
 - [v4.0 research]: Cross-cron coaching dedup via `OutreachLogStore` extension (or thin `CoachingTouchStore`), covering morning briefing + evening check-in + weekly review + autonomous tick. Not just the autonomous tick.
 - [v4.0 research]: Plan_start_date = 2026-06-21 (Week 1 anchor). Week number always derived from `(today - plan_start_date).days // 7 + 1` — never hardcoded.
+- [Phase ?]: Phase 25 Plan 01
 
 ### Pending Todos
 
@@ -81,6 +82,6 @@ Carried forward from v3.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-07T08:20:24.621Z
+Last session: 2026-06-08T07:42:08.882Z
 Stopped at: Phase 25 context gathered
-Resume file: .planning/phases/25-progress-projection-benchmark-trend-reporting/25-CONTEXT.md
+Resume file: None

@@ -40,7 +40,7 @@ Requirements for this milestone. Each maps to a roadmap phase.
 ### Progress Toward Goals (PROG)
 
 - [ ] **PROG-01**: The **Sunday weekly review** reports **per-facet progress** (strength top-set trends, threshold volume vs target, ACWR) with block-relative framing.
-- [ ] **PROG-02**: Klaus **projects strength/pace trends toward the dated Oct/Nov goals** and reports on-track / behind.
+- [x] **PROG-02**: Klaus **projects strength/pace trends toward the dated Oct/Nov goals** and reports on-track / behind.
 - [ ] **PROG-03**: The **morning briefing** frames today's named session + recovery state + the relevant fueling reminder together.
 - [ ] **PROG-04**: Klaus captures a **session-quality annotation** (e.g. strong / neutral / grind) at logging time so the weekly review can surface quality trends.
 
@@ -92,7 +92,7 @@ Populated during roadmap creation.
 | PROG-01 | Phase 24 | Pending |
 | PROG-03 | Phase 24 | Pending |
 | PROG-04 | Phase 24 | Pending |
-| PROG-02 | Phase 25 | Pending |
+| PROG-02 | Phase 25 | Complete |
 
 **Coverage:**
 - v1 requirements: 20 total

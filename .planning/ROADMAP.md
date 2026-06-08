@@ -106,7 +106,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
   2. The Sunday weekly review surfaces a pace-to-deadline status for at least one goal facet: "current trend puts you at [X] by [date] — on track / N weeks behind"
   3. The projection explicitly distinguishes blueprint target (Tier A) from current measured trend (Tier B) — no fabricated convergence claims
 **Plans**: 3 plans
-- [ ] 25-01-PLAN.md — Deterministic projection helper core/projection.py + unit tests (Wave 1 foundation: pure-function trend/projection, direction-aware, today_iso injected)
+- [x] 25-01-PLAN.md — Deterministic projection helper core/projection.py + unit tests (Wave 1 foundation: pure-function trend/projection, direction-aware, today_iso injected)
 - [ ] 25-02-PLAN.md — Reactive get_goal_projection brain-direct tool in core/tools.py + smart_agent.md projection permission (Wave 2)
 - [ ] 25-03-PLAN.md — Sunday weekly-review projection block + COACH-05 dedup + weekly_training_review.md fence lift (Wave 2)
 
@@ -118,7 +118,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
 | 24. Strict Coaching Integration + Nutrition Accountability | 5/5 | Complete   | 2026-06-06 |
-| 25. Progress Projection + Benchmark Trend Reporting | 0/3 | Planned | - |
+| 25. Progress Projection + Benchmark Trend Reporting | 1/3 | In Progress|  |
 
 ---
 
