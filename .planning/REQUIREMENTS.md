@@ -19,9 +19,9 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 - [x] **COACH-01**: Klaus carries curated **expert hybrid-athlete coaching knowledge** (concurrent strength/endurance & the interference effect, block periodization, how to execute the specific run/lift/calisthenics sessions, fueling science) injected into his reasoning substrate.
 - [x] **COACH-02**: Klaus **names the specific session, the load/pace, and the rationale** in coaching messages instead of giving generic advice.
-- [ ] **COACH-03**: Klaus is **strict** — when a session is skipped or a choice is off-plan he names the deficit and the consequence and pushes back, without softening/hedging.
-- [ ] **COACH-04**: On recovery-vs-plan conflicts Klaus **cites the data and presents explicit options, leaving the decision to Amit** (advise, never override).
-- [ ] **COACH-05**: Coaching is both **proactive** (initiated in the existing crons) and **reactive** (in chat), with **cross-cron de-duplication** so the same point isn't nagged from morning briefing + evening check-in + weekly review on the same day.
+- [x] **COACH-03**: Klaus is **strict** — when a session is skipped or a choice is off-plan he names the deficit and the consequence and pushes back, without softening/hedging.
+- [x] **COACH-04**: On recovery-vs-plan conflicts Klaus **cites the data and presents explicit options, leaving the decision to Amit** (advise, never override).
+- [x] **COACH-05**: Coaching is both **proactive** (initiated in the existing crons) and **reactive** (in chat), with **cross-cron de-duplication** so the same point isn't nagged from morning briefing + evening check-in + weekly review on the same day.
 - [x] **COACH-06**: The **D-13 no-fabrication guard is released** under a data-presence contract: blueprint goals are citable as *targets* (Tier A); measured numbers (lifts, paces, macros, HRV) are citable only when a real recent record exists (Tier B). Klaus never invents a number.
 - [x] **COACH-07**: Klaus treats the blueprint **and Amit's current habits as a critiqueable guide, not gospel**. When his expert knowledge or Amit's data shows part of the plan (training structure, nutrition targets/timing, supplements) is **suboptimal or wrong**, he says so, explains why, and recommends a specific better approach. He *recommends* changes — Amit decides whether to adopt them (via PLAN-03); Klaus never silently rewrites the plan. Critique is **structural** (design-level), not daily micro-tweaks.
 
@@ -33,16 +33,16 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Nutrition & Supplement Accountability (NUTR)
 
-- [ ] **NUTR-01**: Klaus checks **macro adherence** against the 150g protein / 350g carb targets using `MealStore` data — and, per COACH-07, flags when **the targets/architecture themselves look suboptimal** for Amit's training load and recommends a better structure (e.g. protein too low for volume, carbs not periodized to long-run days).
-- [ ] **NUTR-02**: Klaus maps logged meals to the **6-slot fueling timeline** and flags **structural misses** (e.g. missed post-AM-run reload, missing pre-bed supplements) — not marginal macro micro-adjustments.
-- [ ] **NUTR-03**: Klaus tracks **supplement timing** against the blueprint schedule and flags gaps (advisory/inference, tied to the fueling-slot windows).
+- [x] **NUTR-01**: Klaus checks **macro adherence** against the 150g protein / 350g carb targets using `MealStore` data — and, per COACH-07, flags when **the targets/architecture themselves look suboptimal** for Amit's training load and recommends a better structure (e.g. protein too low for volume, carbs not periodized to long-run days).
+- [x] **NUTR-02**: Klaus maps logged meals to the **6-slot fueling timeline** and flags **structural misses** (e.g. missed post-AM-run reload, missing pre-bed supplements) — not marginal macro micro-adjustments.
+- [x] **NUTR-03**: Klaus tracks **supplement timing** against the blueprint schedule and flags gaps (advisory/inference, tied to the fueling-slot windows).
 
 ### Progress Toward Goals (PROG)
 
-- [ ] **PROG-01**: The **Sunday weekly review** reports **per-facet progress** (strength top-set trends, threshold volume vs target, ACWR) with block-relative framing.
+- [x] **PROG-01**: The **Sunday weekly review** reports **per-facet progress** (strength top-set trends, threshold volume vs target, ACWR) with block-relative framing.
 - [x] **PROG-02**: Klaus **projects strength/pace trends toward the dated Oct/Nov goals** and reports on-track / behind.
-- [ ] **PROG-03**: The **morning briefing** frames today's named session + recovery state + the relevant fueling reminder together.
-- [ ] **PROG-04**: Klaus captures a **session-quality annotation** (e.g. strong / neutral / grind) at logging time so the weekly review can surface quality trends.
+- [x] **PROG-03**: The **morning briefing** frames today's named session + recovery state + the relevant fueling reminder together.
+- [x] **PROG-04**: Klaus captures a **session-quality annotation** (e.g. strong / neutral / grind) at logging time so the weekly review can surface quality trends.
 
 ## v2 Requirements
 
