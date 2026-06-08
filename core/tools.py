@@ -66,6 +66,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "get_benchmark_history",
     "start_block",
     "end_block",
+    # Phase 25 — progress projection toward dated goals (PROG-02)
+    "get_goal_projection",
 })
 
 # ------------------------------------------------------------------ #
@@ -984,6 +986,29 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "get_goal_projection",
+        "description": (
+            "Compute a deterministic linear-trend projection for one benchmark facet "
+            "toward its dated goal. Brain-direct. Call when Sir asks 'am I on track "
+            "for my October bench target?' or similar. Returns a ProjectionResult dict "
+            "with projected_value, gap, on_track, confidence, and confidence_label "
+            "computed server-side — numbers are never LLM-invented."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "facet": {
+                    "type": "string",
+                    "description": (
+                        "One of: bench_press_1rm, squat_1rm, push_ups, pull_ups, "
+                        "threshold_pace."
+                    ),
+                },
+            },
+            "required": ["facet"],
+        },
+    },
+    {
         "name": "start_block",
         "description": (
             "Bookkeeping: mark a block active and set the current_block_id FK. "
@@ -1047,6 +1072,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "get_benchmark_history",
         "start_block",
         "end_block",
+        # Phase 25 — projection is brain-direct only (PROG-02, T-25-08)
+        "get_goal_projection",
     }
 ]
 
@@ -1793,6 +1820,50 @@ def _handle_get_benchmark_history(facet: str, n: int = 10) -> str:
     return json.dumps({"facet": facet, "history": benchmarks.get_facet_history(facet, n=n)})
 
 
+def _handle_get_goal_projection(facet: str) -> str:
+    """PROG-02 brain-direct: project one facet toward its dated goal.
+
+    Validates facet against _BENCHMARK_FACETS (V5 / T-25-05 pattern, mirrors
+    _handle_log_benchmark). Returns a JSON ProjectionResult dict. Never raises —
+    errors surface as a no_data confidence result (T-25-07).
+
+    Source selection per D-04:
+      - threshold_pace: prefers dense Garmin Postgres history (fetch_dense_pace_history),
+        falls back to sparse BenchmarkStore only when the Postgres list is empty.
+      - strength facets (bench_press_1rm, squat_1rm, push_ups, pull_ups): BenchmarkStore.
+
+    today_iso computed via ZoneInfo("Asia/Jerusalem") — never date.today() (CR-01, T-25-14).
+    """
+    from memory.firestore_db import _BENCHMARK_FACETS, _jsonsafe_doc
+    if facet not in _BENCHMARK_FACETS:
+        return json.dumps(
+            {"error": f"Unknown facet: {facet!r}. Valid: {sorted(_BENCHMARK_FACETS)}"}
+        )
+
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from core.projection import project_goal_progress
+
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+    _blocks, benchmarks, profiles = _block_stores()
+    profile = _jsonsafe_doc(profiles.load())
+    dated_goals = profile.get("dated_goals") or []
+
+    # D-04: threshold_pace uses dense Garmin Postgres points; strength facets use BenchmarkStore.
+    if facet == "threshold_pace":
+        from core.pace_history import fetch_dense_pace_history
+        history = fetch_dense_pace_history(today_iso)
+        if not history:
+            # Fallback to sparse BenchmarkStore when no Garmin running data exists
+            history = benchmarks.get_facet_history(facet, n=10)
+    else:
+        history = benchmarks.get_facet_history(facet, n=10)
+
+    result = project_goal_progress(facet, history, dated_goals, today_iso)
+    return json.dumps(result)
+
+
 def _handle_start_block(block_id: str) -> str:
     """BLOCK-01 brain-direct bookkeeping: mark block active + set current_block_id FK."""
     blocks, _benchmarks, profiles = _block_stores()
@@ -1868,6 +1939,8 @@ _HANDLERS: dict[str, object] = {
     "get_benchmark_history":   lambda args: _handle_get_benchmark_history(**args),
     "start_block":             lambda args: _handle_start_block(**args),
     "end_block":               lambda args: _handle_end_block(**args),
+    # Phase 25 — progress projection (PROG-02), brain-direct
+    "get_goal_projection":     lambda args: _handle_get_goal_projection(**args),
 }
 
 
