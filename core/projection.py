@@ -65,7 +65,8 @@ class ProjectionResult:
     projected_value: Optional[float]   # None when < 2 unique-date points
     target_value: Optional[float]      # None when no matching dated goal
     target_date: Optional[str]         # ISO YYYY-MM-DD, or None
-    gap: Optional[float]               # projected_value - target_value (signed)
+    gap: Optional[float]               # projected_value - target_value (raw signed)
+    behind_by: Optional[float]         # direction-normalized: positive == behind target
     on_track: Optional[bool]           # None when can't project
     unit: str
     confidence_label: str              # human-readable
@@ -106,9 +107,13 @@ def _linear_project(points: list[tuple[float, float]], target_t: float) -> float
         Projected value at target_t. Falls back to last value when denominator = 0.
         Never raises.
     """
+    # Caller contract: only invoked with n >= 2 (project_goal_progress returns
+    # baseline_only for one unique-date point and no_data for zero). The n == 0
+    # guard below is defensive — it keeps the helper from raising ZeroDivisionError
+    # if it is ever reused directly with an empty list.
     n = len(points)
-    if n == 1:
-        return points[0][1]  # single point — no trend, return its value
+    if n == 0:
+        return 0.0
     ts = [p[0] for p in points]
     vs = [p[1] for p in points]
     t_mean = sum(ts) / n
@@ -119,23 +124,49 @@ def _linear_project(points: list[tuple[float, float]], target_t: float) -> float
     return v_mean + slope * (target_t - t_mean)
 
 
+def _select_goal(candidates: list[dict], today_iso: str) -> Optional[dict]:
+    """Pick the most relevant goal: the nearest upcoming deadline relative to today.
+
+    WR-03: selection must not depend on list order. Rule — among goals with a
+    target_date >= today_iso, pick the earliest (soonest deadline). If every
+    candidate deadline is already in the past, pick the latest past one. Goals
+    with no/blank target_date sort last.
+    """
+    if not candidates:
+        return None
+
+    def _key(goal: dict) -> str:
+        return goal.get("target_date") or "9999-12-31"
+
+    ordered = sorted(candidates, key=_key)
+    upcoming = [g for g in ordered if _key(g) >= today_iso]
+    if upcoming:
+        return upcoming[0]          # soonest upcoming deadline
+    return ordered[-1]              # all past → most recent past deadline
+
+
 def _resolve_target(
     facet: str,
     dated_goals: list[dict],
+    today_iso: str,
 ) -> tuple[Optional[float], Optional[str], str]:
     """Resolve (target_value, target_date, unit) for a facet from dated_goals.
 
-    Returns (None, None, "") when no matching dated goal exists.
+    Returns (None, None, "") when no matching dated goal exists. When multiple
+    dated goals specify the facet, the nearest upcoming deadline wins (WR-03).
     For threshold_pace, converts the half_marathon_time string to sec/km.
     """
     # Special case: threshold_pace maps via half_marathon_time
     if facet == "threshold_pace":
-        for goal in dated_goals:
+        candidates = [
+            g for g in dated_goals
+            if (g.get("metrics") or {}).get("half_marathon_time")
+        ]
+        goal = _select_goal(candidates, today_iso)
+        if goal is not None:
             metrics = goal.get("metrics") or {}
-            hm_time = metrics.get("half_marathon_time")
-            if hm_time:
-                target_value = _hm_to_sec_per_km(hm_time)
-                return target_value, goal.get("target_date"), "sec_per_km"
+            target_value = _hm_to_sec_per_km(metrics["half_marathon_time"])
+            return target_value, goal.get("target_date"), "sec_per_km"
         return None, None, "sec_per_km"
 
     # Standard facets: look up via _FACET_TO_METRIC
@@ -143,13 +174,15 @@ def _resolve_target(
     if metric_key is None:
         return None, None, ""
 
-    for goal in dated_goals:
-        metrics = goal.get("metrics") or {}
-        if metric_key in metrics:
-            raw_value = metrics[metric_key]
-            # Determine unit from facet
-            unit = "kg" if facet in ("bench_press_1rm", "squat_1rm") else "reps"
-            return float(raw_value), goal.get("target_date"), unit
+    candidates = [
+        g for g in dated_goals
+        if (g.get("metrics") or {}).get(metric_key) is not None
+    ]
+    goal = _select_goal(candidates, today_iso)
+    if goal is not None:
+        raw_value = (goal.get("metrics") or {})[metric_key]
+        unit = "kg" if facet in ("bench_press_1rm", "squat_1rm") else "reps"
+        return float(raw_value), goal.get("target_date"), unit
 
     return None, None, ""
 
@@ -196,32 +229,45 @@ def project_goal_progress(
         # ------------------------------------------------------------------
         # 1. Resolve target from dated_goals
         # ------------------------------------------------------------------
-        target_value, target_date_str, unit = _resolve_target(facet, dated_goals)
+        target_value, target_date_str, unit = _resolve_target(facet, dated_goals, today_iso)
 
         # Infer unit from history if not resolved from goals
         if not unit and history:
             unit = history[0].get("unit", "")
 
         # ------------------------------------------------------------------
-        # 2. Deduplicate history by date (Pitfall 2 — same-date entries)
-        #    Keep the most recent value per date (i.e., highest value if dates
-        #    are equal, keeping the first in a date-desc sorted list).
+        # 2. Deduplicate history by date (Pitfall 2 — same-date entries).
+        #    WR-01: skip entries with a missing/blank/unparseable date so one
+        #           bad row cannot poison the whole batch (fail-open per-row).
+        #    WR-02: when a date has several readings, keep their MEAN — a
+        #           deterministic value independent of caller list order
+        #           (preserves the "numbers are never order-dependent" contract).
         # ------------------------------------------------------------------
-        seen_dates: dict[str, float] = {}
+        by_date: dict[str, list[float]] = {}
         for entry in history:
-            entry_date = entry.get("date", "")
+            entry_date = entry.get("date") or ""
             entry_value = entry.get("value")
-            if entry_value is None:
+            if entry_value is None or not entry_date:
                 continue
-            if entry_date not in seen_dates:
-                seen_dates[entry_date] = float(entry_value)
+            try:
+                date.fromisoformat(entry_date)  # validate up front (WR-01)
+            except ValueError:
+                continue
+            by_date.setdefault(entry_date, []).append(float(entry_value))
 
+        seen_dates: dict[str, float] = {
+            d: sum(vals) / len(vals) for d, vals in by_date.items()
+        }
         unique_points_by_date = sorted(seen_dates.items())  # [(date_str, value), ...] asc
         n = len(unique_points_by_date)
 
         # ------------------------------------------------------------------
         # 3. Branch on point count
         # ------------------------------------------------------------------
+        # IN-03: name the data source accurately — dense threshold_pace points
+        # are running readings, not benchmark tests.
+        count_noun = "readings" if facet == "threshold_pace" else "benchmarks"
+
         if n == 0:
             return asdict(ProjectionResult(
                 facet=facet,
@@ -231,6 +277,7 @@ def project_goal_progress(
                 target_value=target_value,
                 target_date=target_date_str,
                 gap=None,
+                behind_by=None,
                 on_track=None,
                 unit=unit,
                 confidence_label="no measured data",
@@ -245,6 +292,7 @@ def project_goal_progress(
                 target_value=target_value,
                 target_date=target_date_str,
                 gap=None,
+                behind_by=None,
                 on_track=None,
                 unit=unit,
                 confidence_label="baseline only, no trend yet",
@@ -278,16 +326,20 @@ def project_goal_progress(
         # ------------------------------------------------------------------
         if n == 2:
             confidence = "low"
-            confidence_label = "from only 2 benchmarks — low confidence"
+            confidence_label = f"from only 2 {count_noun} — low confidence"
         elif n == 3:
             confidence = "medium"
-            confidence_label = f"from {n} benchmarks"
+            confidence_label = f"from {n} {count_noun}"
         else:
             confidence = "high"
-            confidence_label = f"from {n} benchmarks"
+            confidence_label = f"from {n} {count_noun}"
 
         # ------------------------------------------------------------------
-        # 5. Direction-aware gap and on_track
+        # 5. Direction-aware gap, behind_by, and on_track
+        #    gap      = raw signed (projected - target), meaning flips by facet
+        #    behind_by= direction-normalized: positive == behind target for
+        #               EVERY facet (WR-04), so the brain never has to combine
+        #               gap + on_track to recover the sign.
         # ------------------------------------------------------------------
         higher_is_better = FACET_DIRECTION.get(facet, True)
 
@@ -295,10 +347,13 @@ def project_goal_progress(
             gap = projected_value - target_value
             if higher_is_better:
                 on_track = projected_value >= target_value
+                behind_by = target_value - projected_value
             else:
                 on_track = projected_value <= target_value
+                behind_by = projected_value - target_value
         else:
             gap = None
+            behind_by = None
             on_track = None
 
         return asdict(ProjectionResult(
@@ -309,6 +364,7 @@ def project_goal_progress(
             target_value=target_value,
             target_date=target_date_str,
             gap=gap,
+            behind_by=behind_by,
             on_track=on_track,
             unit=unit,
             confidence_label=confidence_label,
@@ -326,6 +382,7 @@ def project_goal_progress(
             "target_value": None,
             "target_date": None,
             "gap": None,
+            "behind_by": None,
             "on_track": None,
             "unit": "",
             "confidence_label": "projection error",

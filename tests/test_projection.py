@@ -300,3 +300,167 @@ def test_dedup_same_date():
     assert result["projected_value"] is None or (
         result["projected_value"] == result["projected_value"]  # NaN check
     )
+
+
+# ---------------------------------------------------------------------------
+# WR-01: A single malformed/empty-date entry must NOT poison the whole batch
+# ---------------------------------------------------------------------------
+
+def test_malformed_date_entry_is_skipped_not_poisoning():
+    """One entry with a missing/blank date is skipped; the valid points still project.
+
+    Regression for WR-01: previously an empty-string date reached
+    date.fromisoformat("") → ValueError → caught → whole projection wiped to no_data.
+    """
+    history = [
+        {"date": "2026-07-18", "facet": "bench_press_1rm", "value": 86.0, "unit": "kg"},
+        {"date": "", "facet": "bench_press_1rm", "value": 999.0, "unit": "kg"},  # bad
+        {"date": "2026-06-21", "facet": "bench_press_1rm", "value": 80.0, "unit": "kg"},
+    ]
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    # The two valid points survive → a real projection, NOT no_data
+    assert result["confidence"] != "no_data"
+    assert result["data_point_count"] == 2
+    assert result["projected_value"] is not None
+
+
+def test_unparseable_date_entry_is_skipped():
+    """A non-ISO date string is skipped rather than raising/erasing the batch."""
+    history = [
+        {"date": "2026-07-18", "facet": "bench_press_1rm", "value": 86.0, "unit": "kg"},
+        {"date": "not-a-date", "facet": "bench_press_1rm", "value": 999.0, "unit": "kg"},
+        {"date": "2026-06-21", "facet": "bench_press_1rm", "value": 80.0, "unit": "kg"},
+    ]
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["data_point_count"] == 2
+    assert result["projected_value"] is not None
+
+
+# ---------------------------------------------------------------------------
+# WR-02: Same-date dedup is DETERMINISTIC regardless of input order
+# ---------------------------------------------------------------------------
+
+def test_same_date_dedup_is_order_independent():
+    """Two same-day readings yield the SAME projected value no matter the input order.
+
+    Regression for WR-02: the kept value must not depend on caller list order.
+    """
+    base = [
+        {"date": "2026-06-21", "facet": "threshold_pace", "value": 260.0, "unit": "sec_per_km"},
+        {"date": "2026-07-18", "facet": "threshold_pace", "value": 250.0, "unit": "sec_per_km"},
+        {"date": "2026-07-18", "facet": "threshold_pace", "value": 240.0, "unit": "sec_per_km"},
+    ]
+    forward = project_goal_progress("threshold_pace", base, DATED_GOALS, "2026-08-01")
+    reversed_in = project_goal_progress("threshold_pace", list(reversed(base)), DATED_GOALS, "2026-08-01")
+    assert forward["projected_value"] == reversed_in["projected_value"]
+    # And the same-day value used is the deterministic mean of 250 and 240 (=245),
+    # so it differs from either single reading's projection.
+    assert forward["data_point_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# WR-03: _resolve_target prefers the nearest upcoming deadline among multiple goals
+# ---------------------------------------------------------------------------
+
+def test_resolve_target_picks_nearest_upcoming_deadline():
+    """When two dated goals specify the same facet, the nearest upcoming deadline wins."""
+    multi_goals = [
+        # Deliberately list the FAR goal first to prove order doesn't decide it.
+        {"target_date": "2026-12-31", "goal_label": "Dec", "metrics": {"bench_press_kg": 110}},
+        {"target_date": "2026-10-10", "goal_label": "Oct", "metrics": {"bench_press_kg": 100}},
+    ]
+    history = _build_history(
+        values=[80.0, 86.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=multi_goals,
+        today_iso="2026-08-01",
+    )
+    # Nearest upcoming deadline relative to 2026-08-01 is 2026-10-10 / 100kg
+    assert result["target_date"] == "2026-10-10"
+    assert result["target_value"] == 100.0
+
+
+# ---------------------------------------------------------------------------
+# WR-04: behind_by is direction-consistent (positive == behind for every facet)
+# ---------------------------------------------------------------------------
+
+def test_behind_by_positive_means_behind_higher_is_better():
+    """bench_press_1rm: a projection below target gives a POSITIVE behind_by."""
+    history = _build_history(
+        values=[80.0, 82.0],  # weak upward trend, will fall short of 100
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress("bench_press_1rm", history, DATED_GOALS, "2026-08-01")
+    assert result["on_track"] is False
+    assert result["behind_by"] is not None
+    assert result["behind_by"] > 0  # positive == behind, for higher-is-better
+
+
+def test_behind_by_positive_means_behind_lower_is_better():
+    """threshold_pace: a projection slower (higher sec/km) than target gives POSITIVE behind_by."""
+    history = _build_history(
+        values=[260.0, 258.0],  # barely improving, stays slower than ~241 target
+        dates=["2026-06-21", "2026-07-18"],
+        facet="threshold_pace",
+        unit="sec_per_km",
+    )
+    result = project_goal_progress("threshold_pace", history, DATED_GOALS, "2026-08-01")
+    assert result["on_track"] is False
+    assert result["behind_by"] is not None
+    assert result["behind_by"] > 0  # positive == behind, for lower-is-better too
+
+
+def test_behind_by_negative_when_ahead():
+    """When the projection beats the target, behind_by is negative (ahead)."""
+    history = _build_history(
+        values=[95.0, 110.0],  # steep climb, overshoots 100kg target
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress("bench_press_1rm", history, DATED_GOALS, "2026-08-01")
+    assert result["on_track"] is True
+    assert result["behind_by"] < 0
+
+
+# ---------------------------------------------------------------------------
+# IN-03: confidence label uses a source-appropriate noun (no "benchmarks" for runs)
+# ---------------------------------------------------------------------------
+
+def test_confidence_label_noun_is_source_appropriate():
+    """threshold_pace label must not call dense run data 'benchmarks'."""
+    pace_hist = _build_history(
+        values=[260.0, 255.0, 250.0],
+        dates=["2026-06-21", "2026-07-05", "2026-07-18"],
+        facet="threshold_pace",
+        unit="sec_per_km",
+    )
+    pace_result = project_goal_progress("threshold_pace", pace_hist, DATED_GOALS, "2026-08-01")
+    assert "benchmark" not in pace_result["confidence_label"].lower()
+
+    strength_hist = _build_history(
+        values=[78.0, 82.0, 86.0],
+        dates=["2026-06-21", "2026-07-05", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    strength_result = project_goal_progress("bench_press_1rm", strength_hist, DATED_GOALS, "2026-08-01")
+    assert "benchmark" in strength_result["confidence_label"].lower()

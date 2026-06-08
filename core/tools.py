@@ -991,8 +991,10 @@ TOOL_SCHEMAS: list[dict] = [
             "Compute a deterministic linear-trend projection for one benchmark facet "
             "toward its dated goal. Brain-direct. Call when Sir asks 'am I on track "
             "for my October bench target?' or similar. Returns a ProjectionResult dict "
-            "with projected_value, gap, on_track, confidence, and confidence_label "
-            "computed server-side — numbers are never LLM-invented."
+            "with projected_value, behind_by (positive = behind target for EVERY facet, "
+            "including pace), on_track, confidence, and confidence_label computed "
+            "server-side — numbers are never LLM-invented. Prefer behind_by over the raw "
+            "gap, whose sign flips between higher-is-better and lower-is-better facets."
         ),
         "input_schema": {
             "type": "object",

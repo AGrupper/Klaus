@@ -49,3 +49,19 @@ double-send.
 - A data-verification-heavy query ("what was my last bench press?") returns a single
   correct message, no "more processing steps" fallback.
 - Anti-fabrication behavior (SC-1) still holds.
+
+---
+
+## Resolution (2026-06-08)
+
+FIXED IN CODE (Phase 24, verified by tests). Both proposed fixes are implemented in
+`core/_run_smart_loop` (`core/main.py`):
+- Fix 1 — `MAX_TOOL_ITERATIONS` raised to 12 (line 47), giving data-presence
+  verification room to complete its repository sweep.
+- Fix 2 — at iteration exhaustion the loop returns the last substantive assistant
+  text (`last_response_text` when len > 100) instead of emitting the "more processing
+  steps" fallback alongside the real answer (lines 685-691), eliminating the double-send.
+
+Remaining: one LIVE re-observation that a data-heavy query ("what was my last bench
+press?") returns a single message in prod. This is a behavioral check folded into the
+standing v2.0 live-staging verification backlog — not a code blocker for v4.0.

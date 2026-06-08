@@ -836,10 +836,17 @@ def _load_coaching_guide_slim() -> str:
         )
         return ""
     slim = m.group(1).strip()
-    # Sanity guard: warn if the slim core is suspiciously large (Pitfall 2)
+    # Size contract (two-tier, phase-22 WR-03):
+    #   - ADVISORY early-warning at 10k chars — logs but does not alter content.
+    #     Runtime truncation is deliberately avoided: chopping the block would drop
+    #     coaching content mid-section, which is worse than an over-long prefix.
+    #   - HARD ceiling (15k chars / 350 lines) is enforced at build time by
+    #     test_load_coaching_guide_slim_size_guard against the committed guide, so an
+    #     oversized slim core fails CI before it can ship.
     if len(slim) > 10_000:
         logger.warning(
-            "COACHING_GUIDE.md slim core is %d chars — larger than expected (~4000). "
+            "COACHING_GUIDE.md slim core is %d chars — over the 10k advisory threshold "
+            "(expected ~4000; hard ceiling 15000 enforced by tests). "
             "Check SLIM_CORE_START/END markers.",
             len(slim),
         )

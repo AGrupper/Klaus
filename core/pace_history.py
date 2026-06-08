@@ -9,22 +9,26 @@ Design decisions:
     Question #1 in RESEARCH.md. Do NOT read the ambiguous `avg_pace` column.
   - Running activity types: 'running', 'trail_running', 'treadmill_running'.
   - Minimum distance: 3000m. duration_sec must be > 0.
-  - Last 90 days, newest-first, LIMIT 20.
-  - today_iso is accepted for signature parity / future use but the SQL uses
-    server-side NOW() — caller must NOT pass user/LLM input into the query.
+  - Aggregated per calendar day (AVG pace) so a day with several qualifying runs
+    yields ONE deterministic point and LIMIT counts distinct days, not raw
+    activities (WR-02 / IN-02). Last 90 days, newest day first, 20 distinct days.
+  - today_iso is honoured (IN-01): the 90-day window cutoff is derived from the
+    caller's date, not server wall-clock NOW(). It is validated with
+    date.fromisoformat before being embedded, so only a self-computed ISO date
+    literal (digits + hyphens) reaches the SQL — no user/LLM input, no injection
+    surface (T-25-13 mitigation preserved). A malformed today_iso fails open to [].
   - Fails open to [] on any error — never raises.
-  - SQL contains only hardcoded literals + server-side NOW() (T-25-13 mitigation).
 """
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
 
 
 def fetch_dense_pace_history(today_iso: str) -> list[dict]:
-    """Return up to 20 recent running activity paces as BenchmarkStore-shaped dicts.
+    """Return up to 20 recent running-day paces as BenchmarkStore-shaped dicts.
 
     Each returned dict has the shape:
         {"date": "YYYY-MM-DD", "facet": "threshold_pace",
@@ -32,27 +36,32 @@ def fetch_dense_pace_history(today_iso: str) -> list[dict]:
 
     Args:
         today_iso: Today's ISO date string "YYYY-MM-DD" (provided by caller per
-                   CR-01 lesson; SQL uses server-side NOW() and does not embed this
-                   value — it is accepted for signature parity with future callers).
+                   CR-01 lesson). The 90-day window cutoff is computed from this
+                   value; it is validated before being embedded in the SQL.
 
     Returns:
-        List of pace dicts, newest first. Empty list on any error.
+        List of pace dicts, newest day first. Empty list on any error.
     """
     try:
         from mcp_tools.database_tool import query_health_database
 
+        # IN-01: derive the window cutoff from the caller's date. Validating with
+        # date.fromisoformat guarantees the embedded literal is a real ISO date
+        # (a malformed/injection string raises here → caught → []), so the SQL
+        # stays free of any unvalidated user/LLM input (T-25-13 preserved).
+        cutoff = (date.fromisoformat(today_iso) - timedelta(days=90)).isoformat()
+
         sql = (
             "SELECT "
             "    date::date AS activity_date, "
-            "    duration_sec, "
-            "    distance_m, "
-            "    ROUND((duration_sec::numeric / distance_m * 1000), 1) AS pace_sec_per_km "
+            "    ROUND(AVG(duration_sec::numeric / distance_m * 1000), 1) AS pace_sec_per_km "
             "FROM activities "
             "WHERE type IN ('running', 'trail_running', 'treadmill_running') "
-            "  AND date >= NOW() - INTERVAL '90 days' "
+            f"  AND date >= '{cutoff}' "
             "  AND distance_m >= 3000 "
             "  AND duration_sec > 0 "
-            "ORDER BY date DESC "
+            "GROUP BY date::date "
+            "ORDER BY activity_date DESC "
             "LIMIT 20"
         )
 

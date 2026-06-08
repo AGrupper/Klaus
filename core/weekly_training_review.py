@@ -69,6 +69,20 @@ def _gather_week_data(today_iso: str) -> dict:
         "week_end": week_end.isoformat(),
     }
 
+    # IN-04: compute the four window-boundary strings once and reuse across the
+    # Garmin (block 2) and biometrics (block 3) blocks instead of recomputing.
+    this_start_str = week_start.isoformat()
+    this_end_str = week_end.isoformat()
+    last_start_str = (week_start - timedelta(days=7)).isoformat()
+    last_end_str = (week_start - timedelta(days=1)).isoformat()
+
+    # WR-06: load the UserProfile once and share a single BenchmarkStore so the
+    # projection block (block 8) reuses the same snapshot/instance rather than
+    # re-loading the profile and rebuilding the store. Each block stays fail-open:
+    # if an earlier block leaves these None, block 8 lazily builds its own.
+    _profile_cache: dict | None = None
+    _benchmark_store = None
+
     # ------------------------------------------------------------------ #
     # 1. TrainingLogStore — reads never raise (LOG-02)                   #
     # ------------------------------------------------------------------ #
@@ -91,11 +105,8 @@ def _gather_week_data(today_iso: str) -> dict:
         from mcp_tools.garmin_tool import fetch_garmin_activities
         # fetch_garmin_activities(14) → last 14 days; covers this-week + last-week
         all_activities = fetch_garmin_activities(14)
-        # Split into this-week vs last-week by activity date
-        this_start_str = week_start.isoformat()
-        this_end_str = week_end.isoformat()
-        last_start_str = (week_start - timedelta(days=7)).isoformat()
-        last_end_str = (week_start - timedelta(days=1)).isoformat()
+        # Split into this-week vs last-week by activity date (window strings
+        # computed once above — IN-04).
 
         data["activities"] = [
             a for a in all_activities
@@ -118,25 +129,22 @@ def _gather_week_data(today_iso: str) -> dict:
     # ------------------------------------------------------------------ #
     try:
         from mcp_tools.database_tool import query_health_database
-        last_start_str = (week_start - timedelta(days=7)).isoformat()
         sql = (
             "SELECT date, resting_hr, hrv_baseline, hrv_overnight, "
             "sleep_duration, sleep_score "
             "FROM daily_biometrics "
-            f"WHERE date >= '{last_start_str}' AND date <= '{week_end.isoformat()}' "
+            f"WHERE date >= '{last_start_str}' AND date <= '{this_end_str}' "
             "ORDER BY date ASC"
         )
         rows = query_health_database(sql)
         if isinstance(rows, list):
-            this_start_str = week_start.isoformat()
-            this_end_str = week_end.isoformat()
             data["biometrics_this_week"] = [
                 r for r in rows
                 if isinstance(r.get("date"), str) and this_start_str <= r["date"][:10] <= this_end_str
             ]
             data["biometrics_last_week"] = [
                 r for r in rows
-                if isinstance(r.get("date"), str) and last_start_str <= r["date"][:10] <= (week_start - timedelta(days=1)).isoformat()
+                if isinstance(r.get("date"), str) and last_start_str <= r["date"][:10] <= last_end_str
             ]
         else:
             # query_health_database returned an error string
@@ -185,6 +193,7 @@ def _gather_week_data(today_iso: str) -> dict:
         project_id = os.environ["GCP_PROJECT_ID"]
         database = os.getenv("FIRESTORE_DATABASE", "(default)")
         profile = UserProfileStore(project_id, database).load()
+        _profile_cache = profile  # WR-06: reused by the projection block
         data["athletic_goals"] = profile.get("athletic_goals") or []
     except Exception:
         logger.warning("weekly_review: UserProfileStore fetch failed", exc_info=True)
@@ -202,12 +211,13 @@ def _gather_week_data(today_iso: str) -> dict:
         project_id = os.environ["GCP_PROJECT_ID"]
         database = os.getenv("FIRESTORE_DATABASE", "(default)")
         block = BlockStore(project_id, database).get_current()
+        _benchmark_store = BenchmarkStore(project_id, database)  # WR-06: shared
         if block:
             week_num = (today - date.fromisoformat("2026-06-21")).days // 7 + 1
             data["current_block"] = {**block, "week_num": week_num}
             block_id = block.get("block_id") or block.get("doc_id")
             data["block_benchmarks"] = (
-                BenchmarkStore(project_id, database).get_block_benchmarks(block_id)
+                _benchmark_store.get_block_benchmarks(block_id)
                 if block_id else []
             )
         else:
@@ -249,11 +259,24 @@ def _gather_week_data(today_iso: str) -> dict:
     try:
         from core.projection import project_goal_progress
         from core.pace_history import fetch_dense_pace_history
-        from memory.firestore_db import BenchmarkStore as _BS, UserProfileStore as _UPS
-        _proj_project_id = os.environ["GCP_PROJECT_ID"]
-        _proj_database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        _benchmarks = _BS(_proj_project_id, _proj_database)
-        _profile = _UPS(_proj_project_id, _proj_database).load()
+        # WR-06: reuse the profile snapshot from block 5 and the BenchmarkStore
+        # from block 6; build fresh only if an earlier block failed (fail-open).
+        if _profile_cache is not None:
+            _profile = _profile_cache
+        else:
+            from memory.firestore_db import UserProfileStore as _UPS
+            _profile = _UPS(
+                os.environ["GCP_PROJECT_ID"],
+                os.getenv("FIRESTORE_DATABASE", "(default)"),
+            ).load()
+        if _benchmark_store is not None:
+            _benchmarks = _benchmark_store
+        else:
+            from memory.firestore_db import BenchmarkStore as _BS
+            _benchmarks = _BS(
+                os.environ["GCP_PROJECT_ID"],
+                os.getenv("FIRESTORE_DATABASE", "(default)"),
+            )
         dated_goals = _profile.get("dated_goals") or []
         projections: dict = {}
         for facet in ["bench_press_1rm", "squat_1rm", "threshold_pace", "push_ups", "pull_ups"]:

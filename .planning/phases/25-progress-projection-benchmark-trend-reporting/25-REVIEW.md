@@ -19,7 +19,9 @@ findings:
   warning: 6
   info: 4
   total: 10
-status: issues_found
+status: resolved
+resolved: 2026-06-08
+resolution_commit: pending
 ---
 
 # Phase 25: Code Review Report
@@ -27,7 +29,46 @@ status: issues_found
 **Reviewed:** 2026-06-08T00:00:00Z
 **Depth:** standard
 **Files Reviewed:** 10
-**Status:** issues_found
+**Status:** resolved (all 6 warnings + 4 info fixed 2026-06-08, pre-deploy)
+
+## Resolution Summary (2026-06-08)
+
+All 10 findings fixed before the v4.0 deploy, each with regression coverage
+(full suite 1058 passed):
+
+- **WR-01** — `project_goal_progress` now skips entries with a missing/blank/unparseable
+  date (validates `date.fromisoformat` per row) instead of letting one bad row collapse
+  the batch to `no_data`. Tests: `test_malformed_date_entry_is_skipped_not_poisoning`,
+  `test_unparseable_date_entry_is_skipped`.
+- **WR-02 / IN-02** — same-day readings are now averaged deterministically (order-independent),
+  and `fetch_dense_pace_history` aggregates per calendar day in SQL (`GROUP BY date::date`,
+  `AVG`) so `LIMIT 20` counts distinct days. Tests: `test_same_date_dedup_is_order_independent`,
+  `test_sql_aggregates_per_day`.
+- **WR-03** — `_resolve_target` now selects the nearest **upcoming** dated goal relative to
+  `today_iso` (order-independent) rather than the first match. Test:
+  `test_resolve_target_picks_nearest_upcoming_deadline`.
+- **WR-04** — added a direction-normalized `behind_by` field (positive == behind target for
+  every facet, including pace); tool description + smart_agent.md + weekly_training_review.md
+  steer the brain to read it instead of the sign-flipping raw `gap`. Tests:
+  `test_behind_by_positive_means_behind_*`, `test_behind_by_negative_when_ahead`.
+- **WR-05** — removed the unreachable `n == 1` branch in `_linear_project`; added a defensive
+  `n == 0` guard and documented the `n >= 2` caller contract.
+- **WR-06** — `_gather_week_data` loads the UserProfile once and shares a single `BenchmarkStore`
+  across blocks 5/6/8 (fail-open: block 8 rebuilds only if an earlier block failed), eliminating
+  the double profile load / duplicate store wiring.
+- **IN-01** — `fetch_dense_pace_history` now honours `today_iso` (window cutoff derived + validated
+  from it; SQL stays injection-free). Test: `test_today_iso_is_honoured_in_window`,
+  `test_malformed_today_iso_fails_open`.
+- **IN-03** — confidence label uses a source-appropriate noun ("readings" for dense pace,
+  "benchmarks" for strength) so dense runs are not mislabelled as benchmarks. Test:
+  `test_confidence_label_noun_is_source_appropriate`.
+- **IN-04** — the four week-window boundary strings are computed once and reused across the
+  Garmin + biometrics blocks.
+
+Security note: the T-25-13 / T-25-15 evidence in `25-SECURITY.md` was updated for the new SQL —
+the injection surface is unchanged (validated self-computed ISO date literal, no LLM/user input).
+
+---
 
 ## Summary
 

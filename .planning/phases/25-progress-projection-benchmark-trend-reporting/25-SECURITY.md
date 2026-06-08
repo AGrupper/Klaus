@@ -43,9 +43,9 @@ created: 2026-06-08
 | T-25-10 | Denial of Service | projection gather failure blocks cron | mitigate | Block #8 `try/except → projections={}` (weekly_training_review.py:249–271); pace fetch fails open to `[]`; `send_and_inject` unconditional (line 410) | closed |
 | T-25-11 | Information Disclosure | fabricated convergence in review | mitigate | Numbers only from deterministic dict (weekly_training_review.py:267); 0-point → "no measured data" (weekly_training_review.md:37) | closed |
 | T-25-12 | Repudiation | duplicate same-day nag across crons | mitigate | `structural-critique:projection:<facet>` written via `add_topic` only after `send_and_inject` succeeds (weekly_training_review.py:410 → 426) | closed |
-| T-25-13 | Tampering | fetch_dense_pace_history SQL | mitigate | Hardcoded string literal, no interpolation, server-side NOW() (pace_history.py:44–57); `isinstance(rows, list)` guard fails open to `[]` (line 61) | closed |
+| T-25-13 | Tampering | fetch_dense_pace_history SQL | mitigate | Window cutoff derived from `today_iso` and validated via `date.fromisoformat` before embedding — only a self-computed ISO date literal (digits + hyphens) reaches the SQL; a malformed/injection `today_iso` raises → caught → `[]` (regression test `test_malformed_today_iso_fails_open`). `isinstance(rows, list)` guard fails open to `[]`. (Post-review: NOW() replaced by validated cutoff per IN-01; injection surface unchanged — no LLM/user input) | closed |
 | T-25-14 | Tampering | handler today_iso (deadline arithmetic) | mitigate | `datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()` (tools.py:1843–1847) — never `date.today()` (UTC) | closed |
-| T-25-15 | Tampering | threshold_pace dense pace unit error | mitigate | Pace from `duration_sec / distance_m` (pace_history.py:49); ambiguous `avg_pace` column never read (only a warning comment) | closed |
+| T-25-15 | Tampering | threshold_pace dense pace unit error | mitigate | Pace from `AVG(duration_sec / distance_m * 1000)` grouped per day (pace_history.py); ambiguous `avg_pace` column never read (only a warning comment) | closed |
 | T-25-SC | Tampering | npm/pip/cargo installs | accept | No packages installed; projection.py stdlib-only; pace_history.py reuses existing `mcp_tools.database_tool` — supply-chain delta zero | closed |
 
 *Status: open · closed*

@@ -40,3 +40,17 @@ advisory-only.
   proactive_alerts.py — could be a shared helper.
 
 Full report: `.planning/phases/22-expert-coaching-knowledge-d-13-release/22-REVIEW.md`
+
+---
+
+## Resolution (2026-06-08)
+
+- **WR-02** (read_coaching_guide wrong-section) — FIXED in Phase 24: the fuzzy
+  fallback now requires an unambiguous single-anchor match, else returns the
+  not-found JSON (`core/tools.py:1558-1571`).
+- **WR-03** (slim-core size-guard mismatch) — RESOLVED: the two-tier contract is now
+  explicit in `_load_coaching_guide_slim` (`core/main.py`) — 10k advisory warning
+  (no runtime truncation, which would drop coaching content mid-section) + 15k/350
+  hard ceiling enforced at build time by `test_load_coaching_guide_slim_size_guard`.
+- **IN-01/02/03** (optional micro-chores: per-call `import re`, duplicated compose-time
+  injection helper) — left as documented optional polish; no behavioral impact.
