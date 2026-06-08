@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
 status: Awaiting next milestone
 stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
-last_updated: "2026-06-08T12:59:18.521Z"
-last_activity: 2026-06-08 — Milestone v4.0 completed and archived
+last_updated: "2026-06-08T18:00:00.000Z"
+last_activity: 2026-06-08 — Hevy strength integration shipped + deployed (post-v4.0 increment)
 progress:
   total_phases: 5
   completed_phases: 5
@@ -18,25 +18,36 @@ progress:
 
 ## Current Position
 
-Phase: Milestone v4.0 complete
+Phase: Milestone v4.0 complete; one post-v4.0 increment shipped (Hevy)
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-08 — Milestone v4.0 completed and archived
+Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
+
+## Post-v4.0 Increments (out-of-band, not a GSD milestone)
+
+- **Hevy strength integration** (2026-06-08, deployed rev `klaus-agent-00093-dww`):
+  full per-set workout sync from Hevy (Pro API, daily pull `/cron/strength-sync`,
+  backfill→delta). New `StrengthSessionStore`, `mcp_tools/hevy_tool.py`,
+  `core/strength_ingest.py`, brain-direct tools `get_strength_progress` +
+  `get_training_context` (unified cross-domain coaching), weekly review now reads
+  `strength_sessions` with a loosened "think, don't fill a template" prompt.
+  Backfill verified: 35 workouts (2023→2026) in Firestore. 35 new tests, suite 1096 green.
+  Docs: `docs/hevy_integration.md`, DEPLOYMENT §19a/§20a.
 
 ## Project Reference
 
 See: `.planning/PROJECT.md` (updated 2026-06-08 after v4.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** v4.0 shipped + deployed (rev klaus-agent-00091-4vz). Planning next milestone — run `/gsd-new-milestone`.
+**Current focus:** v4.0 + Hevy increment live. Planning next milestone — run `/gsd-new-milestone`.
 
 ## Architecture (current)
 
 - Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
-- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
-- 8 cron jobs deployed; v4.0 added no new cron jobs (block/benchmark/projection ride the existing 21:30 + Sunday review)
+- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
+- 9 cron jobs deployed (v4.0 added none; post-v4.0 added `klaus-strength-sync` daily 05:00 for the Hevy pull)
 
 ## Accumulated Context
 
@@ -76,7 +87,7 @@ Carried forward from v3.0 close:
 
 - **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 630+ passing baseline must hold after every v4.0 phase.
 - **Firestore SERVER_TIMESTAMP** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool. See `_jsonsafe_doc` helper in `memory/firestore_db.py`.
-- **Cron jobs (8):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00). Plus push-driven `/cron/healthkit-sync`.
+- **Cron jobs (9):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull). Plus push-driven `/cron/healthkit-sync`.
 
 ## Session Continuity
 
