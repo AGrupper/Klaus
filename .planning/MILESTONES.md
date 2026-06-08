@@ -1,5 +1,25 @@
 # Milestones — Klaus
 
+## v4.0 Specific Training & Nutrition Coaching (Shipped: 2026-06-08)
+
+**Phases completed:** 5 phases (21–25), 20 plans, 20 requirements
+**Delivered:** Klaus became a genuinely expert, specific hybrid-athlete coach — grounded in Amit's living blueprint + real Garmin/nutrition data, driving facet-by-facet improvement and proving it with end-of-block benchmarks and dated-goal projections.
+**Timeline:** 2026-06-04 → 2026-06-08 (4 days)
+**Deployed:** Cloud Run rev `klaus-agent-00091-4vz` (image `159cb1e`, me-west1), `/health` ok. Full suite 1058 passing.
+**Quality gates:** 20/20 requirements satisfied · per-phase verification all passed (Phase 21 live UAT 2/2; 22 9/9; 23 4/4; 24 6/6; 25 3/3) · milestone audit `integration_ok` (6/6 cross-phase, 4/4 E2E flows) · Phase 25 secured 16/16 threats + all 10 code-review findings fixed pre-deploy.
+
+**Key accomplishments:**
+
+- **Phase 21 — Living Plan Ingestion (PLAN-01/02/03):** Amit's Hybrid Athlete blueprint lives in `UserProfileStore` as structured fields (dated goals, weekly-split template, 6-slot fueling, supplements) — a flexible, critiqueable guide editable conversationally via the `update_plan` tool, never a raw blob or rigid attendance contract.
+- **Phase 22 — Expert Coaching Knowledge + D-13 Release (COACH-01/02/06/07):** Curated hybrid-athlete coaching knowledge (`docs/COACHING_GUIDE.md` slim core on every brain call + crons, deep sections via `read_coaching_guide`); the blanket no-fabrication guard released under a recency-windowed Tier A/B data-presence contract, so Klaus names specific sessions/loads/rationale and volunteers structural critique (recommend-not-rewrite).
+- **Phase 23 — Block + Benchmark Tracking (BLOCK-01/02/03):** `BlockStore` (date-range resolution, auto inter-block transition) + `BenchmarkStore` (5-facet closed set), idempotent 4-block 16-week seed, 6 brain-direct tools, and a block-end benchmark state machine with an HRV/ACWR validity gate folded into the existing 21:30 cron (no 8th scheduler job).
+- **Phase 24 — Strict Coaching Integration + Nutrition Accountability (COACH-03/04/05, NUTR-01/02/03, PROG-01/03/04):** `CoachingTopicStore` cross-cron dedup gate (one topic/day across all crons), macro + fueling-slot + supplement accountability in the 21:30 check-in, strict pushback + recovery-conflict framing, integrated morning-briefing block, and session-quality capture derived at log time.
+- **Phase 25 — Progress Projection + Benchmark Trend Reporting (PROG-02):** Deterministic `project_goal_progress` LSQ helper + brain-direct `get_goal_projection` tool + dense Garmin pace history (`core/pace_history.py`) for threshold_pace, surfaced in the Sunday weekly review as on-track/behind trajectories toward the dated Oct/Nov goals.
+
+**Known deferred items at close:** 0 open artifacts. Accepted tech debt (non-blocking): Nyquist VALIDATION.md partial (P21 missing, P23/P25 drafts — test suites robust, formal wave-0 audits unfinished); 2 integration design-decisions accepted (cron `plan_start_date` hardcode D-03, `fueling_timeline` not gathered into crons D-11).
+
+---
+
 ## v3.0 Project Shifu (Shipped: 2026-06-02)
 
 **Phases completed:** 5 phases (19, 19.1, 19.2, 19.3, 20), 17 plans, 27 tasks. Verified 19/19 + live UAT. Timeline 2026-05-27 → 2026-06-02 (git `549b0b2..428b782`).

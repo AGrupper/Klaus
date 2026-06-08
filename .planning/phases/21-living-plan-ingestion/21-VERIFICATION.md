@@ -1,16 +1,18 @@
 ---
 phase: 21-living-plan-ingestion
 verified: 2026-06-04T11:00:00Z
-status: human_needed
+status: passed
 score: 4/4 must-haves verified
 overrides_applied: 0
-human_verification:
-  - test: "Run python scripts/ingest_blueprint.py against production Firestore to populate users/amit"
-    expected: "After ingest, UserProfileStore.load() returns non-empty dated_goals (Oct + Nov peaks with numeric targets), weekly_split (7 days AM/PM), nutrition_targets (protein_g=150, carbs_g=350), supplement_schedule, fueling_timeline (6 slots), plan_start_date='2026-06-21'"
-    why_human: "Script requires GCP credentials (GCP_PROJECT_ID + Firestore auth). The mechanism is fully verified — schema, script, renderer, tool handler all correct. The live data population is a one-time operational seed step that cannot be run without production credentials."
-  - test: "Say 'update my bench goal to 105kg' in Telegram chat with Klaus"
-    expected: "Klaus calls update_plan with a patch containing the modified bench_press_kg value, and on the very next turn references 105kg (not 100kg) when discussing the bench goal"
-    why_human: "Verifies the full round-trip: conversational intent → brain tool selection → Firestore write → fresh profile read on next turn. Cannot be tested without a live Telegram session and deployed Klaus."
+human_verification_completed:
+  date: 2026-06-04
+  by: Amit (live UAT, deployed Klaus)
+  result: "2/2 passed"
+  evidence:
+    - test: "Run python scripts/ingest_blueprint.py against production Firestore to populate users/amit"
+      outcome: "PASSED — blueprint seeded into prod Firestore users/amit (schema_version=2; all 6 structured fields: dated_goals Oct+Nov peaks, weekly_split, nutrition_targets protein 150/carbs 350, supplement_schedule, fueling_timeline 6 slots, plan_start_date 2026-06-21). Commits 21 deploy + ingest run."
+    - test: "Say 'update my bench goal to 105kg' in Telegram chat with Klaus"
+      outcome: "PASSED — update_plan fired, merge preserved squat+HM, Klaus referenced 105kg on the next turn. Round-trip (intent → tool → Firestore write → fresh read) confirmed live."
 ---
 
 # Phase 21: Living Plan Ingestion — Verification Report
@@ -21,9 +23,9 @@ that every cron and brain-direct tool can read; the plan is encoded as a flexibl
 `update_plan` tool.
 
 **Verified:** 2026-06-04T11:00:00Z
-**Status:** human_needed (automated checks all pass; live Firestore population and conversational
-update round-trip require human confirmation)
-**Re-verification:** No — initial verification
+**Status:** passed (automated checks all pass; the two live items — Firestore population and the
+conversational update round-trip — were confirmed by live UAT 2/2 on 2026-06-04, see frontmatter)
+**Re-verification:** Live UAT completed 2026-06-04 — both human-verification items passed.
 
 ---
 

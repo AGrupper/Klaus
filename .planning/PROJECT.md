@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task management, proactive alerts, and daily workflows. It uses a dual-model architecture (Gemini 3 Flash as the brain, Gemini 2.5 Flash as the worker) with Telegram as the primary interface, integrated with Gmail, Google Calendar, TickTick, Notion, Garmin, and a vector memory store (Pinecone). No local Mac dependency — fully Cloud Run native.
+Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task management, proactive alerts, daily workflows, and — as of v4.0 — acts as a genuinely expert hybrid-athlete coach (training-block periodization, end-of-block benchmarks, dated-goal projection, and nutrition/supplement accountability grounded in Amit's living blueprint + real Garmin/nutrition data). It uses a dual-model architecture (`gemini-3.5-flash` as the brain, `deepseek-v4-flash` as the worker, `claude-haiku-4-5` inline fallback, free `qwen3-32b` tick-brain) with Telegram as the primary interface, integrated with Gmail, Google Calendar, TickTick, Notion, Garmin, Postgres, and a vector memory store (Pinecone). No local Mac dependency — fully Cloud Run native.
 
 ## Core Value
 
@@ -10,72 +10,32 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 
 ## Current State
 
-**Shipped:** v3.0 — Project Shifu (2026-06-02). Klaus now has athletic-coaching
-capability: he reads his own 3-year Garmin history + Lifesum nutrition (via the iOS
-HealthKit bridge → `MealStore`), runs an evidence-first 21:30 training check-in with
-inline-keyboard logging, surfaces recovery state (ACWR / HRV / sleep) in the morning
-briefing and evening alert, and sends a Sunday weekly training review. The
-accountability **loop** is live and verified end-to-end (19/19 + live UAT).
-
-**v4.0 in progress (3/5 phases):** Phase 21 ingested Amit's Hybrid Athlete blueprint
-into `UserProfileStore` as a structured living guide (editable via `update_plan`). Phase 22
-made Klaus a genuinely *expert, specific* coach: curated source-tier-tagged knowledge
-(`docs/COACHING_GUIDE.md`) on every brain call + cron, and **the D-13 no-fabrication guard
-is released** — replaced by a recency-windowed Tier A/B data-presence contract, so Klaus now
-names real numbers, prescribes specific session/load/rationale, and volunteers structural
-critique (recommend-not-rewrite). Verified live on Telegram 2026-06-05. Phase 23 added
-**block + benchmark tracking**: `BlockStore` (date-range resolution, automatic inter-block
-transition) + `BenchmarkStore` (5-facet closed set) Firestore stores, an idempotent 4-block
-16-week seed, 6 new brain-direct tools (`get_plan`/`get_block_status`/`log_benchmark`/
-`get_benchmark_history`/`start_block`/`end_block`), "Week N of 16" framing in the morning
-briefing + Sunday weekly review, and an end-of-block benchmark trigger in the existing 21:30
-cron behind an HRV/ACWR validity gate (window-open / deferred / stale). Verified 4/4
-2026-06-06. Phase 24 made coaching **strict + nutrition-accountable** (cross-cron
-de-dup, derived session quality, strict 21:30 prompts) — verified live 2026-06-07.
-Phase 25 (final) shipped **progress projection** — see below.
-
-**v4.0 final phase (Phase 25) complete 2026-06-08:** a deterministic pure-function
-projection helper (`core/projection.py`, stdlib least-squares trend, never raises,
-`today_iso`-only), surfaced both reactively (`get_goal_projection` brain-direct tool,
-D-04 dense Garmin pace vs sparse BenchmarkStore source selection) and proactively
-(Sunday weekly-review projection block, Phase-24 fence lifted). Klaus now projects
-strength/pace trends to the dated Oct/Nov deadlines and reports on-track / N-weeks-behind,
-Tier A target always distinguished from Tier B measured trend. Verified 3/3 2026-06-08.
+**Shipped:** v4.0 — Specific Training & Nutrition Coaching (2026-06-08, Cloud Run rev
+`klaus-agent-00091-4vz`, image `159cb1e`). Klaus is now a genuinely expert, specific
+hybrid-athlete coach. Across 5 phases (21–25) he: ingests Amit's Hybrid Athlete blueprint
+into `UserProfileStore` as a structured **living guide** (editable via `update_plan`);
+carries curated expert coaching knowledge (`docs/COACHING_GUIDE.md` slim core on every brain
+call + `read_coaching_guide` deep sections); **released the D-13 no-fabrication guard** under
+a recency-windowed Tier A/B data-presence contract (names real numbers, specific
+session/load/rationale, structural critique); tracks **training blocks + benchmarks**
+(`BlockStore` date-range resolution + `BenchmarkStore` 5-facet closed set, end-of-block
+benchmark state machine behind an HRV/ACWR gate); folds **strict, nutrition-accountable**
+coaching into all crons (cross-cron dedup via `CoachingTopicStore`, macro/fueling-slot/
+supplement accountability, derived session quality); and **projects** strength/pace trends to
+the dated Oct/Nov deadlines (deterministic `core/projection.py` + `get_goal_projection` tool +
+dense Garmin pace history, surfaced in the Sunday weekly review as on-track / N-weeks-behind).
+20/20 requirements satisfied · suite 1058 passing · audit `integration_ok` · Phase 25 secured
+16/16 threats + all 10 code-review findings fixed pre-deploy.
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
-(2026-05-23) · v3.0 Project Shifu (2026-06-02). See `.planning/MILESTONES.md`.
+(2026-05-23) · v3.0 Project Shifu (2026-06-02) · v4.0 Specific Training & Nutrition Coaching
+(2026-06-08). See `.planning/MILESTONES.md`.
 
-## Current Milestone: v4.0 — Specific Training & Nutrition Coaching
+## Next Milestone
 
-**Goal:** Transform Klaus from a *qualitative* coach into a genuinely *expert, specific*
-hybrid-athlete coach — grounded in Amit's blueprint + real data, driving facet-by-facet
-improvement in training blocks, proven by end-of-block benchmarks toward dated goals.
-
-**Target features:**
-- Ingest Amit's Hybrid Athlete blueprint → populate `UserProfileStore` as a *living guide*:
-  dated goals (Oct: 100kg bench / 120kg squat / 1:25 HM; Nov: 125 push-ups / 35 pull-ups /
-  9:30 3k / 55s 400m), the facets/priorities, the AM/PM weekly split, the nutrition framework
-  (150g protein / 350g carbs + 6-part fueling timeline), and the supplement schedule.
-- Curated **expert coaching knowledge** (concurrent strength/endurance, interference effect,
-  periodization, how to execute the specific sessions, fueling science) baked into Klaus's
-  coaching reasoning so it is genuinely expert, not generic.
-- Release the **D-13 "no invented numbers" guard** — Klaus names real numbers grounded in
-  data: current lifts/paces, trends, macro & supplement adherence.
-- **Training blocks + benchmark testing** — track the current block, prompt a benchmark
-  session at block end, record results, compare across blocks to show per-facet improvement.
-- **Specific, strict, proactive + reactive coaching** folded into the existing crons
-  (morning briefing, evening check-in, weekly review) + chat: names specific sessions,
-  pushes Amit to train hard, critiques off-plan training/nutrition/supplements, flags
-  recovery-vs-plan conflicts (Amit decides), holds macro accountability.
-- **Progress toward dated goals** — trend-based per-facet improvement + pace-to-deadline
-  awareness against the Oct/Nov targets.
-
-**Key context:**
-- Goals are dated but the philosophy is *facet-mastery, not goal-cramming*. Testing is at
-  block ends + the deadlines, not periodic.
-- On recovery-vs-plan conflicts Klaus *advises, Amit decides* (not coach-override).
-- Builds on v3.0 plumbing: `UserProfileStore` scaffold, `MealStore`, `TrainingLogStore`,
-  Garmin/ACWR, recovery crons.
+Not yet scoped. Run `/gsd-new-milestone` to define v5.0 (questioning → research →
+requirements → roadmap). Candidate directions carried forward live in the Deferred list below
+and STATE.md § Deferred Items.
 
 ## Requirements
 
@@ -114,20 +74,18 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated g
 - ✓ Curated expert coaching knowledge (`docs/COACHING_GUIDE.md`: slim core on every brain call + 10 anchored deep sections via brain-direct `read_coaching_guide`) wired into every coaching prompt + cron — v4.0 (Phase 22) — COACH-01
 - ✓ D-13 no-fabrication guard released → recency-windowed Tier A/B data-presence contract; Klaus names real numbers, specific session/load/rationale, and volunteers structural critique (recommend-not-rewrite) — verified live 2026-06-05 — v4.0 (Phase 22) — COACH-02/06/07
 - ✓ Block + benchmark tracking: `BlockStore` (date-range resolution, auto inter-block transition) + `BenchmarkStore` (5-facet closed set), 4-block 16-week seed, 6 brain-direct tools, "Week N of 16" framing in morning briefing + weekly review, end-of-block benchmark trigger in the 21:30 cron behind an HRV/ACWR validity gate (window-open/deferred/stale) — verified 4/4 2026-06-06 — v4.0 (Phase 23) — BLOCK-01/02/03
-- ✓ Progress projection toward dated goals: deterministic pure-function `core/projection.py` (stdlib least-squares trend → on-track / N-weeks-behind, `today_iso`-only, never raises), reactive `get_goal_projection` brain tool (D-04 dense Garmin pace history vs sparse `BenchmarkStore`), and a Sunday weekly-review projection block with the Phase-24 fence lifted — Tier A target vs Tier B measured trend always distinguished — verified 3/3 2026-06-08 — v4.0 (Phase 25) — PROG-02
+- ✓ Strict coaching integration + nutrition accountability: `CoachingTopicStore` cross-cron dedup (one topic/day across morning briefing + 21:30 + weekly review), macro adherence + 6-slot fueling + supplement accountability in the 21:30 check-in, strict skip-pushback + recovery-conflict framing ("your call, Sir"), integrated morning briefing block, and session-quality captured at log time — verified 6/6 + live 2026-06-07 — v4.0 (Phase 24) — COACH-03/04/05, NUTR-01/02/03, PROG-01/03/04
+- ✓ Progress projection toward dated goals: deterministic pure-function `core/projection.py` (stdlib least-squares trend → on-track / N-weeks-behind, `today_iso`-only, never raises, direction-normalized `behind_by`), reactive `get_goal_projection` brain tool (D-04 dense Garmin pace history vs sparse `BenchmarkStore`), and a Sunday weekly-review projection block with the Phase-24 fence lifted — Tier A target vs Tier B measured trend always distinguished — verified 3/3 2026-06-08, all 10 code-review findings fixed pre-deploy — v4.0 (Phase 25) — PROG-02
 
-### Active (v4.0 — Specific Training & Nutrition Coaching)
+### Active
 
-To be defined at requirements scoping (this milestone). Headline direction: ingest the
-blueprint as a living guide, give Klaus curated expert coaching knowledge, release the
-D-13 guard for data-grounded specificity, manage training blocks with end-of-block
-benchmark testing, and make coaching strict/specific (proactive + reactive) across
-training, nutrition, and supplements.
+No active milestone. v4.0 shipped 2026-06-08 — run `/gsd-new-milestone` to scope the next.
 
 **Deferred (carried forward):**
 - Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
-- Stale Phase 19 verification/UAT sign-off paperwork (functionality verified live)
 - Recurring "daily review" skill (check-in persistence); `MealAuditStore` (persisted nutrition critique)
+- Nyquist formal validation artifacts for v4.0 phases (P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false`) — test suites robust; close retroactively via `/gsd-validate-phase` if desired
+- One live re-observation of the coaching double-send fix (data-heavy query → single message); accepted design notes WR-01 (cron `plan_start_date` hardcode, D-03) and WR-02 (`fueling_timeline` not gathered into crons, D-11)
 
 ### Out of Scope
 
@@ -168,8 +126,14 @@ training, nutrition, and supplements.
 | Tick every 20 min, 7-21 | ≈42 ticks/day; balances proactivity with quiet hours | ✓ Implemented Phase 18 |
 | HealthKit bridge over Google Fit (iOS) | Lifesum writes to HealthKit on iPhone; Google Fit returns nothing | ✓ Good — v3.0 (19.1) |
 | Training check-in folds into 21:30 cron (D-09, no separate job) | Avoids a redundant scheduler job; runs before the dedup gate so retries aren't blocked | ✓ Good — v3.0 |
-| No invented numbers until profile populated (D-13) | Honest coaching with an empty profile; releases at v4.0 | ✓ Good — v3.0 |
+| No invented numbers until profile populated (D-13) | Honest coaching with an empty profile; releases at v4.0 | ✓ Released v4.0 (Phase 22) → Tier A/B contract |
 | No `MealAuditStore` (live `MealStore` 7-day totals, D-21) | Avoid premature persistence; brain critiques at read time | ✓ Good — v3.0 (revisit if nutrition history reporting matters) |
+| Coaching knowledge = prompt-injected `docs/COACHING_GUIDE.md`, NOT Pinecone RAG | ~5k-token slim core always-on, zero retrieval latency; deep sections via `read_coaching_guide` | ✓ Good — v4.0 (Phase 22) |
+| D-13 release is prompt-only Tier A/B data-presence contract | Tier A blueprint targets always citable; Tier B measured numbers only within a recency window — no fabrication | ✓ Good — v4.0 (Phase 22), verified live |
+| Block/benchmark as Firestore stores with date-range `get_current()` | `BlockStore`/`BenchmarkStore` follow the `TrainingLogStore` pattern; date-range resolution auto-handles inter-block transitions | ✓ Good — v4.0 (Phase 23) |
+| Cross-cron dedup via `CoachingTopicStore` (write-after-send) | One topic/day across all crons; topic written only after `send_and_inject` succeeds (D-10) | ✓ Good — v4.0 (Phase 24) |
+| Projection is a deterministic pure function (`core/projection.py`), brain never computes | LSQ trend from real history only; brain frames, never invents the number — protects the projection trust surface | ✓ Good — v4.0 (Phase 25) |
+| Blueprint is a critiqueable guide, not gospel (COACH-07); Amit adopts via `update_plan` | Klaus recommends structural changes, never silently rewrites the plan | ✓ Good — v4.0 |
 
 ## Evolution
 
@@ -189,4 +153,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-08 — Phase 25 (Progress Projection + Benchmark Trend Reporting) complete; final v4.0 phase. All 5 v4.0 phases executed — ready for milestone close-out.*
+*Last updated: 2026-06-08 after v4.0 milestone — Specific Training & Nutrition Coaching shipped (Phases 21–25, deployed Cloud Run rev klaus-agent-00091-4vz). Next milestone not yet scoped (`/gsd-new-milestone`).*

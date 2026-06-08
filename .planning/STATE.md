@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
-status: milestone_complete
-stopped_at: Milestone complete (Phase 25 was final phase)
-last_updated: 2026-06-08T11:35:50.794Z
-last_activity: 2026-06-08
+status: Awaiting next milestone
+stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
+last_updated: "2026-06-08T12:59:18.521Z"
+last_activity: 2026-06-08 — Milestone v4.0 completed and archived
 progress:
   total_phases: 5
   completed_phases: 5
@@ -18,12 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 25
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-08
-
-Progress: [██████████] 100%
+Phase: Milestone v4.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-08 — Milestone v4.0 completed and archived
 
 ## Project Reference
 
@@ -85,3 +83,7 @@ Carried forward from v3.0 close:
 Last session: 2026-06-08T08:30:00Z
 Stopped at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
