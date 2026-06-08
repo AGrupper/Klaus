@@ -239,10 +239,40 @@ def _gather_week_data(today_iso: str) -> dict:
         logger.warning("weekly_review: coaching topics fetch failed", exc_info=True)
         data["coaching_topics_today"] = []
 
+    # ------------------------------------------------------------------ #
+    # 8. Progress projections — PROG-02 (Phase 25)                       #
+    #    Computed server-side for each dated-goal facet. Fail-open to    #
+    #    {} on any error so the cron always sends.                       #
+    #    D-04: threshold_pace prefers dense Garmin running points        #
+    #    (fetch_dense_pace_history); strength facets use BenchmarkStore. #
+    # ------------------------------------------------------------------ #
+    try:
+        from core.projection import project_goal_progress
+        from core.pace_history import fetch_dense_pace_history
+        from memory.firestore_db import BenchmarkStore as _BS, UserProfileStore as _UPS
+        _proj_project_id = os.environ["GCP_PROJECT_ID"]
+        _proj_database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        _benchmarks = _BS(_proj_project_id, _proj_database)
+        _profile = _UPS(_proj_project_id, _proj_database).load()
+        dated_goals = _profile.get("dated_goals") or []
+        projections: dict = {}
+        for facet in ["bench_press_1rm", "squat_1rm", "threshold_pace", "push_ups", "pull_ups"]:
+            if facet == "threshold_pace":
+                # D-04: prefer dense Garmin running history; fall back to sparse BenchmarkStore
+                history = fetch_dense_pace_history(today_iso)
+                if not history:
+                    history = _benchmarks.get_facet_history("threshold_pace", n=10)
+            else:
+                history = _benchmarks.get_facet_history(facet, n=10)
+            projections[facet] = project_goal_progress(facet, history, dated_goals, today_iso)
+        data["projections"] = projections
+    except Exception:
+        logger.warning("weekly_review: projection gather failed", exc_info=True)
+        data["projections"] = {}
+
     # COACH-05 (conservative-writer producer): derive the structural-critique topic keys this
     # review deterministically raises from already-gathered data, recorded post-send so a later
-    # same-day cron hard-skips them (D-12 structural-critique dedup). Derivation is non-projective
-    # (current-state only, no Phase-25 deadline framing) and fail-open — never crash the cron.
+    # same-day cron hard-skips them (D-12 structural-critique dedup). Fail-open — never crash.
     try:
         data["coaching_topics_included"] = _derive_structural_topics(data)
     except Exception:
@@ -257,16 +287,23 @@ def _derive_structural_topics(week_data: dict) -> list[str]:
 
     Conservative-writer producer for COACH-05: maps clear, current-state signals the
     review surfaces to canonical topic keys so they can be recorded for cross-cron dedup.
-    No projection (Phase 25) — only this-week movement. Order-stable, de-duplicated.
+    Order-stable, de-duplicated.
 
-    Currently derives:
+    Derives:
     - `structural-critique:session-quality` when any logged session this week graded "grind"
       (the review's signature PROG-04 trend always comments on grind sessions when present).
+    - `structural-critique:projection:<facet>` for each facet whose projection result has
+      confidence != "no_data" (i.e. at least 1 data point exists — Phase 25 PROG-02).
     """
     topics: list[str] = []
     training_log = week_data.get("training_log") or []
     if any((entry or {}).get("quality") == "grind" for entry in training_log):
         topics.append("structural-critique:session-quality")
+    # Phase 25 — projection dedup keys (PROG-02 / D-12 COACH-05)
+    projections = week_data.get("projections") or {}
+    for facet, result in projections.items():
+        if isinstance(result, dict) and result.get("confidence") != "no_data":
+            topics.append(f"structural-critique:projection:{facet}")
     # De-duplicate while preserving first-seen order.
     seen: set[str] = set()
     return [t for t in topics if not (t in seen or seen.add(t))]
