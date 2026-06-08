@@ -83,15 +83,15 @@ Populated during roadmap creation.
 | BLOCK-01 | Phase 23 | Complete |
 | BLOCK-02 | Phase 23 | Complete |
 | BLOCK-03 | Phase 23 | Complete |
-| COACH-03 | Phase 24 | Pending |
-| COACH-04 | Phase 24 | Pending |
-| COACH-05 | Phase 24 | Pending |
-| NUTR-01 | Phase 24 | Pending |
-| NUTR-02 | Phase 24 | Pending |
-| NUTR-03 | Phase 24 | Pending |
-| PROG-01 | Phase 24 | Pending |
-| PROG-03 | Phase 24 | Pending |
-| PROG-04 | Phase 24 | Pending |
+| COACH-03 | Phase 24 | Complete |
+| COACH-04 | Phase 24 | Complete |
+| COACH-05 | Phase 24 | Complete |
+| NUTR-01 | Phase 24 | Complete |
+| NUTR-02 | Phase 24 | Complete |
+| NUTR-03 | Phase 24 | Complete |
+| PROG-01 | Phase 24 | Complete |
+| PROG-03 | Phase 24 | Complete |
+| PROG-04 | Phase 24 | Complete |
 | PROG-02 | Phase 25 | Complete |
 
 **Coverage:**
