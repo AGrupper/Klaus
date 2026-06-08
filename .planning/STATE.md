@@ -25,7 +25,7 @@ Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
-- **Training blocks = Training-calendar membership** (2026-06-08, undeployed): a training
+- **Training blocks = Training-calendar membership** (2026-06-08, deployed rev `klaus-agent-00095-hcf`): a training
   block is now defined as any event in the dedicated **Training** calendar (excluding its
   `Get Ready:`/`Travel:` buffer blocks), not by title keywords. Removed `WORKOUT_KEYWORDS`
   + bare-"Practice" auto-detection from `create_event` (`is_workout` defaults to False; the
@@ -38,6 +38,7 @@ Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
   non-training outdoor events in the *primary* calendar. `is_free` still primary-only
   (pre-existing). Files: `mcp_tools/calendar_tool.py`, `core/tools.py`,
   `core/proactive_alerts.py`, `prompts/smart_agent.md`, `docs/USER.md`. Suite 1101 green.
+  Shipped in commit `f4c424f`, deployed via CI/CD to Cloud Run rev `klaus-agent-00095-hcf`.
 
 - **Hevy strength integration** (2026-06-08, deployed rev `klaus-agent-00093-dww`):
   full per-set workout sync from Hevy (Pro API, daily pull `/cron/strength-sync`,
