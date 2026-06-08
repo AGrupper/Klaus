@@ -29,7 +29,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 - [x] **Phase 22: Expert Coaching Knowledge + D-13 Release** - Author `docs/COACHING_GUIDE.md`, wire it into every coaching prompt, replace the D-13 qualitative guard with the Tier A / Tier B data-presence contract; Klaus starts naming real numbers (completed 2026-06-05)
 - [x] **Phase 23: Block + Benchmark Tracking** - `BlockStore` + `BenchmarkStore` Firestore stores, 7 brain-direct tools, block state surfaced in existing crons, end-of-block benchmark trigger logic (completed 2026-06-06)
 - [x] **Phase 24: Strict Coaching Integration + Nutrition Accountability** - Fold expert, specific coaching into all existing crons (morning briefing, evening check-in, weekly review), add cross-cron dedup gate, add nutrition/supplement accountability (completed 2026-06-06)
-- [ ] **Phase 25: Progress Projection + Benchmark Trend Reporting** - Pace-to-deadline trend projection against Oct/Nov goals; per-facet benchmark improvement surfaced in weekly review
+- [x] **Phase 25: Progress Projection + Benchmark Trend Reporting** - Pace-to-deadline trend projection against Oct/Nov goals; per-facet benchmark improvement surfaced in weekly review (completed 2026-06-08)
 
 ## Phase Details
 
@@ -108,7 +108,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 **Plans**: 3 plans
 - [x] 25-01-PLAN.md — Deterministic projection helper core/projection.py + unit tests (Wave 1 foundation: pure-function trend/projection, direction-aware, today_iso injected)
 - [x] 25-02-PLAN.md — Reactive get_goal_projection brain-direct tool in core/tools.py + smart_agent.md projection permission (Wave 2)
-- [ ] 25-03-PLAN.md — Sunday weekly-review projection block + COACH-05 dedup + weekly_training_review.md fence lift (Wave 2)
+- [x] 25-03-PLAN.md — Sunday weekly-review projection block + COACH-05 dedup + weekly_training_review.md fence lift (Wave 2)
 
 ## Progress
 
@@ -118,7 +118,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
 | 24. Strict Coaching Integration + Nutrition Accountability | 5/5 | Complete   | 2026-06-06 |
-| 25. Progress Projection + Benchmark Trend Reporting | 2/3 | In Progress|  |
+| 25. Progress Projection + Benchmark Trend Reporting | 3/3 | Complete   | 2026-06-08 |
 
 ---
 
