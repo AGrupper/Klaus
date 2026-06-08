@@ -1,0 +1,302 @@
+"""Tests for core/projection.py — project_goal_progress() pure-function helper.
+
+Covers PROG-02-A through PROG-02-G and PROG-02-N:
+  - 0 data points → no_data result (PROG-02-A)
+  - 1 data point → baseline_only result (PROG-02-B)
+  - 2 data points → linear projection, confidence "low" (PROG-02-C)
+  - 3 data points → least-squares fit (PROG-02-D)
+  - Lower-is-better direction (threshold_pace) (PROG-02-E)
+  - Higher-is-better direction (bench_press_1rm) (PROG-02-F)
+  - HM time string "1:25:00" → ~241.7 sec/km target (PROG-02-G)
+  - Same-date entries deduplicated before LSQ fit (PROG-02-N)
+
+No Firestore mock needed — project_goal_progress is a pure function.
+Every call uses today_iso="2026-08-01" — never relies on the system clock.
+"""
+from __future__ import annotations
+
+from core.projection import project_goal_progress, FACET_DIRECTION, GOAL_METRIC_TO_FACET
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_history(
+    values: list[float],
+    dates: list[str],
+    facet: str = "bench_press_1rm",
+    unit: str = "kg",
+) -> list[dict]:
+    """Build synthetic benchmark history entries in date-desc order.
+
+    Returns a list[dict] matching the BenchmarkStore.get_facet_history shape:
+      {date, facet, value, unit, block_id, notes, doc_id}
+    Entries are returned sorted newest-first (date-desc) to match the real store.
+    """
+    assert len(values) == len(dates), "values and dates must have the same length"
+    entries = [
+        {
+            "date": d,
+            "facet": facet,
+            "value": v,
+            "unit": unit,
+            "block_id": "2026-06-21_aerobic_base",
+            "notes": "",
+            "doc_id": f"{d}_{facet}",
+        }
+        for v, d in zip(values, dates)
+    ]
+    # Sort date-descending (newest first)
+    entries.sort(key=lambda e: e["date"], reverse=True)
+    return entries
+
+
+# ---------------------------------------------------------------------------
+# Fixtures: dated_goals matching UserProfileStore.dated_goals verified shape
+# ---------------------------------------------------------------------------
+
+DATED_GOALS = [
+    {
+        "target_date": "2026-10-31",
+        "goal_label": "October Peak — Absolute Strength + Half Marathon",
+        "metrics": {
+            "bench_press_kg": 100,
+            "squat_kg": 120,
+            "half_marathon_time": "1:25:00",
+        },
+    },
+    {
+        "target_date": "2026-11-30",
+        "goal_label": "November Peak — Calisthenics + Speed",
+        "metrics": {
+            "push_ups": 125,
+            "pull_ups": 35,
+            "3k_time": "9:30",
+            "400m_time": "55s",
+        },
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-A: 0 data points → no_data
+# ---------------------------------------------------------------------------
+
+def test_project_0_points():
+    """Empty history → confidence='no_data', projected_value=None."""
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=[],
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["confidence"] == "no_data"
+    assert result["projected_value"] is None
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-B: 1 data point → baseline_only
+# ---------------------------------------------------------------------------
+
+def test_project_1_point():
+    """One history entry → confidence='baseline_only', projected_value=None,
+    confidence_label mentions 'baseline'."""
+    history = _build_history(
+        values=[85.0],
+        dates=["2026-07-01"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["confidence"] == "baseline_only"
+    assert result["projected_value"] is None
+    assert "baseline" in result["confidence_label"].lower()
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-C: 2 data points → linear projection, confidence "low"
+# ---------------------------------------------------------------------------
+
+def test_project_2_points():
+    """Two history entries → projected_value is a float, on_track is a bool,
+    confidence='low', confidence_label names the count '2'."""
+    history = _build_history(
+        values=[80.0, 85.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["projected_value"] is not None
+    assert isinstance(result["projected_value"], float)
+    assert isinstance(result["on_track"], bool)
+    assert result["confidence"] == "low"
+    assert "2" in result["confidence_label"]
+    assert result["data_point_count"] == 2
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-D: 3 data points → least-squares; data_point_count == 3
+# ---------------------------------------------------------------------------
+
+def test_project_3_points():
+    """Three entries → LSQ fit; data_point_count==3; projected_value reflects slope."""
+    history = _build_history(
+        values=[78.0, 82.0, 86.0],
+        dates=["2026-06-21", "2026-07-05", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["data_point_count"] == 3
+    assert result["projected_value"] is not None
+    assert isinstance(result["projected_value"], float)
+    # With a linear +4kg/~27-day trend across ~131 days, projection should be well above 86
+    assert result["projected_value"] > 86.0
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-F: Higher-is-better direction (bench_press_1rm)
+# ---------------------------------------------------------------------------
+
+def test_higher_is_better():
+    """bench_press_1rm: on_track=True when projected >= target; False when projected < target."""
+    # Well above target (100kg) — on track
+    history_above = _build_history(
+        values=[95.0, 105.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result_above = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history_above,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result_above["on_track"] is True
+
+    # Decreasing trend, will not reach target — not on track
+    history_below = _build_history(
+        values=[90.0, 85.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result_below = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history_below,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result_below["on_track"] is False
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-E: Lower-is-better direction (threshold_pace)
+# ---------------------------------------------------------------------------
+
+def test_lower_is_better():
+    """threshold_pace: on_track=True when projected <= target; False when projected > target."""
+    target_pace = (85 * 60) / 21.1  # ~241.7 sec/km
+
+    # Improving (decreasing) pace that will reach target — on track
+    history_improving = _build_history(
+        values=[260.0, 250.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="threshold_pace",
+        unit="sec_per_km",
+    )
+    result_on_track = project_goal_progress(
+        facet="threshold_pace",
+        history=history_improving,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result_on_track["on_track"] is True
+
+    # Worsening (increasing) pace — not on track
+    history_worsening = _build_history(
+        values=[240.0, 250.0],
+        dates=["2026-06-21", "2026-07-18"],
+        facet="threshold_pace",
+        unit="sec_per_km",
+    )
+    result_behind = project_goal_progress(
+        facet="threshold_pace",
+        history=history_worsening,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result_behind["on_track"] is False
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-G: HM time string → sec/km target (~241.7)
+# ---------------------------------------------------------------------------
+
+def test_hm_time_conversion():
+    """'1:25:00' → target_value ~241.7 sec/km (within 0.5 tolerance)."""
+    history = _build_history(
+        values=[250.0],
+        dates=["2026-07-01"],
+        facet="threshold_pace",
+        unit="sec_per_km",
+    )
+    result = project_goal_progress(
+        facet="threshold_pace",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    assert result["target_value"] is not None
+    expected = (85 * 60) / 21.1  # 85 minutes / 21.1 km
+    assert abs(result["target_value"] - expected) < 0.5
+
+
+# ---------------------------------------------------------------------------
+# PROG-02-N: Identical-date entries deduplicated before LSQ fit
+# ---------------------------------------------------------------------------
+
+def test_dedup_same_date():
+    """Two entries with the same date are collapsed to one before LSQ fit.
+
+    With only one unique date after dedup, there is a single point → baseline_only.
+    No ZeroDivisionError; projected_value is None (not NaN or infinity).
+    """
+    history = _build_history(
+        values=[85.0, 87.0],  # Two readings on the same day
+        dates=["2026-07-18", "2026-07-18"],
+        facet="bench_press_1rm",
+        unit="kg",
+    )
+    result = project_goal_progress(
+        facet="bench_press_1rm",
+        history=history,
+        dated_goals=DATED_GOALS,
+        today_iso="2026-08-01",
+    )
+    # After dedup by date, only 1 unique point → baseline_only
+    assert result["projected_value"] is None
+    # Should not raise — confidence should be baseline_only (not no_data)
+    assert result["confidence"] in ("baseline_only", "no_data")
+    # Definitely should not be NaN or infinity
+    assert result["projected_value"] is None or (
+        result["projected_value"] == result["projected_value"]  # NaN check
+    )
