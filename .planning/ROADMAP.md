@@ -118,7 +118,7 @@ improvement in training blocks, proven by end-of-block benchmarks toward dated O
 | 22. Expert Coaching Knowledge + D-13 Release | 4/4 | Complete    | 2026-06-05 |
 | 23. Block + Benchmark Tracking | 4/4 | Complete    | 2026-06-06 |
 | 24. Strict Coaching Integration + Nutrition Accountability | 5/5 | Complete   | 2026-06-06 |
-| 25. Progress Projection + Benchmark Trend Reporting | 3/3 | Complete   | 2026-06-08 |
+| 25. Progress Projection + Benchmark Trend Reporting | 3/3 | Complete    | 2026-06-08 |
 
 ---
 

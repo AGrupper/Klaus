@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
-status: verifying
-stopped_at: Phase 25 complete — 25-03 projection gather + fence lift executed; ready for verification
-last_updated: "2026-06-08T07:59:43.920Z"
+status: milestone_complete
+stopped_at: Milestone complete (Phase 25 was final phase)
+last_updated: 2026-06-08T11:35:50.794Z
 last_activity: 2026-06-08
 progress:
   total_phases: 5
@@ -18,9 +18,9 @@ progress:
 
 ## Current Position
 
-Phase: 25 (progress-projection-benchmark-trend-reporting) — COMPLETE
-Plan: 3 of 3
-Status: Phase complete — ready for verification
+Phase: 25
+Plan: Not started
+Status: Milestone complete
 Last activity: 2026-06-08
 
 Progress: [██████████] 100%
@@ -30,7 +30,7 @@ Progress: [██████████] 100%
 See: `.planning/PROJECT.md` (updated 2026-06-03)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 25 — progress-projection-benchmark-trend-reporting
+**Current focus:** Milestone complete
 
 ## Architecture (current)
 
