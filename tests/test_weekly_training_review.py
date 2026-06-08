@@ -442,7 +442,12 @@ def test_weekly_review_prompt_has_quality_trend_instruction():
 
 
 def test_weekly_review_prompt_forbids_dated_projection():
-    """Phase 25 fence: prompt must not introduce dated-projection language as instructions."""
+    """Phase 25 fence: prompt must not introduce dated-projection language as instructions.
+
+    NOTE: This test was written in Phase 24 to guard against the Phase 25 fence being violated
+    prematurely. In Phase 25 Plan 03 the fence IS lifted and this test will be superseded by
+    test_no_phase25_fence (in test_prompts.py) once the prompt edit lands.
+    """
     content = open("prompts/weekly_training_review.md").read()
     lower = content.lower()
     # If "weeks behind" or "on track for" appears, it must be inside a "do NOT" prohibition
@@ -455,3 +460,273 @@ def test_weekly_review_prompt_forbids_dated_projection():
                 f"Dated projection phrase '{phrase}' found in prompt without a prohibition clause — "
                 "Phase 25 fence violated"
             )
+
+
+# ---------------------------------------------------------------------------
+# Phase 25 Plan 03 — projection gather + derive topics (PROG-02 proactive path)
+# ---------------------------------------------------------------------------
+
+
+def _ensure_firestore_stubs() -> None:
+    """Ensure memory.firestore_db and related modules are importable in unit tests.
+
+    On Python 3.14 (used in CI) google.cloud.firestore native wheels are not
+    installed. This function installs minimal sys.modules stubs so that
+    `importlib.import_module("memory.firestore_db")` succeeds, which lets
+    `unittest.mock.patch("memory.firestore_db.*")` resolve the attribute path.
+
+    Safe to call multiple times — uses setdefault() / existence checks.
+    """
+    import sys
+    from types import ModuleType
+
+    # google namespace package
+    google_mod = sys.modules.get("google")
+    if google_mod is None or isinstance(google_mod, MagicMock):
+        google_mod = ModuleType("google")
+        google_mod.__path__ = []
+        sys.modules["google"] = google_mod
+
+    google_cloud = sys.modules.get("google.cloud")
+    if google_cloud is None or isinstance(google_cloud, MagicMock):
+        google_cloud = ModuleType("google.cloud")
+        google_cloud.__path__ = []
+        sys.modules["google.cloud"] = google_cloud
+        setattr(google_mod, "cloud", google_cloud)
+
+    if "google.cloud.firestore" not in sys.modules:
+        fs_mock = MagicMock()
+        fs_mock.SERVER_TIMESTAMP = object()
+        sys.modules["google.cloud.firestore"] = fs_mock
+        setattr(google_cloud, "firestore", fs_mock)
+
+    if "google.api_core" not in sys.modules:
+        api_core = ModuleType("google.api_core")
+        api_core.__path__ = []
+        sys.modules["google.api_core"] = api_core
+        setattr(google_mod, "api_core", api_core)
+
+    sys.modules.setdefault("google.api_core.exceptions", MagicMock())
+    for m in ["google.cloud.firestore_v1", "google.cloud.firestore_v1.base_query"]:
+        sys.modules.setdefault(m, MagicMock())
+
+    # dotenv
+    if "dotenv" not in sys.modules:
+        dm = MagicMock()
+        dm.load_dotenv = MagicMock()
+        sys.modules["dotenv"] = dm
+
+    # pinecone
+    for m in ["pinecone", "pinecone.grpc"]:
+        sys.modules.setdefault(m, MagicMock())
+
+    # mcp_tools submodules referenced by weekly_training_review.py gather blocks
+    for m in [
+        "mcp_tools",
+        "mcp_tools.database_tool",
+        "mcp_tools.garmin_tool",
+    ]:
+        sys.modules.setdefault(m, MagicMock())
+
+
+@pytest.fixture
+def patched_sources_with_projection(monkeypatch):
+    """Extend patched_sources with CoachingTopicStore + projection mocks.
+
+    Adds:
+      - coaching_topic_store: CoachingTopicStore mock (topics_today → [])
+      - project_goal_progress: core.projection.project_goal_progress mock
+      - fetch_dense_pace_history: core.pace_history.fetch_dense_pace_history mock
+      - benchmark_store with get_facet_history wired
+    """
+    import importlib
+    import sys
+
+    # Pre-stub heavy deps so memory.firestore_db, core.projection,
+    # and core.pace_history can be imported for patch() path resolution.
+    _ensure_firestore_stubs()
+    # Make sure memory.firestore_db is loaded (not re-loaded if already cached)
+    if "memory.firestore_db" not in sys.modules:
+        importlib.import_module("memory.firestore_db")
+    # core.projection and core.pace_history are pure Python — always importable
+    importlib.import_module("core.projection")
+    importlib.import_module("core.pace_history")
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+    handles = {
+        "training_log": MagicMock(),
+        "fetch_garmin_activities": MagicMock(return_value=[]),
+        "query_health_database": MagicMock(return_value=[]),
+        "meal_store": MagicMock(),
+        "user_profile": MagicMock(),
+        "block_store": MagicMock(),
+        "benchmark_store": MagicMock(),
+        "coaching_topic_store": MagicMock(),
+        "project_goal_progress": MagicMock(),
+        "fetch_dense_pace_history": MagicMock(return_value=[]),
+    }
+    handles["training_log"].return_value.get_range.return_value = []
+    handles["meal_store"].return_value.get_day_aggregate.return_value = None
+    # Profile with empty dated_goals by default
+    handles["user_profile"].return_value.load.return_value = {"dated_goals": []}
+    handles["block_store"].return_value.get_current.return_value = None
+    handles["benchmark_store"].return_value.get_block_benchmarks.return_value = []
+    handles["benchmark_store"].return_value.get_facet_history.return_value = []
+    handles["coaching_topic_store"].return_value.topics_today.return_value = []
+    # project_goal_progress returns a minimal result dict (1 data point, baseline_only)
+    handles["project_goal_progress"].return_value = {
+        "facet": "bench_press_1rm",
+        "confidence": "baseline_only",
+        "data_point_count": 1,
+        "projected_value": None,
+        "target_value": None,
+        "target_date": None,
+        "gap": None,
+        "on_track": None,
+        "unit": "kg",
+        "confidence_label": "baseline only, no trend yet",
+    }
+
+    with patch("memory.firestore_db.TrainingLogStore", handles["training_log"]), \
+         patch("mcp_tools.garmin_tool.fetch_garmin_activities",
+               handles["fetch_garmin_activities"]), \
+         patch("mcp_tools.database_tool.query_health_database",
+               handles["query_health_database"]), \
+         patch("memory.firestore_db.MealStore", handles["meal_store"]), \
+         patch("memory.firestore_db.UserProfileStore", handles["user_profile"]), \
+         patch("memory.firestore_db.BlockStore", handles["block_store"]), \
+         patch("memory.firestore_db.BenchmarkStore", handles["benchmark_store"]), \
+         patch("memory.firestore_db.CoachingTopicStore", handles["coaching_topic_store"]), \
+         patch("core.projection.project_goal_progress", handles["project_goal_progress"]), \
+         patch("core.pace_history.fetch_dense_pace_history",
+               handles["fetch_dense_pace_history"]):
+        yield handles
+
+
+def test_gather_includes_projections(patched_sources_with_projection):
+    """PROG-02-H: _gather_week_data (happy path) returns a dict containing a
+    'projections' key whose value is a dict (not None, not a list)."""
+    data = wtr._gather_week_data("2026-06-07")
+    assert "projections" in data, (
+        "data['projections'] key missing — gather block #8 not yet implemented"
+    )
+    assert isinstance(data["projections"], dict), (
+        "data['projections'] must be a dict, not None or a list"
+    )
+
+
+def test_projection_gather_fails_open(patched_sources_with_projection):
+    """PROG-02-I: when the projection gather raises, data['projections'] == {}
+    and _gather_week_data does not raise."""
+    patched_sources_with_projection["project_goal_progress"].side_effect = RuntimeError(
+        "projection exploded"
+    )
+    data = wtr._gather_week_data("2026-06-07")
+    assert data.get("projections") == {}, (
+        "projection gather must fail open to {} — not None, not absent"
+    )
+
+
+def test_threshold_pace_uses_dense_garmin(patched_sources_with_projection):
+    """D-04: with fetch_dense_pace_history returning >=2 dense points, the
+    threshold_pace projection uses those points (not get_facet_history).
+    When fetch_dense_pace_history returns [] the gather falls back to BenchmarkStore."""
+    # --- path A: dense Garmin points available ---
+    dense_points = [
+        {"date": "2026-06-01", "facet": "threshold_pace", "value": 250.0, "unit": "sec_per_km"},
+        {"date": "2026-05-15", "facet": "threshold_pace", "value": 255.0, "unit": "sec_per_km"},
+    ]
+    patched_sources_with_projection["fetch_dense_pace_history"].return_value = dense_points
+
+    wtr._gather_week_data("2026-06-07")
+
+    # fetch_dense_pace_history must have been called (for the threshold_pace facet)
+    patched_sources_with_projection["fetch_dense_pace_history"].assert_called()
+
+    # When called for threshold_pace, project_goal_progress must receive the DENSE points
+    calls = patched_sources_with_projection["project_goal_progress"].call_args_list
+    threshold_call = next(
+        (c for c in calls if c.args and c.args[0] == "threshold_pace"
+         or c.kwargs.get("facet") == "threshold_pace"),
+        None,
+    )
+    assert threshold_call is not None, (
+        "project_goal_progress was not called for threshold_pace"
+    )
+    # The history passed for threshold_pace must be the dense list, not the sparse BenchmarkStore list
+    history_arg = threshold_call.args[1] if len(threshold_call.args) > 1 else threshold_call.kwargs.get("history")
+    assert history_arg == dense_points, (
+        "threshold_pace projection must use dense Garmin points (D-04), not sparse BenchmarkStore list"
+    )
+
+    # --- path B: dense returns [] → fallback to BenchmarkStore ---
+    patched_sources_with_projection["project_goal_progress"].reset_mock()
+    patched_sources_with_projection["fetch_dense_pace_history"].return_value = []
+    sparse_points = [
+        {"date": "2026-05-01", "facet": "threshold_pace", "value": 260.0, "unit": "sec_per_km"},
+    ]
+    patched_sources_with_projection["benchmark_store"].return_value.get_facet_history.side_effect = (
+        lambda facet, n=10: sparse_points if facet == "threshold_pace" else []
+    )
+
+    wtr._gather_week_data("2026-06-07")
+
+    calls_b = patched_sources_with_projection["project_goal_progress"].call_args_list
+    threshold_call_b = next(
+        (c for c in calls_b if c.args and c.args[0] == "threshold_pace"
+         or c.kwargs.get("facet") == "threshold_pace"),
+        None,
+    )
+    assert threshold_call_b is not None, "project_goal_progress not called for threshold_pace in fallback path"
+    history_arg_b = (
+        threshold_call_b.args[1]
+        if len(threshold_call_b.args) > 1
+        else threshold_call_b.kwargs.get("history")
+    )
+    assert history_arg_b == sparse_points, (
+        "When dense returns [] the gather must fall back to BenchmarkStore (D-04 fallback)"
+    )
+
+
+def test_derive_projection_topics(patched_sources_with_projection):
+    """PROG-02-M: _derive_structural_topics on week_data with a facet projection of
+    confidence != 'no_data' returns a list containing 'structural-critique:projection:<facet>';
+    a no_data facet does NOT produce a key."""
+    week_data_with_projections = {
+        "training_log": [],
+        "projections": {
+            "bench_press_1rm": {
+                "facet": "bench_press_1rm",
+                "confidence": "low",
+                "data_point_count": 2,
+                "projected_value": 98.0,
+                "target_value": 105.0,
+                "target_date": "2026-10-31",
+                "gap": -7.0,
+                "on_track": False,
+                "unit": "kg",
+                "confidence_label": "from only 2 benchmarks — low confidence",
+            },
+            "squat_1rm": {
+                "facet": "squat_1rm",
+                "confidence": "no_data",
+                "data_point_count": 0,
+                "projected_value": None,
+                "target_value": None,
+                "target_date": None,
+                "gap": None,
+                "on_track": None,
+                "unit": "kg",
+                "confidence_label": "no measured data",
+            },
+        },
+    }
+    topics = wtr._derive_structural_topics(week_data_with_projections)
+    assert "structural-critique:projection:bench_press_1rm" in topics, (
+        "_derive_structural_topics must emit 'structural-critique:projection:<facet>' for "
+        "facets with confidence != 'no_data'"
+    )
+    assert "structural-critique:projection:squat_1rm" not in topics, (
+        "no_data facets must NOT produce a projection topic key"
+    )

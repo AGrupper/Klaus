@@ -215,3 +215,29 @@ def test_meal_audit_referenced():
     """NUTR-08 wiring — meal_audit.md is mentioned by autonomous_triage.md."""
     triage = _read(TRIAGE_PATH)
     assert "meal_audit" in triage
+
+
+# ---------------------------------------------------------------------------
+# Phase 25 Plan 03 — weekly_training_review.md fence lift (PROG-02-L)
+# ---------------------------------------------------------------------------
+
+WEEKLY_REVIEW_PATH = os.path.join(REPO_ROOT, "prompts", "weekly_training_review.md")
+
+
+def test_no_phase25_fence():
+    """PROG-02-L: the weekly_training_review.md prompt no longer contains the
+    Phase-24 'PHASE 25 FENCE' / 'ABSOLUTELY FORBIDDEN' prohibition and still
+    contains the 'Week' framing (Week N of 16 preserved — Pitfall 5)."""
+    content = _read(WEEKLY_REVIEW_PATH)
+    assert "PHASE 25 FENCE" not in content, (
+        "prompts/weekly_training_review.md still contains 'PHASE 25 FENCE' — "
+        "fence lift (Task 3) not yet applied"
+    )
+    assert "ABSOLUTELY FORBIDDEN" not in content, (
+        "prompts/weekly_training_review.md still contains 'ABSOLUTELY FORBIDDEN' — "
+        "fence lift (Task 3) not yet applied"
+    )
+    assert "Week" in content, (
+        "prompts/weekly_training_review.md lost 'Week' framing — "
+        "'Week N of 16' block-relative language must be preserved (Pitfall 5)"
+    )
