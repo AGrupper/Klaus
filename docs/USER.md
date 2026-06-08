@@ -14,8 +14,8 @@
 * **Standard Travel Buffer:** Unless explicitly stated otherwise, the agent must automatically add a 15-minute travel block immediately preceding any scheduled event, and a 15-minute return block immediately following the event (total standard buffer: 30 minutes).
 
 ## 4. Pre-Workout Logic
-* **Trigger Events:** This logic applies strictly to: Running, Biking, Basketball, Gym, and Five Fingers practice.
-* **The Timeline Sequence:** For any triggered event, the schedule must reflect:
+* **What counts as a training block:** A training block is any event living in the dedicated **Training** calendar (excluding its automatic "Get Ready"/"Travel" buffer blocks) — not any event matching a keyword. When Klaus is asked to create a new event, Klaus judges whether it is a workout; if so it is routed to the Training calendar with the buffers below. (Typical workouts: Running, Biking, Basketball, Gym, Five Fingers practice.)
+* **The Timeline Sequence:** For any training block, the schedule must reflect:
     * **T-Minus 60 minutes:** "Get Ready" block begins.
     * **T-Minus 15 minutes:** "Travel" block begins.
     * **T-Zero:** Workout/Practice event begins.

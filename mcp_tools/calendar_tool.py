@@ -19,10 +19,6 @@ from core.auth_google import GoogleAuthManager
 
 logger = logging.getLogger(__name__)
 
-# Keywords that identify a workout event.  Matched case-insensitively against
-# the event summary so we know when to add a travel buffer and a Get Ready block.
-WORKOUT_KEYWORDS: tuple[str, ...] = ("run", "bike", "basketball", "gym", "five fingers")
-
 
 class GoogleCalendarManager:
     """Authenticated wrapper around the Google Calendar v3 API.
@@ -336,7 +332,9 @@ class GoogleCalendarManager:
 
         Workflow
         --------
-        1. Detect whether the event is a workout via WORKOUT_KEYWORDS (if is_workout is None).
+        1. Treat the event as a workout iff is_workout is True (defaults to False
+           when unset — training blocks are defined by the caller's judgment /
+           Training-calendar membership, not by title keywords).
         2. Determine travel time: use the explicit argument if supplied,
            otherwise default to 15 min for workouts and 0 for everything else.
         3. Expand the event window by `travel` minutes on each side.
@@ -355,8 +353,10 @@ class GoogleCalendarManager:
                                       Pass 0 to suppress buffering even for
                                       workouts.  If None, defaults to 15 for
                                       workouts and 0 otherwise.
-            is_workout:               Whether the event is a workout. If None,
-                                      dynamic keyword matching is used.
+            is_workout:               Whether the event is a workout. Defaults to
+                                      False when None. When True, the event is
+                                      routed to the Training calendar and gets a
+                                      travel buffer + Get Ready prep block.
 
         Returns:
             A dict containing:
@@ -378,15 +378,14 @@ class GoogleCalendarManager:
         # -------------------------------------------------------------- #
         # Step 1 — Determine whether this is a workout and set travel.   #
         # -------------------------------------------------------------- #
+        # A "training block" is defined by membership of the Training calendar,
+        # not by title keywords. On creation, the caller (the brain) decides
+        # whether the event is a workout and passes is_workout explicitly. When
+        # unset we default to non-workout — there is no keyword fallback.
         if is_workout is None:
-            summary_lc = summary.lower()
-            is_workout = any(kw in summary_lc for kw in WORKOUT_KEYWORDS)
-            # A bare "Practice" event (the user's basketball session) is a workout.
-            # Matched as the exact title only — NOT a substring — so unrelated events
-            # like "Practice presentation" are never misclassified. ("Basketball
-            # practice" etc. are already caught by the keyword list above.)
-            if not is_workout and summary_lc.strip() == "practice":
-                is_workout = True
+            is_workout = False
+        # Get Ready prep blocks are buffer events, never workouts themselves —
+        # guard against a caller accidentally re-flagging one as a workout.
         if is_workout and summary.lower().startswith("get ready"):
             is_workout = False
 

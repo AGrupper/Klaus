@@ -479,6 +479,33 @@ class TestMacroGapCheck:
         assert len(protein_flags) == 1
 
 
+class TestWeatherConflictDetection:
+    """_detect_weather_conflicts now operates on Training-calendar events (training
+    blocks), keeping an outdoor-property filter so indoor sessions are not warned."""
+
+    _BAD_WEATHER = {"tomorrow": {"rain_chance": 80, "max_c": 22, "min_c": 18, "condition": "rain"}}
+
+    def test_outdoor_training_block_flagged(self):
+        from core.proactive_alerts import _detect_weather_conflicts
+        events = [{"summary": "Long Run", "start": "2026-06-07T07:00:00"}]
+        conflicts = _detect_weather_conflicts(events, self._BAD_WEATHER)
+        assert len(conflicts) == 1
+        assert conflicts[0]["event_summary"] == "Long Run"
+
+    def test_indoor_training_block_not_flagged(self):
+        """A gym/leg-day session is indoor → no weather warning even in heavy rain."""
+        from core.proactive_alerts import _detect_weather_conflicts
+        events = [{"summary": "Leg Day", "start": "2026-06-07T18:00:00"}]
+        conflicts = _detect_weather_conflicts(events, self._BAD_WEATHER)
+        assert conflicts == []
+
+    def test_good_weather_no_conflicts(self):
+        from core.proactive_alerts import _detect_weather_conflicts
+        events = [{"summary": "Long Run", "start": "2026-06-07T07:00:00"}]
+        good = {"tomorrow": {"rain_chance": 5, "max_c": 24, "min_c": 16, "condition": "sunny"}}
+        assert _detect_weather_conflicts(events, good) == []
+
+
 class TestSlotMappingAndMissDetection:
     """Unit tests for _resolve_anchor_times, _map_meals_to_slots, _detect_slot_misses (NUTR-02/03)."""
 
@@ -525,14 +552,27 @@ class TestSlotMappingAndMissDetection:
         assert pm is not None
         assert pm.hour == 19
 
-    def test_resolve_anchor_calendar_run_event(self):
-        """AM anchor resolved from calendar event with 'run' in summary (priority 2)."""
+    def test_resolve_anchor_training_event_before_noon_is_am(self):
+        """A training block starting before noon resolves the AM anchor by time —
+        no title keyword required (priority 2)."""
         from core.proactive_alerts import _resolve_anchor_times
         events = [
-            {"summary": "Morning run", "start": "2026-06-06T07:30:00"},
+            {"summary": "Leg Day", "start": "2026-06-06T07:30:00"},
         ]
-        am, _ = _resolve_anchor_times("2026-06-06", [], events)
-        assert am is not None
+        am, pm = _resolve_anchor_times("2026-06-06", [], events)
+        assert am is not None and am.hour == 7 and am.minute == 30
+        assert pm is None
+
+    def test_resolve_anchor_training_event_after_noon_is_pm(self):
+        """A training block starting at/after noon resolves the PM anchor by time —
+        no gym/upper/lower keyword required."""
+        from core.proactive_alerts import _resolve_anchor_times
+        events = [
+            {"summary": "Climbing", "start": "2026-06-06T18:00:00"},
+        ]
+        am, pm = _resolve_anchor_times("2026-06-06", [], events)
+        assert pm is not None and pm.hour == 18
+        assert am is None
 
     def test_resolve_anchor_rest_day_none(self):
         """Rest day with no activities and no calendar events → both anchors None."""
@@ -737,6 +777,14 @@ def _make_firestore_db_mock(*, meal_store=None, user_profile_store=None,
 
 class TestGatherNutritionData:
     """Unit tests for _gather_nutrition_data — best-effort gather with MealStore mock."""
+
+    @pytest.fixture(autouse=True)
+    def _mock_calendar_tool(self):
+        """Stub the calendar tool so anchor resolution (which now fetches today's
+        Training-calendar events) never touches real Google auth/network in tests."""
+        with patch("core.proactive_alerts._get_calendar_tool") as mock_ct:
+            mock_ct.return_value.list_training_events.return_value = []
+            yield mock_ct
 
     def test_gather_nutrition_data_function_exists(self):
         """_gather_nutrition_data must be importable from core.proactive_alerts."""

@@ -162,28 +162,31 @@ def test_calendar_manager_get_ready_no_workout():
 
     manager = GoogleCalendarManager(mock_auth)
 
-    # Test a summary that has workout keyword 'run' but starts with 'Get Ready'
-    # It should not trigger is_workout!
+    # The Get Ready guard: even with is_workout=True, a 'Get Ready:' event must
+    # never itself be treated as a workout (no nested prep block).
     result = manager.create_event(
         summary="Get Ready: Long Run with Brother",
         start_iso="2026-05-22T08:00:00+03:00",
-        end_iso="2026-05-22T09:00:00+03:00"
+        end_iso="2026-05-22T09:00:00+03:00",
+        is_workout=True,
     )
 
     assert "error" not in result
     assert result["event_id"] == "dummy-event-id"
-    # It should NOT have created a get_ready_event_id because is_workout was False!
+    # It should NOT have created a get_ready_event_id because the guard forced False!
     assert "get_ready_event_id" not in result
 
     # Verify that insert was only called ONCE (for the main event, not the prep event)
     assert mock_service.events().insert.call_count == 1
 
-    # Now test a regular workout event: 'Long Run with Brother'
+    # An explicit workout (is_workout=True) creates the prep block — training blocks
+    # are caller-judged now, not keyword-detected.
     mock_service.events().insert.reset_mock()
     result_workout = manager.create_event(
         summary="Long Run with Brother",
         start_iso="2026-05-22T08:00:00+03:00",
-        end_iso="2026-05-22T09:00:00+03:00"
+        end_iso="2026-05-22T09:00:00+03:00",
+        is_workout=True,
     )
 
     assert "error" not in result_workout

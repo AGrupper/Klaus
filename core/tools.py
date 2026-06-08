@@ -103,11 +103,13 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "create_calendar_event",
         "description": (
             "Create a new event on the user's Google Calendar. "
-            "For workout events (run, bike, basketball, gym, five fingers), a 15-minute travel buffer "
-            "is automatically embedded on each side of the event and a 45-minute 'Get Ready' prep "
-            "block is created immediately before it — pass travel_minutes_each_way to override the "
-            "default 15 min. For any other event type, pass travel_minutes_each_way whenever the "
-            "user explicitly states travel time to embed it inside the event window."
+            "You must decide whether the event is a workout and pass is_workout explicitly "
+            "(there is no automatic keyword detection). When is_workout=true the event is routed "
+            "to the dedicated Training calendar, a 15-minute travel buffer is embedded on each side, "
+            "and a 45-minute 'Get Ready' prep block is created immediately before it — pass "
+            "travel_minutes_each_way to override the default 15 min. For non-workout events, pass "
+            "travel_minutes_each_way whenever the user explicitly states travel time to embed it "
+            "inside the event window."
         ),
         "input_schema": {
             "type": "object",
@@ -132,9 +134,10 @@ TOOL_SCHEMAS: list[dict] = [
                 "is_workout": {
                     "type": "boolean",
                     "description": (
-                        "Optional boolean. Set to true if the event represents a physical workout or run "
-                        "that requires travel buffers and pre-workout prep blocks. Pass false to suppress "
-                        "them for standard meetings/events. If omitted, uses the automatic keyword heuristic."
+                        "Set to true if the event is a physical workout/training session — this routes it "
+                        "to the Training calendar and adds travel buffers + a pre-workout 'Get Ready' prep "
+                        "block. Set false for standard meetings/events. Always pass this explicitly based "
+                        "on your judgment; if omitted it defaults to false (non-workout)."
                     ),
                 },
             },
@@ -1229,8 +1232,25 @@ def _get_memory_tool() -> MemoryTool:
 # ------------------------------------------------------------------ #
 
 def _handle_list_calendar_events(time_min_iso: str, time_max_iso: str) -> str:
-    """Delegate to GoogleCalendarManager.list_events and serialise the result."""
-    events = _get_calendar_tool().list_events(time_min_iso, time_max_iso)
+    """List events from the primary AND Training calendars, merged chronologically.
+
+    Training blocks live in the dedicated Training calendar, so reading only the
+    primary calendar would hide them from the brain. We merge both views (Training
+    events already have their Get Ready:/Travel: buffer blocks stripped by
+    list_training_events) and tag each event with its source calendar so the brain
+    can tell a training block from a regular event.
+    """
+    cal = _get_calendar_tool()
+
+    primary = cal.list_events(time_min_iso, time_max_iso)
+    for ev in primary:
+        ev.setdefault("calendar", "primary")
+
+    training = cal.list_training_events(time_min_iso, time_max_iso)
+    for ev in training:
+        ev["calendar"] = "Training"
+
+    events = sorted(primary + training, key=lambda e: e.get("start") or "")
     return json.dumps({"events": events, "count": len(events)})
 
 

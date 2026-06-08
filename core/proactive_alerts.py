@@ -23,8 +23,12 @@ logger = logging.getLogger(__name__)
 
 _TZ = ZoneInfo("Asia/Jerusalem")
 
-# Additional outdoor keywords beyond WORKOUT_KEYWORDS in calendar_tool.py
-_OUTDOOR_EXTRA: tuple[str, ...] = ("outdoor", "park", "beach", "hike", "bike ride")
+# Outdoor-property keywords. Training blocks are defined by the Training calendar
+# (not keywords); these are used only to decide whether a training block is
+# weather-sensitive — an indoor gym session needs no rain warning.
+_OUTDOOR_KEYWORDS: tuple[str, ...] = (
+    "run", "bike", "ride", "outdoor", "park", "beach", "hike",
+)
 
 
 # ------------------------------------------------------------------ #
@@ -104,9 +108,10 @@ _GARMIN_AM_TYPES: frozenset[str] = frozenset(
 _GARMIN_PM_TYPES: frozenset[str] = frozenset(
     {"strength_training", "fitness_equipment"}
 )
-# Calendar event keywords for anchor resolution (priority 2 fallback).
-_CALENDAR_AM_KEYWORDS: tuple[str, ...] = ("run",)
-_CALENDAR_PM_KEYWORDS: tuple[str, ...] = ("gym", "lower body", "upper body")
+# Clock-hour boundary splitting a training block into the AM vs PM anchor
+# (priority-2 fallback). A training block starting before noon anchors the AM
+# slot; at/after noon anchors the PM slot.
+_ANCHOR_NOON_HOUR: int = 12
 
 
 # ------------------------------------------------------------------ #
@@ -201,20 +206,23 @@ def _resolve_anchor_times(
 
     Priority order for AM anchor:
       1. Garmin activity where type in _GARMIN_AM_TYPES (running/trail_running/treadmill)
-      2. Calendar event with any _CALENDAR_AM_KEYWORDS in summary ("run")
+      2. Earliest training block (Training-calendar event) starting before noon.
       3. None — do NOT fabricate an anchor on a true rest day (Pitfall 2, D-10).
          The fallback to 07:30 is at the caller's discretion (plan 04 passes already-fetched data).
 
     Priority order for PM anchor:
       1. Garmin activity where type in _GARMIN_PM_TYPES (strength_training/fitness_equipment)
-      2. Calendar event with any _CALENDAR_PM_KEYWORDS in summary ("gym"/"lower body"/"upper body")
+      2. Earliest training block (Training-calendar event) starting at/after noon.
       3. None — do NOT fabricate on a rest day.
+
+    Training blocks are defined by Training-calendar membership, not title keywords;
+    the AM/PM split is purely by start time (_ANCHOR_NOON_HOUR).
 
     Args:
         today_iso:         YYYY-MM-DD string for date-matching calendar events.
         garmin_activities: Already-fetched list from fetch_garmin_activities(days=1).
                            Each dict has keys: "type", "date" (ISO string), "activity_id", etc.
-        calendar_events:   Already-fetched list from calendar tool for today_iso.
+        calendar_events:   Already-fetched Training-calendar events for today_iso.
                            Each dict has keys: "summary", "start" (ISO string), etc.
 
     Returns:
@@ -234,18 +242,19 @@ def _resolve_anchor_times(
             except (KeyError, ValueError):
                 continue
 
-    # --- AM anchor (priority 2: calendar event with "run" in summary) ---
+    # --- AM anchor (priority 2: earliest training block starting before noon) ---
     if am_anchor is None:
         for event in (calendar_events or []):
-            summary_lower = (event.get("summary") or "").lower()
-            if any(kw in summary_lower for kw in _CALENDAR_AM_KEYWORDS):
-                start = event.get("start") or ""
-                if "T" in start:
-                    try:
-                        am_anchor = _to_naive_local(start)
-                        break
-                    except ValueError:
-                        continue
+            start = event.get("start") or ""
+            if "T" not in start:
+                continue
+            try:
+                start_dt = _to_naive_local(start)
+            except ValueError:
+                continue
+            if start_dt.hour < _ANCHOR_NOON_HOUR:
+                am_anchor = start_dt
+                break
 
     # --- PM anchor (priority 1: Garmin strength activity) ---
     for act in (garmin_activities or []):
@@ -256,18 +265,19 @@ def _resolve_anchor_times(
             except (KeyError, ValueError):
                 continue
 
-    # --- PM anchor (priority 2: calendar event with gym/lower body/upper body) ---
+    # --- PM anchor (priority 2: earliest training block starting at/after noon) ---
     if pm_anchor is None:
         for event in (calendar_events or []):
-            summary_lower = (event.get("summary") or "").lower()
-            if any(kw in summary_lower for kw in _CALENDAR_PM_KEYWORDS):
-                start = event.get("start") or ""
-                if "T" in start:
-                    try:
-                        pm_anchor = _to_naive_local(start)
-                        break
-                    except ValueError:
-                        continue
+            start = event.get("start") or ""
+            if "T" not in start:
+                continue
+            try:
+                start_dt = _to_naive_local(start)
+            except ValueError:
+                continue
+            if start_dt.hour >= _ANCHOR_NOON_HOUR:
+                pm_anchor = start_dt
+                break
 
     return am_anchor, pm_anchor
 
@@ -597,16 +607,24 @@ def _gather_nutrition_data(today_iso: str, garmin_activities: list[dict] | None 
         logger.warning("proactive_alerts: nutrition targets fetch failed", exc_info=True)
 
     # --- Anchor resolution (reuses garmin_activities already fetched) ---
-    # calendar_events for today's date: not directly available here (cron fetches
-    # target_date = tomorrow). Anchor resolution uses garmin_activities only (no calendar
-    # fallback at this point — the caller passes the already-fetched garmin list).
+    # Priority 1 is Garmin activity type; priority 2 is today's training blocks
+    # (Training-calendar events), split AM/PM by start time. Best-effort fetch.
+    training_events: list[dict] = []
+    try:
+        training_events = _get_calendar_tool().list_training_events(
+            f"{today_iso}T00:00:00+03:00",
+            f"{today_iso}T23:59:59+03:00",
+        )
+    except Exception:
+        logger.warning("proactive_alerts: training-event fetch for anchors failed", exc_info=True)
+
     am_anchor: datetime | None = None
     pm_anchor: datetime | None = None
     try:
         am_anchor, pm_anchor = _resolve_anchor_times(
             today_iso,
             garmin_activities=garmin_activities or [],
-            calendar_events=[],  # no today-calendar available in this gather path
+            calendar_events=training_events,
         )
         result["am_anchor"] = am_anchor.isoformat() if am_anchor else None
         result["pm_anchor"] = pm_anchor.isoformat() if pm_anchor else None
@@ -718,13 +736,21 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         logger.info("Proactive alerts: already processed for %s — skipping", target_date)
         return
 
-    # Fetch tomorrow's events
+    # Fetch tomorrow's events (primary calendar — used for overload + travel checks)
     events = _get_calendar_tool().list_events(
         f"{target_date}T00:00:00+03:00",
         f"{target_date}T23:59:59+03:00",
         max_results=50,
     )
     logger.info("Proactive alerts: %d events fetched for %s", len(events), target_date)
+
+    # Tomorrow's training blocks (Training calendar) — the weather check considers
+    # only real training blocks, not keyword-matched primary-calendar events.
+    training_events = _get_calendar_tool().list_training_events(
+        f"{target_date}T00:00:00+03:00",
+        f"{target_date}T23:59:59+03:00",
+        max_results=50,
+    )
 
     # Fetch weather
     weather: dict | None = None
@@ -735,7 +761,7 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         logger.warning("Proactive alerts: weather fetch failed", exc_info=True)
 
     # Detect all alert types
-    weather_alerts = _detect_weather_conflicts(events, weather) if weather else []
+    weather_alerts = _detect_weather_conflicts(training_events, weather) if weather else []
     overload_alert = _detect_overloaded_day(events)
     home = _home_address()
     travel_alerts = _detect_travel_issues(events, home) if home else []
@@ -898,14 +924,15 @@ def _mark_processed(target_date: str, *, alert_sent: bool) -> None:
 # ------------------------------------------------------------------ #
 
 def _detect_weather_conflicts(events: list[dict], weather: dict) -> list[dict]:
-    """Find timed outdoor events that conflict with bad weather tomorrow.
+    """Find timed outdoor training blocks that conflict with bad weather tomorrow.
+
+    ``events`` are tomorrow's Training-calendar events (training blocks). Indoor
+    sessions are filtered out via the outdoor-property keyword check below.
 
     Returns:
         [{"event_summary", "event_time", "issue"}, ...]
     """
-    from mcp_tools.calendar_tool import WORKOUT_KEYWORDS
-
-    outdoor_keywords = WORKOUT_KEYWORDS + _OUTDOOR_EXTRA
+    outdoor_keywords = _OUTDOOR_KEYWORDS
     tomorrow = weather.get("tomorrow", {})
     rain_chance = tomorrow.get("rain_chance", 0)
     temp_max_c = tomorrow.get("max_c", 20)

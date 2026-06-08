@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
 status: Awaiting next milestone
 stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
-last_updated: "2026-06-08T18:00:00.000Z"
-last_activity: 2026-06-08 — Hevy strength integration shipped + deployed (post-v4.0 increment)
+last_updated: "2026-06-08T20:30:00.000Z"
+last_activity: 2026-06-08 — training blocks redefined by Training-calendar membership (keyword detection removed)
 progress:
   total_phases: 5
   completed_phases: 5
@@ -24,6 +24,20 @@ Status: Awaiting next milestone
 Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
+
+- **Training blocks = Training-calendar membership** (2026-06-08, undeployed): a training
+  block is now defined as any event in the dedicated **Training** calendar (excluding its
+  `Get Ready:`/`Travel:` buffer blocks), not by title keywords. Removed `WORKOUT_KEYWORDS`
+  + bare-"Practice" auto-detection from `create_event` (`is_workout` defaults to False; the
+  brain decides per event). Read paths follow suit: evening **weather alerts** source
+  tomorrow's Training-calendar events (with a decoupled `_OUTDOOR_KEYWORDS` filter for
+  indoor/outdoor weather-sensitivity only), and **nutrition anchors** split AM/PM by start
+  time over Training events instead of keywords (the previously-dead calendar fallback is
+  now live). `list_calendar_events` merges primary + Training events (tagged + sorted) so
+  the brain can see training blocks. Tradeoff: weather alerts no longer warn about
+  non-training outdoor events in the *primary* calendar. `is_free` still primary-only
+  (pre-existing). Files: `mcp_tools/calendar_tool.py`, `core/tools.py`,
+  `core/proactive_alerts.py`, `prompts/smart_agent.md`, `docs/USER.md`. Suite 1101 green.
 
 - **Hevy strength integration** (2026-06-08, deployed rev `klaus-agent-00093-dww`):
   full per-set workout sync from Hevy (Pro API, daily pull `/cron/strength-sync`,
