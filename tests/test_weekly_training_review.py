@@ -67,7 +67,15 @@ def test_biometrics_sql_uses_only_real_columns(patched_sources):
     daily_biometrics. This is the exact bug that returned 'column "hrv_status"
     does not exist' and made biometrics come back empty."""
     wtr._gather_week_data("2026-06-07")  # a Sunday
-    sql = patched_sources["query_health_database"].call_args[0][0]
+    # Phase 25 added a second query_health_database caller (dense Garmin pace
+    # history, FROM activities), so .call_args is no longer guaranteed to be the
+    # biometrics query — select the biometrics call (FROM daily_biometrics)
+    # explicitly.
+    sql = next(
+        c.args[0]
+        for c in patched_sources["query_health_database"].call_args_list
+        if "daily_biometrics" in c.args[0]
+    )
     # Phantom columns that broke the query:
     assert "hrv_status" not in sql
     assert "sleep_hours" not in sql
