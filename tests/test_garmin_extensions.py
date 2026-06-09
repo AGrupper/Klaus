@@ -256,3 +256,52 @@ def test_write_today_biometrics_maps_sleep_hours_to_sleep_duration(monkeypatch):
     assert params[2] == 92      # hrv_baseline
     assert params[3] == 81      # hrv_overnight
     assert params[5] == 7.8     # sleep_duration (mapped from sleep_hours)
+
+
+# ---------------------------------------------------------------------------
+# Bodyweight — _coerce_weight_kg + fetch_garmin_weight
+# ---------------------------------------------------------------------------
+
+def test_coerce_weight_kg_grams_and_kg():
+    """Grams (>300) are /1000; a plain kg value passes through, rounded to 0.1."""
+    assert gt._coerce_weight_kg(73000) == 73.0      # grams
+    assert gt._coerce_weight_kg(74.0) == 74.0       # already kg
+    assert gt._coerce_weight_kg(73450) == 73.5      # grams, rounded
+
+
+def test_coerce_weight_kg_rejects_implausible():
+    """Fat-finger / unit mistakes / junk are rejected (return None), never stored."""
+    assert gt._coerce_weight_kg(974) is None        # 974 -> 0.974 kg -> below band
+    assert gt._coerce_weight_kg(740000) is None     # 740 kg -> above band
+    assert gt._coerce_weight_kg(0) is None
+    assert gt._coerce_weight_kg(None) is None
+    assert gt._coerce_weight_kg("abc") is None
+
+
+def test_fetch_garmin_weight_latest_weigh_in():
+    """Returns the most recent weigh-in (grams→kg), newest date wins."""
+    fake_api = MagicMock()
+    fake_api.get_body_composition.return_value = {
+        "dateWeightList": [
+            {"date": 1717000000000, "weight": 75000},
+            {"date": 1717500000000, "weight": 73200},  # newest
+        ]
+    }
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        assert gt.fetch_garmin_weight() == 73.2
+
+
+def test_fetch_garmin_weight_falls_back_to_profile_setting():
+    """No weigh-in → fall back to the static Garmin profile-setting weight."""
+    fake_api = MagicMock()
+    fake_api.get_body_composition.return_value = {"dateWeightList": []}
+    fake_api.get_userprofile_settings.return_value = {"userData": {"weight": 74000}}
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        assert gt.fetch_garmin_weight() == 74.0
+
+
+def test_fetch_garmin_weight_none_on_auth_failure():
+    """Auth failure is fail-open → None (caller keeps last-known weight)."""
+    with patch.object(gt, "_authed_garmin_client",
+                      side_effect=gt.GarminAuthError("no creds")):
+        assert gt.fetch_garmin_weight() is None
