@@ -393,18 +393,22 @@ class TestPhase19ToolRegistration:
         )
         assert schema["input_schema"]["required"] == ["patch"]
 
-    # ---- Phase 19 Plan 03 — fetch_recent_meals (worker-delegated) ----
+    # ---- Nutrition: fetch_recent_meals is brain-direct (rebuilt) ----
 
-    def test_fetch_recent_meals_worker_delegated(self):
-        """NUTR-03: fetch_recent_meals is worker-delegated at all 4 sites."""
-        # NOT in smart-direct (worker tier)
-        assert "fetch_recent_meals" not in tools.SMART_AGENT_DIRECT_TOOLS
+    def test_fetch_recent_meals_brain_direct(self):
+        """fetch_recent_meals is brain-direct so totals are server-computed, not
+        summed by the worker LLM (the source of the wrong/drifting numbers)."""
+        # IN smart-direct (brain tier)
+        assert "fetch_recent_meals" in tools.SMART_AGENT_DIRECT_TOOLS
         # IN tool schemas
         names = {s["name"] for s in tools.TOOL_SCHEMAS}
         assert "fetch_recent_meals" in names
-        # IN worker schemas (delegated through worker)
+        # NOT in worker schemas — no worker summarization hop
         worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "fetch_recent_meals" in worker_names
+        assert "fetch_recent_meals" not in worker_names
+        # Exposed to the brain via get_smart_schemas
+        smart_names = {s["name"] for s in tools.get_smart_schemas()}
+        assert "fetch_recent_meals" in smart_names
         # IN handlers dispatch
         assert "fetch_recent_meals" in tools._HANDLERS
 
@@ -415,6 +419,53 @@ class TestPhase19ToolRegistration:
         )
         assert schema["input_schema"]["properties"]["hours"]["type"] == "integer"
         assert schema["input_schema"]["required"] == []
+
+    def test_fetch_recent_meals_totals_are_server_computed(self, monkeypatch):
+        """Totals come from get_day_aggregate (Python arithmetic), not LLM
+        summing — so the same question returns the SAME total every time. This is
+        the regression guard for the wrong/drifting-numbers bug this tool fixes.
+        """
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        import memory.firestore_db as firestore_db
+
+        tz = ZoneInfo("Asia/Jerusalem")
+        today = datetime.now(tz).date().isoformat()
+        meals = [
+            {"timestamp": f"{today}T08:00:00+03:00", "calories": 500,
+             "protein_g": 40, "carbs_g": 60, "fat_g": 10, "fiber_g": 5, "meal_type": 1},
+            {"timestamp": f"{today}T13:00:00+03:00", "calories": 700,
+             "protein_g": 50, "carbs_g": 80, "fat_g": 20, "fiber_g": 8, "meal_type": 2},
+        ]
+        real_meal_store = firestore_db.MealStore
+
+        class FakeMealStore:
+            def __init__(self, *a, **k):
+                pass
+
+            def get_day(self, date_str):
+                return list(meals) if date_str == today else []
+
+            def get_day_aggregate(self, date_str):
+                # Reuse the REAL server-side arithmetic — the whole point is that
+                # Python computes the totals, never the model.
+                return real_meal_store.get_day_aggregate(self, date_str)
+
+        monkeypatch.setattr(firestore_db, "MealStore", FakeMealStore)
+
+        # A wide window keeps both meals in-window regardless of wall-clock time.
+        out1 = tools._handle_fetch_recent_meals(hours=1000)
+        out2 = tools._handle_fetch_recent_meals(hours=1000)
+        assert out1 == out2, "identical input must yield byte-identical totals"
+
+        data = json.loads(out1)
+        expected_totals = FakeMealStore().get_day_aggregate(today)["totals"]
+        assert data["totals_by_day"][today] == expected_totals
+        # window_totals = Python sum across the window (40+50 protein, 500+700 kcal)
+        assert data["window_totals"]["protein_g"] == 90
+        assert data["window_totals"]["calories"] == 1200
+        # the per-meal list is still present for recency/timing reasoning
+        assert len(data["meals"]) == 2
 
     def test_get_acwr_worker_delegated(self):
         """Phase 19 SC-1 closeout: get_acwr is worker-delegated at all 4 sites."""

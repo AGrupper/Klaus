@@ -288,6 +288,23 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: meals aggregate failed", exc_info=True)
 
+    # Performance-fueling anchors for the forward-looking "Fuel plan for today".
+    # The briefing is a single tool-less LLM call, so the fueling-coach guidance
+    # (meal_audit.md, appended in _compose_briefing) cannot call get_training_profile
+    # itself — the anchors must be in today_data. Silent-omit on empty (Pitfall 4):
+    # no anchors → no key → the prompt drops the fuel-plan section.
+    try:
+        from memory.firestore_db import UserProfileStore
+        profile = UserProfileStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).load()
+        targets = profile.get("nutrition_targets")
+        if targets:
+            data["nutrition_targets"] = targets
+    except Exception:
+        logger.warning("morning_briefing: nutrition_targets fetch failed", exc_info=True)
+
     # PHASE 23 — BLOCK-01 / D-04: surface the active mesocycle block (date-range
     # resolved, D-01) with a derived "Week N of 16" framing, or a pre-cycle countdown
     # before the 2026-06-21 anchor. Best-effort + silent-omit (Pitfall 4): a None

@@ -73,6 +73,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "get_training_context",
     # Garmin per-run detail — full splits + dynamics for specific running coaching
     "get_run_detail",
+    # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
+    "fetch_recent_meals",
 })
 
 # ------------------------------------------------------------------ #
@@ -814,11 +816,15 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "fetch_recent_meals",
         "description": (
-            "Get the user's logged nutrition entries from the last N hours "
+            "Get the user's logged nutrition from the last N hours "
             "(Lifesum → Apple HealthKit → Klaus on iOS, or Google Fit on Android; "
-            "both land in the same meal store). Each entry has calories, protein_g, "
-            "carbs_g, fat_g, fiber_g, meal_type, optional food_item. "
-            "Default hours=24. Worker-delegated."
+            "both land in the same meal store). Returns an object with: `meals` "
+            "(per-meal entries — calories, protein_g, carbs_g, fat_g, fiber_g, "
+            "meal_type, optional food_item), `totals_by_day` (exact macro totals "
+            "per calendar date, SERVER-COMPUTED in Python), and `window_totals` "
+            "(exact macro totals across the whole window). For any nutrition "
+            "total/status question, report the server-computed totals VERBATIM — "
+            "never sum the meals yourself. Default hours=24. Brain-direct."
         ),
         "input_schema": {
             "type": "object",
@@ -1180,6 +1186,9 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "get_training_context",
         # Garmin per-run detail — brain-direct (Klaus reasons over splits/dynamics)
         "get_run_detail",
+        # Nutrition — brain-direct so the brain reads server-computed totals itself
+        # (was worker-delegated; the worker summarization hop made totals drift)
+        "fetch_recent_meals",
     }
 ]
 
@@ -1757,18 +1766,29 @@ def _handle_get_acwr() -> str:
 
 
 def _handle_fetch_recent_meals(hours: int = 24) -> str:
-    """Phase 19.3: recent meals from MealStore (multi-source: HealthKit + Google Fit).
+    """Brain-direct: recent meals + SERVER-COMPUTED macro totals from MealStore.
 
     Reads ``MealStore.get_day()`` for the Asia/Jerusalem calendar date(s) the
-    requested window touches, then filters to meals within the last ``hours``.
-    This replaces the legacy direct Google Fit read, which returns ``[]`` on iOS
-    (Lifesum on iPhone writes to Apple HealthKit, surfaced into MealStore by
-    ``/cron/healthkit-sync``). MealStore is the shared, source-agnostic store the
+    requested window touches, then filters per-meal entries to the last ``hours``.
+    Lifesum on iPhone writes to Apple HealthKit, surfaced into MealStore by
+    ``/cron/healthkit-sync``; MealStore is the shared, source-agnostic store the
     morning briefing already reads, so meals from either source are visible here.
 
-    Each meal dict includes ``fiber_g`` alongside the core macros (Phase 19.2).
-    Returns a JSON-encoded list of meal dicts. On error returns ``{"error": ...}``
-    so the worker LLM gets a structured tool-result rather than a raised exception.
+    Returns a JSON object (NOT a bare list) with three keys:
+
+    - ``meals``: per-meal entries within the last ``hours`` (each includes
+      ``fiber_g`` alongside the core macros — Phase 19.2), ascending by time.
+    - ``totals_by_day``: exact macro totals per calendar date the window
+      touches, computed in **Python** by ``MealStore.get_day_aggregate`` (the
+      same source of truth the morning briefing and ``get_training_context``
+      use, so chat and briefing can never disagree). These are FULL-calendar-day
+      totals — the authoritative "how much did I eat on date X" number.
+    - ``window_totals``: those per-day totals summed across the window, in Python.
+
+    The brain MUST report these totals verbatim and never sum the ``meals`` list
+    itself — LLM column-summing was the source of the wrong/drifting numbers this
+    tool was rebuilt to fix. On error returns ``{"error": ...}`` so the brain
+    gets a structured tool-result rather than a raised exception.
     """
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
@@ -1784,9 +1804,9 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
         )
         # A window of `hours` (default 24) can straddle midnight, so union the
         # calendar dates the window touches. MealStore.get_day never raises.
-        dates = {now.date().isoformat(), cutoff.date().isoformat()}
+        dates = sorted({now.date().isoformat(), cutoff.date().isoformat()})
         meals: list[dict] = []
-        for d in sorted(dates):
+        for d in dates:
             meals.extend(ms.get_day(d))
         out: list[dict] = []
         for m in meals:
@@ -1797,7 +1817,27 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
             except (KeyError, ValueError, TypeError):
                 # Malformed timestamp on one entry → skip it, keep the rest.
                 continue
-        return json.dumps(out)
+
+        # Server-computed totals — reuse get_day_aggregate (Python arithmetic),
+        # never leave macro-summing to the LLM. totals_by_day is keyed only by
+        # dates that actually have logged meals (get_day_aggregate returns {}
+        # for an empty day — Pitfall 4 contract).
+        totals_by_day: dict[str, dict] = {}
+        for d in dates:
+            agg = ms.get_day_aggregate(d)
+            if agg:
+                totals_by_day[d] = agg["totals"]
+        macro_keys = ("calories", "protein_g", "carbs_g", "fat_g", "fiber_g")
+        window_totals = {
+            k: sum(day.get(k, 0) or 0 for day in totals_by_day.values())
+            for k in macro_keys
+        }
+
+        return json.dumps({
+            "meals": out,
+            "totals_by_day": totals_by_day,
+            "window_totals": window_totals,
+        })
     except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
         return json.dumps({"error": str(exc)})
 
