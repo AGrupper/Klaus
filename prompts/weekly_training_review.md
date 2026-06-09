@@ -102,6 +102,10 @@ the dated projection block follows separately:
    to `run_details_prev` where a like-for-like run exists. This is REAL data — never invent dynamics;
    if a run's `has_dynamics` is false (treadmill / no strap), omit cadence/stride commentary for it.
    Vary which signal you focus on week to week rather than always reporting the same one.
+   Calibrate, don't manufacture: an easy/recovery run's flat signature is expected — say nothing
+   about it unless it genuinely deviates. Respect `derived.split_shape` (None = no real shape to
+   read) and never call a small pace difference or a low-`active_lap_count` run a "negative split" —
+   few/uneven laps are usually manual stops, not a pacing strategy.
 
 3. **ACWR** — From `biometrics_this_week` (7-day acute load vs 28-day chronic load proxy).
    If ACWR is computable from HRV/sleep/load trends, state it (e.g. "ACWR running at 1.1 —

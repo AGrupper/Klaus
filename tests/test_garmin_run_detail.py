@@ -85,12 +85,56 @@ def test_derived_excludes_rest_laps():
     activity, details, splits, hr = _interval_session()
     doc = normalize_run_detail(activity, details, splits, hr)
     d = doc["derived"]
-    # active paces 225 / 230 / 237.5 slow across the set -> positive split
-    assert d["split_shape"] == "positive"
+    # 3 active laps (one REST excluded) — too few to assert a split shape.
+    assert d["active_lap_count"] == 3
+    assert d["split_shape"] is None
     # cadence fades 182 -> 176 over active laps (rest lap's 160 ignored)
     assert d["cadence_drift"] == -6.0
     assert d["hr_drift"] is not None and d["hr_drift"] > 0
     assert d["pace_cv"] is not None and d["pace_cv"] >= 0
+
+
+def _run_with_active_paces(paces_sec_per_km, atype="running"):
+    """Build a run whose active laps have the given per-km paces (1km each)."""
+    splits = {"splits": [
+        {"type": "RWD_RUN", "distance": 1000, "duration": p, "averageHR": 150,
+         "averageRunningCadenceInStepsPerMinute": 178, "strideLength": 118}
+        for p in paces_sec_per_km
+    ]}
+    total_d = 1000 * len(paces_sec_per_km)
+    total_t = sum(paces_sec_per_km)
+    activity = {"activity_id": 321, "type": atype,
+                "startTimeLocal": "2026-06-08 06:00:00",
+                "distance_m": total_d, "duration_sec": total_t}
+    details = _details(rows=[[150, 178, 1.18]], keys=["directHeartRate", "directDoubleCadence", "directStrideLength"])
+    return normalize_run_detail(activity, details, splits, [])
+
+
+def test_split_shape_none_from_two_laps():
+    # The drink-break case: watch stopped mid-run → 2 laps (4.18km @ 5:36, 3.81 @ 5:28).
+    # That 8s/km gap is a pause artifact, not a negative split — must NOT be asserted.
+    doc = _run_with_active_paces([336, 328])
+    assert doc["derived"]["active_lap_count"] == 2
+    assert doc["derived"]["split_shape"] is None
+
+
+def test_even_when_swing_within_band():
+    # 4 laps, sub-4% swing across halves → "even", not a split.
+    doc = _run_with_active_paces([300, 302, 301, 303])
+    assert doc["derived"]["active_lap_count"] == 4
+    assert doc["derived"]["split_shape"] == "even"
+
+
+def test_split_shape_positive_from_four_laps_with_real_swing():
+    # 4 laps slowing well past the band (300 → 330) → positive split.
+    doc = _run_with_active_paces([300, 305, 320, 330])
+    assert doc["derived"]["split_shape"] == "positive"
+
+
+def test_split_shape_negative_from_four_laps_with_real_swing():
+    # 4 laps progressively faster (330 → 300) → negative split.
+    doc = _run_with_active_paces([330, 320, 305, 300])
+    assert doc["derived"]["split_shape"] == "negative"
 
 
 def test_hr_zones_normalized_with_pct():

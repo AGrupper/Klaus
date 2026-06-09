@@ -610,10 +610,22 @@ def _active_laps(splits: list[dict]) -> list[dict]:
     return out
 
 
+# A "split shape" is only a real pattern from a structured run. Fewer laps than
+# this are almost always manual stops (a drink break, a crossing) — calling a
+# 2-lap run a "negative split" reads an artifact as intent. Require enough laps
+# AND a swing past the band before asserting a direction.
+_SPLIT_SHAPE_MIN_LAPS = 4
+_SPLIT_SHAPE_BAND = 0.04  # within ±4% reads "even", not negative/positive
+
+
 def _compute_derived(splits: list[dict], summary: dict) -> dict:
     """Verdict-free coaching signals computed once from the recorded laps.
 
-    - split_shape: negative / positive / even (first vs second half mean pace, ±2%).
+    - split_shape: negative / positive / even — ONLY from >= 4 active laps with a
+      swing past ±4%; None otherwise (too few laps to read a real shape; few/uneven
+      laps are usually manual stops, not a pacing strategy).
+    - active_lap_count: how many running laps the watch recorded (lets coaching see
+      "only 2 laps" and not over-read them).
     - cadence_drift: avg cadence first third vs last third of active laps (spm).
     - hr_drift: (2nd-half − 1st-half mean HR) / 1st-half, over active laps.
     - pace_cv: coefficient of variation of active-lap pace = interval consistency.
@@ -621,6 +633,7 @@ def _compute_derived(splits: list[dict], summary: dict) -> dict:
     active = _active_laps(splits)
     derived: dict = {
         "split_shape": None,
+        "active_lap_count": len(active),
         "cadence_drift": None,
         "hr_drift": None,
         "pace_cv": None,
@@ -632,21 +645,24 @@ def _compute_derived(splits: list[dict], summary: dict) -> dict:
     half = len(active) // 2
 
     if len(paces) >= 2:
-        first = paces[: len(paces) // 2] or paces[:1]
-        second = paces[len(paces) // 2 :] or paces[-1:]
-        m1, m2 = sum(first) / len(first), sum(second) / len(second)
-        if m1 > 0:
-            delta = (m2 - m1) / m1
-            if delta < -0.02:
-                derived["split_shape"] = "negative"
-            elif delta > 0.02:
-                derived["split_shape"] = "positive"
-            else:
-                derived["split_shape"] = "even"
+        # pace_cv is a fact for any multi-lap run; split_shape needs enough laps.
         mean = sum(paces) / len(paces)
         if mean > 0:
             var = sum((p - mean) ** 2 for p in paces) / len(paces)
             derived["pace_cv"] = round((var ** 0.5) / mean, 3)
+
+        if len(paces) >= _SPLIT_SHAPE_MIN_LAPS:
+            first = paces[: len(paces) // 2]
+            second = paces[len(paces) // 2 :]
+            m1, m2 = sum(first) / len(first), sum(second) / len(second)
+            if m1 > 0:
+                delta = (m2 - m1) / m1
+                if delta < -_SPLIT_SHAPE_BAND:
+                    derived["split_shape"] = "negative"
+                elif delta > _SPLIT_SHAPE_BAND:
+                    derived["split_shape"] = "positive"
+                else:
+                    derived["split_shape"] = "even"
 
     cad = [l["avg_cadence_spm"] for l in active if l.get("avg_cadence_spm") is not None]
     if len(cad) >= 3:
