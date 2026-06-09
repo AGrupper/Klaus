@@ -214,6 +214,16 @@ class AgentOrchestrator:
         self._smart_prompt_template = _load_prompt("prompts/smart_agent.md")
         self._worker_prompt_template = _load_prompt("prompts/worker_agent.md")
 
+        # Nutrition fueling-coach guidance — appended to the smart_system in the
+        # CHAT path (handle_message) so on-demand nutrition answers get the same
+        # performance-fueling coaching the morning briefing / autonomous tick
+        # already inject. Load defensively: a missing file must NOT crash chat.
+        try:
+            self._meal_audit_content = _load_prompt("prompts/meal_audit.md")
+        except FileNotFoundError:
+            logger.warning("meal_audit.md not found — nutrition coaching disabled in chat")
+            self._meal_audit_content = ""
+
         self.conversation_manager = build_conversation_store_from_env()
 
         # Load SELF.md content once at startup for stable prompt injection.
@@ -458,6 +468,12 @@ class AgentOrchestrator:
 
         # Per D-03: SELF.md injected into smart_system only (not worker).
         smart_system = self.render_smart_system(self._smart_prompt_template)
+        # Append the nutrition fueling-coach guidance (chat path only — the
+        # autonomous/morning-briefing paths append it to their own composed
+        # prompts, so doing it here rather than inside render_smart_system avoids
+        # a double-append on those paths). Mirrors the cron append pattern.
+        if self._meal_audit_content:
+            smart_system = smart_system + "\n\n" + self._meal_audit_content
         worker_system = self._worker_prompt_template.replace("{today_date}", _today_israel())
 
         # Persist the incoming message and get the full history for this session.

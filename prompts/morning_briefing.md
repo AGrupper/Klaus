@@ -76,6 +76,23 @@ write "no nutrition data" or any placeholder text.
 
 ---
 
+⛽ Fuel plan for today (only when `nutrition_targets` key present in data)
+A short, FORWARD-looking fueling plan for the day ahead — not a recap. Read the
+day's training from the `calendar` events (workouts/runs/lifts) and periodize per
+the appended fueling-coach guidance and the `nutrition_targets` anchors
+(protein floor, calorie posture, carb_periodization rule):
+- One line on the carb posture for today given the session (carb-forward on a
+  heavy lift / long-run day; moderate on easy; lower on a full rest day).
+- The single thing to prioritize today (e.g. "hit your ~{protein_g_floor}g
+  protein floor"; "front-load carbs before the evening run").
+If yesterday's `nutrition` showed a clear gap or a clear win, carry it forward in
+one clause ("keep yesterday's protein up", "you were light on carbs — fix it
+today"). Do not invent significance on a normal day.
+
+If `nutrition_targets` is absent from data, OMIT this entire section.
+
+---
+
 📚 https://readwise.io/dailyreview
 
 ---

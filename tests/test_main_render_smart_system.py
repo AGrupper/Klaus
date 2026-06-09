@@ -730,3 +730,53 @@ def test_alert_no_literal_placeholder():
     assert fake_coaching_content in system_prompt, (
         "Slim core content missing from alert system prompt"
     )
+
+
+# ---------------------------------------------------------------------------
+# Nutrition fueling-coach wiring into the CHAT path
+# ---------------------------------------------------------------------------
+
+
+class TestMealAuditChatWiring:
+    """The performance-fueling coach (prompts/meal_audit.md) must be wired into
+    the on-demand chat path — previously it loaded only for the crons, which is
+    why direct nutrition questions got generic, uncoached answers."""
+
+    def test_main_loads_and_appends_meal_audit_in_chat(self):
+        """core/main.py loads meal_audit into _meal_audit_content and appends it
+        in the chat path (handle_message)."""
+        src = open("core/main.py").read()
+        assert "prompts/meal_audit.md" in src, (
+            "core/main.py must load prompts/meal_audit.md for the chat coach"
+        )
+        assert "_meal_audit_content" in src, (
+            "core/main.py must store the coach as _meal_audit_content"
+        )
+        assert "+ self._meal_audit_content" in src, (
+            "core/main.py must APPEND _meal_audit_content to the chat smart_system"
+        )
+
+    def test_render_smart_system_does_not_append_meal_audit(self):
+        """Guard against double-append: meal_audit must be appended in the chat
+        path (handle_message), NOT inside render_smart_system — autonomous.py
+        calls render_smart_system and appends meal_audit itself."""
+        import inspect
+        import core.main as main_mod
+        render_src = inspect.getsource(main_mod.AgentOrchestrator.render_smart_system)
+        assert "meal_audit" not in render_src, (
+            "render_smart_system must not append meal_audit — autonomous.py would "
+            "then get it twice"
+        )
+
+    def test_meal_audit_is_performance_fueling_coach(self):
+        """meal_audit.md is the performance-fueling coach: improve+keep, periodized,
+        forward-looking — not the old non-personalized critique."""
+        body = open("prompts/meal_audit.md").read()
+        assert body.strip(), "prompts/meal_audit.md is empty"
+        lowered = body.lower()
+        assert "improve" in lowered and "keep" in lowered, (
+            "coach must direct both what to IMPROVE and what to KEEP"
+        )
+        assert "nutrition_targets" in lowered, "coach must reference the profile anchors"
+        # periodization by training load is the core of performance fueling
+        assert "carb" in lowered and ("rest day" in lowered or "long-run" in lowered)
