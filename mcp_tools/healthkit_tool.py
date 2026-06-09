@@ -290,28 +290,39 @@ def _compute_source_id(meal: dict) -> str:
 
     Wave 0 fallback: when ``uuid`` is empty OR is one of the known
     source-app NAMES that the iOS Shortcut emits in place of the real
-    HKObject UUID (e.g. ``"Lifesum"``), build a deterministic synthetic
-    key ``f"healthkit:{start_date_iso}:{food_item}:{calories_int}"`` so
-    each meal still gets a distinct, repeatable source_id (re-syncs
-    collapse to the same doc via MealStore's merge=True). ``food_item`` is
-    in the key so it matches the aggregator's ``(start_date, food_item)``
-    grouping — without it, two distinct foods at the same timestamp with
-    equal integer calories collide and one meal is silently lost (CR-01).
+    HKObject UUID (e.g. ``"Lifesum"``), build a deterministic synthetic key
+    that **mirrors the aggregator's grouping key exactly** —
+    ``f"healthkit:{start_date_iso}:{food_item}"`` (see
+    :func:`_aggregate_quantity_samples`, which groups by
+    ``(start_date.isoformat(), food_item)``). The source_id is therefore a
+    pure function of a meal's *identity*, never of a *value*.
+
+    Why calories are NOT in the key (2026-06-09 bug fix): the iOS Shortcut
+    re-sends the whole day's samples on every Lifesum close (~9×/day), and a
+    meal-time's calorie total legitimately changes between syncs (incremental
+    logging, in-app edits, rounding). When the synthetic key embedded
+    ``:{calories_int}``, each such re-sync produced a *new* source_id → a new
+    Firestore doc instead of overwriting the prior one, so meals piled up and
+    daily totals roughly doubled. Keying on ``(start_date, food_item)`` alone
+    makes re-syncs land on the SAME doc and overwrite via MealStore's
+    ``merge=True`` — restoring the idempotency the grouping was meant to give.
+
+    The CR-01 concern (two *distinct* foods at the same timestamp collapsing)
+    is already inherent upstream: ``_aggregate_quantity_samples`` sums all
+    samples sharing ``(start_date, food_item)`` into one record before this
+    runs, so same-timestamp/same-food items are *already* one meal. The key
+    here is consistent with that — it never had a way to separate them.
     """
     uuid = (meal.get("uuid") or "").strip()
     if uuid and uuid not in _KNOWN_SOURCE_NAMES:
         safe = uuid.replace("/", "_")[:200]
         return f"healthkit:{safe}"
-    # Fallback: synthesize from start_date + food_item + calories. The
-    # aggregator separates meals by (start_date, food_item) (see
-    # _aggregate_quantity_samples), so the synthetic key MUST include
-    # food_item too — otherwise two distinct foods logged at the same
-    # timestamp with equal integer calories collapse to one Firestore doc
-    # and one meal is silently lost (CR-01).
+    # Fallback: synthesize from the aggregator's grouping key (start_date,
+    # food_item) — a stable meal IDENTITY, so re-syncs overwrite rather than
+    # duplicate. ':' in food_item is escaped so it cannot corrupt the key.
     start_iso = meal["start_date"].isoformat()
-    calories = int(meal["samples_by_type"].get("DietaryEnergyConsumed_kcal", 0))
     food_slug = (meal.get("food_item") or "_").replace(":", "_")
-    return f"healthkit:{start_iso}:{food_slug}:{calories}"
+    return f"healthkit:{start_iso}:{food_slug}"
 
 
 # ------------------------------------------------------------------ #

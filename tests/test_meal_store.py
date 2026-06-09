@@ -167,6 +167,44 @@ def test_get_day_returns_empty_on_error():
     assert s.get_day("2026-05-26") == []
 
 
+def test_get_day_dedups_resynced_meals_keeping_latest():
+    """2026-06-09 fix: before the source_id fix, the iOS Shortcut's re-syncs of a
+    meal-time with a drifting calorie total piled up as multiple docs (e.g. lunch
+    stored as both 1177 and 1180 kcal), inflating totals. get_day collapses docs
+    sharing (timestamp, source), keeping the most-recently-written (max updated_at).
+    """
+    s = _store()
+    older = MagicMock()
+    older.to_dict.return_value = {
+        "timestamp": "2026-05-26T12:00:00+03:00", "source": "healthkit",
+        "calories": 1177, "updated_at": 1,
+    }
+    newer = MagicMock()
+    newer.to_dict.return_value = {
+        "timestamp": "2026-05-26T12:00:00+03:00", "source": "healthkit",
+        "calories": 1180, "updated_at": 2,
+    }
+    s._col.document.return_value.collection.return_value.stream.return_value = [older, newer]
+    result = s.get_day("2026-05-26")
+    assert len(result) == 1, "duplicate meal-time docs must collapse to one"
+    assert result[0]["calories"] == 1180, "latest sync (max updated_at) wins"
+    assert "updated_at" not in result[0], "server-write stamp must be stripped"
+
+
+def test_get_day_keeps_distinct_timestamps():
+    """Dedup must NOT collapse genuinely different meal-times."""
+    s = _store()
+    a = MagicMock(); a.to_dict.return_value = {
+        "timestamp": "2026-05-26T08:00:00+03:00", "source": "healthkit",
+        "calories": 500, "updated_at": 1}
+    b = MagicMock(); b.to_dict.return_value = {
+        "timestamp": "2026-05-26T12:00:00+03:00", "source": "healthkit",
+        "calories": 700, "updated_at": 1}
+    s._col.document.return_value.collection.return_value.stream.return_value = [a, b]
+    result = s.get_day("2026-05-26")
+    assert len(result) == 2
+
+
 # ------------------------------------------------------------------ #
 # get_day_aggregate                                                  #
 # ------------------------------------------------------------------ #
