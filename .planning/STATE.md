@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
 status: Awaiting next milestone
 stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
-last_updated: "2026-06-09T11:00:00.000Z"
-last_activity: 2026-06-09 — per-run Garmin detail capture shipped + coaching calibration fix
+last_updated: "2026-06-09T20:30:00.000Z"
+last_activity: 2026-06-09 — nutrition: accurate+training-aware coaching, HealthKit dedup fix, centralized Garmin-synced bodyweight (rev klaus-agent-00102-9nk)
 progress:
   total_phases: 5
   completed_phases: 5
@@ -24,6 +24,30 @@ Status: Awaiting next milestone
 Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calibration fix shipped
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
+
+- **Nutrition: accurate, training-aware coaching + centralized bodyweight** (2026-06-09, three increments):
+  1. *Accurate + prescriptive chat coaching* (rev `klaus-agent-00100-dnh`): `fetch_recent_meals` made
+     brain-direct and now returns **server-computed** `totals_by_day`/`window_totals` (via
+     `get_day_aggregate`) — LLM column-summing across a worker hop was producing wrong, drifting
+     numbers. `prompts/meal_audit.md` rewritten from a non-personalized critique into a
+     **performance-fueling coach** (target-vs-actual gap analysis, always improve + keep,
+     periodize carbs by the day's training, forward-looking) and **wired into the chat path**
+     (`core/main.py`, previously crons-only) + the morning-briefing "Fuel plan for today".
+     `nutrition_targets` seeded with build-goal anchors.
+  2. *HealthKit re-sync duplication fix* (rev `klaus-agent-00101-pbm`): the Shortcut re-sends the
+     whole day on every Lifesum close (~9×/day); the synthetic `source_id` embedded integer
+     calories, so a meal-time whose total drifted between syncs minted a NEW Firestore doc →
+     totals ~60% high (lunch stored as both 1177 and 1180 kcal). Fixed: `_compute_source_id` keys
+     on `(start_date, food_item)` only (mirrors the aggregator); `MealStore.get_day` dedupes
+     `(timestamp, source)` keeping latest `updated_at` (corrects history on read). Optional
+     `scripts/dedupe_healthkit_meals.py` purges legacy dup docs (NOT yet run with `--apply`).
+  3. *Centralized, Garmin-synced bodyweight* (rev `klaus-agent-00102-9nk`): weight is now a single
+     top-level profile field `bodyweight_kg` (=73), auto-refreshed once/day from the latest Garmin
+     weigh-in (`garmin_tool.fetch_garmin_weight`, grams→kg, sanity-bounded 30–250) via
+     `morning_briefing._sync_bodyweight_from_garmin` (guarded on `bodyweight_synced_on`). Removed
+     the duplicate `nutrition_targets.bodyweight_kg`. Chat coach + briefing + smart_agent read the
+     one field. Amit updates weight by logging a Garmin weigh-in. Suite 1153 green. No new cron/secret.
+     **Operator:** first real Garmin pull happens at the next morning briefing — confirm via logs.
 
 - **Per-run Garmin detail capture** (2026-06-09, commits `0de5b2a` + `d72120f`, deployed via CI):
   gives running the same per-detail depth Hevy gave strength, so coaching is specific not generic.
@@ -70,7 +94,7 @@ Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calib
 See: `.planning/PROJECT.md` (updated 2026-06-08 after v4.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** v4.0 + Hevy + per-run Garmin detail increments live. Planning next milestone — run `/gsd-new-milestone`.
+**Current focus:** v4.0 + Hevy + per-run Garmin detail + nutrition (accurate/training-aware coaching, HealthKit dedup, Garmin-synced bodyweight) increments live (rev `klaus-agent-00102-9nk`). Planning next milestone — run `/gsd-new-milestone`.
 
 ## Architecture (current)
 
