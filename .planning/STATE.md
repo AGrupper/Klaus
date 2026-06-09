@@ -4,8 +4,8 @@ milestone: v4.0
 milestone_name: — Specific Training & Nutrition Coaching
 status: Awaiting next milestone
 stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
-last_updated: "2026-06-08T20:30:00.000Z"
-last_activity: 2026-06-08 — training blocks redefined by Training-calendar membership (keyword detection removed)
+last_updated: "2026-06-09T11:00:00.000Z"
+last_activity: 2026-06-09 — per-run Garmin detail capture shipped + coaching calibration fix
 progress:
   total_phases: 5
   completed_phases: 5
@@ -18,12 +18,28 @@ progress:
 
 ## Current Position
 
-Phase: Milestone v4.0 complete; one post-v4.0 increment shipped (Hevy)
+Phase: Milestone v4.0 complete; post-v4.0 increments shipped (latest: per-run Garmin detail)
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
+Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calibration fix shipped
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
+
+- **Per-run Garmin detail capture** (2026-06-09, commits `0de5b2a` + `d72120f`, deployed via CI):
+  gives running the same per-detail depth Hevy gave strength, so coaching is specific not generic.
+  Root insight: Strava is the *wrong* source (downstream of Garmin, strips running dynamics); the
+  installed `garminconnect` client already exposes per-activity detail Klaus never called. New
+  `RunDetailStore` (Firestore `run_details`), `mcp_tools/garmin_tool.py::normalize_run_detail`
+  (recorded laps as the watch lapped them — per-km easy/tempo, per-rep intervals — + whole-run
+  min/avg/max summary + derived split_shape/hr_drift/cadence_drift/pace_cv; NOT raw streams),
+  `core/run_ingest.py` (daily `/cron/run-sync` 05:15, presence-diff backfill→delta), brain-direct
+  `get_run_detail` + fed into `get_training_context`, weekly review reads `run_details`, evening
+  alert optional one-fact ride-along. **Calibration follow-up** (`d72120f`): first real use
+  over-interpreted an easy run (called a watch-pause drink-stop a "negative split"); fixed by
+  gating `split_shape` on ≥4 active laps + ≥4% swing (+ `active_lap_count`) and rewriting the
+  run-coaching prompts to lead with an honest verdict and never narrate noise as strategy. No new
+  secret (reuses `GARMIN_EMAIL`/`GARMIN_PASSWORD`). 37 new tests, suite 1138 green. DEPLOYMENT §19b.
+  Operator: create `klaus-run-sync` job + drain backfill until done:true.
 
 - **Training blocks = Training-calendar membership** (2026-06-08, deployed rev `klaus-agent-00095-hcf`): a training
   block is now defined as any event in the dedicated **Training** calendar (excluding its
@@ -54,15 +70,15 @@ Last activity: 2026-06-08 — Hevy strength integration shipped + deployed
 See: `.planning/PROJECT.md` (updated 2026-06-08 after v4.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** v4.0 + Hevy increment live. Planning next milestone — run `/gsd-new-milestone`.
+**Current focus:** v4.0 + Hevy + per-run Garmin detail increments live. Planning next milestone — run `/gsd-new-milestone`.
 
 ## Architecture (current)
 
 - Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
-- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
-- 9 cron jobs deployed (v4.0 added none; post-v4.0 added `klaus-strength-sync` daily 05:00 for the Hevy pull)
+- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) + `RunDetailStore` (Garmin per-run) in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
+- 10 cron jobs deployed (v4.0 added none; post-v4.0 added `klaus-strength-sync` 05:00 Hevy pull + `klaus-run-sync` 05:15 Garmin per-run detail pull)
 
 ## Accumulated Context
 
@@ -102,7 +118,7 @@ Carried forward from v3.0 close:
 
 - **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 630+ passing baseline must hold after every v4.0 phase.
 - **Firestore SERVER_TIMESTAMP** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool. See `_jsonsafe_doc` helper in `memory/firestore_db.py`.
-- **Cron jobs (9):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull). Plus push-driven `/cron/healthkit-sync`.
+- **Cron jobs (10):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull), run-sync (05:15, Garmin per-run detail pull). Plus push-driven `/cron/healthkit-sync`.
 
 ## Session Continuity
 
