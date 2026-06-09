@@ -1068,6 +1068,7 @@ are in `Asia/Jerusalem`.
 | 7 | klaus-autonomous-tick        | `*/20 7-21 * * *`     | `/cron/autonomous-tick`           | 18             |
 | 8 | klaus-weekly-training-review | `0 10 * * 0`          | `/cron/weekly-training-review`    | 20 (Shifu)     |
 | 9 | klaus-strength-sync          | `0 5 * * *`           | `/cron/strength-sync`             | Hevy           |
+| 10 | klaus-run-sync              | `15 5 * * *`          | `/cron/run-sync`                  | Run-detail     |
 
 Note: There is no `klaus-training-checkin` scheduler job — the 21:30 training
 check-in folds into the existing `proactive-alerts` cron (D-09); no separate job is needed.
@@ -1138,6 +1139,34 @@ gcloud scheduler jobs create http klaus-strength-sync \
 First-run backfill: re-invoke until the response shows `done: true`
 (`gcloud scheduler jobs run klaus-strength-sync --location="${REGION}"`), or just let the
 daily ticks drain it. Requires the `HEVY_API_KEY` secret bound (see §20a).
+
+### §19b. klaus-run-sync (Garmin per-run detail)
+
+Daily Garmin run-detail pull — runs `core/run_ingest.py:run_one_batch()`. Lists recent
+running activities (one cheap summary call) and fetches the per-run DETAIL
+(`get_activity_details` + typed splits + HR-in-timezones) only for runs not yet in
+`RunDetailStore`, bounded by `RUN_INGEST_MAX_ACTIVITIES` (8) and `RUN_INGEST_TIME_BUDGET_SEC`
+(50). On first run it backfills `RUN_INGEST_BACKFILL_DAYS` (120) of history over several
+ticks; thereafter it diffs a `RUN_INGEST_DELTA_DAYS` (14) window. Pull-only; no
+orchestrator/LLM/Telegram. Uses the same `GARMIN_EMAIL`/`GARMIN_PASSWORD` creds as the
+daily briefing (no new secret). Staggered to 05:15 — after strength-sync — to spread
+Garmin login load, and kept a SEPARATE job so a Garmin rate-limit never fails the Hevy sync.
+
+```bash
+gcloud scheduler jobs create http klaus-run-sync \
+  --schedule="15 5 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/run-sync" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+First-run backfill: re-invoke until the response shows `done: true`
+(`gcloud scheduler jobs run klaus-run-sync --location="${REGION}"`), or just let the daily
+ticks drain it (a year of runs drains over a few weeks; recent runs are picked up on day one).
 
 ---
 

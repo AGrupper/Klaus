@@ -25,6 +25,13 @@ You will be given a JSON object containing:
   `volume_kg`, `set_count`, and the raw `sets[]` (weight_kg, reps, rpe per set). This is REAL
   logged data — use the actual numbers, never invent them.
 - `strength_sessions_prev` — the same for the prior week, for top-set / volume / est-1RM trend.
+- `run_details` — list of full per-run Garmin detail synced this week (may be empty). Each run has
+  `date`, `type`, `distance_m`, `avg_pace_sec_per_km`, `has_dynamics`, a `summary` of whole-run
+  {min,avg,max} for cadence/stride/vertical-oscillation/ground-contact/power/HR, the recorded
+  `splits[]` (laps exactly as the watch captured them — per-km for easy/tempo, per-rep for
+  intervals — each with pace, HR, cadence, stride, power), and `derived` (`split_shape`,
+  `cadence_drift`, `hr_drift`, `pace_cv`). This is REAL logged data — use the actual numbers.
+- `run_details_prev` — the same for the prior week, for run-quality trend comparison.
 - `activities` — Garmin activities this week (may be None or empty if Garmin unavailable)
 - `last_week_activities` — Garmin activities the prior week (for trend comparison)
 - `biometrics_this_week` — list of daily_biometrics rows (date, resting_hr, hrv_baseline, hrv_overnight, sleep_duration, sleep_score) — may be None
@@ -85,6 +92,16 @@ the dated projection block follows separately:
    threshold-pace running volume (km). Compare to the block's aerobic target if inferable from
    `athletic_goals` or `block_benchmarks`. Name the actual volume (e.g. "12km threshold this week,
    vs a ~15km week target"). If no run data, omit.
+
+2b. **Run quality (from `run_details`)** — When `run_details` is present, go past total km and
+   reason over the actual runs. For a key run, name concrete facts from its `splits` and `derived`:
+   interval pace consistency (`pace_cv` / the per-rep paces), `split_shape` (negative/positive/even),
+   `cadence_drift` and `hr_drift` as fatigue/efficiency signals (e.g. "Tuesday's tempo held even
+   splits, cadence steady 178→177, HR drift +3% — a controlled aerobic effort"; or "the 5×1k faded
+   on the last two reps, +6s and cadence down 5spm — the set ran out before the legs did"). Compare
+   to `run_details_prev` where a like-for-like run exists. This is REAL data — never invent dynamics;
+   if a run's `has_dynamics` is false (treadmill / no strap), omit cadence/stride commentary for it.
+   Vary which signal you focus on week to week rather than always reporting the same one.
 
 3. **ACWR** — From `biometrics_this_week` (7-day acute load vs 28-day chronic load proxy).
    If ACWR is computable from HRV/sleep/load trends, state it (e.g. "ACWR running at 1.1 —

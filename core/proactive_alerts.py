@@ -828,6 +828,32 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
         logger.warning("proactive_alerts: recovery_concern computation failed", exc_info=True)
         # silent omit — no "all clear" placeholder (D-13 guardrail)
 
+    # Run-detail ride-along: surface ONE notable fact about today's run (e.g. high
+    # HR drift = accumulated fatigue, a faded interval set) when an alert is already
+    # firing. Reads RunDetailStore, which klaus-run-sync populated at 05:15 — no extra
+    # Garmin call. Omitted when there is no run today; never triggers a send by itself
+    # (same ride-along discipline as recovery_concern). The prompt picks at most one
+    # fact and respects has_dynamics.
+    try:
+        from memory.firestore_db import RunDetailStore
+        _rstore = RunDetailStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        _todays_runs = [r for r in _rstore.get_recent(1) if r.get("date") == today_iso]
+        if _todays_runs:
+            _run = _todays_runs[0]
+            alerts_context["today_run"] = {
+                "type": _run.get("type"),
+                "distance_m": _run.get("distance_m"),
+                "avg_pace_sec_per_km": _run.get("avg_pace_sec_per_km"),
+                "derived": _run.get("derived"),
+                "has_dynamics": _run.get("has_dynamics"),
+            }
+    except Exception:
+        logger.warning("proactive_alerts: run detail gather failed", exc_info=True)
+        # silent omit — no fabrication (D-13 guardrail)
+
     # Phase 24 — NUTR-01/02/03: nutrition + fueling-slot gather.
     # Fetch today's Garmin activities (separate from biometric garmin_data) for anchor resolution.
     # Wrapped best-effort — a Garmin failure just means no activity-anchored slot checking.

@@ -114,6 +114,7 @@ _CRON_MAX_STALENESS_HOURS = {
     "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
     "healthkit-sync": 48,         # Phase 19.1 — D-18; 48h tolerance for iPhone Shortcut push bridge
     "weekly-training-review": 170,  # Phase 20 — Sunday 10:00; 170h = 7d + 2h slack
+    "run-sync": 26,               # Garmin per-run detail pull, 05:15; 26h tolerance
 }
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 

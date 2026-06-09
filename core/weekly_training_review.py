@@ -117,6 +117,24 @@ def _gather_week_data(today_iso: str) -> dict:
         data["strength_sessions_prev"] = []
 
     # ------------------------------------------------------------------ #
+    # 1c. RunDetailStore — full per-run Garmin detail (recorded laps +    #
+    #     dynamics), this week + last week. Fail-open to [] so the review  #
+    #     still runs when run-sync is absent. Lets the prompt reason over  #
+    #     actual splits / split-shape / HR-drift instead of total km only. #
+    # ------------------------------------------------------------------ #
+    try:
+        from memory.firestore_db import RunDetailStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        rstore = RunDetailStore(project_id, database)
+        data["run_details"] = rstore.get_range(this_start_str, this_end_str)
+        data["run_details_prev"] = rstore.get_range(last_start_str, last_end_str)
+    except Exception:
+        logger.warning("weekly_review: RunDetailStore fetch failed", exc_info=True)
+        data["run_details"] = []
+        data["run_details_prev"] = []
+
+    # ------------------------------------------------------------------ #
     # 2. Garmin activities — this week + last week for D-22 trend        #
     # ------------------------------------------------------------------ #
     try:

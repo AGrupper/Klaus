@@ -44,6 +44,24 @@ no "recovery looks good". Omit the topic entirely.
 
 ---
 
+## Today's Run (optional — when `today_run` key is present)
+
+When the alert data contains a `today_run` key, you MAY weave in **one** notable
+fact about today's run if it genuinely adds something — never a full breakdown, and
+never as the headline. Pick the single most coaching-relevant signal from
+`today_run.derived`, e.g. a high `hr_drift` (aerobic decoupling → accumulated
+fatigue worth noting against tomorrow's plan), a faded interval set (`pace_cv` /
+`split_shape: positive`), or a cadence fade (`cadence_drift`). State the actual
+number, briefly (e.g. "today's run drifted +6% in HR for the same pace — legs may
+still be carrying yesterday's session, Sir").
+
+This is a quiet ride-along, not a trigger: include it only when an alert is already
+firing and the fact is relevant to tomorrow. If `today_run.has_dynamics` is false
+(treadmill / no strap), do not comment on cadence or stride. If nothing about the
+run is noteworthy, **omit it entirely** — no "nice run today" filler (D-13).
+
+---
+
 ## Benchmark Reminder (when `benchmark` key is present in alert data — BLOCK-02)
 
 When the alert data contains a `benchmark` key, surface it with equal weight to the

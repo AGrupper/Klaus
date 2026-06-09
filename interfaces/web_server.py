@@ -644,6 +644,36 @@ async def cron_strength_sync(request: Request) -> JSONResponse:
         raise
 
 
+@app.post("/cron/run-sync")
+async def cron_run_sync(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler daily tick and run a bounded Garmin run-detail batch.
+
+    Schedule: 15 5 * * *  (Asia/Jerusalem) — staggered after strength-sync (05:00)
+    to spread Garmin login load.
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is
+    RunDetailStore (via core.run_ingest.run_one_batch). On the first run this
+    backfills per-run detail over several ticks; thereafter it pulls detail for
+    new runs only. Kept a SEPARATE job from strength-sync so a Garmin rate-limit
+    never marks the Hevy sync failed. Re-run until the response shows done:true.
+
+    Returns:
+        JSONResponse: batch status dict (ok, mode, processed, remaining, done).
+    """
+    await _verify_cron_request(request)
+    import asyncio as _asyncio
+    import core.run_ingest as _run
+    try:
+        loop = _asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _run.run_one_batch)
+        _log_cron_run("run-sync", ok=bool(result.get("ok")), backlog_done=result.get("done"))
+        return JSONResponse(content=result)
+    except Exception:
+        _log_cron_run("run-sync", ok=False)
+        raise
+
+
 @app.post("/cron/heartbeat")
 async def cron_heartbeat(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler hourly tick and run one heartbeat health check.

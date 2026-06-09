@@ -77,7 +77,8 @@ Klaus/
 │   ├── self_manifest.py    # Auto-generates docs/SELF.md (CI runs on every deploy)
 │   ├── chat_ingest.py      # Daily 04:00: parse Claude Code JSONL → Pinecone + Notion
 │   ├── chat_export_ingest.py # Daily 04:30: ChatGPT/Claude.ai/Gemini Takeout zips → same pipeline
-│   └── strength_ingest.py  # Daily 05:00: Hevy pull (backfill→delta) → StrengthSessionStore
+│   ├── strength_ingest.py  # Daily 05:00: Hevy pull (backfill→delta) → StrengthSessionStore
+│   └── run_ingest.py       # Daily 05:15: Garmin per-run detail pull (presence-diff) → RunDetailStore
 ├── memory/
 │   ├── firestore_conversation.py # Per-user conversation history
 │   ├── firestore_db.py     # All Firestore stores: LLMUsage, SelfState, Journal,
@@ -135,7 +136,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**
+- **Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**
 
 ## 6. Invariants
 

@@ -387,6 +387,8 @@ def _render_manifest(root: Path, sha: str) -> str:
         "| Daily reflection | `0 22 * * *` | `/cron/reflect` |",
         "| Autonomous tick | `*/20 7-21 * * *` | `/cron/autonomous-tick` |",
         "| Weekly training review | `0 10 * * 0` (Sundays) | `/cron/weekly-training-review` |",
+        "| Strength sync (Hevy) | `0 5 * * *` | `/cron/strength-sync` |",
+        "| Run-detail sync (Garmin) | `15 5 * * *` | `/cron/run-sync` |",
         "",
     ]
 

@@ -71,6 +71,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     # Hevy strength — full per-set progression + cross-domain coaching context
     "get_strength_progress",
     "get_training_context",
+    # Garmin per-run detail — full splits + dynamics for specific running coaching
+    "get_run_detail",
 })
 
 # ------------------------------------------------------------------ #
@@ -957,6 +959,42 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "get_run_detail",
+        "description": (
+            "Read Sir's per-run Garmin detail synced from Garmin Connect — the "
+            "recorded laps/intervals exactly as the watch captured them (per-km "
+            "for easy/tempo runs, per-rep for interval sessions), each with pace, "
+            "HR, cadence, stride length and power; plus a whole-run min/avg/max "
+            "summary of cadence, stride, vertical oscillation, ground contact, "
+            "power and HR; plus derived split_shape (negative/positive/even), "
+            "hr_drift, cadence_drift and pace_cv (interval consistency). "
+            "Brain-direct. Pass `activity_id` for one run, or omit for recent runs "
+            "within `days` (default 14). `detail`='full' (every lap + summary) or "
+            "'summary' (derived signals + per-run pace only). Reason over the data "
+            "yourself — no pre-computed verdicts. Some runs (treadmill, no HRM "
+            "strap) lack dynamics; respect `has_dynamics` and never invent cadence "
+            "or stride for them."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "activity_id": {
+                    "type": "string",
+                    "description": "Garmin activity id for a single run. Omit for recent runs.",
+                },
+                "days": {
+                    "type": "integer",
+                    "description": "Look-back window in days when no activity_id is given. Default 14.",
+                },
+                "detail": {
+                    "type": "string",
+                    "description": "'full' (every lap + summary) or 'summary' (derived + per-run pace only). Default 'full'.",
+                },
+            },
+            "required": [],
+        },
+    },
     # ============ PHASE 23 — BLOCK + BENCHMARK TRACKING (BLOCK-01/BLOCK-03) ============
     # All 6 are brain-direct (worker-excluded below). update_plan is NOT re-added.
     {
@@ -1140,6 +1178,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         # Hevy strength — read aggregators are brain-direct (Klaus reasons over them)
         "get_strength_progress",
         "get_training_context",
+        # Garmin per-run detail — brain-direct (Klaus reasons over splits/dynamics)
+        "get_run_detail",
     }
 ]
 
@@ -1885,6 +1925,13 @@ def _handle_get_training_context(days: int = 14) -> str:
         ctx["garmin_activities"] = None
 
     try:
+        from memory.firestore_db import RunDetailStore
+        ctx["run_details"] = RunDetailStore(project_id, database).get_recent(days)
+    except Exception:
+        logger.warning("get_training_context: run detail fetch failed", exc_info=True)
+        ctx["run_details"] = None
+
+    try:
         from mcp_tools.garmin_tool import fetch_garmin_training_status
         ctx["training_status"] = fetch_garmin_training_status()
     except Exception:
@@ -1927,6 +1974,41 @@ def _handle_get_training_context(days: int = 14) -> str:
         ctx["biometrics"] = None
 
     return json.dumps(ctx, default=str)
+
+
+def _handle_get_run_detail(
+    activity_id: str | None = None, days: int = 14, detail: str = "full",
+) -> str:
+    """Brain-direct: read per-run Garmin detail from RunDetailStore.
+
+    With `activity_id` → that single run's full detail. Without it → recent runs
+    within `days` (every lap unless detail='summary', which keeps only the
+    derived signals + per-run pace). Never raises (errors become {"error": ...}).
+    """
+    from memory.firestore_db import RunDetailStore
+    try:
+        store = RunDetailStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        if activity_id:
+            return json.dumps({"run": store.get_run(str(activity_id))}, default=str)
+        runs = store.get_recent(days)
+        if detail != "full":
+            runs = [
+                {
+                    "date": r.get("date"),
+                    "type": r.get("type"),
+                    "distance_m": r.get("distance_m"),
+                    "avg_pace_sec_per_km": r.get("avg_pace_sec_per_km"),
+                    "derived": r.get("derived"),
+                    "has_dynamics": r.get("has_dynamics"),
+                }
+                for r in runs
+            ]
+        return json.dumps({"window_days": days, "runs": runs}, default=str)
+    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
+        return json.dumps({"error": str(exc)})
 
 
 # ------------------------------------------------------------------ #
@@ -2150,6 +2232,7 @@ _HANDLERS: dict[str, object] = {
     # Hevy strength — full per-set progression + cross-domain context (brain-direct)
     "get_strength_progress":   lambda args: _handle_get_strength_progress(**args),
     "get_training_context":    lambda args: _handle_get_training_context(**args),
+    "get_run_detail":          lambda args: _handle_get_run_detail(**args),
     # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03), brain-direct
     "get_plan":                lambda args: _handle_get_plan(),
     "get_block_status":        lambda args: _handle_get_block_status(),
