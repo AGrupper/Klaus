@@ -39,8 +39,9 @@ Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calib
      calories, so a meal-time whose total drifted between syncs minted a NEW Firestore doc →
      totals ~60% high (lunch stored as both 1177 and 1180 kcal). Fixed: `_compute_source_id` keys
      on `(start_date, food_item)` only (mirrors the aggregator); `MealStore.get_day` dedupes
-     `(timestamp, source)` keeping latest `updated_at` (corrects history on read). Optional
-     `scripts/dedupe_healthkit_meals.py` purges legacy dup docs (NOT yet run with `--apply`).
+     `(timestamp, source)` keeping latest `updated_at` (corrects history on read).
+     `scripts/dedupe_healthkit_meals.py --apply` run 2026-06-09: 18 legacy dup docs purged across
+     30 days (storage now matches reads; verified raw_docs == get_day count).
   3. *Centralized, Garmin-synced bodyweight* (rev `klaus-agent-00102-9nk`): weight is now a single
      top-level profile field `bodyweight_kg` (=73), auto-refreshed once/day from the latest Garmin
      weigh-in (`garmin_tool.fetch_garmin_weight`, grams→kg, sanity-bounded 30–250) via
