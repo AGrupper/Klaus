@@ -705,3 +705,45 @@ def test_morning_briefing_prompt_dedup_instruction():
     assert any(kw in lower for kw in ["coaching_topics_today", "dedup", "already raised", "do not repeat"]), (
         "prompts/morning_briefing.md missing D-02 dedup instruction"
     )
+
+
+# ---------------------------------------------------------------------------
+# Bodyweight single-source-of-truth: _sync_bodyweight_from_garmin
+# ---------------------------------------------------------------------------
+
+
+class TestBodyweightGarminSync:
+    def test_skips_garmin_when_already_synced_today(self):
+        """Once-daily guard: if bodyweight_synced_on == today, do NOT hit Garmin."""
+        import core.morning_briefing as mb
+        store = MagicMock()
+        store.load.return_value = {"bodyweight_kg": 73.0, "bodyweight_synced_on": "2026-06-09"}
+        with patch("mcp_tools.garmin_tool.fetch_garmin_weight") as fetch:
+            result = mb._sync_bodyweight_from_garmin(store, "2026-06-09")
+        fetch.assert_not_called()
+        store.update.assert_not_called()
+        assert result == 73.0
+
+    def test_updates_profile_with_new_garmin_weight(self):
+        """A fresh Garmin weight is written to bodyweight_kg + stamps synced_on."""
+        import core.morning_briefing as mb
+        store = MagicMock()
+        store.load.return_value = {"bodyweight_kg": 73.0, "bodyweight_synced_on": "2026-06-01"}
+        with patch("mcp_tools.garmin_tool.fetch_garmin_weight", return_value=74.0):
+            result = mb._sync_bodyweight_from_garmin(store, "2026-06-09")
+        assert result == 74.0
+        patch_arg = store.update.call_args.args[0]
+        assert patch_arg["bodyweight_kg"] == 74.0
+        assert patch_arg["bodyweight_synced_on"] == "2026-06-09"
+
+    def test_keeps_last_known_when_garmin_has_no_weight(self):
+        """No Garmin value → keep stored weight, do NOT overwrite bodyweight_kg."""
+        import core.morning_briefing as mb
+        store = MagicMock()
+        store.load.return_value = {"bodyweight_kg": 73.0, "bodyweight_synced_on": "2026-06-01"}
+        with patch("mcp_tools.garmin_tool.fetch_garmin_weight", return_value=None):
+            result = mb._sync_bodyweight_from_garmin(store, "2026-06-09")
+        assert result == 73.0
+        patch_arg = store.update.call_args.args[0]
+        assert "bodyweight_kg" not in patch_arg          # not overwritten
+        assert patch_arg["bodyweight_synced_on"] == "2026-06-09"  # attempt stamped

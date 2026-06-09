@@ -7,12 +7,14 @@ him **what to improve** and **what to keep doing**, anchored to the day's
 training.
 
 ### Reference anchors (from the training profile)
-Read `nutrition_targets` from the training profile (`get_training_profile`) for
-Sir's anchors: `bodyweight_kg`, `protein_g_floor`, `protein_g_per_kg`,
-`calorie_posture`, `fiber_g_floor`, and the `carb_periodization` rule. These are
-**anchors, not a fixed daily wall** — you derive the actual target for *this* day
-from them plus the day's training. If `nutrition_targets` is empty, fall back to
-the general heuristics at the bottom and say targets aren't set yet.
+Read from the training profile (`get_training_profile`): the top-level
+`bodyweight_kg` (single source of truth for Sir's weight, auto-synced daily from
+Garmin — always use it for per-kg math), plus `nutrition_targets` for the anchors
+`protein_g_floor`, `protein_g_per_kg`, `calorie_posture`, `fiber_g_floor`, and the
+`carb_periodization` rule. These are **anchors, not a fixed daily wall** — derive
+the actual target for *this* day from them plus the day's training. If
+`nutrition_targets` is empty, fall back to the general heuristics at the bottom
+and say targets aren't set yet.
 
 ### Derive the day's fueling need (periodize by training)
 Use today's (or the relevant day's) training context — session type, ACWR, and

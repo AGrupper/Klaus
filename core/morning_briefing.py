@@ -189,6 +189,51 @@ def _fetch_garmin_safe(today_iso: str | None = None) -> dict | None:
         return None
 
 
+def _sync_bodyweight_from_garmin(store, today_iso: str) -> float | None:
+    """Refresh the canonical profile ``bodyweight_kg`` from Garmin, at most once/day.
+
+    ``bodyweight_kg`` (top-level profile field) is the single source of truth the
+    chat fueling coach and this briefing both read. Sir keeps it current simply by
+    entering his weight in Garmin (a weigh-in, or his Garmin profile weight); this
+    pulls the latest via :func:`mcp_tools.garmin_tool.fetch_garmin_weight` and
+    writes it here. Guarded on a ``bodyweight_synced_on`` date marker so repeated
+    morning-briefing fires hit Garmin only once per day.
+
+    Returns the current ``bodyweight_kg`` (freshly synced, or last-known if Garmin
+    has no new value), or None if it has never been set. Never raises — any
+    Garmin/Firestore failure falls back to the stored value.
+    """
+    try:
+        profile = store.load()
+    except Exception:
+        logger.warning("bodyweight sync: profile load failed", exc_info=True)
+        return None
+
+    current = profile.get("bodyweight_kg")
+    # Already synced today → reuse the stored value, skip the Garmin call.
+    if profile.get("bodyweight_synced_on") == today_iso:
+        return current
+
+    weight = None
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_weight
+        weight = fetch_garmin_weight()
+    except Exception:
+        logger.warning("bodyweight sync: Garmin weight fetch failed", exc_info=True)
+
+    # Stamp the attempt (even on no-value) so we don't re-hit Garmin every fire;
+    # only overwrite bodyweight_kg when Garmin actually returned a sane value.
+    patch: dict = {"bodyweight_synced_on": today_iso}
+    if weight is not None:
+        patch["bodyweight_kg"] = weight
+    try:
+        store.update(patch)
+    except Exception:
+        logger.warning("bodyweight sync: profile update failed", exc_info=True)
+
+    return weight if weight is not None else current
+
+
 def _gather_data(today_iso: str) -> dict:
     """Fetch all data sources; each catches its own errors."""
     data: dict = {"today_date": today_iso}
@@ -288,22 +333,28 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: meals aggregate failed", exc_info=True)
 
-    # Performance-fueling anchors for the forward-looking "Fuel plan for today".
-    # The briefing is a single tool-less LLM call, so the fueling-coach guidance
-    # (meal_audit.md, appended in _compose_briefing) cannot call get_training_profile
-    # itself — the anchors must be in today_data. Silent-omit on empty (Pitfall 4):
-    # no anchors → no key → the prompt drops the fuel-plan section.
+    # Performance-fueling anchors + bodyweight for the forward-looking "Fuel plan
+    # for today". The briefing is a single tool-less LLM call, so the fueling-coach
+    # guidance (meal_audit.md, appended in _compose_briefing) cannot call
+    # get_training_profile itself — the anchors must be in today_data. Silent-omit
+    # on empty (Pitfall 4): no anchors → no key → the prompt drops the fuel-plan
+    # section. This is also the once-daily seam that refreshes bodyweight_kg from
+    # Garmin (the single source of truth), guarded so Garmin is hit at most once/day.
     try:
         from memory.firestore_db import UserProfileStore
-        profile = UserProfileStore(
+        store = UserProfileStore(
             project_id=os.environ["GCP_PROJECT_ID"],
             database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        ).load()
+        )
+        bodyweight = _sync_bodyweight_from_garmin(store, today_iso)
+        profile = store.load()
         targets = profile.get("nutrition_targets")
         if targets:
             data["nutrition_targets"] = targets
+        if bodyweight is not None:
+            data["bodyweight_kg"] = bodyweight
     except Exception:
-        logger.warning("morning_briefing: nutrition_targets fetch failed", exc_info=True)
+        logger.warning("morning_briefing: profile/bodyweight fetch failed", exc_info=True)
 
     # PHASE 23 — BLOCK-01 / D-04: surface the active mesocycle block (date-range
     # resolved, D-01) with a derived "Week N of 16" framing, or a pre-cycle countdown

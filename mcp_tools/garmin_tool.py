@@ -258,6 +258,84 @@ def _safe_extract_key(*sources, keys: tuple[str, ...]):
     return None
 
 
+# Plausible adult bodyweight band (kg). A value outside this is treated as a
+# data error (fat-finger / wrong unit) and rejected rather than stored.
+_PLAUSIBLE_WEIGHT_KG = (30.0, 250.0)
+
+
+def _coerce_weight_kg(raw) -> float | None:
+    """Coerce a raw Garmin weight value to kilograms, or None if unusable.
+
+    Garmin reports weigh-ins in GRAMS (e.g. 73000). Profile-setting weight may
+    arrive as grams or kg, so a value > 300 is treated as grams and divided by
+    1000 (no real adult kg reading exceeds 300, and every grams reading is far
+    above it — so the split is unambiguous). The result is rounded to 0.1 kg and
+    must fall within :data:`_PLAUSIBLE_WEIGHT_KG`; anything else (a fat-finger
+    like 974, or a unit mistake) returns None so it is never stored.
+    """
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if v <= 0:
+        return None
+    kg = round(v / 1000.0 if v > 300 else v, 1)
+    lo, hi = _PLAUSIBLE_WEIGHT_KG
+    return kg if lo <= kg <= hi else None
+
+
+def fetch_garmin_weight(days_back: int = 90) -> float | None:
+    """Latest Garmin body weight in kilograms, or None if unavailable.
+
+    Single auto-source for Sir's bodyweight. Reads the most recent **weigh-in**
+    within the last ``days_back`` days (``get_body_composition`` — the dated
+    record a smart scale or "Add weight" writes), then falls back to the static
+    **profile-setting** weight (``get_userprofile_settings``). Reading both means
+    it works whether Sir logs a weigh-in OR edits his Garmin profile weight.
+
+    Values are converted to kg and sanity-bounded by :func:`_coerce_weight_kg`,
+    so an implausible entry is rejected (the caller keeps the last good value).
+    Fail-open: returns None on any auth / availability / parse error so callers
+    (the morning-briefing daily sync) degrade gracefully.
+    """
+    try:
+        api = _authed_garmin_client()
+    except (GarminAuthError, GarminUnavailableError):
+        logger.warning("fetch_garmin_weight: Garmin auth/availability failed", exc_info=True)
+        return None
+
+    tz = ZoneInfo("Asia/Jerusalem")
+    end = datetime.now(tz).date()
+    start = end - timedelta(days=days_back)
+
+    # 1) Most recent weigh-in — the reliable, dated source (newest first).
+    try:
+        comp = api.get_body_composition(start.isoformat(), end.isoformat()) or {}
+        entries = comp.get("dateWeightList") or []
+        for e in sorted(entries, key=lambda x: x.get("date") or 0, reverse=True):
+            kg = _coerce_weight_kg(e.get("weight"))
+            if kg is not None:
+                return kg
+    except Exception:
+        logger.warning("fetch_garmin_weight: body-composition read failed", exc_info=True)
+
+    # 2) Fallback — static profile-setting weight (so editing the Garmin profile
+    #    weight field also works, not only logging a weigh-in).
+    try:
+        settings = api.get_userprofile_settings() or {}
+        user_data = settings.get("userData")
+        raw = user_data.get("weight") if isinstance(user_data, dict) else settings.get("weight")
+        kg = _coerce_weight_kg(raw)
+        if kg is not None:
+            return kg
+    except Exception:
+        logger.warning("fetch_garmin_weight: profile-settings read failed", exc_info=True)
+
+    return None
+
+
 def fetch_garmin_training_status() -> dict:
     """Return today's Garmin training status, VO2 max, and load focus.
 
