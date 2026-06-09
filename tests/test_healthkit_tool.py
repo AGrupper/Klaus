@@ -499,8 +499,9 @@ def test_source_id_falls_back_when_uuid_is_lifesum():
     """Wave 0 finding: iOS Shortcut 'Get Details → Source' returns the source-app
     name string ('Lifesum'), NOT the HKObject UUID. Without a fallback, every
     sample would collapse to source_id='healthkit:Lifesum' and dedup would break.
-    Normalizer must synthesize
-    source_id = 'healthkit:{start_date_iso}:{food_item}:{calories_int}'."""
+    Normalizer synthesizes source_id = 'healthkit:{start_date_iso}:{food_item}'
+    (mirrors the aggregator's grouping key). Calories are NOT in the key — see
+    test_source_id_stable_across_resync_when_calories_change."""
     meal = _make_meal_dict(
         uuid="Lifesum",
         hour=7,
@@ -516,8 +517,33 @@ def test_source_id_falls_back_when_uuid_is_lifesum():
     result = _normalize_healthkit_sample(meal)
     assert result["source_id"].startswith("healthkit:")
     assert result["source_id"] != "healthkit:Lifesum"
-    assert "1038" in result["source_id"]
     assert "Oatmeal" in result["source_id"]
+    # calories must NOT appear in the key (the re-sync duplication bug)
+    assert "1038" not in result["source_id"]
+
+
+def test_source_id_stable_across_resync_when_calories_change():
+    """2026-06-09 regression guard: the iOS Shortcut re-sends a meal-time on every
+    Lifesum close, and its calorie total drifts between syncs (incremental logging,
+    edits, rounding). The synthetic source_id must depend ONLY on identity
+    (start_date, food_item) — NOT calories — so re-syncs land on the SAME doc and
+    overwrite (merge=True) instead of piling up as duplicates that double totals.
+    """
+    base = dict(uuid="Lifesum", hour=12, minute=0, food_item=None)
+    partial = _make_meal_dict(
+        **base, samples_by_type={"DietaryEnergyConsumed_kcal": 1177.0,
+                                 "DietaryProtein_g": 94.0},
+    )
+    fuller = _make_meal_dict(
+        **base, samples_by_type={"DietaryEnergyConsumed_kcal": 1180.0,
+                                 "DietaryProtein_g": 94.0},
+    )
+    sid_partial = _normalize_healthkit_sample(partial)["source_id"]
+    sid_fuller = _normalize_healthkit_sample(fuller)["source_id"]
+    assert sid_partial == sid_fuller, (
+        "re-sync of the same meal-time with a different calorie total must reuse "
+        "the same source_id so it overwrites rather than duplicates"
+    )
 
 
 def test_source_id_fallback_includes_food_item_to_avoid_collision():

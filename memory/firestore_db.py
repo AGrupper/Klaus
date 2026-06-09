@@ -573,6 +573,25 @@ class JournalStore:
         return results[:n]
 
 
+def _is_newer(candidate, incumbent) -> bool:
+    """True if ``candidate`` is a strictly newer updated_at than ``incumbent``.
+
+    Tolerates ``None`` (treated as oldest) and any comparable timestamp type
+    (Firestore ``DatetimeWithNanoseconds`` or ``datetime``). On an
+    incomparable pair (e.g. tz-aware vs naive) it returns False so the
+    first-seen doc is kept — a stable, deterministic tie-break. Used by
+    :meth:`MealStore.get_day` to pick the latest of a duplicate set.
+    """
+    if candidate is None:
+        return False
+    if incumbent is None:
+        return True
+    try:
+        return candidate > incumbent
+    except TypeError:
+        return False
+
+
 class MealStore:
     """Per-date nutrition log persistence (Phase 19 — NUTR-02).
 
@@ -653,16 +672,30 @@ class MealStore:
         """
         try:
             snaps = self._col.document(date_str).collection("timestamps").stream()
-            meals = []
+            # De-duplicate re-synced meals (2026-06-09 fix). The iOS Shortcut
+            # re-sends the day on every Lifesum close; before the source_id fix
+            # a meal-time whose calorie total changed between syncs produced
+            # several docs (e.g. lunch stored as both 1177 and 1180 kcal),
+            # inflating daily totals. Collapse docs that share the same
+            # (timestamp, source) — the duplicate signature — keeping the
+            # most-recently-written one (max updated_at). This corrects totals
+            # for days that accumulated duplicates BEFORE the source_id fix,
+            # with no mutation of stored data. Google-Fit meals have unique
+            # nanosecond timestamps, so they never collapse.
+            best: dict[tuple, dict] = {}
             for s in snaps:
                 d = s.to_dict() or {}
-                # Phase 19.3 live-UAT fix: drop the Firestore server-write stamp.
-                # It round-trips as a DatetimeWithNanoseconds, which is NOT
-                # json-serializable and breaks downstream json.dumps in the
-                # fetch_recent_meals tool + the autonomous triage snapshot. It's
-                # internal write-metadata, never meal data, so readers don't need it.
-                d.pop("updated_at", None)
-                meals.append(d)
+                # updated_at is the Firestore server-write stamp
+                # (DatetimeWithNanoseconds). Use it to pick the latest of a
+                # duplicate set, then strip it: it is not json-serializable and
+                # would break downstream json.dumps (fetch_recent_meals tool +
+                # autonomous triage snapshot); it is write-metadata, not meal data.
+                updated_at = d.pop("updated_at", None)
+                key = (d.get("timestamp", ""), d.get("source"))
+                prev = best.get(key)
+                if prev is None or _is_newer(updated_at, prev[0]):
+                    best[key] = (updated_at, d)
+            meals = [d for _, d in best.values()]
             return sorted(meals, key=lambda d: d.get("timestamp", ""))
         except Exception:
             logger.warning("MealStore.get_day(%r) failed", date_str, exc_info=True)
