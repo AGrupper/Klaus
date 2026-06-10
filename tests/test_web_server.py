@@ -706,3 +706,117 @@ class TestCronHealthkitSync:
         assert resp.status_code == 200, (
             f"Handler must not depend on _application; got {resp.status_code}: {resp.text}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# TestTelegramWebhook — instant-ack + update_id dedup                          #
+# --------------------------------------------------------------------------- #
+
+_WEBHOOK_SECRET = "test-webhook-secret"
+
+
+def _webhook_env() -> dict:
+    env = dict(_BASE_ENV)
+    env["TELEGRAM_WEBHOOK_SECRET"] = _WEBHOOK_SECRET
+    return env
+
+
+def _make_update(update_id: int) -> MagicMock:
+    update = MagicMock(name=f"Update-{update_id}")
+    update.update_id = update_id
+    return update
+
+
+class TestTelegramWebhook:
+    """Behavioral tests for POST /telegram-webhook (instant ACK + dedup)."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self, _ws_module):
+        """Fresh dedup window + router/application singletons per test."""
+        ws = _ws_module
+        original_router = ws._router
+        original_app = ws._application
+        ws._recent_update_ids.clear()
+        ws._application = MagicMock(name="Application")
+        ws._application.bot = MagicMock(name="bot")
+        ws._router = MagicMock(name="MessageRouter")
+        ws._router.handle_update = AsyncMock(return_value=None)
+        yield
+        ws._router = original_router
+        ws._application = original_app
+        ws._recent_update_ids.clear()
+
+    def _post(self, ws, update_id: int = 1, secret: str = _WEBHOOK_SECRET):
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _webhook_env()), patch.object(
+            ws, "Update"
+        ) as mock_update_cls:
+            mock_update_cls.de_json.return_value = _make_update(update_id)
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            return client.post(
+                "/telegram-webhook",
+                json={"update_id": update_id},
+                headers={"X-Telegram-Bot-Api-Secret-Token": secret},
+            )
+
+    def test_acks_200_and_dispatches_in_background(self, _ws_module):
+        """Valid secret → 200, and the router still processes the update
+        (TestClient runs background tasks before returning)."""
+        ws = _ws_module
+        resp = self._post(ws, update_id=101)
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        ws._router.handle_update.assert_awaited_once()
+
+    def test_duplicate_update_id_processed_once(self, _ws_module):
+        """A Telegram retry with the same update_id is ACKed but not re-processed."""
+        ws = _ws_module
+        r1 = self._post(ws, update_id=202)
+        r2 = self._post(ws, update_id=202)
+
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        assert ws._router.handle_update.await_count == 1, (
+            "A retried update_id must be dispatched exactly once"
+        )
+
+    def test_distinct_update_ids_both_processed(self, _ws_module):
+        ws = _ws_module
+        self._post(ws, update_id=301)
+        self._post(ws, update_id=302)
+
+        assert ws._router.handle_update.await_count == 2
+
+    def test_bad_secret_returns_401(self, _ws_module):
+        ws = _ws_module
+        resp = self._post(ws, update_id=401, secret="wrong-secret")
+
+        assert resp.status_code == 401
+        ws._router.handle_update.assert_not_awaited()
+
+    def test_router_exception_does_not_fail_the_response(self, _ws_module):
+        """Errors in background processing are logged, never surfaced as 5xx."""
+        ws = _ws_module
+        ws._router.handle_update = AsyncMock(side_effect=RuntimeError("boom"))
+
+        resp = self._post(ws, update_id=501)
+
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+
+    def test_dedup_window_is_bounded(self, _ws_module):
+        """The dedup OrderedDict never grows past _RECENT_UPDATE_IDS_MAX."""
+        ws = _ws_module
+        for i in range(ws._RECENT_UPDATE_IDS_MAX + 10):
+            ws._recent_update_ids[i] = None
+            while len(ws._recent_update_ids) > ws._RECENT_UPDATE_IDS_MAX:
+                ws._recent_update_ids.popitem(last=False)
+        assert len(ws._recent_update_ids) == ws._RECENT_UPDATE_IDS_MAX
+
+        # The next real request still dedups correctly.
+        resp = self._post(ws, update_id=999_999)
+        assert resp.status_code == 200
+        assert ws._router.handle_update.await_count == 1
+        assert len(ws._recent_update_ids) == ws._RECENT_UPDATE_IDS_MAX

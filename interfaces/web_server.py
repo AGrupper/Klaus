@@ -23,6 +23,7 @@ import asyncio
 import hmac
 import logging
 import os
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import AsyncGenerator
@@ -59,6 +60,15 @@ logger = logging.getLogger(__name__)
 _orchestrator: AgentOrchestrator | None = None
 _router: MessageRouter | None = None
 _application: Application | None = None
+
+# Recently accepted Telegram update_ids, used to drop webhook retries.
+# WHY: Telegram re-delivers an Update if it doesn't get a 200 quickly. We now
+# ACK before processing, but a retry can still arrive for an update we already
+# accepted (e.g. the first ACK was lost in transit). In-process only — a cold
+# start forgets it, which is fine because Telegram retries arrive within
+# seconds of the original, never across container restarts.
+_recent_update_ids: "OrderedDict[int, None]" = OrderedDict()
+_RECENT_UPDATE_IDS_MAX = 256
 
 
 # ------------------------------------------------------------------ #
@@ -148,9 +158,28 @@ async def health_check() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+async def _handle_update_background(update: Update) -> None:
+    """Process a Telegram Update off the webhook's critical path.
+
+    WHY: a full agent turn (multi-LLM, tool loop) can take longer than
+    Telegram's webhook patience; if the 200 doesn't arrive quickly Telegram
+    re-delivers the Update and the message gets processed twice. The webhook
+    now ACKs immediately and the turn runs here. The request is still
+    in-flight while this runs, so Cloud Run keeps CPU allocated. Errors are
+    logged here since they can no longer surface in the response.
+    """
+    try:
+        await _router.handle_update(update)
+    except Exception:
+        logger.exception(
+            "Background processing failed for update_id=%s", update.update_id
+        )
+
+
 @app.post("/telegram-webhook")
 async def telegram_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_telegram_bot_api_secret_token: str | None = Header(default=None),
 ) -> JSONResponse:
     """Receive and dispatch a Telegram Update sent by the Telegram Bot API.
@@ -161,7 +190,10 @@ async def telegram_webhook(
     1. Validates the ``X-Telegram-Bot-Api-Secret-Token`` header via constant-time
        comparison to prevent timing-based token disclosure.
     2. Deserialises the JSON body into a python-telegram-bot ``Update`` object.
-    3. Delegates the Update to ``MessageRouter.handle_update``.
+    3. Drops the Update if its ``update_id`` was already accepted (Telegram
+       webhook retry), then ACKs with 200 immediately and delegates the Update
+       to ``MessageRouter.handle_update`` as a background task so a slow agent
+       turn can never trigger a Telegram re-delivery.
 
     Args:
         request:
@@ -224,8 +256,20 @@ async def telegram_webhook(
     # back to the bot for helper methods like ``reply_text``.
     update = Update.de_json(data=request_json, bot=_application.bot)
 
-    # ---- Dispatch ----
-    await _router.handle_update(update)
+    # ---- Retry dedup ----
+    update_id = update.update_id
+    if update_id in _recent_update_ids:
+        logger.info(
+            "Duplicate Telegram update_id=%s — already accepted, ignoring retry.",
+            update_id,
+        )
+        return JSONResponse(content={"ok": True})
+    _recent_update_ids[update_id] = None
+    while len(_recent_update_ids) > _RECENT_UPDATE_IDS_MAX:
+        _recent_update_ids.popitem(last=False)
+
+    # ---- Dispatch (after the response, off the critical path) ----
+    background_tasks.add_task(_handle_update_background, update)
 
     return JSONResponse(content={"ok": True})
 
