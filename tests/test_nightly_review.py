@@ -156,8 +156,9 @@ def test_trigger_nightly_rejects_bad_token():
     assert resp.status_code == 403
 
 
-def test_trigger_nightly_dev_bypass_runs_nightly():
-    """CRON_DEV_BYPASS=true skips auth and run_nightly is invoked."""
+def test_trigger_nightly_dev_bypass_acks_and_runs_in_background():
+    """CRON_DEV_BYPASS=true skips auth; route returns 202 immediately and the nightly
+    runs in a background task (Starlette TestClient executes background tasks in-cycle)."""
     stubs, env_patch = _build_test_client({
         "GCP_PROJECT_ID": "test-project",
         "FIRESTORE_DATABASE": "(default)",
@@ -175,8 +176,10 @@ def test_trigger_nightly_dev_bypass_runs_nightly():
                 ws._application = MagicMock()  # TestClient w/o `with` skips lifespan
                 client = TestClient(ws.app)
                 resp = client.post("/trigger/nightly")
-    assert resp.status_code == 200
-    assert resp.json() == {"sent": True}
+    # Phone gets an instant ack, not the slow compose result.
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": True}
+    # The background task still ran the nightly with the focus trigger.
     run_mock.assert_awaited_once()
     assert run_mock.await_args.kwargs.get("trigger") == "focus"
 

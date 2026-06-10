@@ -29,7 +29,7 @@ from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application
@@ -444,30 +444,51 @@ async def cron_reflect(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+async def _run_nightly_background(target: str, trigger: str) -> None:
+    """Compose + send the nightly review off the request's critical path.
+
+    WHY: composing the nightly runs several LLM calls (reflection + tomorrow gather +
+    compose) which can exceed the iOS Shortcut's HTTP timeout. Run as a FastAPI
+    background task so the trigger route returns 202 immediately (the phone stops
+    waiting) while the server finishes the work. The request is still in-flight while
+    this runs, so Cloud Run keeps CPU allocated — no --no-cpu-throttling needed.
+    Errors are logged + recorded here since they can no longer surface in the response.
+    """
+    import core.nightly_review as _nightly
+    try:
+        await _nightly.run_nightly(_application.bot, target, trigger=trigger)
+        _log_cron_run("nightly-trigger", ok=True)
+    except Exception:
+        logger.exception("nightly background task failed for %s (%s)", target, trigger)
+        _log_cron_run("nightly-trigger", ok=False)
+
+
 @app.post("/trigger/nightly")
-async def trigger_nightly(request: Request) -> JSONResponse:
+async def trigger_nightly(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     """Receive the iOS Sleep-Focus automation and send the nightly review.
 
-    Triggered when Amit's phone enters Sleep Focus (organic wind-down), so there is
-    no fixed schedule. Authenticated via the shared-secret NIGHTLY_TRIGGER_TOKEN.
-    Idempotent: if the nightly already sent for tonight (e.g. the backstop beat it),
-    run_nightly no-ops.
+    Triggered when Amit's phone winds down (organic), so there is no fixed schedule.
+    Authenticated via the shared-secret NIGHTLY_TRIGGER_TOKEN.
+
+    Acknowledges immediately (202) and composes the nightly in the background so the
+    iOS Shortcut never waits on the multi-LLM compose. Idempotent downstream: if the
+    nightly already sent for tonight (e.g. the backstop beat it), run_nightly no-ops.
 
     Returns:
-        JSONResponse: ``{"sent": true|false}`` with HTTP 200.
+        JSONResponse: ``{"accepted": true}`` with HTTP 202.
     """
     await _verify_trigger_request(request)
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    target = nightly_target_date_now()
+    background_tasks.add_task(_run_nightly_background, target, "focus")
+    return JSONResponse(status_code=202, content={"accepted": True})
+
+
+def nightly_target_date_now() -> str:
+    """The wind-down date for 'now' in Asia/Jerusalem (import-light helper)."""
     import core.nightly_review as _nightly
-    try:
-        target = _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
-        sent = await _nightly.run_nightly(_application.bot, target, trigger="focus")
-        _log_cron_run("nightly-trigger", ok=True)
-    except Exception:
-        _log_cron_run("nightly-trigger", ok=False)
-        raise
-    return JSONResponse(content={"sent": sent})
+    return _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
 
 
 @app.post("/cron/nightly-backstop")
