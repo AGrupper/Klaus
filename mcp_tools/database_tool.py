@@ -28,7 +28,15 @@ class DatabaseUnavailableError(Exception):
     """Raised when the database connection fails or queries time out."""
 
 
-def query_health_database(sql_query: str) -> list[dict] | str:
+# Hard ceiling on returned rows. An unbounded time-series query (e.g. every
+# heart-rate sample for a year) would otherwise flood the LLM context. When
+# the cap trips, the result ends with a sentinel record
+# {"_truncated": True, "_max_rows": N} — shape-preserving, so callers that
+# branch on isinstance(rows, list) keep working and just skip the sentinel.
+MAX_ROWS = 200
+
+
+def query_health_database(sql_query: str, max_rows: int = MAX_ROWS) -> list[dict] | str:
     """Execute a read-only SELECT or CTE SQL query against the Postgres database.
 
     Defense in depth (the parse checks are a fast fail; the read-only DB session is
@@ -41,6 +49,9 @@ def query_health_database(sql_query: str) -> list[dict] | str:
 
     Args:
         sql_query: The SQL query string to run. Must be a read-only SELECT or WITH statement.
+        max_rows:  Row cap (default MAX_ROWS). Results beyond the cap are dropped
+                   and a {"_truncated": True, "_max_rows": N} sentinel record is
+                   appended so the caller can tell the result was cut off.
 
     Returns:
         A list of dictionaries representing row records, or an error string.
@@ -96,8 +107,16 @@ def query_health_database(sql_query: str) -> list[dict] | str:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             logger.info("Executing analytical query...")
             cur.execute(sql_query)
-            records = cur.fetchall()
-            
+            # Fetch one extra row so we can tell "exactly max_rows" apart
+            # from "more rows were available" without pulling the full set.
+            records = cur.fetchmany(max_rows + 1)
+            truncated = len(records) > max_rows
+            if truncated:
+                records = records[:max_rows]
+                logger.warning(
+                    "Query returned more than %d rows — result truncated.", max_rows
+                )
+
             # Convert decimal/numeric types and date objects to standard JSON-compatible floats/strings
             serializable_records = []
             for record in records:
@@ -110,7 +129,11 @@ def query_health_database(sql_query: str) -> list[dict] | str:
                     else:
                         clean_record[k] = str(v)
                 serializable_records.append(clean_record)
-                
+
+            if truncated:
+                serializable_records.append(
+                    {"_truncated": True, "_max_rows": max_rows}
+                )
             return serializable_records
 
     except psycopg2.Error as e:

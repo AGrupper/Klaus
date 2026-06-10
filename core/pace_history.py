@@ -76,6 +76,9 @@ def fetch_dense_pace_history(today_iso: str) -> list[dict]:
 
         result: list[dict] = []
         for row in rows:
+            if row.get("_truncated"):
+                # Row-cap sentinel from query_health_database — not a data row.
+                continue
             pace = row.get("pace_sec_per_km")
             if pace is None:
                 continue

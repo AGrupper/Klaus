@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from mcp_tools.database_tool import query_health_database
+from mcp_tools.database_tool import MAX_ROWS, query_health_database
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +59,8 @@ def test_blocks_multi_statement():
 def _mock_conn(rows):
     conn = MagicMock(name="conn")
     cur = MagicMock(name="cursor")
-    cur.fetchall.return_value = rows
+    # The tool fetches max_rows + 1 via fetchmany; honour the size argument.
+    cur.fetchmany.side_effect = lambda size: rows[:size]
     cur_ctx = MagicMock()
     cur_ctx.__enter__.return_value = cur
     cur_ctx.__exit__.return_value = False
@@ -85,3 +86,58 @@ def test_trailing_semicolon_is_allowed(monkeypatch):
         result = query_health_database("SELECT 1 AS n;")
     assert result == [{"n": 1}]
     conn.set_session.assert_called_once_with(readonly=True, autocommit=True)
+
+
+# ---------------------------------------------------------------------------
+# Row cap — truncation sentinel
+# ---------------------------------------------------------------------------
+
+def test_truncates_at_max_rows_with_sentinel(monkeypatch):
+    """More rows than the cap → exactly max_rows data rows + a sentinel record."""
+    monkeypatch.setenv("PG_CONNECTION_STRING", "postgresql://u:p@h/db")
+    rows = [{"n": i} for i in range(MAX_ROWS + 50)]
+    conn = _mock_conn(rows)
+    with patch("mcp_tools.database_tool.psycopg2.connect", return_value=conn):
+        result = query_health_database("SELECT n FROM samples")
+
+    assert isinstance(result, list)
+    assert len(result) == MAX_ROWS + 1
+    assert result[-1] == {"_truncated": True, "_max_rows": MAX_ROWS}
+    assert result[0] == {"n": 0}
+    assert result[MAX_ROWS - 1] == {"n": MAX_ROWS - 1}
+
+
+def test_under_cap_has_no_sentinel(monkeypatch):
+    """A result within the cap is returned as-is — no sentinel appended."""
+    monkeypatch.setenv("PG_CONNECTION_STRING", "postgresql://u:p@h/db")
+    rows = [{"n": i} for i in range(3)]
+    conn = _mock_conn(rows)
+    with patch("mcp_tools.database_tool.psycopg2.connect", return_value=conn):
+        result = query_health_database("SELECT n FROM samples")
+
+    assert result == rows
+    assert not any(r.get("_truncated") for r in result)
+
+
+def test_exactly_max_rows_has_no_sentinel(monkeypatch):
+    """Exactly max_rows rows → not truncated (the +1 probe row distinguishes)."""
+    monkeypatch.setenv("PG_CONNECTION_STRING", "postgresql://u:p@h/db")
+    rows = [{"n": i} for i in range(MAX_ROWS)]
+    conn = _mock_conn(rows)
+    with patch("mcp_tools.database_tool.psycopg2.connect", return_value=conn):
+        result = query_health_database("SELECT n FROM samples")
+
+    assert len(result) == MAX_ROWS
+    assert not any(r.get("_truncated") for r in result)
+
+
+def test_custom_max_rows_param(monkeypatch):
+    """Callers can tighten the cap per query."""
+    monkeypatch.setenv("PG_CONNECTION_STRING", "postgresql://u:p@h/db")
+    rows = [{"n": i} for i in range(10)]
+    conn = _mock_conn(rows)
+    with patch("mcp_tools.database_tool.psycopg2.connect", return_value=conn):
+        result = query_health_database("SELECT n FROM samples", max_rows=5)
+
+    assert len(result) == 6
+    assert result[-1] == {"_truncated": True, "_max_rows": 5}
