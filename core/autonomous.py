@@ -36,8 +36,9 @@ import logging
 import os
 import threading
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from zoneinfo import ZoneInfo
+
+from core import prompt_loader
 
 logger = logging.getLogger(__name__)
 
@@ -63,22 +64,16 @@ _SMART_LOOP_ERROR_SENTINELS = (
 
 
 def _load_prompt(relative_path: str) -> str:
-    """Load a prompt file by project-root-relative path.
+    """Load a prompt file by project-root-relative path (cached per process).
 
-    Mirrors ``core/main.py:_load_prompt`` (WARNING 2 fix — single path strategy
-    across the codebase). Cloud Run sets CWD to ``/workspace`` (the project
-    root); local dev runs from the project root too.
+    Thin delegate to :func:`core.prompt_loader.load_prompt` — kept under the
+    original name because callers and tests reference it directly. The cache
+    matters here: each compose path loads three prompt files, 43 ticks a day.
 
     Raises:
         FileNotFoundError: If the prompt file does not exist.
     """
-    path = Path(relative_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Prompt file not found: {path.resolve()}. "
-            "Ensure you are running from the project root."
-        )
-    return path.read_text(encoding="utf-8").strip()
+    return prompt_loader.load_prompt(relative_path)
 
 
 def _now_context(now: datetime) -> dict:

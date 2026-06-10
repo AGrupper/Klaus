@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 from core.llm_client import LLMClient, LLMError
+from core import prompt_loader
 from core import tools as tool_registry
 from memory.firestore_db import SelfStateStore, JournalStore, UserProfileStore
 
@@ -790,18 +791,15 @@ class AgentOrchestrator:
 # ------------------------------------------------------------------ #
 
 def _load_prompt(relative_path: str) -> str:
-    """Load a prompt file relative to the project root.
+    """Load a prompt file relative to the project root (cached per process).
+
+    Thin delegate to :func:`core.prompt_loader.load_prompt` — kept under the
+    original name because callers and tests reference it directly.
 
     Raises:
         FileNotFoundError: If the prompt file does not exist.
     """
-    path = Path(relative_path)
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Prompt file not found: {path.resolve()}. "
-            "Ensure you are running from the project root."
-        )
-    return path.read_text(encoding="utf-8").strip()
+    return prompt_loader.load_prompt(relative_path)
 
 
 def _load_self_md() -> str:
