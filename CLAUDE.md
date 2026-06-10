@@ -135,7 +135,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **Cloud Scheduler jobs:** heartbeat (hourly), morning-briefing-tick (*/10 6-10, now a light note), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00, writes private journal/self_state)**, **klaus-nightly-backstop (01:00, sends nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly`. **Retired:** proactive-alerts (21:30) — its signals folded into the nightly review.
+- **Cloud Scheduler jobs:** heartbeat (hourly), morning-briefing-tick (*/10 6-10, now a light note), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-nightly-backstop (01:00, writes journal/self_state + sends the nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly` (the nightly flow writes the journal via `_ensure_reflection`). **Retired:** proactive-alerts (21:30) and reflect (22:00) — folded into the nightly review.
 
 ## 6. Invariants
 

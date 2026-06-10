@@ -210,13 +210,17 @@ def test_all_cron_jobs_have_staleness_entry():
     the upper bound is raised from 100h to 200h to accommodate weekly crons.
     """
     from core.heartbeat import _CRON_MAX_STALENESS_HOURS
-    # The new entry must exist alongside the existing 5.
+    # WS2: proactive-alerts + reflect were retired (folded into the nightly review);
+    # nightly-backstop is the daily journal/nightly guarantee that replaced reflect.
     expected_subset = {
-        "morning-briefing", "proactive-alerts", "ingest-chats",
-        "ingest-chat-exports", "reflect", "autonomous-tick",
+        "morning-briefing", "ingest-chats", "ingest-chat-exports",
+        "nightly-backstop", "autonomous-tick",
     }
     missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not missing, f"Missing staleness entries: {missing}"
+    # The retired jobs must NOT linger in the staleness list (they'd false-alarm).
+    retired = {"proactive-alerts", "reflect"} & set(_CRON_MAX_STALENESS_HOURS.keys())
+    assert not retired, f"Retired jobs still monitored (will false-alarm): {retired}"
     # All thresholds should be reasonable (0 < h <= 200 covers weekly crons up to 8d slack).
     for job_id, hours in _CRON_MAX_STALENESS_HOURS.items():
         assert 0 < hours <= 200, (

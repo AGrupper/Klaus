@@ -1063,7 +1063,6 @@ are in `Asia/Jerusalem`.
 | 3 | klaus-heartbeat              | `0 * * * *`           | `/cron/heartbeat`                 | Earlier        |
 | 4 | klaus-ingest-chats           | `0 4 * * *`           | `/cron/ingest-chats`              | 12             |
 | 5 | klaus-ingest-chat-exports    | `30 4 * * *`          | `/cron/ingest-chat-exports`       | 13             |
-| 6 | klaus-reflect                | `0 22 * * *`          | `/cron/reflect`                   | 17             |
 | 7 | klaus-autonomous-tick        | `*/20 7-21 * * *`     | `/cron/autonomous-tick`           | 18             |
 | 8 | klaus-weekly-training-review | `0 10 * * 0`          | `/cron/weekly-training-review`    | 20 (Shifu)     |
 | 9 | klaus-strength-sync          | `0 5 * * *`           | `/cron/strength-sync`             | Hevy           |
@@ -1074,14 +1073,17 @@ Nightly review (WS2): there is intentionally **no fixed-time send job** — the 
 review fires organically from the iOS Sleep-Focus automation hitting `/trigger/nightly`
 (shared-secret, see §22). `klaus-nightly-backstop` (01:00) is the safety net: it sends
 the nightly review only if the Sleep-Focus trigger never fired that evening (idempotent),
-so Klaus's journal/self_state never skip a day. `klaus-reflect` (22:00) still writes the
-private journal/self_state; the nightly send is layered on top.
+so Klaus's journal/self_state never skip a day. The nightly flow (`_ensure_reflection`)
+writes the private journal/self_state itself, so there is no separate reflect job.
 
-**Retired:** `klaus-proactive-alerts` (was `30 21 * * *` → `/cron/proactive-alerts`). Its
-weather / overload / recovery signals now fold into the nightly review so there is one
-clean night message instead of two. Delete the scheduler job on deploy:
-`gcloud scheduler jobs delete klaus-proactive-alerts --location="${REGION}"`. The
-`/cron/proactive-alerts` route remains in code but is no longer scheduled.
+**Retired:** `klaus-proactive-alerts` (`30 21 * * *`) and `klaus-reflect` (`0 22 * * *`).
+The proactive weather/overload/recovery signals fold into the nightly review (one clean
+night message); and the nightly review + 01:00 backstop now own the journal/self_state
+write, making the standalone 22:00 reflect redundant (it also raced/overwrote the
+nightly's journal on early-wind-down nights). Delete both jobs on deploy:
+`gcloud scheduler jobs delete klaus-proactive-alerts --location="${REGION}"` and
+`gcloud scheduler jobs delete klaus-reflect --location="${REGION}"`. The
+`/cron/reflect` route is removed; `/cron/proactive-alerts` remains in code but unscheduled.
 
 Note: There is no `klaus-training-checkin` scheduler job — the 21:30 training
 check-in folded into the (now retired) `proactive-alerts` cron historically; that

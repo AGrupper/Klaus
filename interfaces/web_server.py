@@ -420,28 +420,12 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
-@app.post("/cron/reflect")
-async def cron_reflect(request: Request) -> JSONResponse:
-    """Daily reflection — gather the day, write a journal entry, evolve self_state.
-
-    Schedule: 0 22 * * *  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    await _verify_cron_request(request)
-    import asyncio as _asyncio
-    import core.reflection as _reflection
-    try:
-        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        loop = _asyncio.get_running_loop()
-        await loop.run_in_executor(None, _reflection.run_reflection, today)
-        _log_cron_run("reflect", ok=True)
-    except Exception:
-        _log_cron_run("reflect", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
+# NOTE: the standalone /cron/reflect (22:00) route was retired in WS2. The nightly
+# review (_ensure_reflection) writes the journal/self_state when Amit winds down, and
+# /cron/nightly-backstop (01:00) guarantees it on nights the Sleep-Focus trigger never
+# fires — so a separate 22:00 reflect job would only duplicate that work (and overwrite
+# the nightly's journal on early-wind-down nights). core.reflection.run_reflection lives
+# on and is invoked by the nightly flow.
 
 
 async def _run_nightly_background(target: str, trigger: str) -> None:
