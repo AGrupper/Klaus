@@ -251,7 +251,8 @@ def test_check_code_detects_drift_and_todos(tmp_path):
     # Create a fake repo with a CLAUDE.md referencing a non-existent path
     claude_md = tmp_path / "CLAUDE.md"
     claude_md.write_text(
-        "some text\n```text\nKlaus/\n├── nonexistent_file.py\n```\nmore text\n"
+        "some text\n```text\nKlaus/\n├── nonexistent_file.py\n```\nmore text\n",
+        encoding="utf-8",
     )
     core_dir = tmp_path / "core"
     core_dir.mkdir()
@@ -337,7 +338,8 @@ def test_check_code_hierarchical_directory_parsing(tmp_path):
         "│       └── config.json\n"
         "└── root_file.py\n"
         "```\n"
-        "more text\n"
+        "more text\n",
+        encoding="utf-8",
     )
     
     docs_dir = tmp_path / "docs"
