@@ -788,7 +788,7 @@ def test_journal_digest_assembly():
 
     # 3. Worker prompt must NOT contain {journal_digest} (D-15 smart-only)
     worker_template_path = "prompts/worker_agent.md"
-    worker_template = open(worker_template_path).read()
+    worker_template = open(worker_template_path, encoding="utf-8").read()
     assert "journal_digest" not in worker_template, (
         "prompts/worker_agent.md must NOT contain journal_digest (D-15 smart-only)"
     )

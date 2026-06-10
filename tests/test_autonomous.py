@@ -1047,7 +1047,7 @@ class TestPhase19Gather:
 class TestPhase19MealAuditWiring:
     def test_autonomous_source_references_meal_audit(self):
         """NUTR-08 wiring: core/autonomous.py must reference prompts/meal_audit.md."""
-        src = open("core/autonomous.py").read()
+        src = open("core/autonomous.py", encoding="utf-8").read()
         assert "meal_audit.md" in src, (
             "core/autonomous.py is missing prompts/meal_audit.md load — "
             "NUTR-08 wiring broken"
@@ -1062,7 +1062,7 @@ class TestPhase19MealAuditWiring:
 
     def test_autonomous_has_two_meal_audit_load_sites(self):
         """NUTR-08: both _compose_layer2 and _compose_followup_layer2 must append meal_audit."""
-        src = open("core/autonomous.py").read()
+        src = open("core/autonomous.py", encoding="utf-8").read()
         # Expect at least 2 references — one per brain-compose entry point
         assert src.count("meal_audit.md") >= 2, (
             f"core/autonomous.py must reference meal_audit.md at least 2 times "

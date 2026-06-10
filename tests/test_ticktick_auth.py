@@ -49,7 +49,7 @@ class TestGetValidAccessToken:
         tokens = {"access_token": "valid_acc", "refresh_token": "ref"}
         token_path = str(tmp_path / "tokens.json")
         import json
-        with open(token_path, "w") as f:
+        with open(token_path, "w", encoding="utf-8") as f:
             json.dump(tokens, f)
 
         monkeypatch.setenv("TICKTICK_TOKEN_STORAGE", "file")
@@ -94,7 +94,7 @@ class TestRefreshAndPersist:
         auth_mod._token_cache = old_tokens
 
         token_path = str(tmp_path / "tokens.json")
-        with open(token_path, "w") as f:
+        with open(token_path, "w", encoding="utf-8") as f:
             import json
             json.dump(old_tokens, f)
 

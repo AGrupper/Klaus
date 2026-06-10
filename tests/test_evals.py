@@ -55,39 +55,39 @@ class TestFixtureSchema:
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_each_fixture_is_valid_json(self, path):
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             json.loads(f.read())
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_each_fixture_has_required_keys(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         missing = _REQUIRED_TOP_KEYS - data.keys()
         assert not missing, f"{path}: missing keys {missing}"
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_each_situation_snapshot_has_required_keys(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         snap = data["situation_snapshot"]
         missing = _REQUIRED_SNAPSHOT_KEYS - snap.keys()
         assert not missing, f"{path}: situation_snapshot missing keys {missing}"
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_each_trigger_type_is_valid_enum(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         assert data["trigger_type"] in _VALID_TRIGGER_TYPES, (
             f"{path}: trigger_type={data['trigger_type']!r} not in {_VALID_TRIGGER_TYPES}"
         )
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_each_ground_truth_has_should_speak_bool(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         assert isinstance(data["ground_truth"]["should_speak"], bool), (
             f"{path}: ground_truth.should_speak must be bool"
         )
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_topic_key_pattern_required_when_should_speak(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         gt = data["ground_truth"]
         if gt["should_speak"]:
             assert "topic_key_pattern" in gt, (
@@ -97,7 +97,7 @@ class TestFixtureSchema:
 
     @pytest.mark.parametrize("path", _all_fixture_paths())
     def test_id_matches_filename_stem(self, path):
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         stem = os.path.splitext(os.path.basename(path))[0]
         assert data["id"] == stem, (
             f"{path}: id={data['id']!r} != filename stem {stem!r}"
@@ -107,7 +107,7 @@ class TestFixtureSchema:
         """WARNING 8 regression guard — per D-13 the followup path bypasses tick-brain,
         so a followup-only snapshot's expected tick-brain behavior is silence."""
         path = "evals/tick_brain/fixtures/0003-due-followup.json"
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         assert data["ground_truth"]["should_speak"] is False, (
             "WARNING 8 regression: 0003-due-followup.json should_speak must be false "
             "(see evals/tick_brain/README.md 'What should_speak Means')"
@@ -132,7 +132,7 @@ def test_phase19_all_fixtures_have_new_keys():
     paths = _all_fixture_paths()
     assert len(paths) >= 5
     for path in paths:
-        data = json.loads(open(path).read())
+        data = json.loads(open(path, encoding="utf-8").read())
         snap = data["situation_snapshot"]
         assert "meals_since_last_tick" in snap, f"{path}: missing meals_since_last_tick"
         assert "training_status" in snap, f"{path}: missing training_status"

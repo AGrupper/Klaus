@@ -745,7 +745,7 @@ class TestMealAuditChatWiring:
     def test_main_loads_and_appends_meal_audit_in_chat(self):
         """core/main.py loads meal_audit into _meal_audit_content and appends it
         in the chat path (handle_message)."""
-        src = open("core/main.py").read()
+        src = open("core/main.py", encoding="utf-8").read()
         assert "prompts/meal_audit.md" in src, (
             "core/main.py must load prompts/meal_audit.md for the chat coach"
         )
@@ -773,7 +773,7 @@ class TestMealAuditChatWiring:
         forward-looking — flags what's worth changing, reinforces what's on track
         only when real (no rigid improve+keep template), not the old non-personalized
         critique."""
-        body = open("prompts/meal_audit.md").read()
+        body = open("prompts/meal_audit.md", encoding="utf-8").read()
         assert body.strip(), "prompts/meal_audit.md is empty"
         lowered = body.lower()
         # Must coach toward change and acknowledge on-track without manufacturing it

@@ -25,7 +25,7 @@ def bot():
 
 def test_prompt_uses_coaching_context_only_when_present():
     """Light morning note: coaching/nutrition context is optional, used only when real."""
-    content = open("prompts/morning_briefing.md").read()
+    content = open("prompts/morning_briefing.md", encoding="utf-8").read()
     lowered = content.lower()
     assert "nutrition_targets" in lowered
     # The note must treat coaching context as optional, not a mandatory section
@@ -415,7 +415,7 @@ class TestPhase19MorningBriefing:
 class TestPhase19MealAuditWiringMorningBriefing:
     def test_morning_briefing_source_references_meal_audit(self):
         """NUTR-08 wiring: core/morning_briefing.py must reference prompts/meal_audit.md."""
-        src = open("core/morning_briefing.py").read()
+        src = open("core/morning_briefing.py", encoding="utf-8").read()
         assert "meal_audit.md" in src, (
             "core/morning_briefing.py is missing prompts/meal_audit.md load — "
             "NUTR-08 wiring broken"
@@ -665,7 +665,7 @@ def test_run_morning_briefing_no_topic_write_when_send_fails(bot):
 
 def test_morning_briefing_prompt_integrated_block_instruction():
     """D-18: the morning briefing prompt must instruct an integrated session+recovery+fueling block."""
-    content = open("prompts/morning_briefing.md").read()
+    content = open("prompts/morning_briefing.md", encoding="utf-8").read()
     lower = content.lower()
     # Check for integrated block instruction keywords
     assert any(kw in lower for kw in ["integrated", "one block", "single block", "weave"]), (
@@ -675,7 +675,7 @@ def test_morning_briefing_prompt_integrated_block_instruction():
 
 def test_morning_briefing_prompt_prior_day_recap_instruction():
     """D-08: the morning briefing prompt must instruct prior-day unresolved-miss recap."""
-    content = open("prompts/morning_briefing.md").read()
+    content = open("prompts/morning_briefing.md", encoding="utf-8").read()
     lower = content.lower()
     assert any(kw in lower for kw in ["prior", "yesterday", "prior-day"]), (
         "prompts/morning_briefing.md missing D-08 prior-day recap instruction"
@@ -684,7 +684,7 @@ def test_morning_briefing_prompt_prior_day_recap_instruction():
 
 def test_morning_briefing_prompt_dedup_instruction():
     """D-02: the morning briefing prompt must instruct dedup (don't repeat today's topics)."""
-    content = open("prompts/morning_briefing.md").read()
+    content = open("prompts/morning_briefing.md", encoding="utf-8").read()
     lower = content.lower()
     assert any(kw in lower for kw in ["coaching_topics_today", "dedup", "already raised", "do not repeat"]), (
         "prompts/morning_briefing.md missing D-02 dedup instruction"

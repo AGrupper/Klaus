@@ -457,7 +457,7 @@ def test_run_weekly_review_no_topic_write_when_send_fails(monkeypatch):
 
 def test_weekly_review_prompt_has_per_facet_instruction():
     """PROG-01 / D-17: prompt must instruct per-facet within-block reporting."""
-    content = open("prompts/weekly_training_review.md").read()
+    content = open("prompts/weekly_training_review.md", encoding="utf-8").read()
     lower = content.lower()
     assert any(kw in lower for kw in ["facet", "top-set", "acwr", "threshold volume"]), (
         "prompts/weekly_training_review.md missing per-facet within-block framing"
@@ -466,7 +466,7 @@ def test_weekly_review_prompt_has_per_facet_instruction():
 
 def test_weekly_review_prompt_has_quality_trend_instruction():
     """PROG-04 / D-17: prompt must instruct session quality trend reporting."""
-    content = open("prompts/weekly_training_review.md").read()
+    content = open("prompts/weekly_training_review.md", encoding="utf-8").read()
     lower = content.lower()
     assert any(kw in lower for kw in ["quality", "strong", "neutral", "grind"]), (
         "prompts/weekly_training_review.md missing session quality trend instruction"
@@ -480,7 +480,7 @@ def test_weekly_review_prompt_forbids_dated_projection():
     prematurely. In Phase 25 Plan 03 the fence IS lifted and this test will be superseded by
     test_no_phase25_fence (in test_prompts.py) once the prompt edit lands.
     """
-    content = open("prompts/weekly_training_review.md").read()
+    content = open("prompts/weekly_training_review.md", encoding="utf-8").read()
     lower = content.lower()
     # If "weeks behind" or "on track for" appears, it must be inside a "do NOT" prohibition
     for phrase in ["weeks behind", "on track for"]:

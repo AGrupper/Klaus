@@ -469,7 +469,7 @@ def test_aggregate_separates_groups_by_food_item_at_same_timestamp():
 def test_aggregate_real_fixture_values():
     """End-to-end: the 5-flat-sample fixture (operator's real 20:00 meal)
     aggregates into exactly one meal dict with the operator's true totals."""
-    with open("tests/fixtures/healthkit_payload_sample.json") as f:
+    with open("tests/fixtures/healthkit_payload_sample.json", encoding="utf-8") as f:
         data = json.load(f)
     payload = HealthKitPayload.model_validate(data)
     groups = _aggregate_quantity_samples(payload.samples)
@@ -691,7 +691,7 @@ def test_ingest_payload_real_fixture_smoke():
 
     The fixture is 5 flat samples at one start_date → 1 aggregated meal →
     1 upsert call."""
-    with open("tests/fixtures/healthkit_payload_sample.json") as f:
+    with open("tests/fixtures/healthkit_payload_sample.json", encoding="utf-8") as f:
         data = json.load(f)
     store = MagicMock()
     result = ingest_payload(data, store)

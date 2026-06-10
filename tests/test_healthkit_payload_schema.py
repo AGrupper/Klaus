@@ -30,7 +30,7 @@ _REQUIRED_SAMPLE_KEYS = {"uuid", "start_date", "quantity_type", "value"}
 
 
 def _load() -> dict:
-    with open(_FIXTURE_PATH) as f:
+    with open(_FIXTURE_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
