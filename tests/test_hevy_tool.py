@@ -116,9 +116,28 @@ def _resp(status: int, json_body: dict | None = None, text: str = "") -> MagicMo
     return r
 
 
+def _patch_session_get(**get_kwargs):
+    """Patch hevy._get_session with a mock session; returns the session's
+    ``get`` mock via the context manager (HTTP calls now go through a shared
+    requests.Session rather than module-level requests.get)."""
+    session = MagicMock(name="requests-session")
+    session.get = MagicMock(**get_kwargs)
+    ctx = patch.object(hevy, "_get_session", return_value=session)
+
+    class _Ctx:
+        def __enter__(self):
+            ctx.__enter__()
+            return session.get
+
+        def __exit__(self, *exc):
+            return ctx.__exit__(*exc)
+
+    return _Ctx()
+
+
 def test_fetch_workouts_sends_api_key_header(monkeypatch):
     monkeypatch.setenv("HEVY_API_KEY", "uuid-123")
-    with patch.object(hevy.requests, "get", return_value=_resp(200, {"workouts": []})) as g:
+    with _patch_session_get(return_value=_resp(200, {"workouts": []})) as g:
         hevy.fetch_workouts(page=2)
     _, kwargs = g.call_args
     assert kwargs["headers"]["api-key"] == "uuid-123"
@@ -128,8 +147,7 @@ def test_fetch_workouts_sends_api_key_header(monkeypatch):
 
 def test_fetch_workout_events_passes_since(monkeypatch):
     monkeypatch.setenv("HEVY_API_KEY", "uuid-123")
-    with patch.object(hevy.requests, "get",
-                      return_value=_resp(200, {"events": []})) as g:
+    with _patch_session_get(return_value=_resp(200, {"events": []})) as g:
         hevy.fetch_workout_events(since="2026-06-01T00:00:00Z", page=1)
     _, kwargs = g.call_args
     assert kwargs["params"]["since"] == "2026-06-01T00:00:00Z"
@@ -144,14 +162,14 @@ def test_missing_api_key_raises_auth_error(monkeypatch):
 
 def test_401_raises_auth_error(monkeypatch):
     monkeypatch.setenv("HEVY_API_KEY", "bad")
-    with patch.object(hevy.requests, "get", return_value=_resp(401, text="Unauthorized")):
+    with _patch_session_get(return_value=_resp(401, text="Unauthorized")):
         with pytest.raises(hevy.HevyAuthError):
             hevy.fetch_workouts()
 
 
 def test_500_raises_unavailable(monkeypatch):
     monkeypatch.setenv("HEVY_API_KEY", "ok")
-    with patch.object(hevy.requests, "get", return_value=_resp(500, text="boom")):
+    with _patch_session_get(return_value=_resp(500, text="boom")):
         with pytest.raises(hevy.HevyUnavailableError):
             hevy.fetch_workouts()
 
@@ -159,6 +177,6 @@ def test_500_raises_unavailable(monkeypatch):
 def test_network_error_raises_unavailable(monkeypatch):
     monkeypatch.setenv("HEVY_API_KEY", "ok")
     import requests as _rq
-    with patch.object(hevy.requests, "get", side_effect=_rq.RequestException("timeout")):
+    with _patch_session_get(side_effect=_rq.RequestException("timeout")):
         with pytest.raises(hevy.HevyUnavailableError):
             hevy.fetch_workout_events(since="x")

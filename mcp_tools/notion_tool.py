@@ -33,6 +33,22 @@ _BLOCK_CHUNK = 100
 # HTTP helpers                                                       #
 # ------------------------------------------------------------------ #
 
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Shared keep-alive session — reuses the TLS connection across API calls.
+
+    A single orchestration flow can issue several Notion calls back-to-back;
+    without a session each one pays a fresh TCP + TLS handshake. No auth state
+    lives on the session (headers are passed per call), so sharing is safe.
+    """
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
+
 def _headers() -> dict:
     token = os.environ.get("NOTION_API_TOKEN", "")
     if not token:
@@ -46,21 +62,21 @@ def _headers() -> dict:
 
 def _api_get(path: str, **kwargs) -> dict | list:
     """GET {_API_BASE}/{path}."""
-    resp = requests.get(f"{_API_BASE}/{path}", headers=_headers(), timeout=15, **kwargs)
+    resp = _get_session().get(f"{_API_BASE}/{path}", headers=_headers(), timeout=15, **kwargs)
     resp.raise_for_status()
     return resp.json()
 
 
 def _api_post(path: str, body: dict) -> dict:
     """POST {_API_BASE}/{path}."""
-    resp = requests.post(f"{_API_BASE}/{path}", json=body, headers=_headers(), timeout=15)
+    resp = _get_session().post(f"{_API_BASE}/{path}", json=body, headers=_headers(), timeout=15)
     resp.raise_for_status()
     return resp.json()
 
 
 def _api_patch(path: str, body: dict) -> dict:
     """PATCH {_API_BASE}/{path}."""
-    resp = requests.patch(f"{_API_BASE}/{path}", json=body, headers=_headers(), timeout=15)
+    resp = _get_session().patch(f"{_API_BASE}/{path}", json=body, headers=_headers(), timeout=15)
     resp.raise_for_status()
     return resp.json()
 

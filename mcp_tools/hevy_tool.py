@@ -47,6 +47,22 @@ def _api_key() -> str:
     return key
 
 
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Shared keep-alive session — reuses the TLS connection across API calls.
+
+    The strength-ingest cron pages through /workouts back-to-back; a session
+    avoids a fresh TCP + TLS handshake per page. No auth state lives on the
+    session (the api-key header is passed per call), so sharing is safe.
+    """
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
+
 def _request(path: str, params: dict) -> dict:
     """GET ``{HEVY_BASE_URL}{path}`` with the api-key header; return parsed JSON.
 
@@ -55,7 +71,7 @@ def _request(path: str, params: dict) -> dict:
         HevyUnavailableError: On network failure, non-JSON body, or other non-2xx.
     """
     try:
-        resp = requests.get(
+        resp = _get_session().get(
             f"{HEVY_BASE_URL}{path}",
             headers={"api-key": _api_key(), "Accept": "application/json"},
             params=params,

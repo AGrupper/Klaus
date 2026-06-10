@@ -37,6 +37,21 @@ _TZ = ZoneInfo("Asia/Jerusalem")
 # HTTP helpers (auto-retry on 401)                                   #
 # ------------------------------------------------------------------ #
 
+_session: requests.Session | None = None
+
+
+def _get_session() -> requests.Session:
+    """Shared keep-alive session — reuses the TLS connection across API calls.
+
+    No auth state lives on the session (the bearer header is built per call
+    via _headers), so sharing is safe and the 401-refresh retry still works.
+    """
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
+
+
 def _headers() -> dict:
     return {
         "Authorization": f"Bearer {get_valid_access_token()}",
@@ -47,13 +62,13 @@ def _headers() -> dict:
 def _api_get(endpoint: str, **kwargs) -> dict | list:
     """GET {_API_BASE}/{endpoint}, refreshing on 401."""
     url = f"{_API_BASE}/{endpoint}"
-    resp = requests.get(url, headers=_headers(), timeout=15, **kwargs)
+    resp = _get_session().get(url, headers=_headers(), timeout=15, **kwargs)
     if resp.status_code == 401:
         token = refresh_and_persist()
-        resp = requests.get(url,
-                            headers={"Authorization": f"Bearer {token}",
-                                     "Content-Type": "application/json"},
-                            timeout=15, **kwargs)
+        resp = _get_session().get(url,
+                                  headers={"Authorization": f"Bearer {token}",
+                                           "Content-Type": "application/json"},
+                                  timeout=15, **kwargs)
     resp.raise_for_status()
     return resp.json()
 
@@ -61,13 +76,13 @@ def _api_get(endpoint: str, **kwargs) -> dict | list:
 def _api_post(endpoint: str, body: dict) -> dict:
     """POST {_API_BASE}/{endpoint}, refreshing on 401."""
     url = f"{_API_BASE}/{endpoint}"
-    resp = requests.post(url, headers=_headers(), json=body, timeout=15)
+    resp = _get_session().post(url, headers=_headers(), json=body, timeout=15)
     if resp.status_code == 401:
         token = refresh_and_persist()
-        resp = requests.post(url,
-                             headers={"Authorization": f"Bearer {token}",
-                                      "Content-Type": "application/json"},
-                             json=body, timeout=15)
+        resp = _get_session().post(url,
+                                   headers={"Authorization": f"Bearer {token}",
+                                            "Content-Type": "application/json"},
+                                   json=body, timeout=15)
     resp.raise_for_status()
     return resp.json()
 
