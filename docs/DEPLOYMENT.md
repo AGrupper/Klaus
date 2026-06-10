@@ -724,8 +724,8 @@ After completing all cloud setup, your local environment must continue to
 work. Verify:
 
 ```bash
-# On your Mac — should start the bot in polling mode
-python -m interfaces.telegram_bot
+# On your Mac — should start the FastAPI app (Telegram webhook + /cron/* routes)
+uvicorn interfaces.web_server:app --host 0.0.0.0 --port 8080
 ```
 
 Local dev uses `GOOGLE_TOKEN_STORAGE=file` and reads `config/token.json`
@@ -1060,7 +1060,6 @@ are in `Asia/Jerusalem`.
 | # | Job ID                       | Schedule              | Endpoint                          | Phase          |
 |---|------------------------------|-----------------------|-----------------------------------|----------------|
 | 1 | klaus-morning-briefing       | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`     | Earlier        |
-| 2 | klaus-proactive-alerts       | `30 21 * * *`         | `/cron/proactive-alerts`          | Earlier        |
 | 3 | klaus-heartbeat              | `0 * * * *`           | `/cron/heartbeat`                 | Earlier        |
 | 4 | klaus-ingest-chats           | `0 4 * * *`           | `/cron/ingest-chats`              | 12             |
 | 5 | klaus-ingest-chat-exports    | `30 4 * * *`          | `/cron/ingest-chat-exports`       | 13             |
@@ -1069,9 +1068,24 @@ are in `Asia/Jerusalem`.
 | 8 | klaus-weekly-training-review | `0 10 * * 0`          | `/cron/weekly-training-review`    | 20 (Shifu)     |
 | 9 | klaus-strength-sync          | `0 5 * * *`           | `/cron/strength-sync`             | Hevy           |
 | 10 | klaus-run-sync              | `15 5 * * *`          | `/cron/run-sync`                  | Run-detail     |
+| 11 | klaus-nightly-backstop      | `0 1 * * *`           | `/cron/nightly-backstop`          | Nightly (WS2)  |
+
+Nightly review (WS2): there is intentionally **no fixed-time send job** — the nightly
+review fires organically from the iOS Sleep-Focus automation hitting `/trigger/nightly`
+(shared-secret, see §22). `klaus-nightly-backstop` (01:00) is the safety net: it sends
+the nightly review only if the Sleep-Focus trigger never fired that evening (idempotent),
+so Klaus's journal/self_state never skip a day. `klaus-reflect` (22:00) still writes the
+private journal/self_state; the nightly send is layered on top.
+
+**Retired:** `klaus-proactive-alerts` (was `30 21 * * *` → `/cron/proactive-alerts`). Its
+weather / overload / recovery signals now fold into the nightly review so there is one
+clean night message instead of two. Delete the scheduler job on deploy:
+`gcloud scheduler jobs delete klaus-proactive-alerts --location="${REGION}"`. The
+`/cron/proactive-alerts` route remains in code but is no longer scheduled.
 
 Note: There is no `klaus-training-checkin` scheduler job — the 21:30 training
-check-in folds into the existing `proactive-alerts` cron (D-09); no separate job is needed.
+check-in folded into the (now retired) `proactive-alerts` cron historically; that
+content is part of the nightly review going forward.
 
 Notes:
 - Schedules in column 2 are illustrative — verify against the live `gcloud scheduler
@@ -1253,6 +1267,13 @@ in `core/heartbeat.py`) still monitors these via `_log_cron_run`.
 | Endpoint | Driver | Auth | Phase |
 |----------|--------|------|-------|
 | `/cron/healthkit-sync` | iPhone Shortcut (Personal Automation) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | 19.1 |
+| `/trigger/nightly` | iPhone Personal Automation ("When Sleep Focus turns On") | shared-secret bearer (`NIGHTLY_TRIGGER_TOKEN`) | Nightly (WS2) |
+
+**iOS setup for `/trigger/nightly`:** Shortcuts → Automation → new Personal Automation →
+"When [Sleep Focus] turns On" → Run a Shortcut that does a `Get Contents of URL`:
+POST `${SERVICE_URL}/trigger/nightly`, header `Authorization: Bearer <NIGHTLY_TRIGGER_TOKEN>`.
+A dedicated token (not the HealthKit one) so a leak of either credential can't be used to
+drive the other endpoint (least privilege).
 
 ---
 
@@ -1289,6 +1310,20 @@ gcloud secrets versions disable klaus-healthkit-webhook-token --version=<CURRENT
 ```
 
 All inbound HealthKit pushes fail auth immediately. Re-enable by adding a new version.
+
+### NIGHTLY_TRIGGER_TOKEN Secret (WS2)
+
+Static shared-secret bearer for `/trigger/nightly` (§22) — same shape as
+HEALTHKIT_WEBHOOK_TOKEN, separate value (least privilege).
+
+**Secret name:** `klaus-nightly-trigger-token`
+
+**Cloud Run binding:** `--set-secrets=NIGHTLY_TRIGGER_TOKEN=klaus-nightly-trigger-token:latest`
+
+**Mint / rotate / kill-switch:** identical commands to HEALTHKIT_WEBHOOK_TOKEN above,
+substituting the secret name and pasting the new token into the iOS Sleep-Focus
+Shortcut's `Authorization: Bearer …` header. The route refuses all requests (500) when
+the env is unset, so a missing mount fails closed rather than open.
 
 ---
 

@@ -340,6 +340,50 @@ async def _verify_healthkit_request(request: Request) -> None:
         )
 
 
+async def _verify_trigger_request(request: Request) -> None:
+    """Verify a shared-secret bearer token from the iOS Sleep-Focus Shortcut.
+
+    The nightly review is triggered by an iPhone Personal Automation ("When Sleep
+    Focus turns On → POST /trigger/nightly"). It carries a dedicated bearer token
+    (NIGHTLY_TRIGGER_TOKEN, sourced from Secret Manager) rather than the Cloud
+    Scheduler OIDC token — least privilege: a leaked HealthKit/cron credential must
+    not be able to make Klaus send messages, and vice-versa.
+
+    Mirrors _verify_healthkit_request exactly (constant-time compare, refuse-all on
+    unset env, redacted-prefix logging).
+
+    Raises:
+        HTTPException 401: Missing / malformed Authorization header.
+        HTTPException 403: Bearer present but does not match the secret.
+        HTTPException 500: NIGHTLY_TRIGGER_TOKEN env unset (refuse-all).
+    """
+    if os.getenv("CRON_DEV_BYPASS", "false").lower() == "true":
+        logger.info("CRON_DEV_BYPASS=true — skipping nightly-trigger auth")
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Missing or malformed Authorization header"},
+        )
+
+    received = auth_header.removeprefix("Bearer ").strip()
+    expected = os.environ.get("NIGHTLY_TRIGGER_TOKEN", "")
+    if not expected:
+        # WHY: refuse-all on unset env prevents a fail-open if the Secret Manager
+        # mount silently fails — surfaces as a 500 the operator can detect rather
+        # than letting any random POST trigger a send.
+        logger.error("NIGHTLY_TRIGGER_TOKEN env unset — refusing all nightly-trigger auth")
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured"})
+
+    if not hmac.compare_digest(received.encode(), expected.encode()):
+        client = request.client.host if request.client else "?"
+        redacted = received[:4] + "..." + received[-4:] if len(received) >= 8 else "***"
+        logger.warning("nightly-trigger auth failed from %s (token_prefix=%s)", client, redacted)
+        raise HTTPException(status_code=403, detail={"error": "Invalid token"})
+
+
 def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) -> None:
     """Best-effort liveness ledger write for a cron endpoint. Never raises."""
     try:
@@ -398,6 +442,57 @@ async def cron_reflect(request: Request) -> JSONResponse:
         _log_cron_run("reflect", ok=False)
         raise
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/trigger/nightly")
+async def trigger_nightly(request: Request) -> JSONResponse:
+    """Receive the iOS Sleep-Focus automation and send the nightly review.
+
+    Triggered when Amit's phone enters Sleep Focus (organic wind-down), so there is
+    no fixed schedule. Authenticated via the shared-secret NIGHTLY_TRIGGER_TOKEN.
+    Idempotent: if the nightly already sent for tonight (e.g. the backstop beat it),
+    run_nightly no-ops.
+
+    Returns:
+        JSONResponse: ``{"sent": true|false}`` with HTTP 200.
+    """
+    await _verify_trigger_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    import core.nightly_review as _nightly
+    try:
+        target = _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
+        sent = await _nightly.run_nightly(_application.bot, target, trigger="focus")
+        _log_cron_run("nightly-trigger", ok=True)
+    except Exception:
+        _log_cron_run("nightly-trigger", ok=False)
+        raise
+    return JSONResponse(content={"sent": sent})
+
+
+@app.post("/cron/nightly-backstop")
+async def cron_nightly_backstop(request: Request) -> JSONResponse:
+    """Safety-net for the nightly review if the Sleep-Focus trigger never fired.
+
+    Schedule: 0 1 * * *  (Asia/Jerusalem) — ~01:00. Authenticated via OIDC bearer.
+    Idempotent: run_nightly no-ops if the trigger already sent tonight's review, so
+    on a normal night this fires, sees "already sent", and does nothing.
+
+    Returns:
+        JSONResponse: ``{"sent": true|false}`` with HTTP 200.
+    """
+    await _verify_cron_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    import core.nightly_review as _nightly
+    try:
+        target = _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
+        sent = await _nightly.run_nightly(_application.bot, target, trigger="backstop")
+        _log_cron_run("nightly-backstop", ok=True)
+    except Exception:
+        _log_cron_run("nightly-backstop", ok=False)
+        raise
+    return JSONResponse(content={"sent": sent})
 
 
 @app.post("/cron/autonomous-tick")

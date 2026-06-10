@@ -261,14 +261,22 @@ def _gather_data(today_iso: str) -> dict:
         logger.warning("morning_briefing: calendar fetch failed", exc_info=True)
         data["calendar"] = None
 
-    # Email — _get_gmail_tool() is a module-level function in core/tools.py
+    # NOTE: email is intentionally NOT gathered — Amit doesn't use it, so the morning
+    # note never surfaces it (the heavy email-list briefing was retired).
+
+    # "What's new since last night" delta — read the snapshot the nightly review stored
+    # for tomorrow (= today, from this morning's perspective). The compose prompt diffs
+    # today's freshly-gathered calendar/tasks against it to flag only what changed
+    # overnight. Best-effort: silent-omit if no nightly ran.
     try:
-        from core.tools import _get_gmail_tool
-        emails = _get_gmail_tool().list_unread(max_results=10)
-        data["email"] = emails
+        from core.nightly_review import _get_state as _nightly_state
+        yesterday_iso = (date.fromisoformat(today_iso) - timedelta(days=1)).isoformat()
+        nightly = _nightly_state(yesterday_iso)
+        structured = nightly.get("structured") if nightly else None
+        if structured:
+            data["since_last_night"] = structured
     except Exception:
-        logger.warning("morning_briefing: email fetch failed", exc_info=True)
-        data["email"] = None
+        logger.warning("morning_briefing: nightly snapshot read failed", exc_info=True)
 
     # Garmin
     try:
@@ -478,66 +486,34 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
 
 
 def _plain_text_fallback(today_data: dict, today_iso: str) -> str:
-    """Deterministic plain-text briefing when LLM is unavailable."""
-    lines = ["Good morning, sir. Briefing service degraded today; here is the raw data.", ""]
+    """Deterministic light morning note when the LLM is unavailable."""
+    lines = ["Morning. Quick read on today (smart version's down, so here's the plain one).", "", "Today:"]
 
-    lines.append("📅 Schedule")
     events = today_data.get("calendar") or []
     if events:
-        for e in events[:10]:
+        for e in events[:6]:
             start = e.get("start", "")
-            end = e.get("end", "")
             summary = e.get("summary", "Event")
             # Prefix with LRM (U+200E) if the summary contains RTL characters
             # so Telegram renders time ranges left-to-right.
             lrm = "\u200e" if any("\u0590" <= ch <= "\u08ff" for ch in summary) else ""
             try:
                 s = datetime.fromisoformat(start).strftime("%H:%M")
-                en = datetime.fromisoformat(end).strftime("%H:%M")
-                lines.append(f"{lrm}{s}–{en} — {summary}")
+                lines.append(f"{lrm}{s} — {summary}")
             except (ValueError, TypeError):
                 lines.append(f"{lrm}— {summary}")
     else:
-        lines.append("Nothing on the calendar today, sir.")
+        lines.append("Nothing on the calendar.")
 
-    lines.append("")
-    lines.append("📧 Email")
-    emails = today_data.get("email") or []
-    if emails:
-        for em in emails[:8]:
-            sender = em.get("sender") or em.get("from", "Unknown")
-            subject = em.get("subject", "—")
-            lines.append(f"• {sender} — {subject}")
-    else:
-        lines.append("No actionable email this morning, sir.")
-
-    lines.append("")
-    lines.append("✅ Tasks")
     tasks = today_data.get("tasks") or {}
     warning = tasks.get("staleness_warning")
     if warning:
-        lines.append(warning)
+        lines += ["", warning]
     else:
         overdue = tasks.get("overdue") or []
-        today_tasks = tasks.get("today") or []
-        due_today = tasks.get("due_today") or []
         if overdue:
-            lines.append("Overdue")
-            for t in overdue[:4]:
-                lines.append(f"• [!] {t.get('title', '')} ({t.get('area', '')})")
-        if today_tasks:
-            lines.append("Today")
-            for t in today_tasks[:4]:
-                lines.append(f"• {t.get('title', '')}")
-        if due_today:
-            lines.append("Due today")
-            for t in due_today[:2]:
-                lines.append(f"• {t.get('title', '')} ({t.get('area', '')})")
-        if not overdue and not today_tasks and not due_today:
-            lines.append("No tasks today, sir.")
+            lines += ["", f"{len(overdue)} overdue — top one: {overdue[0].get('title', '')}."]
 
-    lines.append("")
-    lines.append("📚 https://readwise.io/dailyreview")
     return "\n".join(lines)
 
 

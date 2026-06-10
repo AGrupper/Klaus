@@ -23,36 +23,34 @@ def bot():
     return b
 
 
-def test_prompt_omits_section_when_no_nutrition():
-    """NUTR-07: the prompt must instruct silent omit when nutrition key absent."""
+def test_prompt_uses_coaching_context_only_when_present():
+    """Light morning note: coaching/nutrition context is optional, used only when real."""
     content = open("prompts/morning_briefing.md").read()
-    assert "Yesterday's Nutrition" in content
-    # The omit instruction is text — case-insensitive sanity
     lowered = content.lower()
-    assert "omit" in lowered and "nutrition" in lowered
+    assert "nutrition_targets" in lowered
+    # The note must treat coaching context as optional, not a mandatory section
+    assert "only if there's something real" in lowered or "use only" in lowered
 
 
 # --- Plain text fallback tests (no mocking complexity) ---
 
-def test_plain_text_fallback_all_sections_present():
-    """Fallback renders all 5 sections even when all data is missing."""
+def test_plain_text_fallback_is_light_note_no_email_no_readwise():
+    """Light fallback: warm opener + Today section, no email block, no readwise link."""
     from core.morning_briefing import _plain_text_fallback
     data = {
         "weather": None,
         "calendar": None,
-        "email": None,
         "garmin": {"state": 2},
-        "tasks": {"staleness_warning": "No tasks today, sir.", "overdue": [], "today": [], "due_today": []},
+        "tasks": {"staleness_warning": "Task data unavailable.", "overdue": [], "today": [], "due_today": []},
     }
     result = _plain_text_fallback(data, "2026-05-12")
-    assert "Good morning, sir." in result
-    assert "📅 Schedule" in result
-    assert "Nothing on the calendar today, sir." in result
-    assert "📧 Email" in result
-    assert "No actionable email this morning, sir." in result
-    assert "✅ Tasks" in result
-    assert "No tasks today, sir." in result
-    assert "📚 https://readwise.io/dailyreview" in result
+    assert result.startswith("Morning.")
+    assert "Today:" in result
+    assert "Nothing on the calendar." in result
+    # The heavy briefing sections are gone
+    assert "📧 Email" not in result
+    assert "readwise.io" not in result
+    assert "sir" not in result.lower()
 
 
 def test_plain_text_fallback_with_events():
@@ -86,22 +84,24 @@ def test_plain_text_fallback_task_data_unavailable():
 
 
 def test_plain_text_fallback_no_tasks_at_all():
-    """When no tasks, overdue, or due_today, renders 'No tasks today' message."""
+    """When nothing's on and no overdue tasks, the light note just states that."""
     from core.morning_briefing import _plain_text_fallback
     data = {
-        "weather": None, "calendar": [], "email": [],
+        "weather": None, "calendar": [],
         "garmin": {"state": 2},
         "tasks": {"staleness_warning": None, "overdue": [], "today": [], "due_today": []},
     }
     result = _plain_text_fallback(data, "2026-05-12")
-    assert "No tasks today, sir." in result
+    assert "Nothing on the calendar." in result
+    # No overdue → no task line at all (light)
+    assert "overdue" not in result.lower()
 
 
 def test_plain_text_fallback_with_overdue_tasks():
-    """Overdue tasks are rendered with [!] prefix."""
+    """Overdue tasks render as a single light count line, not a labeled section."""
     from core.morning_briefing import _plain_text_fallback
     data = {
-        "weather": None, "calendar": [], "email": [],
+        "weather": None, "calendar": [],
         "garmin": {"state": 2},
         "tasks": {
             "staleness_warning": None,
@@ -111,23 +111,8 @@ def test_plain_text_fallback_with_overdue_tasks():
         },
     }
     result = _plain_text_fallback(data, "2026-05-12")
-    assert "[!] Call dentist" in result
-    assert "Health" in result
-
-
-def test_plain_text_fallback_with_emails():
-    """Email section renders sender and subject."""
-    from core.morning_briefing import _plain_text_fallback
-    data = {
-        "weather": None, "calendar": [], "email": [
-            {"sender": "boss@example.com", "subject": "Q2 Review"},
-        ],
-        "garmin": {"state": 2},
-        "tasks": {"staleness_warning": None, "overdue": [], "today": [], "due_today": []},
-    }
-    result = _plain_text_fallback(data, "2026-05-12")
-    assert "boss@example.com" in result
-    assert "Q2 Review" in result
+    assert "overdue" in result.lower()
+    assert "Call dentist" in result
 
 
 # --- LLM composition tests ---
@@ -144,9 +129,8 @@ def test_compose_briefing_llm_failure_falls_back():
     with patch("core.llm_client.LLMClient", side_effect=Exception("LLM down")), \
          patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
         result = _compose_briefing(data, "2026-05-12")
-    assert "Good morning, sir." in result
-    assert "📅 Schedule" in result
-    assert "📚 https://readwise.io/dailyreview" in result
+    assert result.startswith("Morning.")
+    assert "Today:" in result
 
 
 def test_compose_briefing_uses_llm_when_available():
@@ -175,7 +159,7 @@ def test_compose_briefing_llm_empty_text_falls_back():
     with patch("core.llm_client.LLMClient", return_value=mock_client), \
          patch("pathlib.Path.read_text", return_value="System prompt"):
         result = _compose_briefing(data, "2026-05-12")
-    assert "Good morning, sir." in result
+    assert result.startswith("Morning.")
 
 
 # --- Garmin sync detection tests ---

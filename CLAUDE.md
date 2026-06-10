@@ -72,6 +72,7 @@ Klaus/
 │   ├── proactive_alerts.py # 21:30 nightly: weather/overload/travel-time alerts
 │   ├── morning_briefing.py # */10 6-10: Garmin-anchored daily briefing state machine
 │   ├── reflection.py       # Daily 22:00: gather day → journal entry → self_state update
+│   ├── nightly_review.py   # Sleep-Focus-triggered nightly review + tomorrow prep (01:00 backstop)
 │   ├── autonomous.py       # */20 7-21: 3-layer gather → tick-brain triage → brain compose
 │   ├── scheduled_message.py# Telegram send + Firestore conversation injection
 │   ├── self_manifest.py    # Auto-generates docs/SELF.md (CI runs on every deploy)
@@ -98,12 +99,10 @@ Klaus/
 │   ├── routes_tool.py      # Google Routes API (traffic-aware drive time)
 │   ├── memory.py           # remember/recall (Pinecone-backed)
 │   ├── self_inspect.py     # list_own_files / read_own_source / search_own_source
-│   ├── healthkit_tool.py   # HealthKit integration tool (replaces Google Fit)
-│   └── google_fit_tool.py  # Google Fit integration tool (deprecated)
+│   └── healthkit_tool.py   # HealthKit integration tool (nutrition sync)
 ├── interfaces/
 │   ├── web_server.py       # FastAPI: Telegram webhook + /cron/* OIDC-protected routes
-│   ├── _router.py          # Telegram message router + photo download
-│   └── telegram_bot.py     # Legacy long-poll (dev-only)
+│   └── _router.py          # Telegram message router + photo download
 ├── prompts/
 │   ├── smart_agent.md      # Brain system prompt (includes {self_md}, {self_state}, {journal_digest})
 │   ├── worker_agent.md     # Worker system prompt
@@ -136,7 +135,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **Cloud Scheduler jobs:** heartbeat (hourly), proactive-alerts (21:30), morning-briefing-tick (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**
+- **Cloud Scheduler jobs:** heartbeat (hourly), morning-briefing-tick (*/10 6-10, now a light note), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-reflect (22:00, writes private journal/self_state)**, **klaus-nightly-backstop (01:00, sends nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly`. **Retired:** proactive-alerts (21:30) — its signals folded into the nightly review.
 
 ## 6. Invariants
 
