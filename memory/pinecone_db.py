@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 import uuid
 from datetime import datetime, timezone
 
@@ -28,6 +27,10 @@ logger = logging.getLogger(__name__)
 
 CONTENT_MAX_CHARS = 2000
 _VALID_KINDS = frozenset({"fact", "chunk", "chat", "self"})  # D-06: "self" added Phase 17
+
+# Texts per Gemini embed_content call — also matches Pinecone's recommended
+# upsert batch size, so one embed round-trip feeds one upsert slice.
+_EMBED_BATCH_SIZE = 100
 
 
 class MemoryStore:
@@ -186,15 +189,21 @@ class MemoryStore:
         if not chunks:
             return 0
 
+        # Embed in batches — one API round-trip per _EMBED_BATCH_SIZE texts
+        # instead of one call (plus a rate-limit sleep) per chunk. The old
+        # per-chunk 500ms sleep made a 100-chunk file take ~50s, blowing the
+        # chat-ingest cron's 45s time budget; batching brings it to one call.
+        contents = [chunk["content"] for chunk in chunks]
+        embeddings: list[list[float]] = []
+        for i in range(0, len(contents), _EMBED_BATCH_SIZE):
+            embeddings.extend(self._embed_batch(contents[i : i + _EMBED_BATCH_SIZE]))
+
         vectors = []
-        for chunk in chunks:
-            content = chunk["content"]
-            vector = self._embed(content)
-            time.sleep(0.5)  # 500ms between embeds; Vertex AI has much higher RPM quota
+        for chunk, vector in zip(chunks, embeddings):
             meta = dict(chunk.get("metadata", {}))
             meta["user_id"] = str(user_id)
             meta.setdefault("kind", "chat")
-            meta["content"] = content
+            meta["content"] = chunk["content"]
             vectors.append({
                 "id": chunk["id"],
                 "values": vector,
@@ -230,6 +239,29 @@ class MemoryStore:
             config=types.EmbedContentConfig(output_dimensionality=768),
         )
         return list(response.embeddings[0].values)
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of texts in a single Gemini API call.
+
+        Returns one 768-dim embedding per input text, in order. Callers
+        slice to _EMBED_BATCH_SIZE.
+
+        WHY explicit Content objects: google-genai coerces a plain
+        ``list[str]`` into ONE multi-part content and returns a single
+        embedding for the whole batch (verified live against SDK 2.8.0).
+        Wrapping each text in its own ``types.Content`` is what makes the
+        API treat them as separate inputs.
+        """
+        from google.genai import types
+        client = self._get_genai()
+        response = client.models.embed_content(
+            model="gemini-embedding-2",
+            contents=[
+                types.Content(parts=[types.Part(text=text)]) for text in texts
+            ],
+            config=types.EmbedContentConfig(output_dimensionality=768),
+        )
+        return [list(e.values) for e in response.embeddings]
 
     def _get_genai(self):
         if self._genai is None:

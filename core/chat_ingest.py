@@ -419,20 +419,6 @@ def summarize_conversation(conv: ParsedConversation) -> tuple[str, str, list[str
 
 
 # ------------------------------------------------------------------ #
-# Embedding helper (future use)                                      #
-# ------------------------------------------------------------------ #
-
-def _embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using the MemoryStore's embed method.
-
-    Available for future use; run_one_batch doesn't call this directly
-    because upsert_chat_chunks handles embedding internally.
-    """
-    store = _get_memory_store()
-    return [store._embed(text) for text in texts]
-
-
-# ------------------------------------------------------------------ #
 # Batch runner                                                       #
 # ------------------------------------------------------------------ #
 

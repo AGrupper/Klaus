@@ -26,3 +26,18 @@ def test_embed_returns_768_dim_vector():
     assert isinstance(vec, list)
     assert len(vec) == 768
     assert all(isinstance(x, float) for x in vec)
+
+
+def test_embed_batch_returns_one_768_dim_vector_per_text():
+    """End-to-end: a single batched Gemini call embeds N texts in order."""
+    from memory.pinecone_db import MemoryStore
+    store = MemoryStore(api_key="unused-for-this-test", index_name="unused")
+    vecs = store._embed_batch([
+        "Amit's gym is on Mon/Wed/Fri",
+        "Klaus runs on Cloud Run in me-west1",
+        "The marathon plan peaks at 70km per week",
+    ])
+    assert len(vecs) == 3
+    for vec in vecs:
+        assert len(vec) == 768
+        assert all(isinstance(x, float) for x in vec)
