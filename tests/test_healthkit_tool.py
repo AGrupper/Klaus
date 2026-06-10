@@ -9,12 +9,12 @@ revision 2026-05-30):
   and sum same-quantity-type values per group → emit per-meal dicts
 - _hour_bucket(hour) — hour-of-day → int meal_type (1..4)
 - _infer_meal_type(meal_dict) — metadata override → hour-bucket fallback
-- _normalize_healthkit_sample(meal_dict) — 9-key dict mirroring google_fit shape
+- _normalize_healthkit_sample(meal_dict) — canonical 9-key MealStore meal shape
 - ingest_payload(payload_dict, store) — aggregate → normalize → idempotent upsert,
   with Pattern C per-item try/except so one bad meal doesn't drop the batch.
 
-The 9-key parity contract with mcp_tools.google_fit_tool._normalize_point is
-enforced explicitly (Q8 from RESEARCH.md — meal_type MUST be int).
+The 9-key MealStore shape contract is enforced explicitly
+(Q8 from RESEARCH.md — meal_type MUST be int).
 
 Wave 0 (Plan 01) on-device findings drive several tests below:
 - uuid arrives as the literal string "Lifesum" (HKObject UUID not exposed via
@@ -113,8 +113,8 @@ def _make_quantity_sample(
 # _normalize_healthkit_sample — 9-key shape parity                   #
 # ------------------------------------------------------------------ #
 
-def test_normalize_shape_matches_google_fit():
-    """The output dict carries the same 9 keys as google_fit_tool._normalize_point."""
+def test_normalize_shape_matches_mealstore_contract():
+    """The output dict carries the canonical 9 keys MealStore consumes."""
     meal = _make_meal_dict()
     result = _normalize_healthkit_sample(meal)
     assert set(result.keys()) == {

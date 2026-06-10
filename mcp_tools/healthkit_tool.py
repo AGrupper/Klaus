@@ -31,10 +31,9 @@ therefore FLAT — one ``HealthKitQuantitySample`` per row — and
 ``_aggregate_quantity_samples`` groups by ``(start_date.isoformat(), food_item)``
 and sums same-quantity-type values within each group.
 
-Output dict shape is the SAME 9 keys as mcp_tools.google_fit_tool._normalize_point
-(source_id, timestamp, meal_type, calories, protein_g, carbs_g, fat_g,
-food_item, source) with ``meal_type`` as **int 1..4** (parity with google_fit's
-int enum; see RESEARCH.md Q8).
+Output dict is the canonical 9-key meal shape MealStore consumes: source_id,
+timestamp, meal_type, calories, protein_g, carbs_g, fat_g, food_item, source —
+with ``meal_type`` as **int 1..4** (the int enum MealStore expects; see RESEARCH.md Q8).
 
 PHASE 19.1 — HEALTHKIT-01, HEALTHKIT-02, HEALTHKIT-03 (and Plan 05 Path B).
 """
@@ -332,9 +331,9 @@ def _compute_source_id(meal: dict) -> str:
 def _normalize_healthkit_sample(meal: dict) -> dict:
     """Convert an aggregated per-meal dict into Klaus's canonical meal shape.
 
-    Returns the SAME 10 keys as mcp_tools.google_fit_tool._normalize_point:
+    Returns the canonical 10-key meal shape MealStore consumes:
     source_id, timestamp, meal_type, calories, protein_g, carbs_g, fat_g,
-    fiber_g, food_item, source. ``meal_type`` is **int** 1..4 (parity contract).
+    fiber_g, food_item, source. ``meal_type`` is **int** 1..4 (MealStore contract).
 
     ``fiber_g`` is threaded from ``DietaryFiber_g`` (Phase 19.2 — the Shortcut
     already emits it). Other unknown ``samples_by_type`` keys are still ignored.

@@ -129,7 +129,6 @@ class TestPhase19SelfManifest:
 
 # ---------------------------------------------------------------------------
 # Phase 19.1 HEALTHKIT-07 / D-21 — SELF.md push-endpoints section
-# Phase 19.1 D-16 — google_fit legacy-marker docstring
 # ---------------------------------------------------------------------------
 
 
@@ -142,13 +141,6 @@ def test_self_md_lists_healthkit_push_endpoint():
     assert "/cron/healthkit-sync" in content
     assert "iPhone Shortcut" in content
     assert "shared-secret bearer" in content
-
-
-def test_google_fit_tool_marked_legacy():
-    """D-16 — preserved Android-source path must surface as legacy in the docstring."""
-    from mcp_tools import google_fit_tool
-    assert "Legacy" in (google_fit_tool.__doc__ or "")
-    assert "mcp_tools/healthkit_tool.py" in (google_fit_tool.__doc__ or "")
 
 
 def test_deployment_md_section_22_push_endpoints():

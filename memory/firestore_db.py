@@ -603,10 +603,10 @@ class MealStore:
     each must round-trip through Fit + this store independently.
 
     Idempotency:
-        ``source_id = "{dataStreamId}:{startTimeNanos}"`` (see
-        ``mcp_tools/google_fit_tool._normalize_point``). Re-syncs land on
-        the same doc with ``merge=True``, so Lifesum sync-timing variance
-        cannot produce duplicate rows (Pitfall 2 mitigation).
+        ``source_id`` is the per-sample stable id the meal normalizer emits
+        (currently ``healthkit:{uuid}`` from ``mcp_tools/healthkit_tool``).
+        Re-syncs land on the same doc with ``merge=True``, so Lifesum
+        sync-timing variance cannot produce duplicate rows (Pitfall 2 mitigation).
 
     Pitfall 4:
         ``get_day_aggregate`` returns ``{}`` (an EMPTY DICT) when no meals
@@ -632,8 +632,9 @@ class MealStore:
         for easier downstream querying.
 
         Args:
-            source_id: ``{dataStreamId}:{startTimeNanos}`` from Fit normalization.
-            meal:      Normalized meal dict (see google_fit_tool._normalize_point).
+            source_id: the per-sample stable id from the meal normalizer
+                       (e.g. ``healthkit:{uuid}``).
+            meal:      Normalized meal dict (see mcp_tools/healthkit_tool).
 
         Raises:
             Exception: re-raises any Firestore write failure after logging.
