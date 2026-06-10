@@ -676,9 +676,9 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_training_profile",
         "description": (
-            "Read Sir's stored training profile (athletic_goals, training_constraints, "
+            "Read Amit's stored training profile (athletic_goals, training_constraints, "
             "recovery_preferences). Brain-direct — call this when you need to know "
-            "Sir's coaching context before answering or planning."
+            "Amit's coaching context before answering or planning."
         ),
         "input_schema": {
             "type": "object",
@@ -691,7 +691,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "read_coaching_guide",
         "description": (
             "Read a deep section of the coaching knowledge guide. Brain-direct. "
-            "Call when Sir asks 'why?' about a training concept, or when the slim "
+            "Call when Amit asks 'why?' about a training concept, or when the slim "
             "core digest (already in your system prompt) is not detailed enough. "
             "Returns the full section text for the requested topic. "
             "Do NOT call for routine coaching messages — the slim core covers those."
@@ -717,8 +717,9 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "update_training_profile",
         "description": (
-            "Merge new fields into Sir's stored training profile. Brain-direct. "
-            "Always confirm with Sir before recording. Recognized top-level keys: "
+            "Merge new fields into Amit's stored training profile. Brain-direct. "
+            "Record the change and tell him you did; only ask first if the new value is "
+            "genuinely ambiguous. Recognized top-level keys: "
             "athletic_goals (list), training_constraints (list), recovery_preferences (object), "
             "dated_goals (list), weekly_split (object), nutrition_targets (object), "
             "supplement_schedule (list), fueling_timeline (list), plan_start_date (string)."
@@ -742,8 +743,9 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "update_plan",
         "description": (
-            "Update Sir's living training plan (goals, weekly split, nutrition targets, "
-            "dates). Brain-direct. Always confirm with Sir before recording. "
+            "Update Amit's living training plan (goals, weekly split, nutrition targets, "
+            "dates). Brain-direct. Record the change and tell him; only ask first if the "
+            "value is genuinely ambiguous. "
             "Same structured keys as update_training_profile: "
             "dated_goals (list), weekly_split (object), nutrition_targets (object), "
             "supplement_schedule (list), fueling_timeline (list), plan_start_date (string), "
@@ -780,7 +782,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "fetch_recent_activities",
         "description": (
-            "Fetch Sir's last N days of Garmin activities as a normalized list "
+            "Fetch Amit's last N days of Garmin activities as a normalized list "
             "(activity_id, date, type, duration_sec, distance_m, perceived_exertion, "
             "feel, training_load). Default days=7. Worker-delegated."
         ),
@@ -798,7 +800,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_acwr",
         "description": (
-            "Compute Sir's acute:chronic workload ratio (ACWR) from the Postgres "
+            "Compute Amit's acute:chronic workload ratio (ACWR) from the Postgres "
             "`activities` table. Returns JSON {acute, chronic, ratio}: acute = mean "
             "7-day training_load, chronic = mean 28-day training_load, ratio = "
             "acute/chronic. ratio is null when fewer than 14 of the last 28 days "
@@ -842,7 +844,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "log_training",
         "description": (
             "Log a completed or skipped training session. Brain-direct. "
-            "Call when Sir reports a workout done, skipped, or RPE. "
+            "Call when Amit reports a workout done, skipped, or RPE. "
             "Parameters: date (YYYY-MM-DD, required), session_type (gym/run/etc), "
             "completed (bool), rpe (1–10 optional), notes (optional), "
             "skipped_reason (rest_recovery | sick_injured | too_busy | other, optional)."
@@ -879,7 +881,7 @@ TOOL_SCHEMAS: list[dict] = [
                 },
                 "notes": {
                     "type": "string",
-                    "description": "Free-form session notes from Sir.",
+                    "description": "Free-form session notes from Amit.",
                 },
                 "source": {
                     "type": "string",
@@ -914,7 +916,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_strength_progress",
         "description": (
-            "Read Sir's strength-training history synced from Hevy (full per-set "
+            "Read Amit's strength-training history synced from Hevy (full per-set "
             "detail: every exercise, set, rep, weight_kg, RPE — plus derived "
             "top_set, est_1rm, and volume_kg). Brain-direct. "
             "Pass `exercise` (e.g. 'Bench Press') to get that lift's progression "
@@ -945,10 +947,10 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_training_context",
         "description": (
-            "Get Sir's FULL cross-domain training picture in one call — strength "
+            "Get Amit's FULL cross-domain training picture in one call — strength "
             "(Hevy per-set), session log, running/cardio + training load, ACWR, "
             "Garmin training status/VO2, nutrition totals per day, and recovery "
-            "(HRV/RHR/sleep). Brain-direct. Use this when Sir asks open-ended "
+            "(HRV/RHR/sleep). Brain-direct. Use this when Amit asks open-ended "
             "questions about how training is going or what to change, so you can "
             "correlate ACROSS domains and surface non-obvious, individualized "
             "insight rather than siloed per-metric readouts. `days` defaults to 14. "
@@ -968,7 +970,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_run_detail",
         "description": (
-            "Read Sir's per-run Garmin detail synced from Garmin Connect — the "
+            "Read Amit's per-run Garmin detail synced from Garmin Connect — the "
             "recorded laps/intervals exactly as the watch captured them (per-km "
             "for easy/tempo runs, per-rep for interval sessions), each with pace, "
             "HR, cadence, stride length and power; plus a whole-run min/avg/max "
@@ -1006,10 +1008,10 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_plan",
         "description": (
-            "Read Sir's living training plan merged with the currently-active "
+            "Read Amit's living training plan merged with the currently-active "
             "mesocycle block. Brain-direct. Returns the stored profile/plan fields "
             "plus the active block (resolved automatically by today's date — no "
-            "start_block needed) and the current 1-based week number. Call when Sir "
+            "start_block needed) and the current 1-based week number. Call when Amit "
             "asks 'what's my plan?' or 'what block/week am I in?'."
         ),
         "input_schema": {
@@ -1023,7 +1025,7 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Read the currently-active mesocycle block (resolved by today's date), "
             "its recorded benchmarks, and the raw per-facet delta versus the prior "
-            "block. Brain-direct. Call when Sir asks how the current block is going "
+            "block. Brain-direct. Call when Amit asks how the current block is going "
             "or how his benchmarks compare to last block."
         ),
         "input_schema": {
@@ -1036,7 +1038,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "log_benchmark",
         "description": (
             "Record one benchmark result for the current block. Brain-direct. "
-            "Always confirm the value with Sir before recording. Valid facets "
+            "Record it and tell him; only confirm first if the value is genuinely ambiguous. Valid facets "
             "(closed set): bench_press_1rm, squat_1rm, push_ups, pull_ups, "
             "threshold_pace. For a bench/squat top-set (weight x reps), compute the "
             "1RM estimate first (Epley: weight x (1 + reps/30)) and pass it as value."
@@ -1070,7 +1072,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "get_benchmark_history",
         "description": (
             "Read the cross-block history for one benchmark facet, newest first. "
-            "Brain-direct. Call when Sir asks how a lift/run has trended over time."
+            "Brain-direct. Call when Amit asks how a lift/run has trended over time."
         ),
         "input_schema": {
             "type": "object",
@@ -1094,7 +1096,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "get_goal_projection",
         "description": (
             "Compute a deterministic linear-trend projection for one benchmark facet "
-            "toward its dated goal. Brain-direct. Call when Sir asks 'am I on track "
+            "toward its dated goal. Brain-direct. Call when Amit asks 'am I on track "
             "for my October bench target?' or similar. Returns a ProjectionResult dict "
             "with projected_value, behind_by (positive = behind target for EVERY facet, "
             "including pace), on_track, confidence, and confidence_label computed "

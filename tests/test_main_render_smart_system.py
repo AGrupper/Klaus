@@ -769,13 +769,19 @@ class TestMealAuditChatWiring:
         )
 
     def test_meal_audit_is_performance_fueling_coach(self):
-        """meal_audit.md is the performance-fueling coach: improve+keep, periodized,
-        forward-looking — not the old non-personalized critique."""
+        """meal_audit.md is the performance-fueling coach: personalized, periodized,
+        forward-looking — flags what's worth changing, reinforces what's on track
+        only when real (no rigid improve+keep template), not the old non-personalized
+        critique."""
         body = open("prompts/meal_audit.md").read()
         assert body.strip(), "prompts/meal_audit.md is empty"
         lowered = body.lower()
-        assert "improve" in lowered and "keep" in lowered, (
-            "coach must direct both what to IMPROVE and what to KEEP"
+        # Must coach toward change and acknowledge on-track without manufacturing it
+        assert "worth changing" in lowered or "what to improve" in lowered, (
+            "coach must direct what's worth changing against the day's need"
+        )
+        assert "on track" in lowered or "dialed in" in lowered, (
+            "coach must be able to acknowledge an on-track day (but not manufacture it)"
         )
         assert "nutrition_targets" in lowered, "coach must reference the profile anchors"
         # periodization by training load is the core of performance fueling

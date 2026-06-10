@@ -1304,29 +1304,33 @@ class TestPromptContent:
         markers = [
             "reactive", "never suppress", "always answer", "not suppress",
             "never suppressed", "always answer", "reactive chat", "reactive coaching",
+            "always gets a full answer", "full answer", "already mentioned",
+            "independent",
         ]
         assert any(m in content for m in markers), (
-            "smart_agent.md must state that reactive chat answers are never suppressed "
-            "by cron topics (COACH-05 / D-03)"
+            "smart_agent.md must state that a coaching question always gets a full answer "
+            "even if a cron already touched the topic (COACH-05 / D-03)"
         )
 
     def test_smart_agent_has_strict_pushback_format(self):
-        """smart_agent.md must include the strict-pushback/single-rec format for
-        reactive coaching queries (COACH-03/04 / D-05/06/07)."""
+        """smart_agent.md must still drive direct, concrete, single-rec coaching on a
+        skipped session / recovery conflict — name the session, cite concrete units,
+        give one best call, leave the decision to him. The exact 'your call, Sir'
+        scripting was intentionally dropped in the warm-voice rewrite; the substance
+        (no hedging, concrete numbers, single recommendation) must remain (COACH-03/04)."""
         content = self._read_prompt("smart_agent.md").lower()
-        # Accept any of these as evidence of the reactive strict-coaching format
+        # Substance markers — direct, concrete, single recommendation, decision left to him
         markers = [
-            "your call, sir",
+            "single best call",
+            "one clear recommendation",
+            "single best recommendation",
             "one ranked",
             "exactly one",
-            "single rec",
-            "skip pushback",
-            "strict.*pushback",
-            "reactive.*strict",
-            "named.*session",
-            "named session",
-            "concrete.*deficit",
-            "concrete deficit",
+            "your call",
+            "concrete units",
+            "name the specific session",
+            "specific session",
+            "not a menu",
         ]
         import re
         assert any(

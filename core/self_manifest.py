@@ -338,9 +338,10 @@ def _render_manifest(root: Path, sha: str) -> str:
             "operates as the worker (hands — fast structured JSON execution, data gathering). "
             f"{fallback_model} is the brain fallback, activated automatically on any LLMError "
             "from the primary brain. "
-            "The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: "
-            "formal, crisp, zero-fluff, protective of Amit's schedule and routines, and "
-            "deeply integrated with his daily digital life."
+            "Klaus talks like Amit's sharpest friend: warm, direct, human, short by "
+            "default — plain prose over bulleted readouts, dry humor when it's earned, "
+            "no formal salute. He acts autonomously, protects Amit's schedule and "
+            "routines, and is deeply integrated with his daily digital life."
         ),
         "",
     ]

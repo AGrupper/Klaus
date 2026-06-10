@@ -289,7 +289,7 @@ class MessageRouter:
             None — sends reply directly via Telegram.
         """
         logger.info("/start received from user_id=%d.", telegram_user_id)
-        await update.message.reply_text("Klaus online, Sir.")
+        await update.message.reply_text("Klaus here. What do you need?")
 
     async def _handle_reset(self, update: Update, telegram_user_id: int) -> None:
         """Handle the /reset command — clears this user's conversation history.
@@ -306,7 +306,7 @@ class MessageRouter:
         # WHY: clearing history lets the user start a fresh session when the
         # model has drifted or accumulated stale context.
         self.orchestrator.conversation_manager.clear(telegram_user_id)
-        await update.message.reply_text("Conversation history cleared, Sir.")
+        await update.message.reply_text("Cleared — fresh start.")
 
     async def _handle_text_message(
         self,
@@ -356,8 +356,7 @@ class MessageRouter:
                 exc,
             )
             orchestrator_response = (
-                "I encountered an unexpected issue, Sir. "
-                "Please try again in a moment."
+                "Something went wrong on my end — give it another go in a moment."
             )
 
         await update.message.reply_text(orchestrator_response)

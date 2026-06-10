@@ -706,8 +706,8 @@ class AgentOrchestrator:
             )
             return last_response_text
         return (
-            "Apologies, Sir. This request required more processing steps than expected. "
-            "Please rephrase or break it into smaller parts."
+            "That one took more steps than I expected to work through — "
+            "try rephrasing it or breaking it into smaller parts."
         )
 
     # ------------------------------------------------------------------ #

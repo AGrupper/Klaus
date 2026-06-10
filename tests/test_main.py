@@ -224,12 +224,12 @@ class TestPhase24DoublesSendFix:
         messages = [{"role": "user", "content": "test"}]
         result = orch._run_smart_loop(messages, smart_system="", worker_system="")
 
-        # Must return the existing sentinel string (unchanged)
-        assert "Apologies" in result, (
-            f"Expected apologetic sentinel when no substantive text, got: {result!r}"
+        # Must return the cap-exhaustion fallback string (not empty)
+        assert "more steps" in result, (
+            f"Expected cap-exhaustion fallback when no substantive text, got: {result!r}"
         )
-        assert "rephrase" in result.lower(), (
-            f"Expected 'rephrase' in sentinel, got: {result!r}"
+        assert "rephrasing" in result.lower() or "smaller parts" in result.lower(), (
+            f"Expected a rephrase/break-up hint in the fallback, got: {result!r}"
         )
 
     def test_sentinel_string_unchanged(self):
