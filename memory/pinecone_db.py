@@ -28,9 +28,38 @@ logger = logging.getLogger(__name__)
 CONTENT_MAX_CHARS = 2000
 _VALID_KINDS = frozenset({"fact", "chunk", "chat", "self"})  # D-06: "self" added Phase 17
 
+
+def _blend_recency(cosine: float, ts: str | None) -> float:
+    """Scale a cosine score by a bounded exponential age decay.
+
+    ``final = cosine * ((1 - W) + W * 0.5^(age_days / half_life))`` — a brand
+    new memory keeps its full score; an infinitely old one keeps (1 - W) of
+    it. Memories without a parseable ``ts`` (pre-Phase-17 vectors) get no
+    penalty, so old curated facts are never buried by the upgrade.
+    """
+    if not ts:
+        return cosine
+    try:
+        age_days = (
+            datetime.now(tz=timezone.utc) - datetime.fromisoformat(ts)
+        ).total_seconds() / 86400.0
+    except (ValueError, TypeError):
+        return cosine
+    age_days = max(0.0, age_days)
+    decay = 0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS)
+    return cosine * ((1.0 - _RECENCY_WEIGHT) + _RECENCY_WEIGHT * decay)
+
 # Texts per Gemini embed_content call — also matches Pinecone's recommended
 # upsert batch size, so one embed round-trip feeds one upsert slice.
 _EMBED_BATCH_SIZE = 100
+
+# Recency re-ranking (recall): pure cosine ranking surfaces a 2-year-old fact
+# over yesterday's if the wording matches, so recall over-fetches and blends
+# in a mild exponential age decay. The weight bounds recency's influence —
+# it can scale a score by at most _RECENCY_WEIGHT (30%), so a strongly
+# relevant old memory still beats a weakly relevant fresh one.
+_RECENCY_HALF_LIFE_DAYS = 90
+_RECENCY_WEIGHT = 0.3
 
 
 class MemoryStore:
@@ -110,28 +139,33 @@ class MemoryStore:
 
         Returns:
             List of dicts: [{"kind", "content", "score", "ts"}, ...]
-            sorted by descending similarity score.
+            sorted by descending blended score (cosine similarity scaled by a
+            mild recency decay — see _blend_recency).
         """
         k = min(k, 10)
         _kinds = kinds if kinds is not None else ["fact", "chunk"]
         vector = self._embed(query)
         result = self._get_index().query(
             vector=vector,
-            top_k=k,
+            # Over-fetch so the recency re-rank has candidates to promote —
+            # the freshest relevant memory may sit just below the raw top-k.
+            top_k=max(20, k * 2),
             # WHY $eq filter: ensures memories from other users are never
             # returned even if the index grows to multiple users later.
             filter={"user_id": {"$eq": str(user_id)}, "kind": {"$in": _kinds}},
             include_metadata=True,
         )
-        return [
+        ranked = [
             {
                 "kind": m.metadata.get("kind"),
                 "content": m.metadata.get("content"),
-                "score": round(float(m.score), 4),
+                "score": round(_blend_recency(float(m.score), m.metadata.get("ts")), 4),
                 "ts": m.metadata.get("ts"),
             }
             for m in result.matches
         ]
+        ranked.sort(key=lambda r: r["score"], reverse=True)
+        return ranked[:k]
 
     def remember_self(self, user_id: int, date_str: str, content: str) -> str:
         """Upsert a journal entry with a deterministic vector ID (self-{date}).
