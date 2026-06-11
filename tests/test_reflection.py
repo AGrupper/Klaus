@@ -182,17 +182,25 @@ def _make_journal_mock_client(docs: dict[str, dict] | None = None):
 
     col.document.side_effect = _document
 
-    # stream() returns all docs
-    def _stream():
+    def _snaps():
         snaps = []
         for date_str, entry in docs.items():
             snap = MagicMock()
             snap.id = date_str
             snap.to_dict.return_value = dict(entry)
             snaps.append(snap)
-        return iter(snaps)
+        return snaps
 
-    col.stream.side_effect = _stream
+    # stream() returns all docs
+    col.stream.side_effect = lambda: iter(_snaps())
+
+    # order_by() returns a real in-memory query (get_recent now uses
+    # order_by("__name__").limit(n) server-side instead of streaming all).
+    def _order_by(field, direction="ASCENDING"):
+        from tests.fakes import FakeQuery
+        return FakeQuery(_snaps()).order_by(field, direction)
+
+    col.order_by.side_effect = _order_by
     return client, col
 
 

@@ -73,6 +73,11 @@ def _install_firestore_mock() -> MagicMock:
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules.setdefault("dotenv", dotenv_mod)
 
+    # Pin base_query so the stores' server-side FieldFilter queries resolve a
+    # real class, even if an earlier test file left the slot as a MagicMock.
+    from tests.fakes import install_fake_base_query
+    install_fake_base_query()
+
     # Force re-import so `from google.cloud import firestore` rebinds to OUR mock.
     if "memory.firestore_db" in sys.modules:
         del sys.modules["memory.firestore_db"]
@@ -81,6 +86,8 @@ def _install_firestore_mock() -> MagicMock:
 
 
 import pytest
+
+from tests.fakes import FailingCollection, FakeCollection, make_snap
 
 # Bound per-test by the autouse fixture below. We deliberately do NOT install
 # the mock or import memory.firestore_db at module/collection time — that leaks
@@ -237,14 +244,10 @@ def test_get_recent_returns_entries_within_cutoff():
     new_date = today.isoformat()                               # inside window
     recent_date = (cutoff_date + timedelta(days=1)).isoformat()  # inside window
 
-    snaps = []
-    for d in [old_date, new_date, recent_date]:
-        snap = MagicMock()
-        snap.id = f"{d}_evt"
-        snap.to_dict.return_value = {"date": d, "slot": "evt"}
-        snaps.append(snap)
-
-    s._col.stream.return_value = snaps
+    s._col = FakeCollection([
+        make_snap(f"{d}_evt", {"date": d, "slot": "evt"})
+        for d in [old_date, new_date, recent_date]
+    ])
     result = s.get_recent(7)
 
     returned_dates = [r["date"] for r in result]
@@ -259,10 +262,9 @@ def test_get_recent_attaches_doc_id():
     """get_recent attaches doc_id to each result dict."""
     s = _store()
     today = date.today().isoformat()
-    snap = MagicMock()
-    snap.id = f"{today}_evt_xyz"
-    snap.to_dict.return_value = {"date": today, "slot": "evt_xyz"}
-    s._col.stream.return_value = [snap]
+    s._col = FakeCollection([
+        make_snap(f"{today}_evt_xyz", {"date": today, "slot": "evt_xyz"})
+    ])
 
     result = s.get_recent(7)
 
@@ -273,7 +275,7 @@ def test_get_recent_attaches_doc_id():
 def test_get_recent_returns_empty_on_exception():
     """get_recent returns [] on Firestore exception — never raises."""
     s = _store()
-    s._col.stream.side_effect = RuntimeError("firestore down")
+    s._col = FailingCollection(RuntimeError("firestore down"))
 
     result = s.get_recent(7)
 
@@ -285,19 +287,15 @@ def test_get_recent_returns_empty_on_exception():
 # ------------------------------------------------------------------ #
 
 def test_get_by_date_returns_matching_entries():
-    """get_by_date returns entries whose doc_id starts with the date prefix."""
+    """get_by_date returns only the entries for that calendar date."""
     s = _store()
     today = "2026-06-01"
     other = "2026-06-02"
 
-    snaps = []
-    for slot, d in [("evt_a", today), ("evt_b", today), ("evt_c", other)]:
-        snap = MagicMock()
-        snap.id = f"{d}_{slot}"
-        snap.to_dict.return_value = {"date": d, "slot": slot}
-        snaps.append(snap)
-
-    s._col.stream.return_value = snaps
+    s._col = FakeCollection([
+        make_snap(f"{d}_{slot}", {"date": d, "slot": slot})
+        for slot, d in [("evt_a", today), ("evt_b", today), ("evt_c", other)]
+    ])
     result = s.get_by_date(today)
 
     result_ids = [r["doc_id"] for r in result]
@@ -309,7 +307,7 @@ def test_get_by_date_returns_matching_entries():
 def test_get_by_date_returns_empty_on_exception():
     """get_by_date returns [] on Firestore exception — never raises."""
     s = _store()
-    s._col.stream.side_effect = RuntimeError("down")
+    s._col = FailingCollection(RuntimeError("down"))
     assert s.get_by_date("2026-06-01") == []
 
 
@@ -318,17 +316,14 @@ def _snap_with_timestamp():
     Firestore SERVER_TIMESTAMP)."""
     from datetime import datetime
     today = date.today().isoformat()
-    snap = MagicMock()
-    snap.id = f"{today}_evt"
-    snap.to_dict.return_value = {
+    return make_snap(f"{today}_evt", {
         "date": today,
         "slot": "evt",
         "completed": False,
         "skipped_reason": "other",
         "notes": "got home late",
         "updated_at": datetime(2026, 6, 2, 22, 0, 0),
-    }
-    return snap
+    })
 
 
 def test_get_recent_json_serialisable_with_server_timestamp():
@@ -336,7 +331,7 @@ def test_get_recent_json_serialisable_with_server_timestamp():
     json.dumps(get_recent(...)) — as get_training_history does — never raises."""
     import json
     s = _store()
-    s._col.stream.return_value = [_snap_with_timestamp()]
+    s._col = FakeCollection([_snap_with_timestamp()])
 
     result = s.get_recent(7)
 
@@ -348,7 +343,7 @@ def test_get_recent_json_serialisable_with_server_timestamp():
 def test_get_by_date_json_serialisable_with_server_timestamp():
     import json
     s = _store()
-    s._col.stream.return_value = [_snap_with_timestamp()]
+    s._col = FakeCollection([_snap_with_timestamp()])
 
     result = s.get_by_date(date.today().isoformat())
 
@@ -359,7 +354,7 @@ def test_get_by_date_json_serialisable_with_server_timestamp():
 def test_get_range_json_serialisable_with_server_timestamp():
     import json
     s = _store()
-    s._col.stream.return_value = [_snap_with_timestamp()]
+    s._col = FakeCollection([_snap_with_timestamp()])
     today = date.today().isoformat()
 
     result = s.get_range(today, today)

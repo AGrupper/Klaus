@@ -22,6 +22,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.fakes import FailingCollection, FakeCollection
+
 
 def _install_firestore_mock() -> MagicMock:
     try:
@@ -55,6 +57,11 @@ def _install_firestore_mock() -> MagicMock:
     dotenv_mod = MagicMock()
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules.setdefault("dotenv", dotenv_mod)
+
+    # Pin base_query so the stores' server-side FieldFilter queries resolve a
+    # real class, even if an earlier test file left the slot as a MagicMock.
+    from tests.fakes import install_fake_base_query
+    install_fake_base_query()
 
     if "memory.firestore_db" in sys.modules:
         del sys.modules["memory.firestore_db"]
@@ -163,11 +170,11 @@ def test_get_run_error_returns_none():
 
 def test_get_range_filters_and_sorts_desc():
     s = _store()
-    s._col.stream.return_value = [
+    s._col = FakeCollection([
         _snap("a", "2026-06-01"),
         _snap("b", "2026-06-05"),
         _snap("c", "2026-05-20"),  # outside range
-    ]
+    ])
     out = s.get_range("2026-06-01", "2026-06-07")
     assert [d["activity_id"] for d in out] == ["b", "a"]
 
@@ -175,17 +182,17 @@ def test_get_range_filters_and_sorts_desc():
 def test_get_recent_uses_cutoff():
     s = _store()
     today = date.today()
-    s._col.stream.return_value = [
+    s._col = FakeCollection([
         _snap("recent", today.isoformat()),
         _snap("old", (today - timedelta(days=60)).isoformat()),
-    ]
+    ])
     out = s.get_recent(7)
     assert [d["activity_id"] for d in out] == ["recent"]
 
 
 def test_reads_strip_server_timestamp_json_safe():
     s = _store()
-    s._col.stream.return_value = [_snap("a", date.today().isoformat())]
+    s._col = FakeCollection([_snap("a", date.today().isoformat())])
     out = s.get_recent(7)
     assert isinstance(out[0]["updated_at"], str)
     json.dumps(out)  # must not raise
@@ -193,5 +200,5 @@ def test_reads_strip_server_timestamp_json_safe():
 
 def test_get_range_returns_empty_on_exception():
     s = _store()
-    s._col.stream.side_effect = RuntimeError("firestore down")
+    s._col = FailingCollection(RuntimeError("firestore down"))
     assert s.get_range("2026-06-01", "2026-06-07") == []

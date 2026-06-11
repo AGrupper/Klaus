@@ -1257,6 +1257,12 @@ Klaus uses a small number of compound queries that require composite indexes:
 |-------------|------------------------------|------------|-------|
 | followups   | `status` ASC, `due_at` ASC   | Phase 18   | Required by `FollowupStore.list_due()`. On first production query, Firestore returns a `FAILED_PRECONDITION` error with a link to create the index — follow it once, or run `gcloud firestore indexes composite create --collection-group=followups --field-config=field-path=status,order=ascending --field-config=field-path=due_at,order=ascending` ahead of first cron-tick deploy. |
 
+The date-windowed read paths (`training_log`, `strength_sessions`,
+`run_details` range/recent queries and `journal.get_recent`) use single-field
+range/equality filters with an `order_by` on the **same** field, which are
+covered by Firestore's automatic single-field indexes — no composite index
+needed for those.
+
 ---
 
 ## 22. Push-driven endpoints

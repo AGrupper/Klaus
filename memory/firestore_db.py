@@ -19,6 +19,31 @@ from google.api_core.exceptions import GoogleAPICallError
 logger = logging.getLogger(__name__)
 
 
+def _where(query, field: str, op: str, value):
+    """Apply a server-side filter to a collection/query.
+
+    Prefers the keyword ``filter=FieldFilter(...)`` form (the positional
+    ``where(field, op, value)`` form is deprecated in google-cloud-firestore),
+    falling back to positional if the FieldFilter import is unavailable.
+
+    WHY server-side: the read paths previously streamed entire collections
+    and filtered in Python — O(lifetime docs) billed reads per call. A range
+    filter + order_by on the same single field uses Firestore's automatic
+    indexes (no composite index needed).
+    """
+    try:
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        return query.where(filter=FieldFilter(field, op, value))
+    except ImportError:
+        return query.where(field, op, value)
+
+
+# Sort-direction constant for order_by. The client library's
+# firestore.Query.DESCENDING is literally this string; using the literal keeps
+# the query builders independent of the (test-mocked) firestore module object.
+_DESCENDING = "DESCENDING"
+
+
 def _make_firestore_client(project_id: str, database: str) -> firestore.Client:
     """Return an authenticated Firestore client.
 
@@ -548,9 +573,10 @@ class JournalStore:
     def get_recent(self, n: int) -> list[dict]:
         """Return the most-recent n journal docs, newest-first. Returns [] on error.
 
-        Uses stream() + Python sort rather than a Firestore order_by query —
-        single-user, low-volume collection (< a few thousand docs lifetime),
-        so no composite index is needed. Same approach as LLMUsageStore.summary.
+        Orders by document ID (``__name__`` — the YYYY-MM-DD date itself) with
+        a server-side limit, so only n docs are read instead of the lifetime
+        collection. Ordering by doc ID rather than the ``date`` field also
+        covers any legacy doc written before the field existed.
 
         Args:
             n: Maximum number of entries to return.
@@ -560,7 +586,8 @@ class JournalStore:
             descending, at most n elements. Empty list on any Firestore error.
         """
         try:
-            snaps = list(self._col.stream())
+            query = self._col.order_by("__name__", direction=_DESCENDING).limit(n)
+            snaps = list(query.stream())
         except Exception:
             logger.warning("JournalStore.get_recent failed", exc_info=True)
             return []
@@ -569,8 +596,7 @@ class JournalStore:
             data = snap.to_dict() or {}
             data["date"] = snap.id
             results.append(data)
-        results.sort(key=lambda d: d.get("date", ""), reverse=True)
-        return results[:n]
+        return results
 
 
 def _is_newer(candidate, incumbent) -> bool:
@@ -899,36 +925,40 @@ class TrainingLogStore:
         try:
             from datetime import date as _date, timedelta
             cutoff = (_date.today() - timedelta(days=days)).isoformat()
-            snaps = list(self._col.stream())
+            # Server-side filter + order — only the window's docs are read,
+            # not the lifetime collection.
+            query = _where(self._col, "date", ">=", cutoff).order_by(
+                "date", direction=_DESCENDING
+            )
             results = []
-            for snap in snaps:
+            for snap in query.stream():
                 d = _jsonsafe_doc(snap.to_dict() or {})
                 d["doc_id"] = snap.id
-                if d.get("date", "") >= cutoff:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+                results.append(d)
             return results
         except Exception:
             logger.warning("TrainingLogStore.get_recent failed", exc_info=True)
             return []
 
     def get_by_date(self, date_str: str) -> list[dict]:
-        """Return all sessions whose doc_id starts with date_str.
+        """Return all sessions for one calendar date.
+
+        Every doc carries a ``date`` field equal to the YYYY-MM-DD prefix of
+        its doc_id, so an equality query replaces the old doc-ID prefix scan.
 
         Never raises — returns [] on any Firestore error (LOG-02).
 
         Args:
-            date_str: YYYY-MM-DD date prefix.
+            date_str: YYYY-MM-DD date.
 
         Returns:
             List of matching session dicts (each with doc_id).  Empty on error.
         """
         try:
-            snaps = list(self._col.stream())
+            query = _where(self._col, "date", "==", date_str)
             return [
                 {**_jsonsafe_doc(snap.to_dict() or {}), "doc_id": snap.id}
-                for snap in snaps
-                if snap.id.startswith(date_str)
+                for snap in query.stream()
             ]
         except Exception:
             logger.warning("TrainingLogStore.get_by_date(%r) failed", date_str, exc_info=True)
@@ -947,14 +977,14 @@ class TrainingLogStore:
             List of session dicts with doc_id, sorted date desc.  Empty on error.
         """
         try:
-            snaps = list(self._col.stream())
+            query = _where(
+                _where(self._col, "date", ">=", start_date), "date", "<=", end_date
+            ).order_by("date", direction=_DESCENDING)
             results = []
-            for snap in snaps:
+            for snap in query.stream():
                 d = _jsonsafe_doc(snap.to_dict() or {})
                 d["doc_id"] = snap.id
-                if start_date <= d.get("date", "") <= end_date:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+                results.append(d)
             return results
         except Exception:
             logger.warning(
@@ -1034,13 +1064,10 @@ class StrengthSessionStore:
         Never raises — returns ``[]`` on any Firestore error.
         """
         try:
-            results = []
-            for snap in self._col.stream():
-                d = _jsonsafe_doc(snap.to_dict() or {})
-                if start_date <= d.get("date", "") <= end_date:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
-            return results
+            query = _where(
+                _where(self._col, "date", ">=", start_date), "date", "<=", end_date
+            ).order_by("date", direction=_DESCENDING)
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
         except Exception:
             logger.warning(
                 "StrengthSessionStore.get_range(%r, %r) failed",
@@ -1056,13 +1083,10 @@ class StrengthSessionStore:
         try:
             from datetime import date as _date, timedelta
             cutoff = (_date.today() - timedelta(days=days)).isoformat()
-            results = []
-            for snap in self._col.stream():
-                d = _jsonsafe_doc(snap.to_dict() or {})
-                if d.get("date", "") >= cutoff:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
-            return results
+            query = _where(self._col, "date", ">=", cutoff).order_by(
+                "date", direction=_DESCENDING
+            )
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
         except Exception:
             logger.warning("StrengthSessionStore.get_recent(%r) failed", days, exc_info=True)
             return []
@@ -1084,7 +1108,11 @@ class StrengthSessionStore:
         try:
             target = (name or "").strip().lower()
             records: list[dict] = []
-            for snap in self._col.stream():
+            # The nested exercises[].name array isn't Firestore-queryable, so
+            # this stays a scan — but ordered newest-first server-side, so a
+            # `limit` lets us stop streaming early instead of reading all docs.
+            query = self._col.order_by("date", direction=_DESCENDING)
+            for snap in query.stream():
                 d = _jsonsafe_doc(snap.to_dict() or {})
                 for ex in d.get("exercises") or []:
                     if (ex.get("name") or "").strip().lower() == target:
@@ -1095,7 +1123,8 @@ class StrengthSessionStore:
                             "est_1rm": ex.get("est_1rm"),
                             "volume_kg": ex.get("volume_kg"),
                         })
-            records.sort(key=lambda r: r.get("date") or "", reverse=True)
+                if limit and len(records) >= limit:
+                    break
             return records[:limit] if limit else records
         except Exception:
             logger.warning(
@@ -1187,13 +1216,10 @@ class RunDetailStore:
         Never raises — returns ``[]`` on any Firestore error.
         """
         try:
-            results = []
-            for snap in self._col.stream():
-                d = _jsonsafe_doc(snap.to_dict() or {})
-                if start_date <= d.get("date", "") <= end_date:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
-            return results
+            query = _where(
+                _where(self._col, "date", ">=", start_date), "date", "<=", end_date
+            ).order_by("date", direction=_DESCENDING)
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
         except Exception:
             logger.warning(
                 "RunDetailStore.get_range(%r, %r) failed",
@@ -1209,13 +1235,10 @@ class RunDetailStore:
         try:
             from datetime import date as _date, timedelta
             cutoff = (_date.today() - timedelta(days=days)).isoformat()
-            results = []
-            for snap in self._col.stream():
-                d = _jsonsafe_doc(snap.to_dict() or {})
-                if d.get("date", "") >= cutoff:
-                    results.append(d)
-            results.sort(key=lambda d: d.get("date", ""), reverse=True)
-            return results
+            query = _where(self._col, "date", ">=", cutoff).order_by(
+                "date", direction=_DESCENDING
+            )
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
         except Exception:
             logger.warning("RunDetailStore.get_recent(%r) failed", days, exc_info=True)
             return []
