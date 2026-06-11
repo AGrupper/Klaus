@@ -23,6 +23,25 @@ import pytest
 gc.disable()
 
 
+@pytest.fixture(autouse=True)
+def _clear_firestore_read_cache():
+    """Reset the module-level TTL read cache in memory.firestore_db.
+
+    SelfStateStore/JournalStore reads are served from an in-process cache
+    keyed by (store, project, database). Tests reuse the same project id with
+    different mock data, so a value cached by one test must never leak into
+    the next. Cleared on both sides of the test; tolerant of the module being
+    re-imported (a fresh module object brings a fresh cache anyway).
+    """
+    mod = sys.modules.get("memory.firestore_db")
+    if mod is not None and hasattr(mod, "_READ_CACHE"):
+        mod._READ_CACHE.clear()
+    yield
+    mod = sys.modules.get("memory.firestore_db")
+    if mod is not None and hasattr(mod, "_READ_CACHE"):
+        mod._READ_CACHE.clear()
+
+
 @pytest.fixture
 def isolated_modules():
     """Snapshot ``sys.modules``; on teardown drop keys the test added and restore

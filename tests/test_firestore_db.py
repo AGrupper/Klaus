@@ -612,3 +612,109 @@ class TestTickLogStore:
             result = store.write(self._DATE, self._TICK, self._SITUATION, self._DECISION)
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TTL read cache — SelfStateStore.get / JournalStore.get / get_recent
+# ---------------------------------------------------------------------------
+
+class TestReadCache:
+    """The module-level TTL cache must serve repeat reads, be invalidated by
+    writes, expire after the TTL, and stay inert for __new__-built stores."""
+
+    def _journal_store(self, docs: dict[str, dict]):
+        client, col = _make_mock_client_with_collection()
+        for date_str, data in docs.items():
+            _stub_existing_doc(col, date_str, data)
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.JournalStore("test-project")
+        return store, col
+
+    def test_journal_get_served_from_cache(self):
+        store, col = self._journal_store({"2026-06-10": {"summary": "day"}})
+
+        first = store.get("2026-06-10")
+        second = store.get("2026-06-10")
+
+        assert first == second
+        assert col.document.call_count == 1, "second get() must not hit Firestore"
+
+    def test_journal_set_invalidates_cache(self):
+        store, col = self._journal_store({"2026-06-10": {"summary": "day"}})
+
+        store.get("2026-06-10")
+        store.set("2026-06-10", {"summary": "rewritten"})
+        store.get("2026-06-10")
+
+        # document() used for: get, set, get-after-invalidation.
+        assert col.document.call_count == 3
+
+    def test_journal_missing_entry_not_cached(self):
+        """A miss (no journal yet) must not be cached — tonight's entry can
+        appear at any moment via the nightly reflection."""
+        client, col = _make_mock_client_with_collection()
+        snap = MagicMock()
+        snap.exists = False
+        col.document.return_value.get.return_value = snap
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.JournalStore("test-project")
+
+        assert store.get("2026-06-10") is None
+        assert store.get("2026-06-10") is None
+        assert col.document.call_count == 2
+
+    def test_journal_cache_expires_after_ttl(self, monkeypatch):
+        store, col = self._journal_store({"2026-06-10": {"summary": "day"}})
+        monkeypatch.setattr(firestore_db, "_READ_CACHE_TTL_SEC", -1)
+
+        store.get("2026-06-10")
+        store.get("2026-06-10")
+
+        assert col.document.call_count == 2, "expired entry must re-read"
+
+    def test_new_built_store_bypasses_cache(self):
+        """Stores built via __new__ (the store-test pattern) have no
+        _cache_key and must never touch the shared cache."""
+        store = firestore_db.JournalStore.__new__(firestore_db.JournalStore)
+        col = MagicMock()
+        snap = MagicMock()
+        snap.exists = True
+        snap.id = "2026-06-10"
+        snap.to_dict.return_value = {"summary": "day"}
+        col.document.return_value.get.return_value = snap
+        store._col = col
+
+        store.get("2026-06-10")
+        store.get("2026-06-10")
+
+        assert col.document.call_count == 2
+        assert firestore_db._READ_CACHE == {}
+
+    def test_self_state_get_served_from_cache_and_invalidated_by_set(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        snap = MagicMock()
+        snap.exists = True
+        snap.to_dict.return_value = {"mood": "sharp"}
+        doc_ref.get.return_value = snap
+        col.document.return_value = doc_ref
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.SelfStateStore("test-project")
+
+        assert store.get() == {"mood": "sharp"}
+        assert store.get() == {"mood": "sharp"}
+        assert doc_ref.get.call_count == 1, "second get() must be a cache hit"
+
+        store.set({"mood": "calm"})
+        store.get()
+        assert doc_ref.get.call_count == 2, "set() must invalidate the cache"
+
+    def test_cached_value_is_copied_not_shared(self):
+        """Mutating a returned dict must not corrupt the cached copy."""
+        store, _ = self._journal_store({"2026-06-10": {"summary": "day"}})
+
+        first = store.get("2026-06-10")
+        first["summary"] = "mutated by caller"
+        second = store.get("2026-06-10")
+
+        assert second["summary"] == "day"

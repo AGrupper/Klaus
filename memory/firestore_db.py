@@ -44,6 +44,47 @@ def _where(query, field: str, op: str, value):
 _DESCENDING = "DESCENDING"
 
 
+# ------------------------------------------------------------------ #
+# In-process TTL read cache (self_state + journal)                    #
+#                                                                     #
+# self_state and journal change ~once a day but are read on every     #
+# chat turn (render_smart_system) and 4x per autonomous tick          #
+# (43 ticks/day) — hundreds of identical Firestore reads daily.       #
+# In-process writers (reflection / nightly review) go through set()   #
+# which invalidates, so same-instance staleness is zero; cross-       #
+# instance staleness is bounded by the TTL, acceptable for fields     #
+# that change once a day. Stores built via __new__ in tests have no   #
+# _cache_key attribute and bypass the cache entirely.                 #
+# ------------------------------------------------------------------ #
+
+_READ_CACHE: dict[tuple, tuple[float, object]] = {}
+_READ_CACHE_TTL_SEC = 600  # 10 minutes
+
+
+def _cache_get(key: tuple):
+    """Return the cached value for key, or None if absent/expired."""
+    import time
+    hit = _READ_CACHE.get(key)
+    if hit is None:
+        return None
+    stored_at, value = hit
+    if time.monotonic() - stored_at > _READ_CACHE_TTL_SEC:
+        _READ_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _cache_put(key: tuple, value) -> None:
+    import time
+    _READ_CACHE[key] = (time.monotonic(), value)
+
+
+def _cache_invalidate_prefix(prefix: tuple) -> None:
+    """Drop every cache entry whose key starts with prefix."""
+    for key in [k for k in _READ_CACHE if k[: len(prefix)] == prefix]:
+        _READ_CACHE.pop(key, None)
+
+
 def _make_firestore_client(project_id: str, database: str) -> firestore.Client:
     """Return an authenticated Firestore client.
 
@@ -453,25 +494,37 @@ class SelfStateStore:
     def __init__(self, project_id: str, database: str = "(default)") -> None:
         self._client = _make_firestore_client(project_id, database)
         self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+        self._cache_key = ("self_state", project_id, database)
 
     def get(self) -> dict:
         """Return the self_state document. Returns {} on any error — never raises.
 
         This is intentionally broader than HeartbeatConfigStore.get() because
         SelfStateStore is injected into every prompt; a failure must never crash
-        a conversation.
+        a conversation. Served from the module TTL cache between writes —
+        self_state changes ~once a day but is read on every chat turn and
+        autonomous tick.
         """
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return dict(cached)
         try:
             snap = self._doc_ref.get()
-            return snap.to_dict() or {} if snap.exists else {}
+            result = snap.to_dict() or {} if snap.exists else {}
         except Exception:
             logger.warning("SelfStateStore.get() failed — returning empty", exc_info=True)
             return {}
+        if cache_key is not None:
+            _cache_put(cache_key, dict(result))
+        return result
 
     def set(self, patch: dict) -> None:
         """Merge patch into the self_state document. Raises on failure (caller decides).
 
-        Always appends updated_at SERVER_TIMESTAMP.
+        Always appends updated_at SERVER_TIMESTAMP. Invalidates the read cache
+        so a same-instance get() never serves the pre-write value.
         """
         try:
             self._doc_ref.set(
@@ -481,6 +534,9 @@ class SelfStateStore:
         except Exception:
             logger.error("SelfStateStore.set() failed", exc_info=True)
             raise
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            _cache_invalidate_prefix(cache_key)
 
     def bootstrap_if_empty(self, identity_summary: str) -> None:
         """Seed config/self_state with identity_summary if the document does not exist.
@@ -501,6 +557,9 @@ class SelfStateStore:
                 "updated_at": firestore.SERVER_TIMESTAMP,
             })
             logger.info("SelfStateStore: bootstrapped config/self_state")
+            cache_key = getattr(self, "_cache_key", None)
+            if cache_key is not None:
+                _cache_invalidate_prefix(cache_key)
         except Exception:
             logger.warning("SelfStateStore.bootstrap_if_empty() failed — skipping", exc_info=True)
 
@@ -526,9 +585,14 @@ class JournalStore:
     def __init__(self, project_id: str, database: str = "(default)") -> None:
         self._client = _make_firestore_client(project_id, database)
         self._col = self._client.collection(self._COLLECTION)
+        self._cache_key = ("journal", project_id, database)
 
     def get(self, date_str: str) -> dict | None:
         """Return the journal doc for a date, or None. Never raises.
+
+        Served from the module TTL cache between writes — the autonomous tick
+        reads 3 journal days on every tick (43x/day) for entries that change
+        once a day.
 
         Args:
             date_str: YYYY-MM-DD date key (Asia/Jerusalem calendar date).
@@ -537,16 +601,27 @@ class JournalStore:
             Dict with all stored fields plus ``date`` == date_str, or None
             if no entry exists for that date or if Firestore is unreachable.
         """
+        cache_key = getattr(self, "_cache_key", None)
+        full_key = cache_key + ("get", date_str) if cache_key is not None else None
+        if full_key is not None:
+            cached = _cache_get(full_key)
+            if cached is not None:
+                return dict(cached)
         try:
             snap = self._col.document(date_str).get()
             if not snap.exists:
+                # WHY no caching of misses: today's entry appears at the
+                # nightly reflection — caching the miss would hide it for up
+                # to the TTL right after it's written by another instance.
                 return None
             data = snap.to_dict() or {}
             data["date"] = snap.id
-            return data
         except Exception:
             logger.warning("JournalStore.get(%r) failed", date_str, exc_info=True)
             return None
+        if full_key is not None:
+            _cache_put(full_key, dict(data))
+        return data
 
     def set(self, date_str: str, entry: dict) -> None:
         """Overwrite the journal doc for a date. Raises on failure (caller decides).
@@ -569,6 +644,10 @@ class JournalStore:
         except Exception:
             logger.error("JournalStore.set(%r) failed", date_str, exc_info=True)
             raise
+        # Invalidate every cached journal read (per-date gets + recents).
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            _cache_invalidate_prefix(cache_key)
 
     def get_recent(self, n: int) -> list[dict]:
         """Return the most-recent n journal docs, newest-first. Returns [] on error.
@@ -585,6 +664,12 @@ class JournalStore:
             List of journal dicts (each with a ``date`` field), sorted by date
             descending, at most n elements. Empty list on any Firestore error.
         """
+        cache_key = getattr(self, "_cache_key", None)
+        full_key = cache_key + ("recent", n) if cache_key is not None else None
+        if full_key is not None:
+            cached = _cache_get(full_key)
+            if cached is not None:
+                return [dict(d) for d in cached]
         try:
             query = self._col.order_by("__name__", direction=_DESCENDING).limit(n)
             snaps = list(query.stream())
@@ -596,6 +681,8 @@ class JournalStore:
             data = snap.to_dict() or {}
             data["date"] = snap.id
             results.append(data)
+        if full_key is not None:
+            _cache_put(full_key, [dict(d) for d in results])
         return results
 
 
