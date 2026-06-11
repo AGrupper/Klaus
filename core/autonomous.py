@@ -189,82 +189,71 @@ def _is_empty_signals(situation: dict) -> bool:
     return True
 
 
-def gather_situation(now: datetime) -> dict:
-    """Layer 0 — aggregate situation snapshot from 8 sources with per-source isolation.
+# --------------------------------------------------------------------- #
+# Layer-0 per-source gather functions                                    #
+#                                                                        #
+# Each function owns its try/except and returns a sentinel on failure    #
+# (empty list / 0 / "" / None) so one failed source never masks another  #
+# — critical for D-11 empty-signals detection. gather_situation runs     #
+# them in a thread pool; isolation is preserved by construction because  #
+# the functions never raise.                                             #
+# --------------------------------------------------------------------- #
 
-    Each source lives in its own try/except. Failures are logged and the source
-    falls back to a sentinel (empty list / 0 / empty string / None). One
-    failure does NOT mask others — critical for D-11 empty-signals detection.
-
-    Uses REAL APIs verified from source (BLOCKER 1 fix):
-      - ``GoogleCalendarManager.list_events(time_min_iso, time_max_iso)``
-      - ``ticktick_tool.get_today_tasks()`` (module-level, returns dict
-        with ``'overdue'`` key)
-      - ``GmailTool(auth_manager).list_unread(max_results)``
-      - ``FirestoreConversationStore.get_last_user_timestamp(user_id)``
-    """
-    gathered: dict = {
-        "calendar": [],
-        "ticktick_overdue": [],
-        "unread_email_count": 0,
-        "due_followups": [],
-        "hours_since_contact": None,  # WARNING 4: None == "unknown"
-        "recent_journal_digest": "",
-        "self_state": {},
-        "today_outreach_log": [],
-        "now_context": _now_context(now),
-    }
-
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-
-    # (a) Calendar — today's events. Reuse the shared singleton from core.tools
-    # to avoid re-bootstrapping GoogleAuthManager and OAuth tokens on every
-    # tick (BLOCKER 5 spirit).
+def _gather_calendar(now: datetime) -> list:
+    """(a) Today's calendar events via the shared core.tools singleton."""
     try:
         from core.tools import _get_calendar_tool
         cal = _get_calendar_tool()
         local = now.astimezone(_TZ)
         day_start = local.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
-        gathered["calendar"] = cal.list_events(
+        return cal.list_events(
             day_start.isoformat(),
             day_end.isoformat(),
             max_results=50,
         ) or []
     except Exception:
         logger.warning("autonomous: calendar gather failed", exc_info=True)
+        return []
 
-    # (b) TickTick overdue (BLOCKER 1 — module function, not a class method).
+
+def _gather_ticktick_overdue() -> list:
+    """(b) TickTick overdue (BLOCKER 1 — module function, not a class method)."""
     try:
         from mcp_tools import ticktick_tool
         tasks = ticktick_tool.get_today_tasks() or {}
-        gathered["ticktick_overdue"] = tasks.get("overdue", []) or []
+        return tasks.get("overdue", []) or []
     except Exception:
         logger.warning("autonomous: ticktick gather failed", exc_info=True)
+        return []
 
-    # (c) Unread email count (BLOCKER 1 — GmailTool not GmailManager; uses
-    # ``list_unread`` length, not the non-existent ``get_unread_count``).
+
+def _gather_unread_email_count() -> int:
+    """(c) Unread email count (BLOCKER 1 — GmailTool.list_unread length)."""
     try:
         from core.tools import _get_gmail_tool
         gm = _get_gmail_tool()
-        gathered["unread_email_count"] = len(gm.list_unread(max_results=50))
+        return len(gm.list_unread(max_results=50))
     except Exception:
         logger.warning("autonomous: gmail gather failed", exc_info=True)
+        return 0
 
-    # (d) Due follow-ups
+
+def _gather_due_followups(now: datetime, project_id: str, database: str) -> list:
+    """(d) Due follow-ups."""
     try:
         from memory.firestore_db import FollowupStore
         fs = FollowupStore(project_id=project_id, database=database)
-        gathered["due_followups"] = fs.list_due(
-            now.astimezone(timezone.utc).isoformat()
-        )
+        return fs.list_due(now.astimezone(timezone.utc).isoformat())
     except Exception:
         logger.warning("autonomous: followup gather failed", exc_info=True)
+        return []
 
-    # (e) Hours since last user contact (BLOCKER 1 — uses the new
-    # ``get_last_user_timestamp`` method added to FirestoreConversationStore
-    # by this plan; WARNING 4 — ``None`` on never-contacted, not 999.0).
+
+def _gather_hours_since_contact(
+    now: datetime, project_id: str, database: str
+) -> float | None:
+    """(e) Hours since last user contact (WARNING 4 — None == unknown, not 999)."""
     try:
         from memory.firestore_conversation import FirestoreConversationStore
         user_id = int(os.environ.get("TELEGRAM_USER_ID", "0"))
@@ -272,15 +261,15 @@ def gather_situation(now: datetime) -> dict:
         last_ts = store.get_last_user_timestamp(user_id)
         if last_ts:
             delta = now.astimezone(timezone.utc) - last_ts.astimezone(timezone.utc)
-            gathered["hours_since_contact"] = round(
-                delta.total_seconds() / 3600.0, 2
-            )
-        else:
-            gathered["hours_since_contact"] = None  # WARNING 4
+            return round(delta.total_seconds() / 3600.0, 2)
+        return None  # WARNING 4
     except Exception:
         logger.warning("autonomous: hours_since_contact gather failed", exc_info=True)
+        return None
 
-    # (f) Recent journal digest (last 3 entries)
+
+def _gather_journal_digest(now: datetime, project_id: str, database: str) -> str:
+    """(f) Recent journal digest (last 3 entries)."""
     try:
         from memory.firestore_db import JournalStore
         js = JournalStore(project_id=project_id, database=database)
@@ -290,34 +279,47 @@ def gather_situation(now: datetime) -> dict:
             entry = js.get(d)
             if entry:
                 digest_parts.append(f"[{d}] {entry.get('summary', '')}")
-        gathered["recent_journal_digest"] = "\n".join(digest_parts)
+        return "\n".join(digest_parts)
     except Exception:
         logger.warning("autonomous: journal digest gather failed", exc_info=True)
+        return ""
 
-    # (g) Self-state (current_focus, mood)
+
+def _gather_self_state(project_id: str, database: str) -> dict:
+    """(g) Self-state (current_focus, mood)."""
     try:
         from memory.firestore_db import SelfStateStore
         ss = SelfStateStore(project_id=project_id, database=database)
-        gathered["self_state"] = ss.get() or {}
+        return ss.get() or {}
     except Exception:
         logger.warning("autonomous: self_state gather failed", exc_info=True)
+        return {}
 
-    # (h) Today's outreach log topics
+
+def _gather_outreach_log(now: datetime, project_id: str, database: str) -> list:
+    """(h) Today's outreach log topics."""
     try:
         from memory.firestore_db import OutreachLogStore
         ols = OutreachLogStore(project_id=project_id, database=database)
         today_iso = now.astimezone(_TZ).date().isoformat()
-        gathered["today_outreach_log"] = ols.topics_today(today_iso)
+        return ols.topics_today(today_iso)
     except Exception:
         logger.warning("autonomous: outreach_log gather failed", exc_info=True)
+        return []
 
-    # (i) PHASE 19.3 — recent meals read from MealStore (NUTR-04).
-    # The iOS HealthKit bridge (/cron/healthkit-sync) writes meals into
-    # MealStore directly, so we READ from the store rather than re-syncing
-    # from Google Fit (dead on iOS — returned []). Keep only meals within the
-    # last hour so `meals_since_last_tick` retains its "since last tick"
-    # trigger semantics (the tick runs */20 7-21, so a 1h window never needs
-    # to straddle midnight). Same store the morning briefing reads.
+
+def _gather_meals_since_last_tick(
+    now: datetime, project_id: str, database: str
+) -> list:
+    """(i) PHASE 19.3 — recent meals read from MealStore (NUTR-04).
+
+    The iOS HealthKit bridge (/cron/healthkit-sync) writes meals into
+    MealStore directly, so we READ from the store rather than re-syncing
+    from Google Fit (dead on iOS — returned []). Keep only meals within the
+    last hour so `meals_since_last_tick` retains its "since last tick"
+    trigger semantics (the tick runs */20 7-21, so a 1h window never needs
+    to straddle midnight). Same store the morning briefing reads.
+    """
     try:
         from memory.firestore_db import MealStore
         ms = MealStore(project_id=project_id, database=database)
@@ -331,29 +333,97 @@ def gather_situation(now: datetime) -> dict:
                     recent.append(m)
             except (KeyError, ValueError, TypeError):
                 continue
-        gathered["meals_since_last_tick"] = recent
+        return recent
     except Exception:
         logger.warning("autonomous: meals gather failed", exc_info=True)
-        gathered["meals_since_last_tick"] = []
+        return []
 
-    # (j) PHASE 19 — Garmin training status (live).
+
+def _gather_training_status() -> dict:
+    """(j) PHASE 19 — Garmin training status (live)."""
     try:
         from mcp_tools.garmin_tool import fetch_garmin_training_status
-        gathered["training_status"] = fetch_garmin_training_status() or {}
+        return fetch_garmin_training_status() or {}
     except Exception:
         logger.warning("autonomous: training_status gather failed", exc_info=True)
-        gathered["training_status"] = {}
+        return {}
 
-    # (k) PHASE 19 — ACWR computed from Postgres activities (live).
-    # compute_acwr_from_db swallows its own exceptions and returns the
-    # sentinel {"acute": 0.0, "chronic": None, "ratio": None}; the outer
-    # try/except is defense-in-depth (Pattern C symmetry).
+
+def _gather_acwr() -> dict:
+    """(k) PHASE 19 — ACWR from Postgres activities (live).
+
+    compute_acwr_from_db swallows its own exceptions and returns the
+    sentinel {"acute": 0.0, "chronic": None, "ratio": None}; the outer
+    try/except is defense-in-depth (Pattern C symmetry).
+    """
     try:
         from mcp_tools.garmin_tool import compute_acwr_from_db
-        gathered["acwr"] = compute_acwr_from_db() or {"ratio": None}
+        return compute_acwr_from_db() or {"ratio": None}
     except Exception:
         logger.warning("autonomous: acwr gather failed", exc_info=True)
-        gathered["acwr"] = {"ratio": None}
+        return {"ratio": None}
+
+
+def gather_situation(now: datetime) -> dict:
+    """Layer 0 — aggregate situation snapshot from 11 sources, fanned out in parallel.
+
+    Each source lives in its own ``_gather_*`` function with its own
+    try/except and sentinel fallback, so one failure does NOT mask others —
+    critical for D-11 empty-signals detection. The sources are independent
+    network/Firestore calls, so they run concurrently in a thread pool:
+    sequential execution cost ~1s per tick × 43 ticks/day.
+
+    Uses REAL APIs verified from source (BLOCKER 1 fix):
+      - ``GoogleCalendarManager.list_events(time_min_iso, time_max_iso)``
+      - ``ticktick_tool.get_today_tasks()`` (module-level, returns dict
+        with ``'overdue'`` key)
+      - ``GmailTool(auth_manager).list_unread(max_results)``
+      - ``FirestoreConversationStore.get_last_user_timestamp(user_id)``
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    gathered: dict = {"now_context": _now_context(now)}
+
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+
+    # Pre-warm the shared Google auth singleton before the fan-out: the lazy
+    # singletons in core.tools (_get_auth_manager → calendar/gmail) have no
+    # locks, so two threads constructing them concurrently on a cold instance
+    # could double-build. Warming once on this thread removes the race.
+    try:
+        from core.tools import _get_auth_manager
+        _get_auth_manager()
+    except Exception:
+        logger.warning("autonomous: auth manager pre-warm failed", exc_info=True)
+
+    jobs: dict[str, callable] = {
+        "calendar": lambda: _gather_calendar(now),
+        "ticktick_overdue": _gather_ticktick_overdue,
+        "unread_email_count": _gather_unread_email_count,
+        "due_followups": lambda: _gather_due_followups(now, project_id, database),
+        "hours_since_contact": lambda: _gather_hours_since_contact(
+            now, project_id, database
+        ),
+        "recent_journal_digest": lambda: _gather_journal_digest(
+            now, project_id, database
+        ),
+        "self_state": lambda: _gather_self_state(project_id, database),
+        "today_outreach_log": lambda: _gather_outreach_log(now, project_id, database),
+        "meals_since_last_tick": lambda: _gather_meals_since_last_tick(
+            now, project_id, database
+        ),
+        "training_status": _gather_training_status,
+        "acwr": _gather_acwr,
+    }
+
+    with ThreadPoolExecutor(max_workers=8, thread_name_prefix="gather") as pool:
+        futures = {pool.submit(fn): key for key, fn in jobs.items()}
+        for fut in as_completed(futures):
+            # _gather_* functions never raise (sentinel on failure), so
+            # fut.result() is safe; a raise here would indicate a programming
+            # error and should surface loudly.
+            gathered[futures[fut]] = fut.result()
 
     # D-11 Layer-0 gate (BLOCKER 2 — narrow calendar detection).
     gathered["empty"] = _is_empty_signals(gathered)

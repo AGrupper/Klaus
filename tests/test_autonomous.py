@@ -277,6 +277,46 @@ def test_gather_situation_isolation(fixed_now):
     assert out["ticktick_overdue"] == []
 
 
+def test_gather_situation_parallel_fanout_completes_all_keys(fixed_now):
+    """The thread-pool fan-out fills every gather key even when one source
+    raises inside a worker thread (sentinel, no sibling poisoning)."""
+    with patch("core.tools._get_calendar_tool") as get_cal, \
+         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}), \
+         patch("core.tools._get_gmail_tool") as get_gm, \
+         patch("memory.firestore_db.FollowupStore") as fs_cls, \
+         patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
+         patch("memory.firestore_db.JournalStore") as js_cls, \
+         patch("memory.firestore_db.SelfStateStore") as ss_cls, \
+         patch("memory.firestore_db.OutreachLogStore") as ols_cls, \
+         patch("memory.firestore_db.MealStore") as ms_cls, \
+         patch("mcp_tools.garmin_tool.fetch_garmin_training_status",
+               return_value={"status": "PRODUCTIVE"}), \
+         patch("mcp_tools.garmin_tool.compute_acwr_from_db",
+               return_value={"ratio": 1.1}):
+        get_cal.return_value.list_events.return_value = []
+        get_gm.return_value.list_unread.return_value = []
+        fs_cls.return_value.list_due.return_value = []
+        conv_cls.return_value.get_last_user_timestamp.return_value = None
+        js_cls.return_value.get.return_value = None
+        ss_cls.return_value.get.return_value = {}
+        ols_cls.return_value.topics_today.return_value = []
+        # Meals source raises INSIDE its worker thread → sentinel [].
+        ms_cls.return_value.get_day.side_effect = RuntimeError("kaboom in thread")
+
+        out = autonomous.gather_situation(fixed_now)
+
+    for k in (
+        "calendar", "ticktick_overdue", "unread_email_count", "due_followups",
+        "hours_since_contact", "recent_journal_digest", "self_state",
+        "today_outreach_log", "meals_since_last_tick", "training_status",
+        "acwr", "now_context", "empty",
+    ):
+        assert k in out, f"key {k} missing"
+    assert out["meals_since_last_tick"] == []          # sentinel, not poison
+    assert out["training_status"] == {"status": "PRODUCTIVE"}  # sibling intact
+    assert out["acwr"] == {"ratio": 1.1}
+
+
 def test_gather_situation_now_context_block(fixed_now):
     """D-08 — now_context contains the 5 required keys; tick_total == 43."""
     with patch("core.tools._get_calendar_tool"), \
