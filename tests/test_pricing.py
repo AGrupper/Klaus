@@ -25,7 +25,10 @@ def test_haiku_versioned_alias():
 
 
 def test_free_model_zero():
-    # qwen3-32b is a free/open-weight model — absent from MODEL_PRICING → 0.0
+    # qwen3-32b is a free/open-weight model — absent from MODEL_PRICING → 0.0.
+    # Both the namespaced Groq id (production since 2026-06-11) and the legacy
+    # bare name must stay free.
+    assert compute_cost("qwen/qwen3-32b", 1000, 500) == 0.0
     assert compute_cost("qwen3-32b", 1000, 500) == 0.0
 
 

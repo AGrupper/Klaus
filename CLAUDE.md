@@ -37,7 +37,7 @@ Before writing any code, read and adhere to these:
 | Brain (smart agent) | `gemini-3.5-flash` | Gemini AI Studio | Orchestration, judgment, every conversation turn |
 | Worker (hands) | `deepseek-v4-flash` | OpenAI-compat (DeepSeek API) | Tool execution, structured JSON, data gathering — $0.11/$0.22 per 1M tokens |
 | Brain fallback | `claude-haiku-4-5` | Anthropic | Inline fallback on LLMError — diversity hedge |
-| Tick-brain | `qwen3-32b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick |
+| Tick-brain | `qwen/qwen3-32b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare `qwen3-32b` 404s |
 | Tick-brain fallback | `gemini-3.5-flash` | Gemini AI Studio | Used if Groq fails |
 | Embeddings | `gemini-embedding-2` | Gemini AI Studio (**NOT Vertex**) | 768-dim, Pinecone cosine |
 

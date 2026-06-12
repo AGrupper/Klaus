@@ -137,7 +137,7 @@ each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table
 | Smart Agent (brain) | gemini | gemini-3.5-flash | SMART_AGENT_BACKEND / MODEL / API_KEY | Orchestration, judgment, crafting responses |
 | Worker Agent (hands) | openai (DeepSeek-compat) | deepseek-v4-flash | WORKER_AGENT_BACKEND / MODEL / API_KEY / BASE_URL | Tool execution, data gathering, structured JSON; base_url=https://api.deepseek.com/v1 |
 | Smart Agent fallback | anthropic | claude-haiku-4-5 | SMART_AGENT_FALLBACK_BACKEND / MODEL / API_KEY | Activated inline on LLMError from brain |
-| Tick-brain | openai (Groq-compat) | qwen3-32b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error |
+| Tick-brain | openai (Groq-compat) | qwen/qwen3-32b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error. Groq ids are namespaced — bare "qwen3-32b" 404s |
 | Embeddings | gemini | gemini-embedding-2 | (uses SMART_AGENT_API_KEY) | AI Studio only — NOT Vertex AI; decoupled from worker key |
 
 ### Model Selection Rationale
@@ -264,7 +264,7 @@ gather_situation()        Layer 0   8 sources, no LLM             $0.00
         ↓
 empty-signals gate (D-11) Layer 0   if nothing happening → EXIT   $0.00
         ↓
-tick_brain.think()        Layer 1   Groq qwen3-32b judgment       $0.00 (free tier)
+tick_brain.think()        Layer 1   Groq qwen/qwen3-32b judgment  $0.00 (free tier)
   purpose='tick_autonomous'         {should_act, reason, draft, topic_key}
         ↓
   if should_act=False → EXIT                                       $0.00

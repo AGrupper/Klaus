@@ -65,6 +65,32 @@ class TestParseResponse(unittest.TestCase):
         # Empty draft string should not be included
         self.assertNotIn("draft", result)
 
+    def test_think_block_stripped_before_json(self):
+        """Qwen3 prepends <think>…</think> reasoning before the JSON payload —
+        the parse must strip it (2026-06-11: this broke every live Groq call)."""
+        parse = self._get_parse_response()
+        raw = ('<think>\nThe user has an overdue task. I should flag it.\n</think>\n\n'
+               '{"should_act": true, "reason": "overdue", "topic_key": "overdue:x"}')
+        result = parse(raw)
+        self.assertTrue(result["should_act"])
+        self.assertEqual(result["reason"], "overdue")
+
+    def test_think_block_with_fenced_json_stripped(self):
+        parse = self._get_parse_response()
+        raw = ('<think>reasoning here</think>\n'
+               '```json\n{"should_act": false, "reason": "ok"}\n```')
+        result = parse(raw)
+        self.assertFalse(result["should_act"])
+        self.assertEqual(result["reason"], "ok")
+
+    def test_unterminated_think_block_returns_parse_failure(self):
+        """max_tokens truncation mid-reasoning leaves an unclosed <think> and no
+        JSON — must land in safe mode, not raise."""
+        parse = self._get_parse_response()
+        result = parse('<think>\nstill reasoning when the output got cut')
+        self.assertFalse(result["should_act"])
+        self.assertEqual(result["reason"], "parse_failure")
+
 
 class TestTickBrainConstructor(unittest.TestCase):
     """Tests for TickBrain.__init__ — env var handling."""
@@ -119,7 +145,7 @@ class TestTickBrainConstructor(unittest.TestCase):
                 brain = tb2.TickBrain()
                 primary_call = _calls[0]
                 self.assertEqual(primary_call["backend"], "openai")
-                self.assertEqual(primary_call["model"], "qwen3-32b")
+                self.assertEqual(primary_call["model"], "qwen/qwen3-32b")
                 self.assertEqual(primary_call["base_url"], "https://api.groq.com/openai/v1")
 
 

@@ -6,7 +6,8 @@ main Gemini brain on LLMError or rate-limit.
 
 Env vars:
     TICK_BRAIN_BACKEND   — "openai" (default; Groq is OpenAI-compatible)
-    TICK_BRAIN_MODEL     — e.g. "qwen3-32b" (default)
+    TICK_BRAIN_MODEL     — e.g. "qwen/qwen3-32b" (default; Groq ids are namespaced —
+                           the bare "qwen3-32b" returns 404 model_not_found)
     TICK_BRAIN_API_KEY   — Groq API key (required; stored in GCP Secret Manager)
     TICK_BRAIN_BASE_URL  — Groq base URL (default: https://api.groq.com/openai/v1)
 
@@ -18,13 +19,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from core.llm_client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BACKEND  = "openai"
-_DEFAULT_MODEL    = "qwen3-32b"
+_DEFAULT_MODEL    = "qwen/qwen3-32b"
 _DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
 
 _TICK_SYSTEM_PROMPT = """\
@@ -173,6 +175,12 @@ class TickBrain:
     @staticmethod
     def _parse_response(text: str) -> dict:
         """Parse the LLM's JSON response. Returns safe mode on any parse failure."""
+        text = text.strip()
+        # Qwen3-style reasoning models prepend a <think>…</think> block before
+        # the JSON payload. Strip every such span — including an unterminated
+        # trailing one (max_tokens truncation) — or json.loads sees prose.
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+        text = re.sub(r"<think>.*\Z", "", text, flags=re.DOTALL)
         text = text.strip()
         # Strip markdown code fences if present (some models wrap JSON in ```json ... ```)
         if text.startswith("```"):
