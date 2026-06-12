@@ -51,6 +51,12 @@ _TICK_TOTAL_PER_DAY = 43
 # D-14: ``defer_count >= 3`` force-fires on the next due tick.
 _DEFER_FORCE_FIRE_THRESHOLD = 3
 
+# Hours of user silence that count as a salient signal — used both by the
+# Layer-0 empty gate (wake tick-brain on a silence-only day) and by
+# _infer_trigger_type's "silence" label. Judgment about whether the silence
+# is actually worth a message belongs to tick-brain, not this threshold.
+_SILENCE_TRIGGER_HOURS = 8.0
+
 # BLOCKER 3 guard — ``_run_smart_loop`` RETURNS this sentinel string on total
 # LLM exhaustion. The full canned text lives in ``core.main.CONNECTIVITY_ERROR_TEXT``
 # (M-5 fix) — any edit to that constant is caught by
@@ -186,6 +192,16 @@ def _is_empty_signals(situation: dict) -> bool:
     # ACWR ratio would force a speak-up on every tick of the day).
     if situation.get("meals_since_last_tick"):
         return False
+    # Silence is a trigger, not just context: a long gap since Amit's last
+    # message must wake tick-brain even on an otherwise empty day — that is
+    # exactly when a check-in is worth judging (fixture 0004). Without this,
+    # silence-only days are structurally unreachable: the gather bug fixed
+    # 2026-06-12 starved the signal of data, and this gate skipped it anyway.
+    # Tick-brain is the free layer, so waking it costs nothing; its tuned
+    # prompt + the outreach log handle don't-repeat judgment downstream.
+    hsc = situation.get("hours_since_contact")
+    if isinstance(hsc, (int, float)) and hsc >= _SILENCE_TRIGGER_HOURS:
+        return False
     return True
 
 
@@ -253,10 +269,25 @@ def _gather_due_followups(now: datetime, project_id: str, database: str) -> list
 def _gather_hours_since_contact(
     now: datetime, project_id: str, database: str
 ) -> float | None:
-    """(e) Hours since last user contact (WARNING 4 — None == unknown, not 999)."""
+    """(e) Hours since last user contact (WARNING 4 — None == unknown, not 999).
+
+    The user id comes from the first entry of ``TELEGRAM_ALLOWED_USER_IDS`` —
+    the same convention as every other single-user call site (e.g.
+    ``core/scheduled_message.py``). This function originally read a
+    ``TELEGRAM_USER_ID`` var that exists nowhere in the deployment, so it
+    queried user 0 and returned None on every live tick (823/823 null,
+    2026-05-23 → 2026-06-10) — the silence trigger never had data.
+    """
     try:
         from memory.firestore_conversation import FirestoreConversationStore
-        user_id = int(os.environ.get("TELEGRAM_USER_ID", "0"))
+        raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")[0].strip()
+        if not raw:
+            logger.warning(
+                "autonomous: TELEGRAM_ALLOWED_USER_IDS unset — "
+                "hours_since_contact unknown"
+            )
+            return None
+        user_id = int(raw)
         store = FirestoreConversationStore(project_id=project_id, database=database)
         last_ts = store.get_last_user_timestamp(user_id)
         if last_ts:
@@ -569,7 +600,7 @@ def _infer_trigger_type(situation: dict) -> str:
     if situation.get("due_followups"):
         return "followup"
     hsc = situation.get("hours_since_contact")
-    if hsc is not None and hsc >= 8:
+    if hsc is not None and hsc >= _SILENCE_TRIGGER_HOURS:
         return "silence"
     if _calendar_has_gap_or_overload(
         situation.get("calendar") or [],

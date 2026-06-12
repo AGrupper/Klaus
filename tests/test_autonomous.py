@@ -523,6 +523,34 @@ def test_hours_since_contact_no_record_renders_as_unknown_in_prompt(fixed_now):
     assert "999" not in prompt
 
 
+def test_gather_hours_since_contact_uses_allowed_user_ids_env(monkeypatch, fixed_now):
+    """The gather reads the first entry of TELEGRAM_ALLOWED_USER_IDS — the
+    codebase-wide convention. It originally read a TELEGRAM_USER_ID var that
+    exists nowhere in the deployment, so it queried user 0 and returned None
+    on all 823 live ticks (silence trigger never had data)."""
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789,987654321")
+    store = MagicMock()
+    store.get_last_user_timestamp.return_value = fixed_now - timedelta(hours=3)
+    with patch(
+        "memory.firestore_conversation.FirestoreConversationStore",
+        return_value=store,
+    ):
+        result = autonomous._gather_hours_since_contact(fixed_now, "proj", "db")
+    store.get_last_user_timestamp.assert_called_once_with(123456789)
+    assert result == 3.0
+
+
+def test_gather_hours_since_contact_env_unset_returns_none(monkeypatch, fixed_now):
+    """No TELEGRAM_ALLOWED_USER_IDS -> None (unknown), never a user-0 query."""
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
+    with patch(
+        "memory.firestore_conversation.FirestoreConversationStore",
+    ) as store_cls:
+        result = autonomous._gather_hours_since_contact(fixed_now, "proj", "db")
+    assert result is None
+    store_cls.return_value.get_last_user_timestamp.assert_not_called()
+
+
 def test_load_prompt_resolves_paths_correctly():
     """WARNING 2 — _load_prompt uses core/main.py's relative-path strategy."""
     text = autonomous._load_prompt("prompts/autonomous_triage.md")
@@ -1056,6 +1084,31 @@ class TestPhase19Gather:
         }
         # Even with high ACWR, signals are empty — training context never triggers
         assert autonomous._is_empty_signals(situation) is True
+
+    def test_long_silence_alone_is_a_signal(self):
+        """hours_since_contact >= threshold wakes tick-brain on an empty day —
+        otherwise silence-only days never reach the silence trigger at all."""
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "hours_since_contact": 11.5,
+            "now_context": {},
+        }
+        assert autonomous._is_empty_signals(situation) is False
+
+    def test_short_or_unknown_silence_keeps_signals_empty(self):
+        """Below-threshold hsc and None (unknown) must NOT wake tick-brain."""
+        base = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "now_context": {},
+        }
+        assert autonomous._is_empty_signals({**base, "hours_since_contact": 2.0}) is True
+        assert autonomous._is_empty_signals({**base, "hours_since_contact": None}) is True
 
     def test_triage_prompt_includes_phase19_keys(self):
         """_build_triage_prompt JSON snapshot includes the 3 new keys."""

@@ -94,10 +94,19 @@ Detail: see `.planning/MILESTONES.md § v1.0`.
 
 ## Backlog
 
-- **Fix `hours_since_contact`** — null on all 823 live ticks 2026-05-23 →
-  2026-06-10, so the autonomous silence trigger has never had data in
-  production (see `core/autonomous.py` gather; surfaced during the
-  2026-06-11 fixture-curation pass).
+- ✅ **Fix `hours_since_contact`** — done 2026-06-12. The trigger was doubly
+  dead: (1) the gather read a `TELEGRAM_USER_ID` env var that exists nowhere
+  in the deployment, so it queried user 0 and returned null on all 823 live
+  ticks — now reads the first entry of `TELEGRAM_ALLOWED_USER_IDS` like every
+  other call site; (2) the Layer-0 empty gate ignored `hours_since_contact`
+  entirely, so a silence-only day could never reach tick-brain even with
+  data — long silence (≥ 8h, `_SILENCE_TRIGGER_HOURS`, same threshold as
+  `_infer_trigger_type`) now counts as a salient signal. **Behavioral note
+  for Amit:** during multi-day absences, every tick past 8h-since-contact now
+  consults the (free) tick-brain, which may judge an occasional check-in
+  worth sending — previously structurally impossible. If that feels chatty,
+  tune the threshold or the triage prompt's silence guidance, and mint
+  fixtures from the new outreach logs.
 - ✅ **Tune `prompts/autonomous_triage.md` against the expanded eval** —
   done 2026-06-12. Restructured the triage prompt for qwen (hard
   followup-silence rule + ordered vetoes→signals→silence decision
