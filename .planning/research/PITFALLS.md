@@ -1,277 +1,318 @@
 # Pitfalls Research
 
-**Domain:** Adding expert data-grounded hybrid-athlete coaching to an existing LLM personal agent (Klaus v4.0)
-**Researched:** 2026-06-03
-**Confidence:** HIGH — analysis drawn directly from the live codebase, shipped v3.0 artifacts, and the blueprint document
+**Domain:** Adding a PWA hub + Web Push + dual-interface chat to an existing FastAPI/Cloud Run personal agent (Klaus v5.0)
+**Researched:** 2026-06-13
+**Confidence:** HIGH — analysis drawn from the live codebase, approved design spec, known shipped incidents (slow-reply 2026-06-12), and verified external sources on iOS Push, Firestore billing, and FastAPI/SPA integration patterns
 
 ---
 
 ## Critical Pitfalls
 
-### Pitfall 1: Fabrication Regression — Releasing D-13 Without a Data-Presence Gate
+### Pitfall 1: iOS Web Push — Permission Not Triggered from a User Gesture
 
 **What goes wrong:**
-The D-13 "no invented numbers" guard in `prompts/smart_agent.md` currently blocks Klaus from citing any personalized thresholds when `UserProfileStore` is empty. Releasing it at v4.0 removes that backstop. Without an explicit replacement contract, Klaus defaults to what LLMs do naturally: filling silence with plausible-sounding numbers. He will say "you're about 80% to your 100kg bench goal" when no recent bench press data exists in `TrainingLogStore`, or cite "your typical threshold pace of 3:52/km" when the Garmin history contains only easy runs that week. The original sin is subtle: the guard was binary (empty profile = no numbers), but the v4.0 replacement must be data-presence conditional, not just profile-presence conditional.
+The VAPID push permission dialog on iOS Safari never appears, or appears and is immediately dismissed as invalid. iOS requires `Notification.requestPermission()` to be called directly from within a click/tap handler — not from a `setTimeout`, `useEffect` on mount, or any async callback chain that breaks the user-gesture requirement. If the permission request is deferred even one microtask tick outside the direct handler, Safari silently drops it. Additionally, the push subscription only works when the PWA is installed to the home screen via Share → Add to Home Screen on iOS 16.4+; opening the URL in Safari browser does not support Web Push.
 
 **Why it happens:**
-The prompt instruction "use real data-grounded numbers" sounds like a constraint but reads to the brain as permission. Without an explicit list of which numbers require which data sources to be non-null, the model pattern-matches from training data ("a typical threshold pace for a 1:25 HM runner is...") and presents it as personalized fact. The blueprint itself provides numeric targets (3:55/km threshold, 100kg bench), which will be ingested into `UserProfileStore` — this makes the problem worse, because the model confuses "goal stated in blueprint" with "current measured performance."
+Developers test in Chrome (desktop or Android) where the user-gesture requirement is looser. The "enable notifications" flow in the shell phase is often wired to a React `useEffect` or a post-login callback, both of which break the iOS gesture chain. The installed-PWA-only constraint is missed because the PWA still renders fine in Safari browser — the push subscription call just fails silently.
 
 **How to avoid:**
-Define a `CoachingDataContract` at the prompt level with two tiers:
-- Tier A (blueprint-derived): numbers from `UserProfileStore` (goals, plan targets). Klaus may cite these explicitly as "your stated goal" or "your plan target" — never as current performance.
-- Tier B (measurement-derived): numbers from `TrainingLogStore`, Garmin Postgres, or `MealStore`. Klaus cites these only when the relevant record exists within a defined recency window (e.g., lift data ≤ 14 days old, pace data ≤ 7 days old, nutrition data ≤ 2 days old).
-
-When Tier B data is missing or stale, Klaus must name the gap: "I don't have a recent bench press logged, Sir — the last recorded lift was [date]." This is the strict replacement for D-13, not its removal.
-
-Implement a `_validate_coaching_claim(metric, value, source, age_days)` utility that the gather step runs before building the coaching prompt context, so the brain never sees a number without provenance metadata attached.
+- Wire the permission request to a dedicated "Enable Notifications" button click handler — never to mount, auth callback, or any async path.
+- At subscription time, check `window.matchMedia('(display-mode: standalone)').matches` or `navigator.standalone`; if false on iOS, show a prompt guiding the user to install the PWA before enabling push. Do not silently attempt and fail.
+- Test the full push flow on a physical iPhone with the app installed, not in Safari browser or Chrome devtools.
+- Add a visible badge/indicator in the hub showing push status (active / not installed / permission denied) so silent failures are surfaced.
 
 **Warning signs:**
-- Klaus uses a pace or load number without citing a specific date ("your threshold pace is typically around...").
-- Klaus states progress percentages toward goals without a benchmark test in `TrainingLogStore`.
-- The morning briefing or weekly review cites a target macro split without a recent `MealStore` entry.
-- In chat, Klaus answers "how close am I to 100kg bench?" without first calling `get_training_history`.
+- Notification permission dialog never appears on iPhone after clicking "Enable."
+- `PushManager.subscribe()` throws `NotAllowedError` with no user gesture in the call stack.
+- Chrome desktop push works; iPhone push does not.
+- Push subscription is stored in `PushSubscriptionStore` but no notification arrives on iPhone.
 
 **Phase to address:**
-The blueprint ingestion phase (earliest v4.0 phase). The data-presence contract must be defined and tested before any coaching prompt uses `UserProfileStore` data. The D-13 guard should be REPLACED in the same commit it is removed — not removed and then replaced later.
+Phase 4 (Web Push). The gesture requirement must be built into the Phase 4 permission UI design — not retrofitted after the UI is already wired.
 
 ---
 
-### Pitfall 2: Generic-Advice Regression Despite Curated Knowledge
+### Pitfall 2: iOS Web Push — Silent Subscription Termination Without `event.waitUntil()`
 
 **What goes wrong:**
-The curated expert knowledge (interference effect, periodization, fueling windows) gets injected into the system prompt or coaching context, but coaching output still collapses to generic advice: "make sure you're eating enough protein before heavy lifts, Sir." The knowledge is present but not triggered by specific data. The result is advice that sounds informed but could apply to any hybrid athlete anywhere — not to Amit who had a 7.2-hour sleep, HRV of 58, ran 18km on Friday, and has Upper Body A today with bench press targeting 100kg.
+Push notifications arrive on desktop and Android, but on iPhone the service worker receives the push event, processes it, and then Safari silently revokes the push notification permission — terminating future pushes entirely. No 410 error is returned; the subscription appears valid in `PushSubscriptionStore`. The root cause: Safari requires that every push event immediately display a visible notification. If the push event handler does any async work (fetching data, reading IndexedDB) before calling `showNotification()`, and that work is not wrapped in `event.waitUntil()`, Safari treats it as a "silent push" (which iOS does not support) and revokes the subscription.
 
 **Why it happens:**
-There are two sub-causes. First, the coaching prompt uses the expert knowledge as background context rather than as decision logic — the brain reads it as flavor, not as conditional rules. Second, the gather step assembles data but doesn't distill it into per-session-specific signals before handing to the brain. The brain receives a wall of data and defaults to general commentary rather than connecting "today's session + today's body state → specific actionable coaching point."
+The service worker push handler calls `event.waitUntil(somePromise)` where `somePromise` resolves without calling `self.registration.showNotification()`, or the promise is structured so that notification display is conditional. iOS enforces the "must show a notification" rule strictly — any conditional or delayed display triggers revocation. Unlike Android and desktop, iOS has no "silent push" budget.
 
 **How to avoid:**
-Structure the coaching prompt as a decision tree, not a knowledge dump. For each cron (morning briefing, evening check-in, weekly review), the gather step should produce a `coaching_signal` object that pre-joins: today's scheduled session from the blueprint, the relevant biometric state (HRV, sleep, ACWR, body battery), and the most recent performance data for that session's primary lift or pace. The brain's instruction is then: "Given this specific session and this specific body state, give one directive coaching point and one recovery/nutrition action." Forbid introductory summaries — start with the coaching point.
-
-For "strict" to mean something, the prompt must explicitly instruct Klaus to name numbers: "Amit, your bench target for today's working sets is [X]kg. Your last logged set was [Y]kg on [date]. Hit 5 reps at [X]kg before dropping to back-off sets." Generic advice is a coaching failure, not a coaching style.
+- The push event handler must call `event.waitUntil(self.registration.showNotification(...))` synchronously from within the push handler before any awaited async call.
+- Never make the `showNotification()` call conditional based on fetched data; instead, show a notification immediately with whatever data is in the push payload, and optionally update it after async enrichment.
+- Design the push payload to be self-contained (title + body in the VAPID payload itself) — do not rely on a subsequent fetch to determine what to show.
+- Add a smoke test: send a push with an intentionally async handler and verify the subscription is not revoked on iPhone after 3 pushes.
 
 **Warning signs:**
-- Output contains phrases like "make sure to," "it's important to," or "consider" without a specific number or session context.
-- The coaching doesn't mention today's specific scheduled session by name.
-- Recovery commentary does not cite actual HRV or sleep numbers from today's Garmin data.
-- The weekly review gives a verdict ("good week") without referencing specific sessions that were completed or missed.
+- First 2-3 push notifications arrive on iPhone, then pushes stop silently.
+- `PushSubscriptionStore` still shows a valid subscription for the device.
+- Sending a push returns HTTP 201 from APNs (success), but no notification appears.
+- iOS revokes the permission — the hub's push status indicator shows "permission denied" after previously being active.
 
 **Phase to address:**
-The coaching prompt engineering phase. Must be validated before any cron is shipped — a dry-run test with real data should produce output that a coach would recognize as session-specific.
+Phase 4 (Web Push). The service worker push handler skeleton must be written and tested on iPhone before any push delivery logic is wired to the autonomous tick or `scheduled_message.py`.
 
 ---
 
-### Pitfall 3: Rigidity Drift — Blueprint Becomes a Daily Prescription
+### Pitfall 3: Web Push Subscription Expiry and 410 Gone — No Resubscription Path
 
 **What goes wrong:**
-The blueprint is ingested and represented such that Klaus treats every session as mandatory and every deviation as a failure. Amit misses Lower Body A on Monday due to a work shift. Klaus flags it in Tuesday's morning briefing, again in the evening check-in, again in the weekly review, and considers it a "missed session" that needs make-up. This turns the guide into a rigid contract and erodes trust, because Amit's stated philosophy is facet-mastery — the blueprint is a framework, not a prison.
-
-The converse failure is equally common: the blueprint is stored as loose guidelines with no weekly structure, and Klaus has no concept of what "on plan" means for a given week, making all coaching vague.
+After days or weeks, the push service returns HTTP 410 (Gone) or 404 for a previously valid VAPID subscription. The server-side push delivery fails, but `PushSubscriptionStore` retains the dead subscription. Future pushes all fail silently. The hub shows Klaus's messages only when actively open, with no notification when closed — the core value of Phase 4 is broken without any visible error.
 
 **Why it happens:**
-The representation problem: if sessions are stored as scheduled events with a boolean `completed` field, any missed session is structurally a failure. If sessions are stored as a general "weekly template," there is no per-week accountability. Both are wrong.
+Browser push subscriptions can expire or be invalidated when the user reinstalls the PWA, clears browser data, or when APNs (Apple's push infrastructure for iOS) rotates the endpoint. Safari specifically does not expose `expirationTime` on the subscription object, unlike Chrome, so there is no proactive warning. The common mistake is to treat a stored subscription as permanently valid and not handle 410/404 responses from the push service.
 
 **How to avoid:**
-Represent the blueprint in `UserProfileStore` as a **weekly template** with session priorities (primary/optional) and a **block-level volume target** (e.g., "3 of 4 strength sessions per week, both threshold runs"). Klaus coaches against volume completion and trend, not against day-specific attendance. "You hit 2 of 3 strength sessions this week, Sir — the Lower Body A slot was missed. Worth fitting it before Sunday's mixed session if recovery allows" is the correct register. "You missed Lower Body A on Monday" repeated three times is nagging.
-
-The block-level target also serves as the benchmark: at block end, Klaus measures whether the volume targets were met on average, not whether each individual session was hit.
+- In the Python push-delivery function (added to `scheduled_message.py` and the autonomous tick path), handle HTTP 410 and 404 responses by deleting the subscription from `PushSubscriptionStore` and logging a warning — do not treat them as transient errors.
+- The hub frontend must recheck push subscription validity on each app open and resubscribe automatically if the stored subscription is gone — wrap this in the same "Enable Notifications" gesture flow.
+- Add a `last_used_at` and `last_delivery_status` field to `PushSubscriptionStore` so the health page can show "last push delivered N days ago."
+- Do not store multiple subscriptions for the same device without a clear update path — overwrite on resubscribe using a device fingerprint key.
 
 **Warning signs:**
-- Klaus mentions a specific missed session more than once in a 24-hour window across different crons.
-- The weekly review counts missed sessions as failures rather than looking at weekly volume completion.
-- Klaus proposes a "make-up session" that conflicts with the recovery schedule or Amit's stated schedule.
-- The morning briefing says "you have Lower Body A today" when Amit has a work shift from 11:00.
+- Push delivery returns 410 from APNs in server logs but `PushSubscriptionStore` is not cleaned up.
+- Hub shows push status as "active" but no notification has arrived in several days.
+- After reinstalling the PWA, push stops working until manually re-enabling in settings.
 
 **Phase to address:**
-Blueprint schema design phase. The data model for `UserProfileStore.training_template` must encode session priority and block-level targets before any coaching prompt reads it. This is a schema decision that is hard to retrofit.
+Phase 4 (Web Push). 410 handling in the delivery path and resubscription on app open are both Phase 4 requirements, not optional polish.
 
 ---
 
-### Pitfall 4: Interference-Effect Overreach — Ignoring the Concurrent Training Stack
+### Pitfall 4: Service Worker Cache Poisoning — Stale `index.html` After Cloud Run Revision Change
 
 **What goes wrong:**
-Klaus pushes volume or intensity in one domain (endurance) without accounting for the concurrent load from the other domain (strength). The blueprint's 16-week aerobic progression already prescribes significant long run and threshold volumes. If Klaus's coaching commentary independently recommends "you should add more easy mileage" or "consider a second threshold session," he creates interference-effect violations that the blueprint was specifically designed to avoid. The harder version: Klaus sees low running mileage this week (from Garmin) and recommends additional runs without knowing that a heavy strength block is also in progress.
+A new Cloud Run revision is deployed with updated JS bundles. The hub's service worker has cached `index.html` from the previous revision. When Amit opens the hub, the old `index.html` loads, references asset hashes that no longer exist at the new revision's URLs, and the app fails with network errors or renders a broken shell. This is especially damaging on iPhone where the installed PWA's shell is what the service worker serves offline — a poisoned cache means the app is broken even when online.
 
 **Why it happens:**
-The Garmin data pipeline and `TrainingLogStore` are separate. The morning briefing gather currently reads them independently. Without a unified weekly load view that sums both strength and endurance stress, Klaus has no signal that total load is already high when looking at either domain in isolation.
+FastAPI (or Cloud Run's load balancer) does not set `Cache-Control: no-cache` on `index.html` by default. The browser and the service worker both cache it aggressively. Vite hashes JS/CSS asset filenames for cache-busting, but `index.html` is always at the same URL. If the service worker caches `index.html` with `max-age`, it will not re-fetch it after a deploy.
 
 **How to avoid:**
-Add a `compute_weekly_total_stress(week_start, week_end)` function that combines Garmin ACWR (endurance) with `TrainingLogStore` session count and RPE (if logged) into a single "weekly load tier" (LOW / MODERATE / HIGH / VERY_HIGH). Klaus's coaching recommendations are gated by this tier: at HIGH or above, the recommendation is recovery and quality execution of scheduled sessions, not adding volume. Curated coaching knowledge about interference effect (block the brain from recommending concurrent additions at high load) should be in the expert knowledge layer as explicit decision rules, not just as background context.
+- Serve `index.html` with `Cache-Control: no-cache, no-store, must-revalidate` from FastAPI — never let it be cached by CDN, browser, or service worker. Add this explicitly to the route that serves the SPA fallback.
+- In the Vite PWA plugin (vite-plugin-pwa / Workbox), exclude `index.html` from the precache manifest. All other assets (JS, CSS, images) can use Workbox's asset hashing strategy.
+- Use `registerType: 'prompt'` in vite-plugin-pwa so that when a new service worker is waiting, the hub shows an "Update available" prompt — never use `autoUpdate` with `skipWaiting: true` unless you have tested that it does not break mid-session state.
+- Add a deploy smoke test: after each revision, open the hub on iPhone and verify the correct version is shown.
 
 **Warning signs:**
-- Klaus recommends an additional run or session on a week where ACWR is already above 1.3.
-- Klaus comments on "low running volume" without checking whether a heavy strength session was completed that day.
-- The evening check-in recommends "easy active recovery run" on a day after a threshold run + upper body session.
-- The weekly review suggests increasing threshold volume without accounting for the concurrent strength block phase.
+- After a deploy, the hub loads but shows JS errors about missing chunks or undefined exports.
+- The version string shown in the hub (if present) is from the previous deploy.
+- Vite dev tools show the service worker is "waiting" indefinitely after a deploy.
+- The app works in Chrome (which skips the service worker in incognito) but not in the installed iPhone PWA.
 
 **Phase to address:**
-The load aggregation phase, implemented before any recommendation logic. The `compute_weekly_total_stress` function should be a shared utility used by morning briefing, evening check-in, and weekly review gather steps.
+Phase 1 (Shell). The `Cache-Control: no-cache` header for `index.html` and the service worker precache config must be set during the initial shell build — before any caching strategy is added.
 
 ---
 
-### Pitfall 5: Over-Coaching / Nagging That Erodes Trust
+### Pitfall 5: SPA Fallback Route Shadowing Existing Webhook, Cron, and Internal Routes
 
 **What goes wrong:**
-Multiple crons each identify a coaching opportunity and all fire independently. Amit receives: a morning briefing with a protein reminder, an autonomous tick at 14:00 noting he hasn't logged lunch macros, an evening check-in repeating the protein point, and a weekly review that opens with nutrition failure. Four touches on the same issue in one day. Klaus becomes noise. Amit starts ignoring him, which is the worst possible outcome for an agent whose value depends on being listened to.
-
-The timing dimension compounds this: Klaus fires a pre-workout nutrition reminder when Amit is already at the gym (20:30 check-in when the PM session starts at 19:30).
+A catch-all route `GET /{full_path:path}` returning `index.html` is added to `web_server.py` to support React Router. This route, if defined before or at the same level as `/webhook/telegram`, `/cron/*`, `/internal/process-update`, or `/trigger/*`, begins intercepting those requests and returning HTML instead of the expected JSON — breaking Telegram webhook delivery, Cloud Scheduler OIDC-authenticated cron calls, and the Cloud Tasks callback that runs agent turns. The result can be silent: Telegram stops delivering updates (webhook returns 200 with HTML, Telegram interprets it as success), while cron jobs fail with parse errors.
 
 **Why it happens:**
-The existing `OutreachLogStore` repeat-suppression (D-06) works at the topic_key level for the autonomous tick but does not span crons. Morning briefing, proactive alerts, and weekly review are independent paths that have no shared dedup gate for coaching topics. Each cron sees a valid coaching signal and fires independently.
+FastAPI route matching is first-match-wins. `app.get("/{full_path:path}")` matches everything, including `/webhook/telegram`. If it is registered before the specific routes (or if the specific routes are in an `APIRouter` included after the catch-all), the catch-all wins. The mistake is also common when using `app.mount("/", StaticFiles(...))` which acts as a sub-application and does not apply FastAPI's route ordering rules.
 
 **How to avoid:**
-Extend `OutreachLogStore` (or create a `CoachingTouchStore`) to track per-day coaching topic coverage across all crons. Before any cron adds a coaching point, it checks whether that topic (protein, recovery, session completion) was already addressed in the last N hours. The rule: each major coaching topic gets one primary touch per day, with a single follow-up allowed only if Amit explicitly responded to the first.
-
-For timing: the coaching prompt for each cron must receive the current time and the scheduled session times from the blueprint, and must not surface pre-workout fueling advice after the session start time. This is a data-dependency the gather step must supply.
+- Define all API-side routes — Telegram webhook, `/cron/*`, `/internal/*`, `/trigger/*`, `/api/*` — before registering the SPA catch-all route. In `web_server.py`, the catch-all must be the absolute last route.
+- Do not use `app.mount("/", StaticFiles(...))` for the SPA fallback; use a `@app.get("/{full_path:path}")` route handler that manually checks if the path is an existing static asset (returns it), or falls back to `index.html`. This keeps the route in the FastAPI router where ordering is respected.
+- Add a smoke test: after the SPA is wired up, POST a synthetic Telegram update to `/webhook/telegram` and verify it returns the expected `{"ok": true}` response, not HTML.
+- Add a smoke test for `/internal/process-update` and one cron endpoint from Cloud Scheduler. These are the most critical paths that must not be shadowed.
 
 **Warning signs:**
-- The same coaching topic appears in both morning briefing and evening check-in on the same day.
-- An autonomous tick fires a coaching nudge on a day already covered by a scheduled cron.
-- Amit stops responding to training check-in confirmations — likely over-touch saturation.
-- The weekly review opens with a topic already flagged in Monday's check-in without new information.
+- Telegram stops delivering messages after the SPA shell is deployed.
+- Cloud Scheduler job shows "200" responses but cron logic is not executing.
+- `/internal/process-update` returns 200 but agent turns are not completing — check Content-Type in the response.
+- `curl -X POST /webhook/telegram` returns HTML `<!DOCTYPE html>` instead of JSON.
 
 **Phase to address:**
-The cross-cron coaching coordination phase. Should be implemented as part of folding expert coaching into the existing crons, before shipping any proactive coaching behavior. The `OutreachLogStore` extension is a concrete implementation task.
+Phase 1 (Shell). The catch-all must be designed correctly from the first commit that serves the SPA — not retrofitted after Telegram breaks in production.
 
 ---
 
-### Pitfall 6: Conflict UX — Getting Advise-Don't-Override Wrong in Both Directions
+### Pitfall 6: Hub Session Cookie Auth Conflicting with OIDC Cron Auth
 
 **What goes wrong:**
-**Dictating direction:** Klaus sees recovery concern (low HRV) and says "I've moved today's threshold run to tomorrow's slot, Sir." Or: "I'm flagging today's Lower Body A as a skip." Klaus takes a decision that is explicitly Amit's to make.
+Phase 1 adds `SessionMiddleware` to `web_server.py` for Google Sign-In cookie auth. The existing `/cron/*` routes use OIDC token validation (the Cloud Scheduler service account's Bearer token in the `Authorization` header). After adding `SessionMiddleware`, one of two failures occurs:
+1. The session middleware strips or modifies the `Authorization` header before the OIDC validator reads it, causing all cron calls to fail with 401.
+2. The SPA auth adds `SameSite=Lax` or `SameSite=Strict` cookies that the Cloud Scheduler service account does not send, and the cron validator is accidentally changed to require the session cookie instead of the OIDC token — locking out all crons.
 
-**Wishy-washy direction:** Klaus sees the same low HRV and says "You might want to consider possibly adjusting today's session if you feel that recovery might not be optimal, though of course that's entirely up to you." This is not coaching; it is noise that Amit will tune out.
-
-The correct register is strict advisory: "Sir, your HRV is 51 — that is below your 7-day baseline of 63. The plan has a threshold run today. My recommendation is to drop it to easy Zone 2 or rest. You call it." One clear recommendation, one explicit acknowledgment of who decides.
+A subtler version: the `starlette-session` or `itsdangerous` session middleware raises an exception on requests that do not have a valid session cookie (cron calls), breaking the OIDC path entirely if the exception is not narrowed to hub routes only.
 
 **Why it happens:**
-LLMs default to either mimicking authority (dictating) or hedging to avoid being wrong (wishy-washy). Without an explicit prompt contract that separates "Klaus recommends" from "Amit decides," the model alternates between the two failure modes depending on phrasing. The recovery-vs-plan conflict case is the highest-stakes scenario because it has real injury implications.
+Middleware in Starlette/FastAPI is global by default — it runs on every request including cron and webhook routes. Session middleware is often configured for the whole app during development, then left that way in production. The OIDC validator and the session validator use different auth channels (`Authorization` header vs. cookie) and must not interfere, but without explicit scoping they do.
 
 **How to avoid:**
-Write a recovery-conflict prompt template with a fixed structure:
-1. State the biometric fact with the number and the baseline.
-2. State the plan conflict (what is scheduled and why it conflicts).
-3. Give a single tiered recommendation (modify / substitute / rest), ranked by severity of the recovery signal.
-4. Explicitly close with "Your call, Sir" or equivalent.
-
-This template must be invoked by name in the coaching prompt: "When HRV or ACWR triggers a recovery conflict, use the RECOVERY-CONFLICT template." The template should be in `prompts/` as a standalone include, not embedded in the main coaching system prompt where it gets diluted.
+- Apply `SessionMiddleware` only to the `/api/*` route prefix using a sub-application or explicit path check in the middleware, not globally.
+- Keep the OIDC cron validator as the first handler in `/cron/*` routes; it must read `Authorization: Bearer` and must not depend on a session cookie being present or absent.
+- Separate auth concerns in code: `auth_google.py` for OIDC (existing, do not modify), and a new `auth_hub.py` for session cookie management — never merge them into the same middleware stack.
+- After adding session middleware, run the full cron smoke test: POST to a cron endpoint with a valid OIDC token and verify it still succeeds.
 
 **Warning signs:**
-- Klaus uses the word "I've" before a scheduling action during a recovery flag scenario.
-- The recovery flag message does not contain a specific number (HRV value, ACWR value).
-- The message hedges with "might" or "consider" without a single clear recommendation at the end.
-- Klaus provides two equally-weighted options without ranking them ("you could do the threshold run or you could rest").
+- All cron jobs begin returning 401 after the session middleware is added.
+- `POST /webhook/telegram` returns 403 after the session middleware is added.
+- The hub login works but `/cron/morning-briefing` returns a session-related error.
+- Cloud Scheduler job history shows a sudden spike in failures on the same day the session middleware was deployed.
 
 **Phase to address:**
-The conflict UX is a prompt contract that must be drafted in the coaching prompt engineering phase and validated with recovery-scenario dry runs before any coaching cron ships.
+Phase 1 (Shell). The auth middleware design must scope session auth to `/api/*` routes from day one — this cannot be corrected easily after the fact without a full middleware refactor.
 
 ---
 
-### Pitfall 7: Block and Benchmark Ambiguity
+### Pitfall 7: Dual-Interface Chat — Double Replies and the Telegram Mirror Race
 
 **What goes wrong:**
-**Ambiguous block boundaries:** The block concept is introduced but the system has no explicit block start/end date in `UserProfileStore`. Klaus gives coaching commentary that references "this block" without knowing when the block started or ends. End-of-block benchmark prompts fire at the wrong time (too early, too late, or never).
+A message sent from the hub triggers the Cloud Tasks agent turn via `/api/chat` → `task_dispatch.py` → `/internal/process-update`. The agent composes a reply and calls `scheduled_message.py` to deliver it. With the Telegram mirror flag enabled (Phase 4 hybrid transition), `scheduled_message.py` sends the reply both to the hub (via Web Push + Firestore injection) and to Telegram. If Amit simultaneously sends a message via Telegram (which also goes through `/internal/process-update`), two agent turns are in flight. The shared Firestore conversation history gets both replies injected. The hub's polling sees both messages; Telegram delivers both. Result: duplicate or interleaved replies that make Klaus appear incoherent.
 
-**Non-comparable benchmark tests:** Amit does a bench press test on a day where he had a threshold run that morning and poor sleep. Klaus records the result and compares it to the previous block's result from a rested day. The comparison is meaningless and potentially demoralizing.
-
-**Demanding periodic testing:** The 16-week aerobic table has specific weekly targets. Klaus interprets the week numbers as testing prompts and asks Amit to "test his 3k pace" in Week 6 because the plan says "Capacity Build." Testing is only at block ends and at the Oct/Nov deadlines — not mid-plan.
+The subtler version: the hub polls the Firestore conversation every N seconds. A new reply arrives. The autonomous tick fires concurrently and also injects a message. The hub shows Klaus's proactive message and the reply in a race-determined order, breaking the conversational thread.
 
 **Why it happens:**
-Block tracking requires a data model that isn't in `UserProfileStore` yet. Without it, the brain infers blocks from the 16-week table, which contains intermediate targets (threshold paces, long run distances) that look like test benchmarks but are training prescriptions.
+The existing Firestore conversation is a single shared document (`firestore_conversation.py`) used by both Telegram and the hub. It was designed for a single-interface world. There is no turn-level mutex — the `_get_orchestrator()` singleton prevents parallel agent instantiation within one Cloud Run instance, but Cloud Tasks enqueues can arrive at different Cloud Run instances and both proceed in parallel.
 
 **How to avoid:**
-Add explicit `block_start_date`, `block_end_date`, and `benchmark_session_type` fields to `UserProfileStore`. Benchmark prompts are triggered only when today's date is within 3 days of `block_end_date` or within 7 days of the Oct/Nov deadline dates. The benchmark prompt must include a "test validity" checklist in the gather step: session was not preceded by a heavy training day, HRV is above 70% of 7-day baseline, ACWR is below 1.2. If the checklist fails, Klaus defers and explains why.
-
-For the 16-week table: store it as a training prescription lookup, not a benchmark schedule. The weekly threshold volumes and long run distances are coaching targets, not test events. Distinguish in the data model.
+- Add a `source` field to each message in the Firestore conversation: `"telegram"` or `"hub"`. The hub's UI renders all messages from either source, but the reply routing in `scheduled_message.py` must check which source the triggering message came from and deliver the reply to that source first (push + Firestore), then mirror to Telegram only if the mirror flag is enabled.
+- Use a `turn_lock` document in Firestore (with a TTL) to prevent two concurrent agent turns on the same conversation. Before enqueuing in `task_dispatch.py`, write the lock; after the turn completes, delete it. If the lock exists when a new turn would be enqueued, queue the new message for processing after the current turn.
+- For the hub's polling, filter on `created_at > last_seen_timestamp` client-side and use a stable sort by `created_at` — do not rely on Firestore insertion order.
 
 **Warning signs:**
-- Klaus asks Amit to test his 1:25 HM pace in Week 3 of the plan.
-- The weekly review compares benchmark results without noting biometric state at time of test.
-- Klaus references "this block" without being able to state the block start date when asked.
-- A block-end benchmark fires on a day where Garmin shows poor sleep or high ACWR.
+- Amit sends a message from the hub and a response appears twice — once from the hub reply path and once from the Telegram mirror.
+- The hub chat shows messages in a different order than Telegram.
+- The conversation history in Firestore has two consecutive assistant messages with different content.
+- After enabling the Telegram mirror flag, proactive autonomous tick messages appear in the hub with a duplicate in Telegram within seconds of each other.
 
 **Phase to address:**
-Block data model phase, implemented before benchmark prompt logic. The `UserProfileStore` schema extension for block tracking must precede any block-aware coaching logic.
+Phase 1 (Shell) must introduce the `source` field on messages. The turn-lock mechanism is Phase 4 (Web Push / dual delivery) where the mirror flag is activated.
 
 ---
 
-### Pitfall 8: Knowledge Staleness and Hallucinated Sports Science
+### Pitfall 8: Hub Polling Firestore — Cost Blowup From Aggressive Polling Interval
 
 **What goes wrong:**
-The curated coaching knowledge layer contains claims that are either wrong, contested, or outdated. Examples: specific HRV thresholds ("HRV below 50 means rest"), exact interference-effect recovery windows ("48 hours between strength and endurance"), or optimal protein timing windows ("within 30 minutes post-workout is critical"). The brain injects these as authoritative coaching points. Because they are in the system prompt as "expert knowledge," they feel more authoritative than spontaneous generation, but they are equally subject to training-data errors.
-
-The harder case: the brain extends the curated knowledge via in-context reasoning and generates derivative claims that were never in the curated layer. "Since you're in Week 9 (Deep Waters), your lactate threshold should be approaching 3:48/km" — plausible-sounding, not verified, never stated in the blueprint.
+The hub polls `/api/messages` (backed by a Firestore read of the conversation collection) every few seconds while the tab is open. At a 3-second interval, one open browser tab generates 20 Firestore document reads per minute. Multiply by an active session of 30 minutes: 600 reads for one conversation. Firestore charges $0.06 per 100,000 reads on Cloud Firestore native mode, which is low at single-user scale — but the real cost is bandwidth and latency, not billing. The more dangerous failure mode: the polling is implemented as a full conversation collection fetch (all messages, not just new ones since last poll), which re-reads N documents on every tick and scales with conversation length.
 
 **Why it happens:**
-LLMs are trained to be helpful and authoritative. When given coaching knowledge as system context, the model treats it as a permission slip to make strong claims in that domain. The curated layer provides the domain framing; the model fills in specifics from training data.
+Polling is simple to implement; the mistake is fetching the entire conversation document on each poll rather than querying only for messages newer than the last-seen ID. In Firestore, a query with `where('created_at', '>', last_seen)` reads only the new documents, not the entire history.
 
 **How to avoid:**
-Three-part defense:
-1. Source every claim in the curated knowledge layer with a confidence tier (HIGH = from the blueprint directly, MEDIUM = well-established sports science consensus, LOW = specific thresholds from research that may not apply to Amit). LOW-confidence claims are prefaced with "research suggests" not stated as fact.
-2. Explicitly forbid derivative reasoning beyond the curated layer: "Do not extrapolate expected physiological adaptations that are not directly stated in the user's blueprint or coaching knowledge layer."
-3. Separate the blueprint's prescribed targets (3:52/km threshold in Weeks 5-8) from "what Amit's body will actually do" — Klaus can report the plan target but must not claim the body will achieve it on schedule.
+- Implement polling with a `?since=<ISO timestamp>` parameter on `/api/messages`. The Firestore query must use `where('created_at', '>', last_seen)` and `order_by('created_at')` — Firestore will need a composite index on `(conversation_id, created_at)`.
+- Use exponential backoff during quiet periods: if no new messages arrive in 30 seconds, extend the poll interval to 10s, then 30s. Reset to fast polling (3s) when a message is sent or received.
+- For Phase 4+, replace polling with SSE (Server-Sent Events) on a `/api/messages/stream` endpoint — one long-lived connection, zero poll overhead. Phase 1 polling is acceptable as a known v1 tradeoff, documented for Phase 4 replacement.
+- Add a Firestore composite index for `(user_id, created_at DESC)` on the conversation collection during Phase 1 — the polling query will require it and without it Firestore will refuse the query or full-scan.
 
 **Warning signs:**
-- Klaus cites a specific HRV threshold (e.g., "below 55") without referencing a source — this is a fabricated personalized rule.
-- Klaus predicts fitness improvement rates ("by Week 10 your VO2max should be...") — these are derivative claims.
-- Klaus quotes research statistics ("athletes who follow concurrent training show 15% higher...") without a source in the curated layer.
-- The curated knowledge layer contains threshold numbers that don't appear in the blueprint.
+- Firestore read count in the GCP billing dashboard spikes after the hub is opened.
+- Hub `GET /api/messages` requests appear at constant 3-second intervals in Cloud Run request logs even when no messages have been sent.
+- Hub chat feels slow on mobile because each poll is re-fetching a growing conversation history.
 
 **Phase to address:**
-Knowledge curation phase. Every claim in the curated layer must be tagged with its source before it enters the system prompt. This is a one-time authoring discipline that protects against ongoing hallucination.
+Phase 1 (Shell). The `?since=` parameter and bounded query must be built from the start. The Firestore composite index must be created before Phase 1 UAT.
 
 ---
 
-### Pitfall 9: Scope Creep Toward a Full Periodized Training App
+### Pitfall 9: Cloud Run Cold Start vs. Service Worker Offline Shell Expectations
 
 **What goes wrong:**
-The v4.0 feature list is already at the edge of scope: blueprint ingestion, expert knowledge, D-13 release, block tracking, benchmark management, strict coaching across all crons. The scope creep version adds: auto-generating modified weekly plans, weekly volume prescription adjustments, automatic session rescheduling, injury risk scoring, HRV-triggered plan modifications. These are features of a training app, not a coaching agent. Each one requires its own data model, logic, and UX contract. They pull implementation away from what actually matters: making the existing crons say something specific and useful.
+The installed PWA on iPhone has a service worker that serves the app shell (HTML + JS) from cache when offline, which is correct. However, users expect that "offline" means full functionality — they tap a task, expect it to save, and get a network error. Worse: the hub opens instantly from the service worker cache, but the first API call (`/api/today`, `/api/messages`) hits a cold Cloud Run instance with a 2-8 second cold start. The user sees a blank "Loading..." state for several seconds after the shell renders, creating the impression the app is broken.
+
+The flip side: during a Cloud Run cold start, the service worker may intercept the API calls and return a cached stale response from a previous session (tasks from yesterday, an old conversation state) if the service worker caching strategy is too aggressive.
 
 **Why it happens:**
-The milestone goal ("transform Klaus from qualitative to expert coaching") is open-ended enough that "what would an expert do?" naturally expands toward what a full training app does. The planning process includes phrases like "progress toward dated goals" and "per-facet improvement" that can rationalize increasingly complex tracking features.
+Vite PWA plugin's Workbox default strategy caches all same-origin requests. Without explicit runtime caching rules, API responses under `/api/*` get cached indefinitely. On next open, the stale cached API response is returned instead of the live Firestore data. The developer tests on a warm instance and never sees the cold start latency.
 
 **How to avoid:**
-The v4.0 test: "Does Klaus tell Amit what to do today and hold him to it?" If yes, the feature ships. "Does Klaus compute a derived training metric that Amit would never directly act on?" If yes, it does not ship in v4.0. Specifically: no auto-rescheduling, no volume prescription adjustments, no injury risk scoring. Klaus coaches the blueprint as given, does not modify it. Plan modifications are Amit's decision, documented via `update_training_profile`.
-
-The benchmark for scope is the morning briefing and evening check-in — those are the two moments where coaching is most valuable. If a feature does not make either cron more specific, it is not v4.0 scope.
+- Exclude all `/api/*` routes from Workbox runtime caching — API responses must always be network-first, never cached. Configure `runtimeCaching` in the Workbox config to explicitly allow caching only for static assets (images, fonts, the built JS/CSS).
+- For the app shell itself: cache-first for the built static assets (already handled by Vite's asset hashing), network-first (with cache fallback) for `index.html`.
+- Handle cold start latency in the UI with skeleton loaders (not blank screens) so the perceived performance is acceptable. Design the `/api/today` response to return a partial result quickly rather than waiting for all data sources to resolve.
+- Set Cloud Run minimum instances to 1 for the `me-west1` service (already at minimum 1 for the Telegram webhook to be responsive) — this eliminates the cold start for the primary use case.
 
 **Warning signs:**
-- A feature requires modifying the blueprint programmatically rather than reading it.
-- A feature requires a new Postgres table or schema beyond `UserProfileStore` and `BenchmarkStore`.
-- The implementation discussion uses the phrase "auto-adjust the plan."
-- A phase in the roadmap is titled "plan management" or "training prescriptions."
+- The hub shows yesterday's tasks on open, then the correct tasks appear after a few seconds (stale cache being replaced).
+- API calls in the service worker logs are served from `(ServiceWorker)` cache instead of the network.
+- The hub works perfectly in Chrome devtools (which can disable the service worker) but serves stale data in the installed iPhone PWA.
+- Cold start latency visible in Cloud Run logs correlates with "blank screen for 5 seconds" UX reports.
 
 **Phase to address:**
-Scope control is a milestone-level decision, not a phase. The v4.0 kickoff requirements document must explicitly list what is NOT in scope with the same specificity as what is.
+Phase 1 (Shell). The Workbox runtime caching configuration for `/api/*` exclusion must be done before the first live deploy. The skeleton loader UX is also Phase 1.
 
 ---
 
-### Pitfall 10: V3.0 Cron Regression — Existing Flows Break When Coaching Context Expands
+### Pitfall 10: TickTick Import — Recurrence Mapping and Timezone Misalignment
 
 **What goes wrong:**
-The morning briefing, proactive alerts, and weekly review prompts are expanded to include blueprint context, expert knowledge, and coaching directives. The additions push the effective prompt length past what the gather step was designed to supply. Missing data keys that were previously benign (empty `UserProfileStore`) now cause prompt template failures or the brain silently falls back to generic text because the expected context is absent.
+The one-time TickTick import script (Phase 2) pulls tasks via the TickTick Open API (already have `mcp_tools/ticktick_tool.py` + `ticktick_auth.py`). TickTick stores recurring tasks with RRULE strings (e.g., `RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR`) and per-task timezone fields. `TaskStore` only needs to support "simple recurrence" per the design spec. The import fails silently: tasks with complex RRULE patterns (e.g., `UNTIL=`, `COUNT=`, `BYDAY` with ordinals like `2MO` for "second Monday") are imported without recurrence (become one-off tasks) because the mapping logic doesn't handle them — and Amit doesn't notice until a recurring task he relied on never appears.
 
-The `{training_profile}` placeholder in `prompts/smart_agent.md` is already there (line 4 of the live file) but is currently populated with empty profile data. When v4.0 populates it with a full blueprint, existing v3.0 tests that assert specific response patterns may break because the system prompt content changes.
-
-The 21:30 cron (`proactive_alerts.py`) currently handles training check-in as a folded behavior. Adding expert coaching to this path without regression testing the existing weather/overload/travel-time logic risks breaking the non-coaching alerts.
+The timezone issue: TickTick stores task due times in the task's `timeZone` field, which may differ from `Asia/Jerusalem`. The import naively converts `dueDate` to UTC, then the hub displays it in `Asia/Jerusalem`, which shifts the due time by 2-3 hours (or straddles midnight and becomes a different day during DST transitions).
 
 **Why it happens:**
-The v3.0 crons were designed with a specific gather+compose contract. Each one was tested with the empty profile as a known state. V4.0 changes the profile state without revisiting the gather contracts or test coverage.
+RRULE is a rich spec; "simple recurrence" implementations typically handle `FREQ=DAILY/WEEKLY/MONTHLY` without modifiers. The import script handles the common case in smoke testing but misses the edge cases that are common in a real task list built over years. Timezone conversion is done with `datetime.utcnow()` instead of aware datetimes, losing the original `timeZone` context.
 
 **How to avoid:**
-Before shipping any v4.0 coaching feature to a live cron:
-1. Run the cron's dry-run path with the fully-populated `UserProfileStore` and assert that non-coaching output (weather alerts, schedule conflicts) is unchanged.
-2. Add a `coaching_available: bool` flag to each cron's gather output — when False (data missing), the cron falls back to v3.0 qualitative behavior, not a broken template.
-3. Pin the existing 630+ test suite and require zero new failures before any v4.0 cron goes live.
-4. The `{training_profile}` injection in `smart_agent.md` should be reviewed for token budget impact — a full blueprint plus expert knowledge layer may push individual cron prompts over efficient context windows for `gemini-3.5-flash`.
+- Before writing any import logic, export Amit's full TickTick task list and audit the RRULE patterns present. This takes 30 minutes and prevents scope surprise during Phase 2.
+- Define `TaskStore` recurrence as a union type that covers the actually-present patterns, not just a theoretical minimum. If `BYDAY=MO,WE,FR` appears in the export, support it; if complex ordinals (`2MO`) appear rarely, import them as "manual review needed" with a comment field rather than silently dropping the recurrence.
+- All TickTick `dueDate` values must be converted using the task's own `timeZone` field: `datetime.fromisoformat(due_date).replace(tzinfo=ZoneInfo(task["timeZone"]))`. Store in Firestore as UTC; display in the hub converted to `Asia/Jerusalem` via `ZoneInfo("Asia/Jerusalem")`.
+- The import script must output a reconciliation report: N tasks imported cleanly, N with recurrence downgraded (list titles), N with timezone warnings. Amit reviews before cancelling the TickTick subscription.
 
 **Warning signs:**
-- A dry-run of the morning briefing with populated profile raises a `KeyError` or produces `None` in a template field.
-- The 21:30 cron's weather alert disappears when training coaching is added to the same prompt.
-- The weekly review's gather step times out because additional `UserProfileStore` reads add latency.
-- Test suite failures in `tests/` after blueprint ingestion code is introduced.
+- Recurring tasks appear in `TaskStore` as single-occurrence tasks with a `due` date in the past.
+- Due times are off by 2-3 hours after import.
+- The reconciliation report is absent — no visibility into what was lost.
+- Amit notices a specific recurring task is missing only after cancelling TickTick.
 
 **Phase to address:**
-Every v4.0 phase that modifies an existing cron must include an explicit regression step with dry-run validation before deployment.
+Phase 2 (Tasks). The RRULE audit of Amit's export must be the first step of Phase 2, before any `TaskStore` schema is finalized.
+
+---
+
+### Pitfall 11: Habit Streak Timezone — Asia/Jerusalem DST and Midnight Rollover
+
+**What goes wrong:**
+Habit streaks are computed by checking whether a completion log entry exists for "today." If "today" is computed in UTC, the day boundary is 02:00 local time in winter (UTC+2) and 03:00 in summer (UTC+3 during Israel DST). A completion logged at 23:45 local time on a Tuesday is stored with a UTC timestamp of 21:45 (UTC+2 winter) or 20:45 (UTC+3 summer). If the streak query compares UTC dates, it may assign this completion to Tuesday in UTC but Wednesday in local time — or vice versa — breaking the streak count.
+
+The Israel DST transition (which does not follow the standard EU/US schedule) creates an additional edge case: Israel DST switches on specific Fridays before Jewish holidays, not on standard last-Sunday dates. A completion logged near the DST boundary may shift by an hour relative to the streak computation.
+
+**Why it happens:**
+Streak logic uses Python `datetime.utcnow().date()` for "today" — a common mistake when the user is not in UTC. Firestore timestamps are stored as UTC (correct), but the date comparison for streak purposes must use `Asia/Jerusalem` midnight as the day boundary, not UTC midnight.
+
+**How to avoid:**
+- All streak computation must use `datetime.now(ZoneInfo("Asia/Jerusalem")).date()` as "today." This is the single authoritative day boundary for all habit/supplement logic.
+- Completion timestamps are stored as UTC in Firestore (consistent with all other stores), but streak queries convert to `Asia/Jerusalem` before comparing dates.
+- Add a `compute_streak(completions: List[datetime], tz: str = "Asia/Jerusalem") -> int` pure function in `memory/firestore_db.py` that is tested against DST edge cases — both the standard Israel spring-forward and the pre-holiday schedule.
+- The daily habit reset (which marks "today's" habits as pending) must fire after `Asia/Jerusalem` midnight — either at 00:05 IST via a cron or as a computed "is today already logged?" check at read time.
+
+**Warning signs:**
+- Streak resets unexpectedly for completions logged late at night (23:00-23:59 IST).
+- During Israel DST transition weekends, all streaks reset even for users who completed habits.
+- The hub shows "0 day streak" on Friday morning despite a completion on Thursday evening.
+- Habit completion timestamps in Firestore are 2-3 hours off from when the check-off was tapped.
+
+**Phase to address:**
+Phase 3 (Habits). The `compute_streak` pure function with timezone handling must be implemented and unit-tested with DST edge cases before any streak is displayed in the hub UI.
+
+---
+
+### Pitfall 12: Agent Turn Must Use Cloud Tasks — Not a Hub Background Task
+
+**What goes wrong:**
+The hub's `/api/chat` endpoint receives a message and dispatches the agent turn. The temptation is to use FastAPI's `BackgroundTasks` (`background_tasks.add_task(run_agent, ...)`) instead of enqueuing via `core/task_dispatch.py`. This appears to work locally and in warm Cloud Run instances, but under the default Cloud Run CPU-throttling model, the background task runs after the response is returned — at which point Cloud Run throttles the CPU. The agent turn hangs, LLM calls time out, and the reply never arrives. This is exactly the incident that occurred on 2026-06-12 (18-minute reply, fixed by moving Telegram turns to Cloud Tasks). Repeating the same mistake for the hub would re-introduce the same failure.
+
+**Why it happens:**
+`BackgroundTasks` is convenient and well-documented in FastAPI. The Cloud Run CPU throttle behavior is non-obvious and only manifests under production CPU allocation settings, not locally. The fix (Cloud Tasks dispatch) requires more infrastructure (queue name, Cloud Tasks client, internal endpoint) and developers skip it for the "simpler" path.
+
+**How to avoid:**
+- The hub `/api/chat` endpoint must follow the exact same pattern as the Telegram webhook: return `{"ok": true}` immediately, enqueue via `core/task_dispatch.py` to `/internal/process-update`, let the Cloud Tasks call carry the turn on full CPU. No exceptions.
+- Do not add any new `BackgroundTasks` usage to `web_server.py` for any agent-related work. This invariant is already in `CLAUDE.md` ("Agent turns must run INSIDE a tracked request") — enforce it explicitly in code review for every Phase 1 PR.
+- The Cloud Tasks queue (`me-central1`, `queue: ...`) is already configured for Telegram turns. The hub can use the same queue with a `source: "hub"` field in the task payload so the `/internal/process-update` handler knows where to route the reply.
+
+**Warning signs:**
+- `/api/chat` uses `background_tasks.add_task` anywhere in the implementation.
+- Agent replies take 15+ seconds in production but are fast locally.
+- Cloud Run request logs show the `/api/chat` request completing quickly but no subsequent `/internal/process-update` request appearing.
+- Hub chat shows "thinking..." indefinitely after a message is sent.
+
+**Phase to address:**
+Phase 1 (Shell). The Cloud Tasks dispatch path for `/api/chat` must be designed in Phase 1 before any chat UI is wired. The invariant must be documented in the Phase 1 implementation notes.
 
 ---
 
@@ -279,11 +320,13 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Shortcut | Immediate Benefit | Long-term Cost | When Acceptable |
 |----------|-------------------|----------------|-----------------|
-| Storing blueprint as raw markdown in `UserProfileStore` | Fast to implement, no schema work | Brain must parse structure at inference time — inconsistent results, context bloat | Never — parse to structured fields at ingest time |
-| Reusing the same coaching context blob across all crons | Single source of truth for blueprint data | Morning briefing, evening check-in, and weekly review need different coaching context subsets; a monolithic blob makes each prompt unfocused | Never for the final architecture; acceptable for a first-pass spike only |
-| Skipping data-presence validation and trusting the prompt to "handle" missing data | Faster prompt authoring | Brain hallucinates when context fields are None — this is exactly the fabrication-regression failure | Never — validate data presence in the gather step, not in the prompt |
-| No cross-cron coaching topic dedup (each cron is independent) | No coordination logic to build | Nagging / over-touch — degrades trust | Never after v4.0 coaching goes live |
-| Hardcoding benchmark dates from the 16-week table | Simple to implement | Table is week-relative; if Amit's plan start date shifts, all benchmark triggers are wrong | Never — store plan_start_date and compute block boundaries dynamically |
+| Serving `index.html` without `Cache-Control: no-cache` | Zero config | Stale app shell after every deploy; requires users to manually clear cache | Never — set the header from day one |
+| Global `SessionMiddleware` applied to all routes | Simple auth setup | Breaks OIDC cron auth and Telegram webhook; requires full middleware refactor to fix | Never — scope to `/api/*` from the start |
+| Polling entire conversation on each tick vs. `?since=` query | Simpler implementation | Scales with conversation length; breaks at long conversation histories | Acceptable only in a 1-week Phase 1 spike; must be replaced before Phase 4 |
+| Using `BackgroundTasks` for agent turns instead of Cloud Tasks | Simpler code | Reproduces the 2026-06-12 18-minute reply incident under CPU throttle | Never — Cloud Run CPU throttle makes this category error |
+| TickTick import without a reconciliation report | Faster to write | Amit unknowingly loses recurring tasks or incorrect due times; can't cancel TickTick with confidence | Never — the report is what makes the import trustworthy |
+| Streak computation in UTC midnight instead of `Asia/Jerusalem` midnight | One less import | Streak resets near midnight local time; DST transitions corrupt all streaks | Never — the timezone is known at design time |
+| Caching `/api/*` responses in Workbox runtime cache | Instant repeat-visit data | Stale tasks/habits/messages shown from cache instead of live Firestore data | Never — API routes must be network-first |
 
 ---
 
@@ -291,11 +334,14 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Integration | Common Mistake | Correct Approach |
 |-------------|----------------|------------------|
-| `UserProfileStore` + `TrainingLogStore` | Reading them in separate tool calls and letting the brain join them in the response | Pre-join in the gather step: produce a `coaching_context` object that already associates the scheduled session with the most recent performance for that session type |
-| Garmin Postgres + `TrainingLogStore` | Using Garmin activity data as a proxy for session completion | Garmin records the GPS activity; `TrainingLogStore` records the logged check-in. They can disagree (Amit runs without logging, or logs without syncing Garmin). Treat as two independent signals with explicit precedence rules |
-| Blueprint weekly table (16-week) + current week number | Computing week number from today's date without a stored plan start date | Store `plan_start_date` in `UserProfileStore` at blueprint ingestion time; always derive week number from `(today - plan_start_date).days // 7 + 1` |
-| `MealStore` + coaching timing | Coaching on nutrition data that is from the day before because HealthKit sync runs on push | Always stamp nutrition coaching with the data's `updated_at` timestamp; if data is >18 hours old, note "based on yesterday's log" |
-| `OutreachLogStore` dedup gate | Assuming the existing D-06 gate prevents coaching over-touch | D-06 uses `topic_key` for the autonomous tick only. Morning briefing, proactive alerts, and weekly review are separate code paths that bypass this gate entirely |
+| iOS Web Push + Safari | Calling `requestPermission()` from `useEffect` or auth callback | Call only from a direct button click handler; check `navigator.standalone` before subscribing |
+| iOS Web Push + APNs | Treating 201 from APNs as proof of delivery | 201 means accepted; actual delivery to device is not confirmed. Handle 410/404 by deleting the subscription |
+| Firestore conversation + dual interface | Reading all messages on every hub poll | Query `where('created_at', '>', last_seen)` — requires a composite index on `(user_id, created_at)` |
+| FastAPI StaticFiles + SPA fallback | `app.mount("/", StaticFiles(...))` shadowing API routes | Use `@app.get("/{full_path:path}")` handler last, after all API and webhook routes are registered |
+| TickTick API + timezone | Converting `dueDate` to UTC using `datetime.utcnow()` | Parse with `ZoneInfo(task["timeZone"])` from the task's own timezone field |
+| Cloud Run + service worker | Workbox caching `/api/*` responses | Explicitly exclude `/api/**` from all Workbox `runtimeCaching` entries |
+| `scheduled_message.py` + Telegram mirror | Both hub and Telegram delivery happen in the same function, no `source` routing | Check `source` field on the triggering message; deliver to source first, then mirror if flag is set |
+| `HabitStore` streak + Firestore timestamps | Comparing Firestore UTC timestamps with Python `datetime.date()` (UTC) for day boundaries | Always convert to `ZoneInfo("Asia/Jerusalem")` before `.date()` comparison |
 
 ---
 
@@ -303,9 +349,23 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Trap | Symptoms | Prevention | When It Breaks |
 |------|----------|------------|----------------|
-| Injecting the full blueprint + expert knowledge into every smart agent turn (not just coaching crons) | Higher latency per turn, higher token cost for non-coaching requests | Only inject `{training_profile}` into cron prompts and explicit coaching queries; use `get_training_profile` tool for on-demand access | From the first deploy of the expanded system prompt |
-| Running all data sources in sequence in the coaching gather step | Morning briefing latency spikes to 8-12 seconds | Use `asyncio.gather` for independent sources (Garmin, MealStore, TrainingLogStore, UserProfileStore) — they are already isolated by try/except in `weekly_training_review.py` | On the first live cron tick with full coaching context |
-| Storing benchmark history with full activity payloads | Firestore document size creep | Store only the relevant metrics per benchmark (date, session_type, key_metric, biometric_state) — not the full Garmin activity JSON | After 3-4 blocks of data accumulate |
+| Hub polling at constant 3s interval regardless of activity | Sustained Firestore read traffic in Cloud Run logs during all waking hours | Implement exponential backoff; reset on send/receive | From day one of Phase 1 UAT |
+| `/api/today` fetching all data sources sequentially | 6-10 second load time on first hub open | `asyncio.gather()` for independent sources (calendar, MealStore, HabitStore, Garmin, weather) | First load after Phase 1 deploy |
+| Full conversation collection scan on each poll | Poll latency grows linearly with conversation history | `?since=` query with Firestore composite index | After ~200 messages in history |
+| No `Cache-Control: no-cache` on `index.html` | Old JS bundle runs after a deploy; manifest.json mismatches | Set the header in FastAPI before the first deploy | Every deploy after the first |
+| Autonomous tick `Layer-0` gather adding HabitStore read | Tick gather latency increases for every new store added without parallelism | Fan-out habit store read alongside existing Layer-0 reads using the existing thread pool pattern (see `core/autonomous.py`) | After Phase 3 ships habits into the tick |
+
+---
+
+## Security Mistakes
+
+| Mistake | Risk | Prevention |
+|---------|------|------------|
+| Session cookie without `HttpOnly` + `Secure` + `SameSite=Lax` | JavaScript-readable cookie; susceptible to CSRF | Set all three attributes explicitly in the session cookie configuration |
+| `/api/*` routes that check session cookie but not that the `sub` claim matches Amit's Google account ID | Another Google account could log in if the OAuth client is misconfigured | Validate `sub` or `email` against a hard-coded allowlist (`ALLOWED_GOOGLE_ACCOUNTS` env var) in every `/api/*` route |
+| VAPID private key stored in `.env` / Secret Manager but logged in error traces | Key exposure allows anyone to send pushes as Klaus | Treat VAPID private key with same sensitivity as `TELEGRAM_BOT_TOKEN`; add to the `self_inspect.py` secret denylist |
+| Push subscription endpoint stored in plaintext Firestore without any access control | Push subscriptions are single-use URLs that allow targeted push delivery | `PushSubscriptionStore` collection must use Firestore security rules or be accessible only via the server-side Python client, never from client JS directly |
+| Google OAuth redirect URI allowing arbitrary state parameter | Open-redirect attack during login | Validate the `state` parameter is a known value (e.g., HMAC-signed nonce) before completing the auth flow |
 
 ---
 
@@ -313,23 +373,28 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Pitfall | User Impact | Better Approach |
 |---------|-------------|-----------------|
-| Recovery-conflict message without a single clear recommendation | Amit re-reads it looking for the answer, can't find it, ignores it | Structure: fact → plan conflict → ranked recommendation → "your call" — always one clear recommendation ranked first |
-| Benchmark prompt on a day Amit is clearly tired (HRV + sleep both poor) | Amit attempts the benchmark in a bad state, gets a demoralizing number | Gate benchmark prompts on biometric validity check; if state is poor, defer to next valid day and explain why |
-| Coaching commentary that opens with a summary of what Klaus observed | Amit reads past the preamble and misses the action | Lead with the action or the number, not the observation: "3 reps at 90kg today, Sir — you're 10kg behind plan target" not "I noticed your last bench session..." |
-| Weekly review that scores the week before acknowledging what went well | Framing effect — negative scoring sticks even when performance was good | Lead with facts, then trajectory, then the one area to adjust — no "score" framing |
-| Using the blueprint's goal dates (Oct/Nov) as deadlines in coaching messages | Creates anxiety / pressure-framing that conflicts with facet-mastery philosophy | Frame goals as "dated north-stars" not contracts: "Your October target is 100kg bench — current trend puts you at [X] by that date" not "You have 6 weeks to hit 100kg" |
+| Hub shows "thinking..." with no timeout feedback | Amit assumes Klaus is broken; closes and reopens, creating a second turn | Show a 30-second "still working..." indicator; if no reply after 120s (matching `LLM_TIMEOUT_SECONDS`), show "something went wrong — message is queued" |
+| Push notification arrives but tapping it opens Safari browser not the installed PWA | Tap-to-open goes to wrong context; chat history not shown | Set `"start_url"` and `"scope"` in `manifest.json` correctly; handle `notificationclick` in the service worker with `clients.openWindow(self.registration.scope)` |
+| Habit check-off has no optimistic UI — the server round-trip feels slow | Tapping a habit feels laggy; user double-taps; two completions logged | Use optimistic UI: mark the habit checked immediately in local state, write to server in background, revert on error |
+| Today timeline mixes meal slot times as "events" at 08:00/12:00/20:00 | Amit sees "Breakfast" at 08:00 even though he ate at 09:30 — confusing as a timeline event | Render meal slots as a section header ("Nutrition") in the timeline, not as timed events. Never show canonical slot times as actual eating times (CLAUDE.md invariant) |
+| Telegram mirror sends Klaus's hub reply as a Telegram message during the transition period | Amit gets duplicate notifications — hub push + Telegram notification for every reply | Make the mirror flag per-message-type: mirror autonomous outreach (proactive) but not conversational replies from the hub |
 
 ---
 
 ## "Looks Done But Isn't" Checklist
 
-- [ ] **D-13 replacement:** The no-fabrication guard is removed AND the data-presence contract is live in the same commit — verify by testing a coaching query when `TrainingLogStore` has no recent bench data.
-- [ ] **Blueprint ingestion:** `UserProfileStore` fields are populated AND the plan start date, block boundaries, and goal dates are stored as structured fields, not as raw markdown text.
-- [ ] **Cross-cron dedup:** The coaching topic gate covers morning briefing + evening check-in + weekly review + autonomous tick — not just the autonomous tick.
-- [ ] **Recovery-conflict template:** The advise-don't-override template is tested with a real recovery scenario (low HRV day with threshold run scheduled) and produces a clear ranked recommendation without dictating or hedging.
-- [ ] **Block boundaries:** `block_start_date` and `block_end_date` are in `UserProfileStore` AND benchmark prompts are gated on those dates, not on week number from the 16-week table.
-- [ ] **Regression:** All 630+ existing tests pass after blueprint ingestion code ships. Morning briefing and proactive alert dry-runs with full profile produce the same non-coaching outputs as before.
-- [ ] **Expert knowledge tier tags:** Every claim in the curated coaching knowledge layer has a confidence tier (HIGH/MEDIUM/LOW) and LOW-confidence claims are prefaced in coaching output.
+- [ ] **iOS Push permission:** The "Enable Notifications" button is a real `<button onClick>` handler — verify there is no `async` call between the click event and `Notification.requestPermission()`.
+- [ ] **iOS Push delivery:** After 5 test pushes on an installed iPhone PWA, push permission is still active (not revoked). Confirm by checking notification settings in iOS Settings → Klaus app.
+- [ ] **SPA fallback:** `POST /webhook/telegram` returns `{"ok": true}` (JSON) not HTML after the catch-all route is added.
+- [ ] **Cron OIDC auth:** After `SessionMiddleware` is added, all Cloud Scheduler cron endpoints still return 200 with valid OIDC tokens and 401 without.
+- [ ] **Conversation `source` field:** Every message in Firestore has a `source` field (`"telegram"` or `"hub"`). Verified by checking a Firestore document directly.
+- [ ] **`index.html` headers:** `curl -I https://<cloud-run-url>/` returns `Cache-Control: no-cache` on the first response and after a hard refresh on the installed iPhone PWA.
+- [ ] **Workbox config:** `/api/*` URLs are NOT listed in the Workbox precache manifest and NOT matched by any `runtimeCaching` entry. Verified by inspecting the built `sw.js`.
+- [ ] **Cloud Tasks for chat:** `/api/chat` never calls `background_tasks.add_task`. Verified by grep: `grep -r "BackgroundTasks" interfaces/` returns no hits in the chat handler.
+- [ ] **Streak timezone:** `compute_streak` unit test includes a completion at 23:50 IST and verifies it counts for the correct IST date, not the UTC date.
+- [ ] **TickTick import reconciliation:** Import script prints (or writes) a report of tasks with downgraded recurrence before Amit cancels the TickTick subscription.
+- [ ] **Push subscription 410 handling:** When the Python push delivery function receives a 410, the subscription is deleted from `PushSubscriptionStore` within the same request, not left for a background cleanup.
+- [ ] **Dual delivery routing:** Autonomous tick messages that reach `scheduled_message.py` are delivered via Web Push to the hub AND mirrored to Telegram only when the `TELEGRAM_MIRROR_ENABLED` flag is true — not unconditionally.
 
 ---
 
@@ -337,11 +402,13 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Pitfall | Recovery Cost | Recovery Steps |
 |---------|---------------|----------------|
-| Fabrication regression discovered post-deploy | MEDIUM | Re-add data-presence validation to gather step; hot-patch the coaching prompt with explicit "ONLY cite numbers when source is provided in context" instruction; audit last 7 days of coaching output for invented numbers |
-| Blueprint stored as raw markdown, brain parsing inconsistently | HIGH | Re-ingest blueprint into structured `UserProfileStore` fields; this requires a migration script and redeployment |
-| Cross-cron nagging discovered after user complains | LOW | Implement `CoachingTouchStore` dedup gate; requires one new Firestore document structure and gather-step additions to each cron |
-| Block boundary ambiguity — blocks never fire | MEDIUM | Add `plan_start_date` to `UserProfileStore` and recompute all block boundaries; requires a backfill if Klaus has already given coaching comments referencing "this block" |
-| v3.0 cron regression (weather alerts disappear) | HIGH | Revert the cron prompt change; re-architect as a coaching section appended after the existing alert logic rather than merged into it |
+| SPA fallback shadows Telegram webhook (discover in prod) | HIGH | Immediately revert the catch-all route; re-register with correct ordering; test with synthetic Telegram update before re-enabling |
+| Service worker cache poisoning after a deploy | MEDIUM | Serve `index.html` with `Cache-Control: no-cache, no-store`; force service worker update via a new SW version hash; instruct user to uninstall and reinstall the PWA on iPhone if still broken |
+| iOS push subscription mass-revocation | MEDIUM | All affected subscriptions show as invalid in `PushSubscriptionStore`; display "re-enable notifications" prompt in the hub on next open; no data loss, but user action required |
+| SessionMiddleware breaks all cron jobs | HIGH | Revert the middleware change; scope session middleware to `/api/*` sub-app before re-deploying; run full cron smoke test before next deploy |
+| TickTick tasks lost in import (discovered after subscription cancelled) | HIGH | TickTick allows re-subscription for 30 days after cancellation for data export; re-export and re-import with corrected RRULE mapping; the reconciliation report would have prevented this |
+| Streak counts corrupted by UTC timezone bug | LOW | Recompute all streaks server-side using corrected `Asia/Jerusalem` timezone function; one-time Firestore backfill job; no user data is lost |
+| Hub chat BackgroundTask → 18-minute reply | MEDIUM | Mirror the fix from commit `80809f9`; move to Cloud Tasks dispatch; deploy; verify with a test message turn timing under 60s |
 
 ---
 
@@ -349,27 +416,34 @@ Every v4.0 phase that modifies an existing cron must include an explicit regress
 
 | Pitfall | Prevention Phase | Verification |
 |---------|------------------|--------------|
-| Fabrication regression (D-13 release without data-presence gate) | Blueprint ingestion + UserProfileStore population phase | Dry-run coaching query with empty `TrainingLogStore` returns "no recent data" not an invented number |
-| Generic advice despite curated knowledge | Coaching prompt engineering phase | Dry-run morning briefing output names a specific session, specific numbers, and today's biometric state |
-| Rigidity drift — blueprint becomes prescription | Blueprint schema design phase | Weekly review treats 3-of-4 sessions completed as success, not failure; no duplicate session-missed mentions in 24h window |
-| Interference-effect overreach | Load aggregation phase | `compute_weekly_total_stress` function exists and gates volume recommendations at HIGH load |
-| Over-coaching / nagging | Cross-cron coordination phase | Same coaching topic does not appear in both morning briefing and evening check-in on the same day |
-| Conflict UX — advise-don't-override wrong | Coaching prompt engineering phase | Recovery conflict test scenario produces: fact + conflict + single ranked recommendation + explicit "your call" |
-| Block/benchmark ambiguity | Block data model phase | Benchmark prompt fires only within 3 days of stored `block_end_date`; biometric validity gate defers if HRV or ACWR fail threshold |
-| Hallucinated sports science | Knowledge curation phase | Every number in the curated layer traces to either the blueprint or a tagged source; no derivative physiological predictions in coaching output |
-| Scope creep | Milestone kickoff requirements | Out-of-scope list explicitly names: no auto-rescheduling, no volume prescription adjustments, no injury risk scoring |
-| V3.0 cron regression | Every phase that modifies an existing cron | Dry-run with full profile passes; 630+ test suite shows zero new failures |
+| iOS push permission user gesture | Phase 4 (Web Push) | Permission dialog appears after button tap on installed iPhone PWA |
+| iOS push subscription revocation via missing `event.waitUntil()` | Phase 4 (Web Push) | After 10 test pushes, iOS push permission is still active |
+| Push subscription 410 not cleaned up | Phase 4 (Web Push) | Simulate a 410 response in tests; verify subscription deleted from store |
+| `index.html` cache poisoning | Phase 1 (Shell) | `Cache-Control: no-cache` confirmed on every `/` response |
+| SPA fallback shadows webhook/cron routes | Phase 1 (Shell) | Telegram webhook smoke test passes after catch-all is registered |
+| SessionMiddleware conflicts with OIDC cron auth | Phase 1 (Shell) | All cron endpoints return 200 with OIDC token after session middleware is added |
+| Dual-interface double reply | Phase 1 (source field) + Phase 4 (mirror flag) | Send from hub; verify single reply in hub and single mirror in Telegram |
+| Firestore polling cost blowup | Phase 1 (Shell) | `GET /api/messages?since=` query observed in Cloud Run logs (not full collection scan) |
+| Cloud Run cold start serving stale API cache | Phase 1 (Shell) | No `/api/**` URLs in Workbox `runtimeCaching`; verified in built `sw.js` |
+| Cloud Tasks invariant violated for hub chat | Phase 1 (Shell) | No `BackgroundTasks` usage in chat handler; Cloud Run request logs show `/internal/process-update` after `/api/chat` |
+| TickTick RRULE / timezone import errors | Phase 2 (Tasks) | Reconciliation report reviewed before TickTick subscription cancelled |
+| Habit streak timezone Asia/Jerusalem | Phase 3 (Habits) | Unit test: 23:50 IST completion counts for correct IST date |
 
 ---
 
 ## Sources
 
-- Live codebase analysis: `prompts/smart_agent.md` (D-13 guard, `{training_profile}` placeholder), `core/autonomous.py` (D-06 dedup gate, `OutreachLogStore`), `core/weekly_training_review.py` (gather pattern), `core/morning_briefing.py`
-- `.planning/PROJECT.md` — v4.0 goal definition, D-13 release context, facet-mastery stance, recovery-advise-not-override invariant
-- `/Users/amitgrupper/Downloads/Hybrid Athlete Master Blueprint_ Oct_Nov Peak V2.md` — blueprint structure, 16-week aerobic table, fueling architecture, session prescriptions
-- `CLAUDE.md` — system invariants, model architecture, cost-gating pattern (Layer 0/1/2), existing cron inventory
-- `memory/firestore_db.py` — `UserProfileStore` scaffold (currently stub), store architecture patterns
+- Live codebase: `interfaces/web_server.py`, `core/task_dispatch.py`, `core/scheduled_message.py`, `memory/firestore_conversation.py`, `mcp_tools/ticktick_tool.py`, `CLAUDE.md` invariants
+- Approved design spec: `docs/superpowers/specs/2026-06-13-klaus-hub-design.md`
+- Known incident: slow-reply 2026-06-12 (commit `80809f9`) — BackgroundTask CPU throttle root cause
+- iOS Web Push installed-PWA-only + user gesture requirement: [PWA Push Notifications on iOS in 2026](https://webscraft.org/blog/pwa-pushspovischennya-na-ios-u-2026-scho-realno-pratsyuye?lang=en), [OneSignal iOS Web Push](https://documentation.onesignal.com/docs/en/web-push-for-ios)
+- iOS subscription revocation via missing `event.waitUntil()`: [How to fix iOS push subscriptions being terminated after 3 notifications](https://dev.to/progressier/how-to-fix-ios-push-subscriptions-being-terminated-after-3-notifications-39a7), [Apple Developer Forums — Web Push response always success](https://developer.apple.com/forums/thread/719990)
+- VAPID 410 handling: [Web Push Error 410](https://blog.pushpad.xyz/2021/01/web-push-error-410-the-push-subscription-has-expired-or-the-user-has-unsubscribed/)
+- Vite PWA / Workbox `index.html` no-cache: [Workbox GitHub issue #1528](https://github.com/GoogleChrome/workbox/issues/1528), [vite-plugin-pwa prompt-for-update guide](https://vite-pwa-org.netlify.app/guide/prompt-for-update)
+- FastAPI SPA catch-all route ordering: [FastAPI Discussion #11502](https://github.com/fastapi/fastapi/discussions/11502), [Serving a React Frontend with FastAPI](https://davidmuraya.com/blog/serving-a-react-frontend-application-with-fastapi/)
+- Cloud Run CPU throttle + background tasks: [Cloud Run CPU allocation blog](https://cloud.google.com/blog/topics/developers-practitioners/use-cloud-run-always-cpu-allocation-background-work), [Medium: How Cloud Run Default CPU Throttling Turned 18s Into 8 Minutes](https://medium.com/@buckwheat469/how-cloud-runs-default-cpu-throttling-turned-an-18-second-response-into-an-8-minute-timeout-63c3abc74df1)
+- Firestore billing for polling: [Firestore real-time queries at scale](https://firebase.google.com/docs/firestore/real-time_queries_at_scale)
 
 ---
-*Pitfalls research for: v4.0 Specific Training & Nutrition Coaching — adding expert data-grounded coaching to Klaus*
-*Researched: 2026-06-03*
+*Pitfalls research for: v5.0 Klaus Hub — adding PWA + Web Push + dual-interface chat to existing Klaus agent*
+*Researched: 2026-06-13*

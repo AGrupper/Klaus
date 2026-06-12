@@ -1,517 +1,838 @@
 # Architecture Research
 
-**Domain:** Klaus v4.0 — Specific Training & Nutrition Coaching integration
-**Researched:** 2026-06-03
-**Confidence:** HIGH (all integration points verified from live source code)
+**Domain:** Klaus Hub (v5.0) — Web PWA integration with existing Klaus Cloud Run service
+**Researched:** 2026-06-13
+**Confidence:** HIGH (all integration points verified from direct code reading of all affected files)
 
 ---
 
 ## System Overview
 
-The v4.0 features integrate across four horizontal layers of the existing architecture:
-
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                       PROMPT LAYER                                   │
-│  smart_agent.md  morning_briefing.md  proactive_alert.md            │
-│  weekly_training_review.md  autonomous.md  autonomous_triage.md     │
-│  {training_profile} → expanded to {training_profile} + {plan}       │
-├─────────────────────────────────────────────────────────────────────┤
-│                       ORCHESTRATION LAYER                            │
-│  core/main.py: render_smart_system()  ← add _load_coaching_guide()  │
-│  core/weekly_training_review.py  ← add block/benchmark gather       │
-│  core/morning_briefing.py        ← add block state surface          │
-│  core/proactive_alerts.py        ← add benchmark trigger check      │
-│  core/training_checkin.py        ← remove D-13 qualitative guard    │
-├─────────────────────────────────────────────────────────────────────┤
-│                        TOOLS LAYER                                   │
-│  core/tools.py                                                       │
-│  NEW brain-direct: get_plan, get_block_status, update_plan          │
-│  NEW brain-direct: log_benchmark, get_benchmark_history             │
-│  Extend: update_training_profile (already exists)                    │
-├─────────────────────────────────────────────────────────────────────┤
-│                       PERSISTENCE LAYER                              │
-│  memory/firestore_db.py                                              │
-│  UserProfileStore (users/amit) — expand scaffold with v4.0 fields   │
-│  NEW BlockStore   (training_blocks/{block_id})                       │
-│  NEW BenchmarkStore (benchmarks/{YYYY-MM-DD}_{facet})               │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    FastAPI  (interfaces/web_server.py)                      │
+│                                                                             │
+│  ┌───────────────┐   ┌──────────────────┐   ┌────────────────────────┐    │
+│  │ /telegram-    │   │ /api/*           │   │ /cron/*                │    │
+│  │ webhook       │   │ (new: hub)       │   │ /internal/*            │    │
+│  │ /internal/    │   │ Google Sign-In   │   │ /trigger/*             │    │
+│  │ process-      │   │ session cookie   │   │ OIDC / shared-secret   │    │
+│  │ update        │   │ auth (new)       │   │ auth  (UNCHANGED)      │    │
+│  └──────┬────────┘   └────────┬─────────┘   └──────────────────────-─┘   │
+│         │                     │                                            │
+│         │   StaticFiles at /  (frontend/dist/ — mounted LAST, after all    │
+│         │   route definitions so existing routes always win)               │
+└─────────┼─────────────────────┼─────────────────────────────────────────-─┘
+          │                     │
+          ▼                     ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│              Cloud Tasks queue  (me-central1)                               │
+│                                                                             │
+│  enqueue_update(payload)       → POST /internal/process-update              │
+│  enqueue_hub_message(payload)  → POST /internal/process-hub-message  (new) │
+│                                                                             │
+│  Both tasks carry OIDC token from CLOUD_SCHEDULER_SA_EMAIL.                │
+│  Both targets run with full Cloud Run CPU (request is in-flight).          │
+└────────────────────────────────────────────────────────────────────────────┘
+          │                     │
+          ▼                     ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│              core/   (orchestration — mostly unchanged)                     │
+│                                                                             │
+│  AgentOrchestrator._run_smart_loop (brain)  ← unchanged singleton          │
+│  MessageRouter.handle_update        (Telegram)                              │
+│  MessageRouter.handle_hub_message   (hub, new)                             │
+│                                                                             │
+│  scheduled_message.send_and_inject  ← gains hub_push + telegram_mirror     │
+│  autonomous.gather_situation        ← gains _gather_habits_state() source  │
+│  tools.py  TOOL_SCHEMAS             ← native task/habit tools; drop TickTick│
+└────────────────────────────────────────────────────────────────────────────┘
+          │
+          ▼
+┌────────────────────────────────────────────────────────────────────────────┐
+│              Firestore  (database: "klaus-firestore")                       │
+│                                                                             │
+│  conversations/         (unchanged — shared by Telegram + hub)             │
+│  tasks/                 (new — TaskStore)                                   │
+│  habits/                (new — HabitStore, with completions sub-collection) │
+│  push_subscriptions/    (new — PushSubscriptionStore)                       │
+│  outreach_log/          (unchanged — D-10 gating unmodified)               │
+└────────────────────────────────────────────────────────────────────────────┘
+          ▲
+          │  serves built assets
+┌─────────┴───────────────────────────────────────────────────────────────── ┐
+│              frontend/dist/   (React + TypeScript PWA)                      │
+│                                                                             │
+│  Installed on iPhone home screen and opened as window on PC.               │
+│  Polls  GET /api/messages/since?after=<cursor>  while tab is open.         │
+│  Receives  Web Push  when closed  (Phase 4).                               │
+└────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Integration Point 1: Living Plan in UserProfileStore
+## Component Responsibilities
 
-### Current state
+| Component | Responsibility | Status |
+|-----------|---------------|--------|
+| `interfaces/web_server.py` | Route mounting, all auth surfaces, lifespan | Modify: add `include_router` + StaticFiles mount at end |
+| `interfaces/hub_api.py` | All `/api/*` handlers, session dependency | New file |
+| `frontend/` | React + TypeScript + Vite PWA source | New directory |
+| `core/task_dispatch.py` | Cloud Tasks enqueue for full-CPU turns | Modify: add `enqueue_hub_message()` |
+| `interfaces/_router.py` | Telegram message routing | Modify: add `handle_hub_message()` method |
+| `core/scheduled_message.py` | Proactive message delivery | Modify: add `hub_push` + `telegram_mirror` kwargs |
+| `core/autonomous.py` | Layer-0 gather, triage, compose | Modify: add `_gather_habits_state()` source; rename TickTick gather |
+| `core/tools.py` | Tool schemas + dispatch | Modify: add task/habit tools to `SMART_AGENT_DIRECT_TOOLS`; retire TickTick schemas |
+| `memory/firestore_db.py` | All Firestore stores | Modify: add TaskStore, HabitStore, PushSubscriptionStore |
+| `mcp_tools/ticktick_tool.py` | TickTick task sync | Retire after one-time import (Phase 2) |
+| `scripts/import_ticktick.py` | One-time migration TickTick → TaskStore | New script |
 
-`UserProfileStore` (`memory/firestore_db.py`, lines 93–168) holds a single Firestore doc at `users/amit`. The current scaffold (`_SCAFFOLD`, line 113) has three fields: `athletic_goals: []`, `training_constraints: []`, `recovery_preferences: {}`. The doc is bootstrapped on startup by `AgentOrchestrator.__init__` (line 233–235 of `core/main.py`) via `bootstrap_if_empty()`.
+---
 
-`render_smart_system` (`core/main.py`, lines 239–307) already renders a `{training_profile}` placeholder that reads from `UserProfileStore.load()` and omits the block when the profile is empty. The substitution happens at line 305: `.replace("{training_profile}", training_profile_snippet)`.
+## Recommended Project Structure
 
-`prompts/smart_agent.md` already contains the `{training_profile}` placeholder at line 8.
+```
+Klaus/
+├── frontend/                        # new — React + TypeScript PWA
+│   ├── src/
+│   │   ├── components/              # shared UI components
+│   │   ├── pages/
+│   │   │   ├── Today.tsx            # Today timeline (home)
+│   │   │   ├── Tasks.tsx
+│   │   │   ├── Habits.tsx
+│   │   │   ├── Health.tsx
+│   │   │   └── Chat.tsx             # center tab on phone
+│   │   ├── api/                     # typed fetch wrappers for /api/*
+│   │   └── sw.ts                    # service worker: Web Push + installability
+│   ├── public/manifest.json         # PWA manifest (name, icons, display: standalone)
+│   ├── vite.config.ts               # PWA plugin, build output → dist/
+│   └── package.json
+├── interfaces/
+│   ├── web_server.py                # modified: add include_router + StaticFiles
+│   ├── hub_api.py                   # new: /api/* router + session dependency
+│   └── _router.py                   # modified: add handle_hub_message()
+├── core/
+│   ├── task_dispatch.py             # modified: enqueue_hub_message()
+│   ├── scheduled_message.py         # modified: hub_push + telegram_mirror
+│   ├── autonomous.py                # modified: _gather_habits_state()
+│   └── tools.py                     # modified: task/habit tools, drop TickTick
+├── memory/
+│   └── firestore_db.py              # modified: TaskStore, HabitStore, PushSubscriptionStore
+└── scripts/
+    └── import_ticktick.py           # new: one-time TickTick → TaskStore migration
+```
 
-### What v4.0 needs
+### Structure Rationale
 
-Expand the `UserProfileStore` document to carry the full blueprint fields. Extend `_SCAFFOLD` in `firestore_db.py` — do not create a new collection. The existing store, tool, and prompt placeholder wire is already in place.
+- **frontend/ is a peer to interfaces/ and core/,** not nested inside any Python package. Vite tooling runs independently; `npm run build` outputs to `frontend/dist/` which FastAPI mounts.
+- **interfaces/hub_api.py** is separate from `web_server.py` because `web_server.py` already contains four distinct auth patterns (Telegram HMAC, OIDC cron, iOS shared-secret ×2). Adding session cookie auth inline would make it a god file and obscure which auth path applies to each route.
+- **scripts/import_ticktick.py** lives in `scripts/` — the convention for one-time operational tools — so it can never be accidentally invoked by any cron or import path.
 
-**New scaffold fields to add:**
+---
+
+## Integration Point 1: SPA Mount and Auth Middleware in `web_server.py`
+
+### The mounting rule
+
+FastAPI resolves routes in registration order. A `StaticFiles` mount at `/` with `html=True` will serve `index.html` for any unmatched path — if registered before any other routes, it captures everything. The invariant is:
+
+**`StaticFiles` mount must be the last statement in `web_server.py` after all `@app.post`/`@app.get` decorators and `include_router()` calls.**
 
 ```python
-_SCAFFOLD = {
-    # existing
-    "athletic_goals": [],
-    "training_constraints": [],
-    "recovery_preferences": {},
-    "schema_version": 1,
-    # v4.0 additions
-    "dated_goals": {},        # {"oct_bench_1rm_kg": 100, "oct_squat_1rm_kg": 120,
-                              #  "oct_half_marathon_min": 85, "nov_pushups": 125,
-                              #  "nov_pullups": 35, "nov_3k_pace_sec": 570,
-                              #  "nov_400m_sec": 55}
-    "weekly_split": {},       # {"mon": "lower_strength", "tue": "run_easy", ...}
-    "nutrition_targets": {},  # {"protein_g": 150, "carbs_g": 350, ...}
-    "supplement_schedule": [],# [{"name": "creatine", "timing": "post_workout", ...}]
-    "facet_priorities": [],   # ordered list: ["strength", "endurance", "power", ...]
-    "fueling_timeline": {},   # {"pre_workout_min": 60, "post_workout_min": 30, ...}
-    "current_block_id": None, # FK → BlockStore doc id
-}
+# interfaces/web_server.py — additions at the BOTTOM of the file
+
+from interfaces.hub_api import router as hub_router
+
+# /api/* routes (session-authed, defined in hub_api.py)
+app.include_router(hub_router, prefix="/api")
+
+# SPA catch-all — MUST be last.
+# Serves frontend/dist/. html=True makes any unresolved path return index.html
+# so the React client-side router handles /tasks, /habits, /chat, etc.
+# /api/*, /cron/*, /telegram-webhook, /internal/* are resolved BEFORE this mount.
+_FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
+if _FRONTEND_DIST.exists():
+    app.mount(
+        "/",
+        StaticFiles(directory=str(_FRONTEND_DIST), html=True),
+        name="spa",
+    )
 ```
 
-**How to keep it a flexible guide, not a rigid prescription:**
+The `if _FRONTEND_DIST.exists()` guard means tests and local dev without a built frontend do not fail.
 
-The `{training_profile}` block in `render_smart_system` becomes the context Klaus reasons _from_, not a ruleset he enforces. Achieve this in two places:
+### Session auth as a FastAPI dependency, not global middleware
 
-1. In `render_smart_system` (`core/main.py`): keep the current "non-empty fields only" rendering but relabel the header to `**Coaching blueprint:**` instead of `**Training profile:**`. This signals to the brain that this is reference material, not a binding schedule.
+Global `@app.middleware("http")` fires on every request — including Telegram webhook HMAC validation and OIDC cron verification. Injecting session-cookie logic there would either break those paths or require duplicating their detection logic inside the middleware. The correct pattern is a per-route `Depends()`:
 
-2. In `prompts/smart_agent.md`: replace the existing "If the training profile is empty..." block (lines 85–100) with a v4.0 coaching posture paragraph that explicitly frames the blueprint as a guide. State that the brain should use targets as intent anchors, name them when giving feedback, and flag when current data diverges — but that Amit decides on plan changes. One new sentence on recovery-vs-plan conflicts: "When recovery data conflicts with the plan, advise the deviation and offer both paths; Amit decides."
+```python
+# interfaces/hub_api.py
+from fastapi import APIRouter, Depends, Request, HTTPException, Response
+import os, hashlib, hmac, time, json
 
-### Modified files
+router = APIRouter()
 
-- `memory/firestore_db.py`: expand `UserProfileStore._SCAFFOLD`
-- `core/main.py`: rename `training_profile_snippet` header string to `Coaching blueprint:`
-- `prompts/smart_agent.md`: replace training coaching section (lines 77–100)
+_SESSIONS: dict[str, dict] = {}   # in-process; acceptable for single user
+
+
+async def require_hub_session(request: Request) -> str:
+    """Validate session cookie. Returns Amit's email on success; raises 401 on failure."""
+    token = request.cookies.get("hub_session", "")
+    session = _SESSIONS.get(token)
+    if not session or session.get("expires_at", 0) < time.time():
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return session["email"]
+
+@router.get("/auth/me")
+async def auth_me(user: str = Depends(require_hub_session)):
+    return {"email": user}
+
+@router.post("/chat")
+async def hub_chat(request: Request, user: str = Depends(require_hub_session)):
+    ...
+```
+
+Existing routes in `web_server.py` — `/telegram-webhook`, `/internal/process-update`, all `/cron/*`, all `/trigger/*` — are completely unaffected because they do not use `Depends(require_hub_session)`.
+
+### Google Sign-In flow
+
+```
+GET /api/auth/google
+    → redirect to Google OAuth2 authorize URL
+    → (user approves in browser)
+GET /api/auth/callback?code=...&state=...
+    → exchange code for ID token
+    → verify email == os.environ["AMIT_EMAIL"]
+    → generate session token (secrets.token_hex(32))
+    → store {email, expires_at} in _SESSIONS dict
+    → set "hub_session" cookie (HttpOnly, Secure, SameSite=Lax)
+    → redirect to "/"
+```
+
+`google-auth` and `google-auth-oauthlib` are already in the dependency graph (used by `core/auth_google.py` and `mcp_tools/` tools). No new packages required for the OAuth2 exchange.
+
+The allowlist check (`email == os.environ["AMIT_EMAIL"]`) is a single string comparison — single-user system, no ACL store needed.
 
 ---
 
-## Integration Point 2: Curated Coaching Knowledge
+## Integration Point 2: Hub Chat Through Cloud Tasks (Shared Conversation)
 
-### Options analysis
+### Why a new Cloud Tasks path (not reusing `/internal/process-update`)
 
-**Option A — Prompt-embedded principles doc (static string in smart_agent.md):**
-Pre-render a concise (~400-token) coaching principles block directly in `prompts/smart_agent.md`. Covers: concurrent strength/endurance interference, periodization logic (blocks vs linear), fueling science summary, how to read ACWR for hybrid athletes.
+`/internal/process-update` calls `Update.de_json(data=request_json, bot=_application.bot)` — it expects Telegram wire-format JSON. The bot object is required for some nested `Update` objects' helper methods. Injecting a hub message as a fake Telegram `Update` is brittle and leaks the Telegram abstraction into the hub. The correct design is a parallel but structurally identical Cloud Tasks path.
 
-**Option B — Pinecone "coaching" namespace recalled per-turn:**
-Store coaching principles as `kind="coaching"` vectors in `memory/pinecone_db.py`. The brain calls `recall(query, kind="coaching")` before formulating advice.
+### `enqueue_hub_message()` in `core/task_dispatch.py`
 
-**Option C — Brain-direct retrieval tool `get_coaching_knowledge(topic)`:**
-A new brain-direct tool that reads a static file or a Firestore doc keyed by topic.
+```python
+def enqueue_hub_message(payload: dict) -> bool:
+    """Enqueue one hub chat message for full-CPU processing.
 
-**Recommendation: Option A.** The coaching principles are stable, compact, and always relevant when Klaus is in a training coaching context. Pinecone retrieval (Option B) adds latency and a recall-or-miss risk on every coaching turn. A separate tool (Option C) adds a tool-use round-trip when the principles should simply be in context. The existing codebase already includes the `{self_md}` pattern (stable content injected once at startup, placed before dynamic content for Gemini prompt caching) — coaching knowledge follows the same pattern.
+    payload shape:
+        {"text": str, "user_id": int, "source": "hub", "request_id": str}
+    request_id is an ISO timestamp the client sent; the poll endpoint uses it
+    as a cursor to find the reply.
 
-### Integration path
+    Returns True on success, False on any failure (never raises).
+    Falls back to direct in-process handling is NOT provided — the hub API
+    handler returns 202 immediately and the client polls; there is no
+    Starlette BackgroundTask fallback here because the hub does not have the
+    Telegram instant-ACK requirement.
+    """
+    queue = os.getenv("CLOUD_TASKS_QUEUE", "")
+    if not queue:
+        return False
+    # ... identical Cloud Tasks construction to enqueue_update() ...
+    # url: f"{base_url}/internal/process-hub-message"
+```
 
-Add a new placeholder `{coaching_guide}` to `prompts/smart_agent.md` immediately before the `TRAINING & ATHLETIC COACHING` section. In `core/main.py`:
+This reuses the same queue (`CLOUD_TASKS_QUEUE`), the same OIDC service account, and the same `_DISPATCH_DEADLINE_SECONDS` as the Telegram path. No new infrastructure.
 
-1. Add `self._coaching_guide = _load_coaching_guide()` to `AgentOrchestrator.__init__`, where `_load_coaching_guide()` reads `docs/COACHING_GUIDE.md` at startup (same pattern as `_load_self_md()`).
-2. In `render_smart_system`, add `.replace("{coaching_guide}", self._coaching_guide)` alongside the other replacements. Place it after `{self_md}` but before `{training_profile}` in the stable-content prefix.
+### `/internal/process-hub-message` endpoint in `web_server.py`
 
-**For cron compose prompts** (morning_briefing, proactive_alert, weekly_training_review): these compose functions instantiate their own `LLMClient` and pass a system prompt without going through `render_smart_system`. Append a condensed version of the coaching guide directly into those prompt files in a clearly delimited section. The weekly_training_review already appends `meal_audit.md` this way (line 233 of `core/weekly_training_review.py`); use the same pattern.
+```python
+@app.post("/internal/process-hub-message")
+async def internal_process_hub_message(request: Request) -> JSONResponse:
+    """Cloud Tasks target: process one hub chat message with full CPU.
 
-### New file
+    Verified via the same _verify_cron_request() as /internal/process-update.
+    Payload: {"text": str, "user_id": int, "source": "hub", "request_id": str}
+    """
+    await _verify_cron_request(request)
+    if _router is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    payload = await request.json()
+    await _router.handle_hub_message(payload)
+    return JSONResponse(content={"ok": True})
+```
 
-`docs/COACHING_GUIDE.md` — the authoritative coaching knowledge doc. Single source of truth. Section headers: Hybrid Athlete Principles, Interference Effect Management, Periodization & Block Structure, Fueling Science, How to Read Recovery Signals. Target ~600 tokens — substantial enough to be genuinely expert, short enough to not degrade prompt caching.
+`_verify_cron_request` already validates the OIDC bearer token from `CLOUD_SCHEDULER_SA_EMAIL`. Cloud Tasks uses that same service account. No new auth logic needed.
 
-### Modified files
+### `handle_hub_message()` on `MessageRouter` in `interfaces/_router.py`
 
-- `core/main.py`: `AgentOrchestrator.__init__` + `render_smart_system` (add `{coaching_guide}` rendering)
-- `prompts/smart_agent.md`: add `{coaching_guide}` placeholder before training section
-- `prompts/morning_briefing.md`: append condensed coaching context section
-- `prompts/proactive_alert.md`: append condensed coaching context section
-- `prompts/weekly_training_review.md`: append full coaching guide (same pattern as meal_audit append in `weekly_training_review.py`)
+```python
+async def handle_hub_message(self, payload: dict) -> None:
+    """Process a hub chat message: inject into conversation, then run agent turn."""
+    user_id = payload["user_id"]
+    text = payload["text"]
+    # 1. Append user message into shared conversation (same store Telegram uses)
+    self._conversation_store.append(user_id, "user", text, source="hub")
+    # 2. Run the brain — same orchestrator, same smart loop
+    reply = await self._orchestrator.handle_message(user_id, text)
+    # 3. Append assistant reply
+    self._conversation_store.append(user_id, "assistant", reply, source="hub")
+    # Note: no Telegram send here. Delivery is via polling or Web Push.
+```
+
+### Channel tagging in `FirestoreConversationStore`
+
+The existing message schema is `{"role": "user"|"assistant", "content": str}`. Adding an optional `source` field (`"telegram"` | `"hub"` | `"cron"`) enables the polling endpoint to return hub-visible messages and suppresses cron injections from appearing in the chat UI.
+
+Change in `_txn_append` signature:
+
+```python
+def _txn_append(
+    transaction, doc_ref, role: str, content: str,
+    max_messages: int, timeout_hours: int,
+    source: str | None = None,     # new, optional
+) -> None:
+    ...
+    messages.append({"role": role, "content": content, **({"source": source} if source else {})})
+```
+
+All existing callers pass no `source` — the kwarg defaults to `None` and the field is absent from the stored dict (backward compatible). The hub path passes `source="hub"`. Cron injections via `scheduled_message.send_and_inject` pass `source="cron"`.
+
+### Polling endpoint
+
+```python
+@router.get("/messages/since")
+async def messages_since(
+    after: str,   # ISO timestamp — last seen message time
+    user: str = Depends(require_hub_session),
+):
+    """Return assistant messages newer than `after`. Used for chat polling."""
+    messages = conversation_store.get(AMIT_USER_ID)
+    # Filter: role == "assistant", source != "cron", timestamp > after
+    # Timestamp approximation: conversation doc updated_at is doc-level only;
+    # use message list position relative to a known-sent request_id as the
+    # cursor if per-message timestamps are not added. Simplest v1: return all
+    # assistant messages in the last 20 entries of the conversation.
+    ...
+```
+
+The simplest viable v1 cursor: the client tracks the index of the last message it displayed; the poll endpoint returns `messages[last_index:]`. This avoids per-message timestamps in Firestore (a schema change with transaction implications). SSE is a clean fast-follow that makes this endpoint obsolete.
 
 ---
 
-## Integration Point 3: Releasing the D-13 Guard
+## Integration Point 3: `send_and_inject` Hub Push + Telegram Mirror (D-10 Gating Preserved)
 
-### Where the guard lives today
+### D-10 invariant
 
-The D-13 "no invented numbers" guard is implemented in four places:
+`OutreachLogStore.append` is called by the autonomous tick **only after** `send_and_inject` returns without raising. This invariant is documented in `CLAUDE.md` and enforced by the call sites in `core/autonomous.py`. The signature change must not alter the success/failure semantics that D-10 callers depend on.
 
-**1. `core/training_checkin.py`, `compute_recovery_concern()` (line 161):**
-The function returns `None` rather than fabricated metrics. The guard here is correct and stays. This is not D-13 — it's the right behavior (don't emit a concern when there's no concern). D-13 release does not touch this function.
+### Modified signature
 
-**2. `core/morning_briefing.py` (line 246):**
-`recovery_concern` key is silently omitted when `compute_recovery_concern` returns `None`. This logic also stays — it prevents a phantom "all clear" section. The guard is about omitting the section, not about qualitative-only language. This is not the target of D-13 release.
+```python
+# core/scheduled_message.py
+async def send_and_inject(
+    bot: Bot,
+    text: str,
+    *,
+    inject_into_conversation: bool = False,
+    reply_markup=None,                    # existing — unchanged
+    hub_push: bool = True,               # new: attempt Web Push delivery
+    telegram_mirror: bool = True,        # new: env-overridable for hybrid transition
+) -> "telegram.Message | None":
+    """
+    Delivery behavior:
+      1. If telegram_mirror=True (default): bot.send_message() as before.
+         If this raises, the exception propagates to the caller — D-10 gating
+         is preserved: OutreachLogStore.append is never called on a failed send.
+      2. If hub_push=True: _send_hub_push(text) — best-effort, NEVER raises,
+         NEVER affects the return value. Web Push failure is swallowed + logged
+         at WARNING. A stale push subscription must not prevent a Telegram
+         outreach from being logged.
+      3. inject_into_conversation: same as before.
 
-**3. `prompts/morning_briefing.md` (lines 138–143):**
+    telegram_mirror is read from env at call time:
+      actual_mirror = telegram_mirror and (
+          os.getenv("TELEGRAM_MIRROR", "true").lower() == "true"
+      )
+    When TELEGRAM_MIRROR=false is deployed, the function skips Telegram send
+    and returns None. Callers that use the returned telegram.Message only for
+    reply-to detection (training_checkin.py) must guard for None.
+    """
 ```
-**Empty training profile guardrail (D-13):** When the `UserProfileStore` profile is
-empty or the user has no configured targets, suggest only qualitative modifications:
-"keep today's session submaximal", "favour aerobic over anaerobic", "drop a set or two".
-**Never invent** a specific weight, HR zone, HR cap, pace target, or rep count.
+
+The `TELEGRAM_MIRROR` env var (default `"true"`) is the Telegram retirement switch. It can be flipped without a redeploy via Cloud Run environment variable update. Until it is flipped, every proactive message goes to both Telegram and Web Push with no behavior change for existing callers.
+
+### `_send_hub_push()` helper
+
+```python
+# core/scheduled_message.py
+async def _send_hub_push(text: str) -> None:
+    """Send Web Push to all registered VAPID subscriptions. Best-effort — never raises."""
+    try:
+        from memory.firestore_db import PushSubscriptionStore
+        from pywebpush import webpush, WebPushException
+        store = PushSubscriptionStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        subs = store.list_all()
+        vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "")
+        vapid_claims = {"sub": f"mailto:{os.environ.get('AMIT_EMAIL', '')}"}
+        for sub in subs:
+            try:
+                webpush(
+                    subscription_info=sub,
+                    data=text,
+                    vapid_private_key=vapid_private,
+                    vapid_claims=vapid_claims,
+                )
+            except WebPushException as e:
+                if e.response and e.response.status_code == 410:
+                    # Subscription expired — remove it
+                    store.delete(sub.get("endpoint", ""))
+                else:
+                    logger.warning("Web Push failed for one subscription: %s", e)
+    except Exception:
+        logger.warning("_send_hub_push failed entirely", exc_info=True)
 ```
-**This is the primary D-13 prompt guard.** Once the profile is populated with real targets, this paragraph should be replaced with: "When profile targets are available, name them. Compare current data to targets directly. On recovery conflicts, offer both the plan target and the adjusted approach; Amit decides."
-
-**4. `prompts/proactive_alert.md` (lines 22–23):**
-```
-**Empty training profile guardrail (D-13):** With no configured targets, suggest
-qualitative modifications only: "keep it submaximal", "favour aerobic over anaerobic",
-"drop a set or two". Never invent a specific weight, HR zone, or pace.
-```
-**Same release pattern** — replace the guard with a "use named targets from profile" instruction.
-
-**5. `prompts/smart_agent.md` (lines 85–100):**
-The `TRAINING & ATHLETIC COACHING` section contains the per-conversation version of D-13 (lines 87–93: "If the training profile is empty... do NOT invent thresholds, targets, or scheduling buffers"). This block is replaced entirely as part of Integration Point 1 above.
-
-**6. `prompts/weekly_training_review.md` (line 51):**
-```
-"grounded in this week's actual data... JARVIS voice, direct, no fabricated numeric targets (no specific weights, HR zones, pace targets)."
-```
-The phrase "no specific weights, HR zones, pace targets" stays as a fabrication guard — the brain should not invent numbers it doesn't have. But it should be amended: "Name targets from the coaching blueprint when comparing actual performance to plan." This is a refinement, not a removal.
-
-### What D-13 release means in practice
-
-D-13 release is not a blanket "you can say any number now" toggle. It means:
-
-- Numbers from `UserProfileStore.dated_goals` (e.g., 100 kg bench target) can be named when comparing against current TrainingLogStore or benchmark data.
-- Current lift estimates from `BenchmarkStore` (see Integration Point 4) can be named.
-- Pace targets from `nutrition_targets` can be named when critiquing meals.
-- Numbers still cannot be invented. The guard shifts from "no numbers at all" to "only data-grounded numbers" — a refinement, not a removal.
-
-### Modified files
-
-- `prompts/morning_briefing.md`: replace D-13 guard paragraph (lines 138–143) with data-grounded-targets instruction
-- `prompts/proactive_alert.md`: replace D-13 guard paragraph (lines 22–23) similarly
-- `prompts/smart_agent.md`: training section replaced as per Integration Point 1
-- `prompts/weekly_training_review.md`: amend line 51 to add "name blueprint targets when comparing"
-
-**No Python code changes required for D-13 release.** The guard is purely prompt-level. `compute_recovery_concern` in `training_checkin.py` returns `None` when appropriate — that discipline is unchanged and correct.
 
 ---
 
-## Integration Point 4: Block and Benchmark Tracking
+## Integration Point 4: New Firestore Stores in `firestore_db.py`
 
-### Store design
+All three new stores follow the established discipline exactly:
+- Constructor: `(project_id: str, database: str = "(default)")` calling `_make_firestore_client()`
+- Reads: never raise, return `[]` / `None` / `{}` on any error
+- Writes: re-raise after `logger.error(...)` so API handlers can return 500
+- Timestamps: `updated_at: firestore.SERVER_TIMESTAMP` on every write; `created_at` as static ISO string
+- JSON safety: `_jsonsafe_doc()` applied to all reads before returning
 
-**Use two new Firestore stores, separate from TrainingLogStore.** Do not extend TrainingLogStore for blocks or benchmarks — they have different schemas, retention needs, and query patterns.
+### TaskStore
 
-**BlockStore** (`memory/firestore_db.py`):
-- Collection: `training_blocks`
-- Document ID: `{YYYY-MM-DD}_{label}` e.g. `2026-06-03_strength_phase1`
-- Fields: `block_id` (str), `label` (str), `start_date` (YYYY-MM-DD), `end_date` (YYYY-MM-DD or None), `focus_facets` (list), `weekly_split_override` (dict or None), `status` (active / complete / abandoned), `notes` (str), `benchmark_due` (bool), `created_at`, `updated_at`
-- Operations: `start_block(label, start_date, focus_facets)`, `end_block(block_id, end_date)`, `get_current()` (returns the active block or None), `get_all()` (for trend view)
-- `get_current()` queries where `status == "active"`; `filter=FieldFilter("status", "==", "active")` (same composite-index pattern as `FollowupStore.list_due`)
+```
+Collection: tasks
+Document ID: uuid4 hex
 
-**BenchmarkStore** (`memory/firestore_db.py`):
-- Collection: `benchmarks`
-- Document ID: `{YYYY-MM-DD}_{facet}` e.g. `2026-06-15_bench_press_1rm`
-- Fields: `date` (YYYY-MM-DD), `facet` (str), `value` (float), `unit` (str: kg / reps / sec / min), `block_id` (str, FK to BlockStore), `notes` (str), `updated_at`
-- Operations: `log_benchmark(date, facet, value, unit, block_id, notes)`, `get_facet_history(facet, n)` (last n results for trend), `get_block_benchmarks(block_id)` (all benchmarks for a block)
-- Idempotent: `{date}_{facet}` doc ID means re-logging the same facet on the same day overwrites with `merge=True`
+Fields:
+  id:           str    — doc id (also stored in payload for query)
+  title:        str    — required
+  notes:        str    — optional
+  due:          str    — YYYY-MM-DD or None
+  priority:     int    — 0=none 1=low 2=medium 3=high
+  list:         str    — "Inbox" | "Work" | "Personal" | custom
+  recurrence:   str    — "daily" | "weekly" | "monthly" | None
+  completed_at: str    — ISO datetime or None
+  status:       str    — "pending" | "completed" | "cancelled"
+  created_at:   str    — ISO UTC datetime (static — NOT SERVER_TIMESTAMP)
+  updated_at:   SERVER_TIMESTAMP
+```
 
-**Why not extend TrainingLogStore?**
-TrainingLogStore is keyed `{date}_{slot}` for session-level entries. Benchmarks are per-facet per-date, not per-session slot. Blocks are entirely different entities. Mixing them in one collection would require `doc.type` filtering on full collection scans (all reads currently stream the whole collection). Two dedicated stores keep each store's scan cheap and readable.
+Methods:
+- `create(payload: dict) -> dict` — generates uuid4, writes, returns `{"id": id}`; re-raises
+- `get(task_id: str) -> dict | None` — never raises
+- `list_pending() -> list[dict]` — `status == "pending"`, newest-first; never raises
+- `list_due_today(date_str: str) -> list[dict]` — `status == "pending"` AND `due <= date_str`; never raises (requires composite index on `status` + `due`)
+- `list_by_list(list_name: str) -> list[dict]` — filtered by list; never raises
+- `update(task_id: str, patch: dict) -> None` — merge patch + `updated_at`; re-raises
+- `complete(task_id: str) -> None` — sets `status="completed"`, `completed_at=now_iso`; re-raises
+- `delete(task_id: str) -> None` — hard delete (TickTick allows hard deletes); re-raises
 
-**Why not Postgres?**
-The 3-year Garmin history lives in Postgres because it was a bulk historical import. Blocks and benchmarks are small, user-created, and need the same lazy-singleton + never-raises read discipline as the other Firestore stores. Consistency with existing stores matters more than raw query flexibility here.
+### HabitStore
 
-### New tools in core/tools.py
+```
+Collection: habits
+Document ID: uuid4 hex
 
-All new tools follow the existing `_HANDLERS` dispatch pattern. They are added to `TOOL_SCHEMAS`, registered in `SMART_AGENT_DIRECT_TOOLS`, excluded from `WORKER_TOOL_SCHEMAS`, and dispatched in `_HANDLERS`.
+Definition doc fields:
+  id:             str    — doc id
+  name:           str    — habit/supplement name
+  type:           str    — "habit" | "supplement"
+  dose:           str    — optional, e.g. "5g creatine" — Klaus reads this field
+  schedule_days:  list   — ["mon","tue","wed","thu","fri","sat","sun"] subset
+  slot:           str    — "morning" | "afternoon" | "evening" | "anytime"
+  active:         bool
+  created_at:     str    — static ISO UTC
+  updated_at:     SERVER_TIMESTAMP
 
-| Tool | Type | Handler | Purpose |
-|------|------|---------|---------|
-| `get_plan` | brain-direct | `_handle_get_plan` | Full `UserProfileStore.load()` + `BlockStore.get_current()` in one call |
-| `get_block_status` | brain-direct | `_handle_get_block_status` | Current block + its benchmarks + trend vs prior block |
-| `update_plan` | brain-direct | `_handle_update_plan` | Merge patch into `UserProfileStore` (new fields only; wraps existing `update_training_profile`) |
-| `log_benchmark` | brain-direct | `_handle_log_benchmark` | Write to `BenchmarkStore` |
-| `get_benchmark_history` | brain-direct | `_handle_get_benchmark_history` | `BenchmarkStore.get_facet_history(facet, n)` |
-| `start_block` | brain-direct | `_handle_start_block` | `BlockStore.start_block(...)` + sets `UserProfileStore.current_block_id` |
-| `end_block` | brain-direct | `_handle_end_block` | `BlockStore.end_block(...)` + clears `UserProfileStore.current_block_id` |
+Sub-collection: habits/{habit_id}/completions/{YYYY-MM-DD}
+  date:           str    — YYYY-MM-DD
+  completed:      bool
+  completed_at:   str    — ISO datetime or None
+  note:           str    — optional
+  updated_at:     SERVER_TIMESTAMP
+```
 
-Note: `update_plan` can coexist with `update_training_profile` — they operate on the same document. `update_plan` targets v4.0 fields (`dated_goals`, `weekly_split`, etc.) while `update_training_profile` targets v3.0 fields (`athletic_goals`, `training_constraints`, `recovery_preferences`). Either tool calls `UserProfileStore.update(patch)` with `merge=True`, so they are safe to use interchangeably.
+Methods:
+- `create(payload: dict) -> dict` — re-raises
+- `get(habit_id: str) -> dict | None` — never raises
+- `list_active() -> list[dict]` — all `active=True` habits; never raises
+- `get_today_state(date_str: str) -> list[dict]` — all active habits with their completion doc for `date_str` merged in; used by `_gather_habits_state()` and `GET /api/today`; never raises
+- `log_completion(habit_id: str, date_str: str, completed: bool, note: str) -> None` — writes to sub-collection; re-raises
+- `list_completions(habit_id: str, days: int) -> list[dict]` — last N days of completions; never raises
+- `compute_streak(completions: list[dict]) -> int` — pure function, no Firestore I/O
 
-### Surfacing block state in the crons
+`get_today_state` is the core read path. Implementation:
 
-**morning_briefing.py — `_gather_data()`:**
-Add a best-effort block state gather alongside the existing nutrition and recovery gather. Read `BlockStore.get_current()`. If a block is active and `benchmark_due == True`, include a `"block"` key in the briefing data dict with `{label, days_elapsed, benchmark_due: true}`. The `morning_briefing.md` prompt picks this up and can add a brief note ("Block {label} is at its benchmark window, sir").
+```python
+def get_today_state(self, date_str: str) -> list[dict]:
+    """Return active habits with today's completion status merged in. Never raises."""
+    try:
+        habits = self.list_active()
+        result = []
+        for h in habits:
+            comp_snap = (
+                self._col.document(h["id"])
+                .collection("completions")
+                .document(date_str)
+                .get()
+            )
+            comp = _jsonsafe_doc(comp_snap.to_dict() or {}) if comp_snap.exists else {}
+            result.append({**h, "today": comp})
+        return result
+    except Exception:
+        logger.warning("HabitStore.get_today_state(%r) failed", date_str, exc_info=True)
+        return []
+```
 
-**proactive_alerts.py — `run_proactive_alerts()`:**
-After the training check-in call (line 103), add a best-effort block-end check: if `BlockStore.get_current()` returns a block with `end_date <= tomorrow` and `benchmark_due == False`, set `benchmark_due = True` in the BlockStore and include a `"benchmark_reminder"` key in `alerts_context`. The `proactive_alert.md` prompt surfaces it as an alert.
+### PushSubscriptionStore
 
-**weekly_training_review.py — `_gather_week_data()`:**
-Add `BlockStore.get_current()` and `BenchmarkStore.get_block_benchmarks(block_id)` to the gather dict. Pass as `current_block` and `block_benchmarks` keys. The `weekly_training_review.md` prompt uses these to surface per-facet improvement trends across blocks.
+```
+Collection: push_subscriptions
+Document ID: SHA-256 hex of endpoint URL (stable, collision-resistant, avoids URL chars in doc IDs)
 
-### End-of-block benchmark trigger
+Fields:
+  endpoint:     str    — Web Push subscription endpoint URL
+  p256dh:       str    — ECDH public key (base64url)
+  auth:         str    — auth secret (base64url)
+  created_at:   str    — static ISO UTC
+  updated_at:   SERVER_TIMESTAMP
+```
 
-No new cron required. Use a state machine embedded in `BlockStore`: the `benchmark_due` field on a block doc is the trigger state. The existing `proactive_alerts` cron (21:30) checks the flag and sends the reminder. Amit logs the benchmark through a brain-direct conversation (`log_benchmark` tool). No separate scheduler job needed — this reuses the existing cron infrastructure.
-
-The trigger logic:
-1. Block is created with `benchmark_due: False`
-2. At end_date or at user request, `benchmark_due` is set to `True` (either by the proactive alert cron or the brain)
-3. `proactive_alert.md` surfaces the benchmark reminder when the flag is set
-4. Brain calls `log_benchmark` after Amit does the test session
-5. Brain calls `end_block` to close the block
+Methods:
+- `upsert(subscription: dict) -> None` — called on every `pushManager.subscribe`; idempotent; re-raises
+- `list_all() -> list[dict]` — returns all subscriptions for push fan-out; never raises
+- `delete(endpoint: str) -> None` — called on HTTP 410 Gone from push service; re-raises
 
 ---
 
-## Integration Point 5: Proactive and Reactive Strictness
+## Integration Point 5: Native Task Tools in `core/tools.py`
 
-### Changed cron behaviors
+### Why brain-direct (not worker-delegated)
 
-**morning_briefing.py:**
-The `compute_recovery_concern` call (line 237) already surfaces recovery data. Post-D-13 release, the morning briefing prompt can name the plan's target session from `weekly_split[today_weekday]` and compare it to the recovery concern level. Add `block_state` to the briefing data dict (from Integration Point 4). No Python logic changes needed beyond the data gather.
+Task management is identity-critical — it is the hub's core replacement for TickTick. Worker tools are for structured data execution (JSON parsing, API calls). Task create/complete/update require judgment (which list? what priority? does this conflict with calendar?). Brain-direct tools are the correct pattern for tools requiring orchestration reasoning, matching the existing convention for `get_plan`, `log_benchmark`, `update_plan`.
 
-**proactive_alerts.py:**
-After D-13 release, the `recovery_concern` dict already has `level`, `acwr`, `hrv_status`, `sleep_score`, `intensity`. The prompt change in `proactive_alert.md` (Integration Point 3) is sufficient to allow named targets. Add the `benchmark_reminder` check (Integration Point 4). No new cron logic.
+### New entries in `SMART_AGENT_DIRECT_TOOLS`
 
-**weekly_training_review.py:**
-Add `block_benchmarks` and `current_block` to `_gather_week_data()`. The prompt already has the right structure for trend commentary. Post-D-13 release, the prompt can reference dated goals by name.
+```python
+# core/tools.py — added to SMART_AGENT_DIRECT_TOOLS frozenset
+"create_task",
+"get_tasks",
+"complete_task",
+"update_task",
+"delete_task",
+"get_habits",
+"log_habit_completion",
+"create_habit",
+"update_habit",
+```
 
-**core/training_checkin.py:**
-`compute_recovery_concern` stays unchanged. The function already provides `level`, `acwr`, `hrv_status`, `sleep_score`, `intensity` — this is data-grounded. The qualitative guard in the prompt is what changes, not this function.
+Each gets a schema in `TOOL_SCHEMAS` and a handler in `_HANDLERS` dispatching to `TaskStore` / `HabitStore` via the same lazy-singleton pattern used by every other store-backed tool.
 
-### New brain behaviors in chat
+### TickTick retirement sequence
 
-Post-D-13 release, in `prompts/smart_agent.md`:
-- The brain calls `get_plan` when starting any training-related conversation to get full context in one call (profile + current block)
-- The brain calls `get_block_status` when asked about progress or trends
-- The brain critiques off-plan training by comparing `TrainingLogStore` history to `weekly_split` from the profile
-- The brain names supplement adherence gaps when nutrition data is available
+1. Run `scripts/import_ticktick.py` → verify all tasks are in `TaskStore`
+2. Remove `ticktick_tool` schema entries from `TOOL_SCHEMAS`
+3. Remove `ticktick_tool` handlers from `_HANDLERS`
+4. Remove `_gather_ticktick_overdue()` from `core/autonomous.py`, add `_gather_tasks_overdue()`
+5. Update `prompts/autonomous_triage.md`: rename `ticktick_overdue` key to `tasks_overdue` in the triage prompt context block
+6. `mcp_tools/ticktick_tool.py` and `mcp_tools/ticktick_auth.py` can be removed (or archived) after confirming no other imports
 
 ---
 
-## Component Boundaries (New vs Modified)
+## Integration Point 6: Layer-0 Gather Extension in `core/autonomous.py`
 
-| Component | Status | Changes |
-|-----------|--------|---------|
-| `memory/firestore_db.py::UserProfileStore` | Modified | Expand `_SCAFFOLD` with v4.0 fields; no interface change |
-| `memory/firestore_db.py::BlockStore` | New | New class, same pattern as TrainingLogStore |
-| `memory/firestore_db.py::BenchmarkStore` | New | New class, same pattern as TrainingLogStore |
-| `core/main.py::AgentOrchestrator` | Modified | Add `_coaching_guide` field; add `{coaching_guide}` rendering in `render_smart_system` |
-| `core/main.py::_load_coaching_guide` | New | Module-level helper, same shape as `_load_self_md()` |
-| `core/tools.py::TOOL_SCHEMAS` | Modified | Add 7 new schemas: `get_plan`, `get_block_status`, `update_plan`, `log_benchmark`, `get_benchmark_history`, `start_block`, `end_block` |
-| `core/tools.py::SMART_AGENT_DIRECT_TOOLS` | Modified | Add the 7 new tools |
-| `core/tools.py::_HANDLERS` | Modified | Add 7 new handler lambdas |
-| `core/tools.py` | Modified | Add 7 handler functions `_handle_get_plan`, etc. |
-| `core/weekly_training_review.py::_gather_week_data` | Modified | Add block + benchmark gather |
-| `core/morning_briefing.py::_gather_data` | Modified | Add block state gather |
-| `core/proactive_alerts.py::run_proactive_alerts` | Modified | Add block-end benchmark trigger check |
-| `docs/COACHING_GUIDE.md` | New | Coaching knowledge doc; read at startup by `_load_coaching_guide()` |
-| `prompts/smart_agent.md` | Modified | Replace training section; add `{coaching_guide}` placeholder |
-| `prompts/morning_briefing.md` | Modified | Replace D-13 guard; add block state rendering; append coaching context |
-| `prompts/proactive_alert.md` | Modified | Replace D-13 guard; add benchmark reminder rendering; append coaching context |
-| `prompts/weekly_training_review.md` | Modified | Amend target-naming instruction; add block/benchmark trend rendering |
+### Adding `_gather_habits_state()`
+
+The autonomous tick should be aware of today's supplement adherence so tick-brain can judge a nudge. This is a new source `(l)` alongside the existing 11 sources.
+
+```python
+def _gather_habits_state(now: datetime, project_id: str, database: str) -> list:
+    """(l) Today's habit/supplement completion state for autonomous tick awareness."""
+    try:
+        from memory.firestore_db import HabitStore
+        hs = HabitStore(project_id=project_id, database=database)
+        today_iso = now.astimezone(_TZ).date().isoformat()
+        return hs.get_today_state(today_iso) or []
+    except Exception:
+        logger.warning("autonomous: habits gather failed", exc_info=True)
+        return []
+```
+
+In `gather_situation()`, add to the `jobs` dict:
+
+```python
+"habits_state": lambda: _gather_habits_state(now, project_id, database),
+```
+
+And add to `_is_empty_signals()`: incomplete supplements at a scheduled slot can act as a proactive trigger (same pattern as `meals_since_last_tick`). This is a Phase 3 addition — implement when HabitStore exists.
+
+### Replacing `_gather_ticktick_overdue()` with `_gather_tasks_overdue()`
+
+```python
+def _gather_tasks_overdue(now: datetime, project_id: str, database: str) -> list:
+    """(b) Tasks overdue as of today — reads native TaskStore (Phase 2 replacement for TickTick)."""
+    try:
+        from memory.firestore_db import TaskStore
+        ts = TaskStore(project_id=project_id, database=database)
+        today_iso = now.astimezone(_TZ).date().isoformat()
+        return ts.list_due_today(today_iso) or []
+    except Exception:
+        logger.warning("autonomous: tasks gather failed", exc_info=True)
+        return []
+```
+
+The `jobs` dict key changes from `"ticktick_overdue"` to `"tasks_overdue"`. The triage prompt template must be updated in sync — the key name appears in `prompts/autonomous_triage.md`.
+
+---
+
+## Integration Point 7: `/api/today` Composition Endpoint
+
+Mirrors the `gather_situation()` fan-out pattern: each data source has its own `try/except`, failures produce `null` sections in the response rather than a 500.
+
+```python
+@router.get("/today")
+async def get_today(
+    date: str | None = None,
+    user: str = Depends(require_hub_session),
+):
+    """Compose Today timeline server-side from all sources concurrently.
+
+    Sources (fanned out in thread pool, mirrors autonomous.gather_situation):
+      - Calendar events (GoogleCalendarManager.list_events)
+      - Meals (MealStore.get_day_aggregate) — display-only, slot-time caveat applies
+      - Habits due today (HabitStore.get_today_state)
+      - Tasks due today (TaskStore.list_due_today)
+      - Garmin morning stats (GarminTool — sleep, HRV, body battery)
+      - Weather (WeatherTool.get_weather)
+      - Leave-by times for calendar events with location (RoutesTool — best-effort)
+
+    Returns structured JSON. Missing sources produce null sections.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    today_iso = date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = {
+            "calendar": pool.submit(_fetch_today_calendar, today_iso),
+            "meals": pool.submit(_fetch_today_meals, today_iso),
+            "habits": pool.submit(_fetch_today_habits, today_iso),
+            "tasks": pool.submit(_fetch_today_tasks, today_iso),
+            "garmin": pool.submit(_fetch_garmin_morning),
+            "weather": pool.submit(_fetch_weather),
+        }
+        result = {k: _safe_result(f) for k, f in futures.items()}
+
+    return JSONResponse(content={"date": today_iso, **result})
+```
+
+Meal timestamp caveat (from `CLAUDE.md`): `MealStore` timestamps are canonical slot times (08:00/12:00/20:00), NOT actual eating times. The Today endpoint must not infer eating time from them or display them as "eaten at 08:00". Display label: "Breakfast" not "Eaten at 08:00".
 
 ---
 
 ## Data Flow
 
-### Chat path (reactive coaching)
+### Hub Chat Flow (Phase 1)
 
 ```
-User message (Telegram)
+User types in hub chat → POST /api/chat {text, request_id}  (session cookie auth)
     ↓
-interfaces/_router.py → AgentOrchestrator.handle_message()
+hub_api.py: store request_id + enqueue_hub_message({text, user_id, source:"hub", request_id})
+    ↓  (returns HTTP 202 immediately)
+Cloud Tasks: POST /internal/process-hub-message  (OIDC auth, full CPU)
     ↓
-render_smart_system() injects:
-  {self_md}, {coaching_guide}, {training_profile}, {self_state},
-  {journal_digest}, {today_date}
+_router.handle_hub_message(payload)
     ↓
-Brain (gemini-3.5-flash) sees full coaching context in system prompt
+FirestoreConversationStore.append(user_id, "user", text, source="hub")
     ↓
-Brain calls get_plan (brain-direct) → UserProfileStore.load() + BlockStore.get_current()
+AgentOrchestrator.handle_message(user_id, text)  — same brain, same tool loop
     ↓
-Brain formulates data-grounded coaching response
-  (names targets from dated_goals, compares to TrainingLogStore / BenchmarkStore)
+reply text produced
     ↓
-Brain optionally calls log_benchmark / start_block / end_block
+FirestoreConversationStore.append(user_id, "assistant", reply, source="hub")
+
+Meanwhile, client polls every 2s:
+GET /api/messages/since?after=<cursor>
+    → FirestoreConversationStore.get(user_id)
+    → return messages[cursor:] where role=="assistant" and source!="cron"
 ```
 
-### Cron path (proactive coaching)
+### Proactive Message Flow with Web Push (Phase 4)
 
 ```
-Cloud Scheduler → POST /cron/proactive-alerts (21:30)
+autonomous tick / morning briefing / nightly review
     ↓
-run_proactive_alerts():
-  1. run_training_checkin()  [existing]
-  2. compute_recovery_concern() [existing, returns data-grounded dict]
-  3. BlockStore.get_current() → check benchmark_due flag  [new]
-  4. Compose alerts_context with recovery_concern + benchmark_reminder
+send_and_inject(bot, text, hub_push=True, telegram_mirror=<TELEGRAM_MIRROR env>)
     ↓
-_compose_alert() → brain with proactive_alert.md
-  (names plan targets post-D-13 release)
+if telegram_mirror:
+    bot.send_message(telegram_user_id, text)  ← existing path
+    (if this raises, exception propagates — D-10 gating preserved)
+if hub_push:
+    _send_hub_push(text)  ← best-effort, never raises
+        → PushSubscriptionStore.list_all()
+        → for each sub: webpush(sub, text, vapid_claims)
+        → on HTTP 410: PushSubscriptionStore.delete(endpoint)
+inject into FirestoreConversationStore (source="cron")
     ↓
-send_and_inject()
+caller: OutreachLogStore.append(...)  ← D-10: called only after return, unchanged
 ```
 
-### Block lifecycle
+### TickTick → TaskStore Migration (Phase 2, one-time)
 
 ```
-Amit: "Start a new strength block"
-  → Brain calls start_block(label, start_date, focus_facets)
-  → BlockStore creates doc, sets UserProfileStore.current_block_id
-  → Brain calls update_plan with weekly_split for the block
-
-[During block: daily sessions logged to TrainingLogStore as before]
-
-At end_date (detected by proactive_alerts 21:30 cron):
-  → BlockStore.benchmark_due set to True
-  → Evening alert surfaces benchmark reminder
-
-Amit does benchmark sessions → Brain calls log_benchmark(date, facet, value, unit, block_id)
-  → BenchmarkStore records result
-
-Amit: "End the block"
-  → Brain calls end_block(block_id, end_date)
-  → BlockStore.status = "complete", benchmark_due = False
-  → UserProfileStore.current_block_id = None
+scripts/import_ticktick.py (manual operator run)
+    ↓
+ticktick_tool.get_all_tasks()  (all lists + completed)
+    ↓
+for each task: TaskStore.create(normalize_ticktick(task))
+    ↓
+print summary {total, imported, errors}
+    ↓  [Amit verifies in hub UI]
+Operator: cancel TickTick subscription
+Operator: remove ticktick schemas from tools.py + autonomous.py
 ```
 
 ---
 
-## Build Order (Dependency-Respecting Sequence)
+## New `/api/*` Endpoints
 
-Dependencies flow: plan ingestion unlocks D-13 release; D-13 release unlocks named-number coaching; block/benchmark tracking unlocks trend coaching; all of the above together unlock strict proactive+reactive coaching.
-
-### Phase A: Living Plan ingestion
-
-1. Expand `UserProfileStore._SCAFFOLD` (`memory/firestore_db.py`)
-2. Update `render_smart_system` header string (`core/main.py`)
-3. Update `prompts/smart_agent.md` training section — remove D-13 empty-profile guard, add v4.0 coaching posture
-4. Add `update_plan` tool schema + handler + SMART_AGENT_DIRECT_TOOLS entry (`core/tools.py`) — extends the existing `update_training_profile` pattern
-5. Ingest Amit's blueprint via `update_plan` (or direct Firestore write + bootstrap verification)
-
-**Gate:** UserProfileStore.load() returns non-empty `dated_goals`, `weekly_split`, `nutrition_targets`.
-
-### Phase B: Coaching knowledge layer
-
-6. Create `docs/COACHING_GUIDE.md`
-7. Add `_load_coaching_guide()` helper to `core/main.py`
-8. Add `{coaching_guide}` field + rendering to `AgentOrchestrator.__init__` and `render_smart_system` (`core/main.py`)
-9. Add `{coaching_guide}` placeholder to `prompts/smart_agent.md`
-10. Append condensed coaching context to `prompts/morning_briefing.md`, `prompts/proactive_alert.md`, `prompts/weekly_training_review.md`
-
-**Gate:** Brain demonstrates expert coaching reasoning in chat (no generic platitudes).
-
-### Phase C: D-13 release
-
-11. Replace D-13 guard in `prompts/morning_briefing.md` with data-grounded-targets instruction
-12. Replace D-13 guard in `prompts/proactive_alert.md` similarly
-13. Amend `prompts/weekly_training_review.md` to add blueprint target naming
-
-**Dependency:** Phase A must complete first. D-13 can only release after the profile has real targets — otherwise the prompt instruction "name targets from profile" produces empty or fabricated output.
-
-**Gate:** Morning briefing and evening alert name specific targets from the profile when recovery concern fires. Weekly review references dated goals.
-
-### Phase D: Block and benchmark tracking
-
-14. Add `BlockStore` class to `memory/firestore_db.py` (same pattern as `TrainingLogStore`)
-15. Add `BenchmarkStore` class to `memory/firestore_db.py`
-16. Add 5 new tool schemas + handlers + direct-tool registrations (`core/tools.py`): `get_plan`, `get_block_status`, `log_benchmark`, `get_benchmark_history`, `start_block`, `end_block`
-17. Add block state gather to `core/morning_briefing.py::_gather_data()`
-18. Add block benchmark gather to `core/weekly_training_review.py::_gather_week_data()`
-19. Add benchmark trigger check to `core/proactive_alerts.py::run_proactive_alerts()`
-20. Update `prompts/morning_briefing.md` with block state rendering section
-21. Update `prompts/weekly_training_review.md` with block/benchmark trend section
-22. Update `prompts/proactive_alert.md` with benchmark reminder section
-23. Create the first training block via `start_block` tool
-
-**Dependency:** Phase A must complete (profile needs `current_block_id` field). Phase C should complete first so the brain can name targets when surfacing benchmark trends.
-
-### Phase E: Strict proactive + reactive coaching (emerges from Phases A–D)
-
-No new Python logic needed. This phase is the behavioral outcome of Phases A–D working together:
-- Chat coaching: smart_agent.md + get_plan + get_block_status
-- Morning briefing: data-grounded recovery with named targets
-- Evening alert: benchmark reminders + named plan targets
-- Weekly review: per-facet improvement trends across blocks
-
-Validate by running through representative scenarios: recovery conflict, off-plan nutrition critique, mid-block progress question, end-of-block benchmark trigger.
+| Endpoint | Auth | Purpose | Phase |
+|----------|------|---------|-------|
+| `GET /api/auth/google` | None | Initiate Google OAuth2 | 1 |
+| `GET /api/auth/callback` | None | OAuth2 callback, set session cookie | 1 |
+| `GET /api/auth/me` | Session | Return authenticated email | 1 |
+| `POST /api/auth/logout` | Session | Clear session cookie | 1 |
+| `GET /api/today` | Session | Compose Today timeline | 1 |
+| `POST /api/chat` | Session | Enqueue hub chat → Cloud Tasks | 1 |
+| `GET /api/messages/since` | Session | Poll for new assistant messages | 1 |
+| `GET /api/vapid-public-key` | None | Serve VAPID public key for service worker | 1 |
+| `GET /api/tasks` | Session | List tasks (filtered) | 2 |
+| `POST /api/tasks` | Session | Create task | 2 |
+| `PATCH /api/tasks/{id}` | Session | Update task | 2 |
+| `POST /api/tasks/{id}/complete` | Session | Complete task | 2 |
+| `DELETE /api/tasks/{id}` | Session | Delete task | 2 |
+| `GET /api/habits` | Session | List habits with today's completion state | 3 |
+| `POST /api/habits/{id}/complete` | Session | Log habit/supplement completion | 3 |
+| `POST /api/push/subscribe` | Session | Register Web Push subscription | 4 |
+| `DELETE /api/push/subscribe` | Session | Remove push subscription | 4 |
+| `GET /api/health/training` | Session | Training history (Hevy + Garmin) | 5 |
+| `GET /api/health/nutrition` | Session | Nutrition detail (MealStore range) | 5 |
+| `GET /api/health/sleep` | Session | Sleep trends (Garmin) | 5 |
 
 ---
 
-## Architectural Patterns to Follow
+## Dockerfile Change (Multi-Stage Build)
 
-### Pattern 1: Omit-empty discipline (existing — extend)
+```dockerfile
+# Stage 1: Build frontend
+FROM node:20-slim AS frontend-builder
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-**What:** Stores read with `.load()` / `.get()` return `{}` or `[]` on failure; prompts silently omit sections when data keys are absent. No placeholder text.
-**Apply to:** All new block/benchmark data in morning briefing, weekly review, proactive alerts. If `BlockStore.get_current()` returns None, the block section is absent from the briefing data dict. The prompt is never called with a `"block": None` key — it simply doesn't have the key.
+# Stage 2: Python runtime (existing, extended)
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+# Copy built frontend assets from stage 1
+COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
+CMD ["uvicorn", "interfaces.web_server:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+```
 
-### Pattern 2: Best-effort gather wrapping (existing — extend)
-
-**What:** In `_gather_week_data` (weekly_training_review.py), every data source is wrapped in `try/except`; failures set the key to `None` and log at WARNING. The brain handles error copy.
-**Apply to:** All new gather calls in morning_briefing.py, weekly_training_review.py, proactive_alerts.py.
-
-### Pattern 3: Brain-direct tools for judgment, worker for execution (existing — extend)
-
-**What:** Tools requiring coaching judgment (`get_plan`, `get_block_status`, `log_benchmark`, `start_block`, `end_block`) are brain-direct. They go in `SMART_AGENT_DIRECT_TOOLS` and are excluded from `WORKER_TOOL_SCHEMAS`.
-**Rationale:** Block lifecycle decisions (when to start/end a block, whether a benchmark result is valid) require the brain's judgment, not just data execution.
-
-### Pattern 4: Startup-cached stable content (existing — extend)
-
-**What:** `_load_self_md()` reads `docs/SELF.md` once at startup; the result is stored on the orchestrator and injected into every prompt without further file I/O.
-**Apply to:** `_load_coaching_guide()` reads `docs/COACHING_GUIDE.md` the same way. Coaching knowledge is stable; no per-message I/O.
+The Python runtime image contains only compiled static files — no Node.js, no `node_modules`. Cold start is not materially affected.
 
 ---
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Adding a new cron job for block-end benchmark triggers
+### Anti-Pattern 1: Global Auth Middleware for Hub Routes
 
-**What people do:** Create a new Cloud Scheduler job that fires at block end to prompt a benchmark.
-**Why it's wrong:** The proactive_alerts cron at 21:30 already runs daily and has the send_and_inject infrastructure. Adding a new scheduler job (8th job) for a state that can be detected by a flag check in the existing 21:30 cron is over-engineering.
-**Do this instead:** Set `benchmark_due = True` on the block doc when the end condition is met; the 21:30 cron reads the flag and includes a benchmark reminder in the alert.
+**What people do:** Add `@app.middleware("http")` that validates a session cookie for all requests.
 
-### Anti-Pattern 2: Embedding D-13 release as a Python feature flag
+**Why it's wrong:** `web_server.py` has four distinct auth surfaces (Telegram HMAC, OIDC, iOS shared-secret ×2). A global middleware fires before all of them. The OIDC `_verify_cron_request` and the `hmac.compare_digest` webhook check run inside their route handlers — global middleware would need to detect which auth pattern applies per-path, duplicating routing logic and creating a maintenance hazard.
 
-**What people do:** Add an `if profile.dated_goals: release_d13 = True` code branch that selects between two prompt strings or two code paths.
-**Why it's wrong:** The guard is purely prompt-level. Adding Python branching introduces a dual-path complexity that has no behavioral benefit — the prompt already handles the empty-profile case gracefully with "ask the user to state their preference".
-**Do this instead:** Replace the D-13 guard paragraphs in the prompts with data-grounded-targets instructions. The brain naturally applies qualitative language when no targets exist and named targets when they do.
+**Do this instead:** Per-route `Depends(require_hub_session)` in `hub_api.py`. The hub routes are fully isolated from the existing auth surfaces.
 
-### Anti-Pattern 3: Storing benchmark history in TrainingLogStore
+### Anti-Pattern 2: Reusing `/internal/process-update` for Hub Messages
 
-**What people do:** Add a `benchmark: true` flag to TrainingLogStore sessions and query by that flag.
-**Why it's wrong:** TrainingLogStore scans the whole collection (no Firestore index on `benchmark`) and returns all sessions sorted by date. Filtering by a flag in Python on every benchmark query is inefficient and makes the schema ambiguous. Benchmarks are not sessions — they are per-facet measurement events.
-**Do this instead:** Dedicated `BenchmarkStore` with doc IDs keyed `{date}_{facet}`. Single-purpose collection, clean schema, no scan overhead.
+**What people do:** Serialize the hub chat message as a fake Telegram `Update` JSON and POST it to the existing endpoint.
 
-### Anti-Pattern 4: Pinecone for coaching knowledge retrieval
+**Why it's wrong:** The endpoint calls `Update.de_json(data=request_json, bot=_application.bot)`, which deserializes into python-telegram-bot's typed `Update` object. Hub messages are not Telegram updates and should not pretend to be. A fake `Update` breaks type safety, makes debugging harder, and ties hub chat to Telegram's wire format forever.
 
-**What people do:** Embed coaching principles in Pinecone and recall them per turn.
-**Why it's wrong:** Coaching principles are ~600 tokens, always relevant, and change infrequently. Pinecone retrieval adds ~200ms latency per turn, has a recall-or-miss failure mode, and splits authoritative coaching context across an embedding store that cannot be easily reviewed or updated.
-**Do this instead:** Inject coaching knowledge as stable prompt context at startup (same as SELF.md). Edit `docs/COACHING_GUIDE.md` when knowledge needs updating; the next deploy picks it up.
+**Do this instead:** `enqueue_hub_message()` + `/internal/process-hub-message` — a parallel path with ~50 lines of code sharing the same auth, queue, and full-CPU invariant.
+
+### Anti-Pattern 3: Calling `OutreachLogStore.append` Before Both Deliveries Succeed
+
+**What people do:** Log the outreach after both Telegram send and Web Push succeed, making the log conditional on two network calls.
+
+**Why it's wrong:** Web Push is inherently unreliable (subscriptions expire, devices go offline). Making D-10 gating conditional on push delivery means a sleeping phone can prevent the outreach log from being written, allowing the autonomous tick to re-send the same message repeatedly.
+
+**Do this instead:** Web Push is best-effort — the `_send_hub_push()` helper never raises, and the outreach log is written after Telegram send succeeds (or after any send path succeeds when TELEGRAM_MIRROR=false). Web Push failure is logged but has no effect on D-10 gating.
+
+### Anti-Pattern 4: Inserting `firestore.SERVER_TIMESTAMP` Inside Outreach Log Entries
+
+**What people do:** Add a `"push_sent_at": firestore.SERVER_TIMESTAMP` field to the entry dict passed to `OutreachLogStore.append`.
+
+**Why it's wrong:** `OutreachLogStore.append` uses `firestore.ArrayUnion([entry])` for atomic duplicate-free appends. `ArrayUnion` uses deep equality comparison; each `SERVER_TIMESTAMP` sentinel is a freshly allocated object, so two identical entries with sentinel timestamps would not de-duplicate. The existing `OutreachLogStore` docstring (NOTE 2) explicitly warns against this.
+
+**Do this instead:** `"push_sent_at": datetime.now(timezone.utc).isoformat()` — a static ISO string that round-trips through deep equality correctly.
+
+### Anti-Pattern 5: Computing Habit Streaks in Firestore
+
+**What people do:** Use Firestore `count()` aggregations on the completions sub-collection to compute streaks.
+
+**Why it's wrong:** Firestore has no server-side window functions. `count()` returns the total number of completions, not the current unbroken streak. Streak computation requires knowing which consecutive days have completions — this is sequential logic that must run in Python.
+
+**Do this instead:** `list_completions(habit_id, days=30)` returns raw documents; `compute_streak(completions)` is a pure Python function. Thirty days is sufficient for any meaningful streak display.
+
+### Anti-Pattern 6: Building the Frontend at Container Runtime
+
+**What people do:** Include `node` in the Python image and run `npm run build` during container startup.
+
+**Why it's wrong:** Adds Node.js and hundreds of MB of `node_modules` to the runtime image. Increases cold start time. Makes npm vulnerabilities a runtime security surface.
+
+**Do this instead:** Multi-stage Dockerfile (documented above). The final image contains only static files.
 
 ---
 
 ## Scaling Considerations
 
-This is a single-user system. Scaling is not the concern. The relevant constraint is **prompt token budget**:
+This is a single-user system. Scaling is not a concern. The `--workers 1` uvicorn constraint (required by `AgentOrchestrator` singleton and `ConversationManager`) already handles all traffic on a single instance. Cloud Run scales instances horizontally when the single worker is busy, but one user generates insufficient load for that to matter.
 
-| Addition | Token cost | Mitigation |
-|----------|------------|------------|
-| `{coaching_guide}` in smart_agent.md | ~600 tokens (stable, cached) | Gemini prompt caching on shared prefix — paid once |
-| `{training_profile}` expanded fields | ~200–400 tokens (stable, cached) | Same caching prefix benefit |
-| `block_state` in morning_briefing data | ~100 tokens | Per-cron; briefing is already ~1000 tokens |
-| `block_benchmarks` in weekly_review data | ~300–600 tokens | Weekly, not daily; acceptable |
-
-Total smart_agent.md prompt grows by ~800–1000 tokens. Well within Gemini 3.5 Flash's context window and prompt caching benefit.
+The in-process TTL read cache for `self_state` and `journal` (10-minute TTL, existing) extends naturally to `TaskStore` and `HabitStore` reads in the Today endpoint — tasks and habits change slowly during the day. A 30-60 second in-process cache for `get_today_state()` reduces Firestore read costs during rapid client polling without meaningful staleness risk.
 
 ---
 
 ## Sources
 
-- `core/main.py` — `AgentOrchestrator.__init__`, `render_smart_system` (lines 239–307)
-- `core/tools.py` — `TOOL_SCHEMAS`, `SMART_AGENT_DIRECT_TOOLS`, `_HANDLERS` (lines 39–57, 651–827, 1433–1471)
-- `core/weekly_training_review.py` — `_gather_week_data`, `_compose_review` (lines 42–266)
-- `core/training_checkin.py` — `compute_recovery_concern`, `RECOVERY_THRESHOLDS` (lines 65–232)
-- `core/proactive_alerts.py` — `run_proactive_alerts`, D-13 guard comments (lines 91–175)
-- `memory/firestore_db.py` — `UserProfileStore`, `TrainingLogStore`, `MealStore` (lines 93–879)
-- `prompts/smart_agent.md` — `{training_profile}` placeholder, D-13 training section (lines 1–164)
-- `prompts/morning_briefing.md` — D-13 guard (lines 138–143), section structure
-- `prompts/proactive_alert.md` — D-13 guard (lines 22–23)
-- `prompts/weekly_training_review.md` — qualitative-only coaching instruction (line 51)
-- `.planning/PROJECT.md` — v4.0 goal statement and feature targets
+- Direct code reading (verified line numbers):
+  - `interfaces/web_server.py` — route registration order, auth surfaces, lifespan, singleton guards
+  - `core/task_dispatch.py` — `enqueue_update()` implementation, Cloud Tasks payload shape
+  - `core/scheduled_message.py` — `send_and_inject()` signature, D-10 gating relationship
+  - `core/autonomous.py` — `gather_situation()` fan-out, `_gather_*()` function patterns, `_is_empty_signals()` gate
+  - `core/tools.py` — `SMART_AGENT_DIRECT_TOOLS`, `TOOL_SCHEMAS`, `_HANDLERS` dispatch pattern
+  - `memory/firestore_db.py` — `OutreachLogStore` (D-10, NOTE 2 invariant), `TrainingLogStore` (store discipline pattern), `FollowupStore` (sub-collection-free alternative pattern)
+  - `memory/firestore_conversation.py` — `_txn_append`, message schema, `get_last_user_timestamp`
+- Design spec: `docs/superpowers/specs/2026-06-13-klaus-hub-design.md`
+- Project context: `.planning/PROJECT.md`
+- CLAUDE.md invariants verified: Cloud Tasks full-CPU turns, OutreachLog D-10 gating, lowercase GCP resource names, `load_dotenv(override=True)`, single-worker constraint
 
 ---
-*Architecture research for: Klaus v4.0 Specific Training & Nutrition Coaching*
-*Researched: 2026-06-03*
+*Architecture research for: Klaus Hub v5.0 — Web PWA integration with existing Klaus Cloud Run service*
+*Researched: 2026-06-13*

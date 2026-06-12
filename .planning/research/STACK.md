@@ -1,20 +1,21 @@
 # Stack Research
 
-**Domain:** Expert coaching knowledge layer + living training plan + block/benchmark tracking for a personal AI agent
-**Researched:** 2026-06-03
-**Confidence:** HIGH — all decisions are pure extensions of existing, validated infrastructure; no genuinely new technology domains introduced
+**Domain:** Web PWA hub — React + TypeScript frontend served from existing FastAPI/Cloud Run service
+**Researched:** 2026-06-13
+**Confidence:** HIGH for frontend stack (well-established ecosystem, verified versions); HIGH for auth pattern (official Google docs + existing `google-auth` library already in `requirements.txt`); MEDIUM for Web Push iOS constraints (behavior is documented but Apple's reliability is an observed characteristic, not a spec guarantee)
 
 ---
 
 ## Executive Context
 
-v4.0 adds three capabilities to an already-running system:
+This research covers only the NEW technology needed for v5.0 Klaus Hub. The existing Python/FastAPI/Firestore/Cloud Run stack is validated and unchanged. The question is: what gets added?
 
-1. **Curated coaching knowledge** — expert hybrid-athlete content the brain reasons over
-2. **Living plan in UserProfileStore** — Amit's blueprint as a structured-but-flexible Firestore doc
-3. **Training block + benchmark tracking** — block state and per-facet improvement records
-
-The guiding constraint: **every decision must reuse existing infra unless a genuinely new capability is needed.** The existing stack (Firestore, Pinecone 768-dim cosine, Postgres activities/biometrics, Gemini brain, TrainingLogStore, MealStore) is already wired and working. The question is how to extend it, not what to replace it with.
+Five decision areas need research:
+1. Frontend build: React + Vite + TypeScript + Tailwind versions and tooling
+2. PWA: `vite-plugin-pwa` vs hand-rolled service worker
+3. Web Push: Python-side VAPID library + iOS Safari constraints
+4. Auth: Google Identity Services (GSI) one-tap → FastAPI session cookie
+5. Serving: StaticFiles mount, SPA fallback, cache headers
 
 ---
 
@@ -22,303 +23,268 @@ The guiding constraint: **every decision must reuse existing infra unless a genu
 
 ### Core Technologies
 
-All existing — no new core frameworks.
-
-| Technology | Version | Purpose | Why Keep It |
-|------------|---------|---------|-------------|
-| Firestore (`users/amit`) | existing | Living plan + block state | UserProfileStore scaffold already exists; merge-patch discipline established; no new DB needed |
-| Postgres (`activities`, `daily_biometrics`) | existing | Benchmark result queries + trend analytics | 3yr backfill lives here; `compute_acwr` already reads it; benchmark snapshots fit as additional columns on `activities` or a thin new table |
-| Pinecone `klaus-memory` (768-dim, cosine) | existing | Optional: coaching knowledge RAG namespace | Index already live; adding a `kind="coaching"` namespace costs zero infra |
-| `prompts/*.md` + `docs/` flat files | existing | Primary vehicle for curated coaching knowledge | Brain context window can hold the full blueprint + principles doc; no retrieval plumbing needed for a single well-structured document |
-| TrainingLogStore (Firestore `training_log`) | existing | Session-level log with RPE/feel/notes | Already logs sessions; add `benchmark: bool` flag + facet fields to existing schema via merge-patch |
+| Technology | Version | Purpose | Why Recommended |
+|------------|---------|---------|-----------------|
+| React | 19.x | UI framework | Latest stable; concurrent features clean up polling + async UX; no breaking changes from v18 for this scope |
+| TypeScript | 5.x | Type safety | Standard; Vite templates default to TS5; no reason to use 4.x |
+| Vite | 6.x | Build tool (NOT 7) | Vite 7 breaks `@tailwindcss/vite` peer dep (`^5.2.0 \|\| ^6` only); stay on 6.x until Tailwind ships Vite 7 support |
+| Tailwind CSS | 4.x | Styling | v4 ships a Vite plugin (`@tailwindcss/vite`) — no PostCSS config file needed, just `import 'tailwindcss'` in CSS |
+| `vite-plugin-pwa` | 1.x | PWA manifest + service worker | Zero-config manifest generation, Workbox integration, TypeScript types; use `injectManifest` strategy to keep control of push event handlers |
 
 ### Supporting Libraries
 
-No new dependencies required. All of the following already exist in the project:
-
-| Library | Already In Project | Purpose in v4.0 | Notes |
-|---------|-------------------|----------------|-------|
-| `google-cloud-firestore` | yes | UserProfileStore extended schema | Use `merge=True` upserts — same discipline as all other stores |
-| `psycopg2` | yes | Benchmark queries + trend queries against Postgres | `database_tool.py` already wraps this with read-only guard |
-| `pinecone` | yes | `kind="coaching"` namespace if RAG path chosen | Only needed if RAG path is taken (see decision below) |
-| `google-genai` (embedding) | yes | Embed coaching content for RAG | Only needed if RAG path taken; `MemoryStore._embed` already handles this |
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `@tanstack/react-query` | v5.x (5.90+) | Server state, polling, cache | Every `/api/*` call; `refetchInterval` for chat polling while app is open |
+| `react-router` | v7.x | Client-side routing | Declarative mode only (not framework mode); 5 top-level tabs map naturally to routes |
+| `lucide-react` | latest | Icons | Ships tree-shakeable SVGs; pairs with Tailwind; shadcn/ui's default icon set |
+| `pywebpush` | 2.3.0 | Python-side Web Push (VAPID) | Send push to subscribed browser from FastAPI routes and from `core/scheduled_message.py` |
+| `itsdangerous` | bundled with Starlette | Session cookie signing | Already a Starlette/FastAPI dependency; `SessionMiddleware` is built on it — no new package |
+| `aiohttp` | >=3.9 | Async HTTP for push sends | Required by `pywebpush` 2.1+ `async_webpush`; keeps push sends non-blocking inside FastAPI handlers |
 
 ### Development Tools
 
-No changes — existing `pytest`, `ruff`, and Cloud Run deploy pipeline remain unchanged.
+| Tool | Purpose | Notes |
+|------|---------|-------|
+| `@vitejs/plugin-react` | React fast refresh + JSX | Required peer for Vite + React; version must be compatible with Vite 6 (4.x works) |
+| `@tailwindcss/vite` | Tailwind v4 Vite integration | Replaces PostCSS config entirely; just `plugins: [tailwindcss()]` in `vite.config.ts` |
+| `vitest` | Frontend unit tests | Same config as Vite; keep separate from the Python `pytest` suite |
+| `typescript` | 5.x | TS compiler | Vite handles transpilation; tsc only for type checking |
 
 ---
 
-## The Three Key Design Decisions
+## Detailed Decisions
 
-### Decision 1: Coaching Knowledge — Prompt-Injected Doc, NOT RAG
+### 1. Vite + React + Tailwind Scaffold
 
-**Recommendation: a single `docs/COACHING.md` flat file injected into the smart agent system prompt at render time, NOT Pinecone RAG.**
+Use Vite 6 (not 7). As of 2026-06-13, `@tailwindcss/vite` declares `"vite": "^5.2.0 || ^6"` as a peer dependency — Vite 7 installs fail. Tailwind v4 eliminates the old `tailwind.config.js` and PostCSS chain entirely; configuration lives in the CSS file via `@import "tailwindcss"` and `@theme {}` blocks.
 
-Why prompt injection wins for this use case:
+Vite 6 requires Node 18+ (use Node 22 LTS in the Docker build layer).
 
-- The coaching knowledge corpus is small and bounded. The hybrid-athlete blueprint is ~1,500 words. A distilled coaching principles doc (interference effect, block periodization, session execution, fueling science) will be another ~2,000-3,000 words. Total: comfortably under 6,000 tokens — well within Gemini flash's context window, and always present.
-- The brain needs the full coaching context on every coaching-related exchange, not just when a specific query triggers retrieval. A Telegram message like "how did I do this week?" requires access to all facets simultaneously — RAG would need to retrieve the right chunks without knowing which ones are needed.
-- RAG introduces retrieval latency + embedding cost on every coaching turn. At a single-user scale with bounded knowledge, this is pure overhead.
-- A flat file in `docs/` is editable, version-controlled, and self-documenting. When Amit updates the blueprint, the coaching doc updates in a single edit + deploy.
-- The `render_smart_system` function in `core/main.py` already injects `{self_md}`, `{self_state}`, and `{journal_digest}`. Adding `{coaching_knowledge}` is a two-line change.
+TypeScript project: `tsconfig.json` must include `"vite-plugin-pwa/client"` in `compilerOptions.types` so the service worker globals are typed.
 
-**The right use of `kind="coaching"` in Pinecone would be** for storing individual benchmark results or weekly narrative summaries that should be semantically searchable over time — not for the expert principles doc. Do NOT embed and RAG the static principles doc.
+### 2. vite-plugin-pwa vs Hand-Rolled Service Worker
 
-**What the `docs/COACHING.md` should contain:**
-- Distilled hybrid-athlete principles: concurrent training interference effect, how to manage it (run AM / lift PM with ≥6h gap, sequence runs before lifts on the same day only when unavoidable)
-- Block periodization: what a block is, how to identify block transitions, what benchmark tests map to which facets
-- Session execution notes: specific coaching cues for the blueprint's sessions (what "heavy, driving toward 120kg" means in practice, fatigue squeeze protocol, threshold run structure)
-- Fueling science: the 6-part timeline from the blueprint with reasoning (why post-run carb reload matters, beta-alanine timing, creatine protocol)
-- The full AM/PM weekly split table verbatim
-- The 16-week aerobic progression table verbatim
-- Dated goals verbatim (October / November peaks)
+Use `vite-plugin-pwa` v1.x with the **`injectManifest` strategy** — not `generateSW`.
 
-This document is the "coaching brain" — inject it, don't retrieve it.
+Why `injectManifest`: `generateSW` auto-generates the entire service worker from Workbox options with no escape hatch for custom push event handlers. `injectManifest` lets you write `src/sw.ts` with your own `push` and `notificationclick` listeners while Workbox still injects the pre-cache manifest. This is the documented approach for push notifications in vite-plugin-pwa (see GitHub issue #84).
 
-### Decision 2: Living Plan — Extended UserProfileStore in Firestore
+The service worker (`src/sw.ts`) needs:
+```typescript
+self.addEventListener('push', (event) => {
+  const data = event.data?.json();
+  event.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/icon-192.png',
+      badge: '/badge-72.png',
+      data: { url: data.url },
+    })
+  );
+});
 
-**Recommendation: extend the existing `users/amit` Firestore document with a richer schema. Do NOT create a separate collection.**
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(clients.openWindow(event.notification.data.url));
+});
+```
 
-The current scaffold has `athletic_goals: []`, `training_constraints: []`, `recovery_preferences: {}`, `schema_version: 1`. This is intentionally minimal and was designed to be extended.
+`event.waitUntil` is mandatory on iOS — a push handler that doesn't call `showNotification` inside `waitUntil` causes iOS to silently kill the service worker.
 
-**Extended schema for v4.0** (merged via `UserProfileStore.update()` with `merge=True`):
+### 3. Web Push (VAPID) — Python Side
+
+**Library:** `pywebpush==2.3.0` (released 2026-02-09; async support added in 2.1.0 via `async_webpush`).
+
+VAPID keys: Generate once with OpenSSL (`ec -name prime256v1`), store private key as Secret Manager secret, public key as env var `VAPID_PUBLIC_KEY`. The private key can be passed to `pywebpush` as a base64-encoded DER string (not a file path) — better for Cloud Run where you can't guarantee a writable filesystem path.
+
+VAPID claims must include `"sub": "mailto:amit.grupper@gmail.com"` and `"aud"` is auto-populated from the endpoint URL by pywebpush.
+
+`async_webpush` uses `aiohttp` under the hood. Add `aiohttp>=3.9` to `requirements.txt`.
+
+Push send pattern in `core/scheduled_message.py`:
+```python
+from pywebpush import async_webpush
+await async_webpush(
+    subscription_info=sub.to_dict(),  # from PushSubscriptionStore
+    data=json.dumps({"title": "Klaus", "body": msg, "url": "/"}),
+    vapid_private_key=os.environ["VAPID_PRIVATE_KEY_DER"],
+    vapid_claims={"sub": "mailto:amit.grupper@gmail.com"},
+)
+```
+
+**PushSubscriptionStore** (new Firestore store in `memory/firestore_db.py`): stores `endpoint`, `keys.auth`, `keys.p256dh` from the browser `PushSubscription` object. Single document per device (Amit only); support multiple devices (iPhone + PC).
+
+### 4. iOS Safari Web Push Constraints
+
+These are hard constraints, not soft best practices:
+
+| Constraint | Detail |
+|------------|---------|
+| Install required | Push only works for PWAs added to home screen via Safari → Share → Add to Home Screen. An open Safari tab never gets push. |
+| iOS 16.4+ required | Amit is on iPhone; over 95% of iPhones run ≥16 as of 2026. Non-issue. |
+| Gesture-gated permission | `Notification.requestPermission()` must be called inside a click handler — not on page load, not in `setTimeout`. Show a button in the UI; request on tap. |
+| `display: standalone` mandatory | The `manifest.webmanifest` must have `"display": "standalone"`. vite-plugin-pwa sets this via config. |
+| `event.waitUntil` mandatory | Service worker push handler must call `showNotification` inside `waitUntil` or iOS drops the notification silently. |
+| HTTPS required | Cloud Run already serves HTTPS — no action needed. |
+| Delivery reliability | ~70-85% vs Android ~90-95%. Acceptable for personal use; Telegram mirror flag (per the design spec) covers the gap during transition. |
+| EU DMA exception | Apple removed standalone PWA (and therefore push) in the EU with iOS 17.4. Amit is in Tel Aviv (Israel), not EU — no impact. |
+| Subscription stability | iOS subscriptions can expire after prolonged inactivity. Implement re-subscription logic on hub open: check if subscription is still valid, re-register if not. |
+
+### 5. Google Sign-In (GSI) Auth Flow
+
+The existing `google-auth>=2.30` in `requirements.txt` is the verification library — no new package needed.
+
+**Flow:**
+1. Frontend loads the Google Identity Services One Tap JS library (`accounts.google.com/gsi/client`) — not OAuth redirect, just the credential token flow.
+2. On successful sign-in, GSI returns a JWT credential to the frontend callback.
+3. Frontend POSTs the credential to `POST /api/auth/google` (new FastAPI route).
+4. Backend verifies with `google.oauth2.id_token.verify_oauth2_token(credential, GoogleRequest(), audience=CLIENT_ID)`.
+5. Check `payload["email"] == "amit.grupper@gmail.com"` — allowlist of one. Reject all others with 403.
+6. Set a server-side session cookie using Starlette's `SessionMiddleware` (already bundled with FastAPI/Starlette):
+   ```python
+   request.session["user"] = payload["sub"]  # Google sub, not email
+   ```
+7. All `/api/*` routes check `request.session.get("user")` — raise 401 if absent.
+
+`SessionMiddleware` configuration:
+```python
+from starlette.middleware.sessions import SessionMiddleware
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.environ["SESSION_SECRET"],  # new Secret Manager secret
+    https_only=True,    # Secure flag — Cloud Run is always HTTPS
+    same_site="lax",    # Prevents CSRF for top-level navigations; fine for same-origin hub
+    max_age=30 * 24 * 3600,  # 30 days — personal device, no public terminal risk
+)
+```
+
+CSRF: `SameSite=Lax` covers the CSRF attack surface for same-origin form submissions. GSI also validates `g_csrf_token` automatically. No additional CSRF library needed.
+
+Note: `google-auth-oauthlib` is for the *server-side* Google OAuth flow (used by `core/auth_google.py` for Calendar/Gmail). The GSI credential token flow for the hub uses only `google-auth` + `google.oauth2.id_token.verify_oauth2_token` — no OAuth redirect, no callback URL, simpler.
+
+### 6. Serving Vite Build from FastAPI
+
+**Build output:** `frontend/dist/` (Vite default). Add a Docker build step that runs `npm run build` and copies `frontend/dist/` into the image. The `frontend/` directory lives alongside `interfaces/`, `core/`, etc.
+
+**StaticFiles mount:** Mount with a SPA fallback. FastAPI's `StaticFiles` returns 404 for unknown paths by default; React Router needs the server to return `index.html` for any non-API path.
 
 ```python
-{
-    # --- existing fields (preserved) ---
-    "schema_version": 2,
-    "updated_at": SERVER_TIMESTAMP,
+# In web_server.py, after all /api/* and /cron/* routes:
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+import pathlib
 
-    # --- dated goals (from blueprint §1) ---
-    "goals": {
-        "october": {
-            "bench_kg": 100,
-            "squat_kg": 120,
-            "half_marathon_time": "1:25:00",
-            "deadline": "2026-10-31"
-        },
-        "november": {
-            "push_ups": 125,
-            "pull_ups": 35,
-            "run_3k_time": "9:30",
-            "run_400m_time": "0:55",
-            "deadline": "2026-11-30"
-        }
-    },
+FRONTEND_DIR = pathlib.Path(__file__).parent.parent / "frontend" / "dist"
 
-    # --- weekly training template (from blueprint §2) ---
-    "weekly_template": {
-        "sunday":    {"am": "rest_or_sleep", "pm": "mixed_practice"},
-        "monday":    {"am": "easy_run", "pm": "lower_body_a"},
-        "tuesday":   {"am": "medium_long_run_strides", "pm": "upper_body_a"},
-        "wednesday": {"am": "threshold_run", "pm": "lower_body_b"},
-        "thursday":  {"am": "easy_run", "pm": "upper_body_b"},
-        "friday":    {"am": "long_run", "pm": "mobility_sauna"},
-        "saturday":  {"am": "rest", "pm": "rest"}
-    },
-
-    # --- nutrition framework (from blueprint §6) ---
-    "nutrition": {
-        "daily_targets": {"protein_g": 150, "carbs_g": 350},
-        "fueling_timeline": [
-            {"slot": "pre_am_run", "content": "30-50g simple carbs + coffee"},
-            {"slot": "post_am_run", "content": "oats/rice/sourdough + 3-4 eggs. Vitamin D3+K2 + Omega-3"},
-            {"slot": "midday", "content": "lean beef/steak + complex carbs + greens"},
-            {"slot": "pm_pre_lift", "content": "30-60min prior: electrofuel or fruit. Beta-Alanine"},
-            {"slot": "pm_post_lift", "content": "high protein + digestible carbs + Creatine"},
-            {"slot": "pre_bed", "content": "Magnesium Glycinate + Zinc + Copper 30-60min before sleep"}
-        ]
-    },
-
-    # --- supplement schedule ---
-    "supplements": [
-        {"name": "Vitamin D3+K2", "timing": "post_am_run"},
-        {"name": "Omega-3", "timing": "post_am_run"},
-        {"name": "Beta-Alanine", "timing": "pm_pre_lift"},
-        {"name": "Creatine", "timing": "pm_post_lift"},
-        {"name": "Magnesium Glycinate", "timing": "pre_bed"},
-        {"name": "Zinc", "timing": "pre_bed"},
-        {"name": "Copper", "timing": "pre_bed"}
-    ],
-
-    # --- aerobic progression (from blueprint §4) ---
-    "aerobic_plan": {
-        "goal_hm_pace_per_km": "4:01",
-        "zone2_range": {"min_pace": "4:50", "max_pace": "5:30"},
-        "weeks": [
-            {"week": 1, "phase": "aerobic_base", "long_run_km": 16, "threshold_vol_km": 6, "threshold_pace": "3:55"},
-            # ... all 16 weeks; store as array of dicts
-        ]
-    },
-
-    # --- per-facet current state (populated incrementally by Klaus from data) ---
-    "current_state": {
-        "bench_1rm_kg": null,           # updated after benchmark sessions
-        "squat_1rm_kg": null,
-        "push_up_max": null,
-        "pull_up_max": null,
-        "run_3k_best": null,
-        "run_400m_best": null,
-        "hm_threshold_pace": null,
-        "last_assessed": null
-    },
-
-    # --- current training block ---
-    "current_block": {
-        "block_id": "block-1",          # e.g. "block-1", "block-2"
-        "start_date": "2026-06-03",
-        "target_end_date": "2026-07-28",  # ~8 weeks typical block
-        "phase": "aerobic_base",         # maps to aerobic_plan.weeks phase
-        "week_in_block": 1,              # incremented weekly
-        "benchmark_due": false,
-        "benchmark_session_date": null
-    }
-}
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    candidate = FRONTEND_DIR / full_path
+    if candidate.is_file():
+        return FileResponse(candidate)
+    return FileResponse(FRONTEND_DIR / "index.html")
 ```
 
-**Why this lives in `users/amit` (not a sub-collection):**
-- The brain reads the entire profile doc on every coaching-relevant call (morning briefing, evening check-in, weekly review). A single document read is one Firestore RPC; a sub-collection read is multiple RPCs plus a collection stream.
-- The data is not write-heavy at the field level — it's updated by Klaus once per session at most. Firestore's 1MB doc limit is nowhere near a concern here (this schema is ~5KB).
-- `UserProfileStore.load()` already returns the full dict; all callers get the full context with zero changes.
-- `merge=True` upserts mean Klaus can update individual nested paths (`current_state.bench_1rm_kg`) without overwriting the rest of the doc.
+**Cache headers:** Vite hashes asset filenames (`/assets/index-Bz3xYK.js`). These can be served with `Cache-Control: public, max-age=31536000, immutable`. `index.html` and the service worker (`sw.js`) must NOT be cached aggressively — use `Cache-Control: no-cache` so the browser always re-checks. Implement via a custom `StaticFiles` subclass or a response header middleware that checks the path pattern.
 
-**One caveat on nested object updates in Firestore:** To update a single field inside a nested map (e.g. `current_state.bench_1rm_kg`) without clearing sibling keys, use dotted-path notation: `{"current_state.bench_1rm_kg": value}` with `merge=True`. This is existing Firestore behavior — no new library capability needed.
+**Cloud Run:** No CDN is needed for a personal tool (one user). The container serves assets directly. If latency ever matters, Cloud CDN can be bolted on later with zero app changes.
 
-### Decision 3: Block/Benchmark Tracking — Split Between Firestore and Postgres
+### 7. Data Fetching with TanStack Query v5
 
-**Recommendation:**
-- Block state (current block metadata, week number, benchmark due flag) lives in `users/amit` (see `current_block` above).
-- Benchmark test **results** are recorded as a new Postgres table `benchmark_results`.
-- TrainingLogStore gets a `benchmark: bool` flag added (merge-patch compatible, backward safe) to mark which sessions were benchmark tests.
+Use `@tanstack/react-query` v5.90+ (latest stable). For this app:
 
-**Why NOT a new Firestore `BlockStore` collection:**
-- Block metadata is just a handful of scalar fields that belong logically alongside the user profile. A separate collection adds a second RPC and a second store class for no structural gain.
-- There will be at most ~6-10 blocks over the Oct/Nov training horizon. This is not a collection-scale problem.
+- `/api/today` — fetch on mount, refetch on window focus, manual pull-to-refresh
+- `/api/chat/messages` — poll every 3 seconds while the chat tab is active (`refetchInterval: 3000`); disable when tab is backgrounded via `refetchIntervalInBackground: false`
+- `/api/tasks`, `/api/habits` — standard cache with `staleTime: 60_000`; invalidate on mutation
 
-**Why a new Postgres table for benchmark results (instead of TrainingLogStore):**
-- Benchmark results need to be queried as a time series for trend analysis: "show bench 1RM progression across blocks". SQL is the right tool for this — `SELECT facet, result_value, tested_at FROM benchmark_results ORDER BY tested_at`.
-- The existing `database_tool.py` read-only query interface already provides this to the brain — no new tool needed, brain can issue SQL.
-- Benchmark results are structured tabular data (facet, value, units, block_id, tested_at), not the session-level narrative that TrainingLogStore holds.
-- Firestore's TrainingLogStore stream-and-filter approach (no composite index for cross-session analytics) would make trend queries ugly.
+v5 API change to note: `refetchInterval` callback now receives the `Query` object (not `data` + `Query`). Minor — just don't use the old v4 signature.
 
-**New Postgres table schema** (additive, idempotent DDL):
-```sql
-CREATE TABLE IF NOT EXISTS benchmark_results (
-    id SERIAL PRIMARY KEY,
-    tested_at DATE NOT NULL,
-    block_id VARCHAR(20) NOT NULL,          -- e.g. "block-1"
-    facet VARCHAR(50) NOT NULL,             -- "bench_1rm", "squat_1rm", "push_up_max", etc.
-    result_value NUMERIC(8,2) NOT NULL,
-    units VARCHAR(20) NOT NULL,             -- "kg", "reps", "seconds", "min:sec"
-    notes TEXT,
-    source VARCHAR(20) DEFAULT 'telegram'   -- "telegram" | "manual_chat" | "garmin"
-);
-CREATE INDEX IF NOT EXISTS idx_benchmark_facet_date ON benchmark_results (facet, tested_at);
-```
-
-**This DDL lives in** `scripts/` as a migration script (same pattern as `ingest_garmin_zip.py`'s SCHEMA_DDL). It runs once on deploy. No ORM needed — plain psycopg2 INSERT matches the existing pattern in `database_tool.py`.
-
-**TrainingLogStore extension** — add `benchmark: bool | None` to the `log_session` call signature and payload dict. Because `merge=True` is used everywhere and existing docs don't have this field, it defaults to `None` (falsy) on all pre-existing sessions. No migration needed.
-
----
-
-## What NOT to Add
-
-| Avoid | Why | Use Instead |
-|-------|-----|-------------|
-| A dedicated `CoachingKnowledgeStore` Firestore collection | Over-engineered. The coaching knowledge is a bounded static doc, not per-session state. | `docs/COACHING.md` injected via `render_smart_system` |
-| Pinecone RAG for the coaching principles doc | Adds retrieval latency + embedding cost with no benefit for a small, always-needed document | Direct prompt injection |
-| A separate `BlockStore` Firestore collection | Adds a new store class + collection for what is 6-8 scalar fields | `current_block` map inside `users/amit` |
-| Vector embeddings for benchmark results | Benchmark trends are structured numerical queries, not semantic search | Postgres `benchmark_results` table + existing `database_tool.py` |
-| A new Python ORM (SQLAlchemy, etc.) | Existing project uses raw psycopg2 with `RealDictCursor` everywhere; adding an ORM for one table creates inconsistency | Raw psycopg2 INSERT, same pattern as ingestion scripts |
-| A new `BenchmarkStore` Firestore class | Duplicates what Postgres does better for time-series data | `benchmark_results` Postgres table |
-| Webhook or external API for blueprint ingestion | Blueprint is a one-time ingest; a `scripts/ingest_blueprint.py` script running locally is sufficient | One-shot CLI script |
-| New LLM model or new API backend | Brain (Gemini flash) is fully capable of expert coaching reasoning when given the curated knowledge doc | Extend `docs/COACHING.md`, not the model |
-| Pinecone namespace isolation for coaching | Pinecone serverless doesn't support namespaces for filtering — `kind` metadata filter is the existing isolation mechanism; adding `kind="coaching"` for dynamic benchmark summaries is valid but the static doc should NOT go here | `kind` metadata on dynamic content only |
-
----
-
-## Integration with Existing Systems
-
-### D-13 Guard Release
-
-The D-13 "no-fabrication" guard in `prompts/morning_briefing.md` and `prompts/proactive_alert.md` is a conditional block checking whether `UserProfileStore` is populated. Once `users/amit` is populated with `goals`, `current_state`, and `current_block`, the brain can:
-- Name specific target weights/paces from `goals`
-- Compare current performance to `current_state.*_kg / *_best` fields
-- Reference the specific session from `weekly_template` for today's day
-
-The guard condition changes from "profile is empty" to "current_state has been assessed" — i.e., release the guard once at least one benchmark session has been recorded. This is a prompt change, not a code change.
-
-### Cron Integration
-
-No new cron jobs needed. v4.0 coaching is folded into:
-- **Morning briefing** (`core/morning_briefing.py`): reads `UserProfileStore` (already does), now has nutrition targets + weekly template to compare against
-- **Evening check-in** (`core/proactive_alerts.py`): already reads `UserProfileStore` for athletic_goals; extended schema gives it real targets
-- **Weekly review** (`core/weekly_training_review.py`): already reads `UserProfileStore.athletic_goals`; extended schema + benchmark query gives it per-block trend data
-- **Autonomous tick** (`core/autonomous.py`): already gathers `UserProfileStore`; gains supplement adherence checking, block-week awareness
-
-### Brain Tool: `get_user_profile` (new or existing)
-
-The brain needs a direct tool to read `UserProfileStore` on demand (outside cron flows). Check whether `tools.py` already exposes this as a direct tool; if not, add one. It is a thin wrapper over `UserProfileStore.load()` — no new logic.
-
-### `render_smart_system` Change
-
-`core/main.py` renders the brain system prompt with `{self_md}`, `{self_state}`, `{journal_digest}`. Add `{coaching_knowledge}` — loaded from `docs/COACHING.md` at startup (same pattern as SELF.md). This is the primary integration point for expert coaching capability.
+No global state library (Zustand, Redux) is needed. TanStack Query handles all server state. Local UI state (open/close panels, form inputs) uses React's own `useState`/`useReducer`.
 
 ---
 
 ## Installation
 
-No new Python packages to install. All capabilities use existing dependencies:
-
 ```bash
-# No new pip installs needed.
-# Verify existing deps are present:
-# - google-cloud-firestore (Firestore UserProfileStore)
-# - psycopg2 (Postgres benchmark_results DDL + queries)
-# - pinecone (if kind="coaching" RAG for benchmark summaries chosen)
-# - google-genai (embedding, only if RAG path)
-```
+# In frontend/ directory
+npm create vite@latest . -- --template react-ts
+npm install react-router @tanstack/react-query lucide-react
+npm install -D vite-plugin-pwa @tailwindcss/vite tailwindcss
 
-The one "installation" step is running the benchmark_results DDL migration — a one-line psycopg2 execute from a `scripts/create_benchmark_table.py` or appended to the existing `ingest_garmin_zip.py` SCHEMA_DDL string.
+# Python side (add to requirements.txt)
+# pywebpush>=2.3.0
+# aiohttp>=3.9
+```
 
 ---
 
 ## Alternatives Considered
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|-------------------------|
-| `docs/COACHING.md` injected into system prompt | `kind="coaching"` Pinecone RAG | If the corpus grows to >20K tokens and becomes a reference library queried selectively; not the case here |
-| Extended `users/amit` single document | Sub-collections per concern (goals, nutrition, blocks) | If data grows to collection scale (>100 items per entity) or if concurrent writes from multiple processes become a concern; neither applies |
-| `benchmark_results` Postgres table | `BenchmarkStore` Firestore collection | If the project ever drops Postgres; Firestore would work but loses the SQL trend query capability that `database_tool.py` already provides |
-| `benchmark_results` Postgres table | Benchmark fields directly on `TrainingLogStore` docs | Would work for simple lookups but makes trend-across-blocks queries require streaming the entire `training_log` collection and filtering in Python |
-| Prompt injection of coaching doc | Fine-tuning the brain model | Would be 100x cost + complexity for marginal gain; Gemini flash is capable of expert reasoning with good context |
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| `vite-plugin-pwa` (`injectManifest`) | Hand-rolled service worker | Plugin handles manifest generation, Workbox precaching, TypeScript types; only the push event listener needs to be custom — `injectManifest` gives both |
+| `vite-plugin-pwa` (`injectManifest`) | `generateSW` strategy | `generateSW` gives no escape hatch for custom push handlers; documented dead-end |
+| `pywebpush` | `web-push` (Node), Firebase FCM | pywebpush is the canonical Python VAPID library; FCM adds a GCP dependency and intermediary that breaks the direct VAPID model |
+| `async_webpush` | Sync `webpush()` in executor | Push sends happen inside FastAPI route handlers and cron flows — blocking an executor thread for every push send is wasteful; async is cleaner |
+| `SessionMiddleware` (Starlette built-in) | `authlib`, `fastapi-users`, Auth0 | Single user, single identity provider; a full auth library is massive overkill; `google-auth` is already in requirements |
+| Vite 6 | Vite 7 | Tailwind v4's `@tailwindcss/vite` peer dep breaks on Vite 7 as of 2026-06-13 |
+| `react-router` v7 (declarative) | `wouter` | wouter is 1.2kB vs 17kB — for a personal tool loaded on fast connections, the bundle savings don't justify losing React Router's `useNavigate`, `useParams`, nested routes, and `<NavLink>` active state |
+| `@tanstack/react-query` | SWR | TanStack Query has cleaner mutation invalidation, `refetchInterval` with conditional function signature, devtools; SWR is fine but TQ is more capable for the Today + Chat polling pattern |
 
 ---
 
-## Confidence Assessment
+## What NOT to Use
 
-| Area | Confidence | Basis |
-|------|------------|-------|
-| Firestore UserProfileStore extension | HIGH | Direct read of existing code; merge-patch discipline already proven across SelfStateStore, MealStore, TrainingLogStore |
-| Postgres benchmark table | HIGH | Schema follows exact pattern already in `ingest_garmin_zip.py`; `database_tool.py` provides brain access already |
-| Prompt injection for coaching knowledge | HIGH | `render_smart_system` pattern is live; SELF.md injection proves the mechanism; token budget is not a concern for Gemini flash |
-| No new dependency needed | HIGH | Exhaustive check of all three capability areas; every primitive is already imported and used |
-| Pinecone `kind="coaching"` for dynamic summaries | MEDIUM | Valid but optional; only needed if benchmark narrative summaries need to be semantically searchable over time — can be deferred to a later phase |
+| Avoid | Why | Use Instead |
+|-------|-----|-------------|
+| Next.js / Remix | SSR frameworks; Cloud Run already serves FastAPI; adding Node.js SSR creates a second runtime, second container, CORS headaches | Vite SPA served as static files from FastAPI |
+| Firebase Cloud Messaging (FCM) | Adds an extra intermediary and GCP service just to wrap VAPID; direct VAPID works fine for one user and is simpler to debug | `pywebpush` direct VAPID |
+| Zustand / Redux | No complex shared state; server state is TanStack Query's job; UI state is local | React `useState` + TanStack Query |
+| `google-auth-oauthlib` OAuth redirect flow for hub auth | Full OAuth redirect is for acquiring service credentials (Calendar, Gmail) — the hub only needs to verify who the user is, which GSI credential token does in one step | GSI One Tap + `verify_oauth2_token` |
+| `@vitejs/plugin-react-swc` | SWC variant is faster in CI but introduces a native binary; the standard `@vitejs/plugin-react` (Babel) is fast enough for a small personal app and avoids native dep complexity | `@vitejs/plugin-react` |
+| Vite 7 | Breaks `@tailwindcss/vite` peer dependency (^5.2.0 \|\| ^6 only) | Vite 6 |
+
+---
+
+## Version Compatibility
+
+| Package | Compatible With | Notes |
+|---------|-----------------|-------|
+| `vite@6.x` | `@tailwindcss/vite@4.x` | Tailwind v4 Vite plugin peer dep is `^5.2.0 \|\| ^6` — Vite 7 fails |
+| `vite@6.x` | `@vitejs/plugin-react@4.x` | 4.3.4+ added Vite 6 to peerDependencies |
+| `vite-plugin-pwa@1.x` | `vite@6.x` | 1.x requires Vite 5 or 6 |
+| `pywebpush@2.3.0` | Python 3.10+ | Prod Dockerfile is Python 3.11 — compatible |
+| `aiohttp>=3.9` | `asyncio` / FastAPI | Used by `async_webpush`; no conflict with existing dependencies |
+| `react@19.x` | `react-router@7.x` | RR v7 officially targets React 18+/19 |
+| `@tanstack/react-query@5.x` | `react@18 \| react@19` | v5 supports both |
+
+---
+
+## New Environment Variables / Secrets
+
+| Name | Where Stored | Used By |
+|------|-------------|---------|
+| `VAPID_PRIVATE_KEY_DER` | Secret Manager | `pywebpush` in push send paths |
+| `VAPID_PUBLIC_KEY` | Env var (not secret) | Served to frontend at `/api/push/vapid-public-key` |
+| `GOOGLE_CLIENT_ID` | Secret Manager | GSI One Tap config on frontend + `verify_oauth2_token` on backend |
+| `SESSION_SECRET` | Secret Manager | `SessionMiddleware` cookie signing |
 
 ---
 
 ## Sources
 
-- `memory/firestore_db.py` — `UserProfileStore`, `TrainingLogStore`, `MealStore` — direct code read (HIGH)
-- `memory/pinecone_db.py` — `MemoryStore` kinds, embedding, recall filter — direct code read (HIGH)
-- `scripts/ingest_garmin_zip.py` — Postgres schema DDL and psycopg2 pattern — direct code read (HIGH)
-- `mcp_tools/database_tool.py` — read-only Postgres query interface — direct code read (HIGH)
-- `core/main.py` (partial) — `render_smart_system` injection pattern — inferred from CLAUDE.md description (MEDIUM, verify at implementation time)
-- `prompts/morning_briefing.md`, `prompts/proactive_alert.md` — D-13 guard location — direct code read (HIGH)
-- `/Users/amitgrupper/Downloads/Hybrid Athlete Master Blueprint_ Oct_Nov Peak V2.md` — blueprint content for schema design — direct file read (HIGH)
+- [pywebpush GitHub CHANGELOG](https://github.com/web-push-libs/pywebpush/blob/main/CHANGELOG.md) — confirmed v2.3.0 latest (2026-02-09), async since 2.1.0 (HIGH confidence)
+- [pywebpush PyPI](https://pypi.org/project/pywebpush/) — Python >=3.10 requirement (HIGH confidence)
+- [Google: Verify Google ID token](https://developers.google.com/identity/gsi/web/guides/verify-google-id-token) — `verify_oauth2_token`, CSRF, `sub` as canonical ID (HIGH confidence)
+- [Starlette docs: Middleware](https://starlette.dev/middleware/) — `SessionMiddleware` config, itsdangerous signing (HIGH confidence)
+- [vite-pwa-org: Guide](https://vite-pwa-org.netlify.app/guide/) — v1.2.0, injectManifest strategy for custom push handlers (HIGH confidence)
+- [vite-plugin-pwa GitHub issue #84](https://github.com/vite-pwa/vite-plugin-pwa/issues/84) — confirmed `injectManifest` is the path for push notification handlers (MEDIUM confidence)
+- [TanStack Query v5 docs: Polling](https://tanstack.com/query/latest/docs/framework/react/guides/polling) — `refetchInterval` API (HIGH confidence)
+- [PWA Push Notifications on iOS in 2026](https://webscraft.org/blog/pwa-pushspovischennya-na-ios-u-2026-scho-realno-pratsyuye?lang=en) — iOS constraints, EU DMA exception, 70-85% delivery reliability (MEDIUM confidence — observed behavior, not Apple spec)
+- [Vite 7 / Tailwind peer dep issue](https://github.com/vitejs/vite/issues/20284) — confirmed Tailwind v4 plugin breaks on Vite 7 (HIGH confidence)
+- [React Router v7 modes — LogRocket](https://blog.logrocket.com/react-router-v7-modes/) — declarative mode recommendation (MEDIUM confidence)
+- [FastAPI serving Vite SPA discussion](https://github.com/fastapi/fastapi/discussions/5134) — SPA fallback pattern for StaticFiles (MEDIUM confidence)
 
 ---
-*Stack research for: Klaus v4.0 — Expert Coaching Knowledge Layer, Living Plan, Block/Benchmark Tracking*
-*Researched: 2026-06-03*
+
+*Stack research for: Klaus Hub v5.0 PWA — new frontend capabilities only*
+*Researched: 2026-06-13*
