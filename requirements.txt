@@ -15,6 +15,7 @@ google-cloud-secret-manager>=2.20  # OAuth token persistence on Cloud Run
 google-cloud-storage>=2.18         # GCS: chat-log staging bucket (Phase 12)
 google-cloud-monitoring>=2.20      # Cloud Monitoring: heartbeat 5xx metrics
 google-cloud-run>=0.10             # Cloud Run revision checks (Phase 14)
+google-cloud-tasks>=2.16           # Telegram update dispatch → full-CPU in-request processing
 
 # --- Vector memory (Pinecone: unstructured RAG) ---
 # NOTE: the legacy 'pinecone-client' package is deprecated; the new SDK is 'pinecone'.

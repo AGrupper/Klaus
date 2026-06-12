@@ -843,3 +843,40 @@ class TestPhase24CoachingGuideFuzzyHardening:
         assert "Creatine" in parsed["content"], (
             f"Expected 'Creatine' in section content, got: {parsed['content']}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# fetch_recent_meals — slot-time semantics note (2026-06-12 incident)          #
+# --------------------------------------------------------------------------- #
+
+
+class TestFetchRecentMealsSlotTimeNote:
+    """Lifesum stamps HealthKit samples with canonical meal-slot times
+    (breakfast=08:00, lunch=12:00, dinner=20:00) — NOT the actual eating
+    time. The tool result must say so, otherwise the brain reasons about
+    digestion windows from times the user never ate at."""
+
+    def test_result_includes_timestamp_semantics_note(self):
+        import json as _json
+        from unittest.mock import MagicMock, patch as _patch
+
+        fake_store = MagicMock(name="MealStore")
+        fake_store.get_day.return_value = [{
+            "timestamp": "2026-06-12T08:00:00+03:00",
+            "source": "healthkit",
+            "calories": 885.0,
+            "meal_type": 1,
+        }]
+        fake_store.get_day_aggregate.return_value = {
+            "totals": {"calories": 885.0, "protein_g": 46.0,
+                       "carbs_g": 87.0, "fat_g": 41.0, "fiber_g": 3.3},
+        }
+        with _patch("memory.firestore_db.MealStore", return_value=fake_store):
+            result = _json.loads(tools._handle_fetch_recent_meals(hours=6))
+
+        note = result.get("timestamp_note", "")
+        assert "slot" in note.lower(), (
+            "fetch_recent_meals must warn that healthkit timestamps are "
+            f"Lifesum slot times, got: {result.keys()}"
+        )
+        assert "not" in note.lower() and "actual" in note.lower()

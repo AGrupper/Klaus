@@ -28,11 +28,23 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 MAX_TOKENS = 4096
+
+
+def _llm_timeout_seconds() -> float:
+    """Per-request timeout applied to every backend client.
+
+    WHY: the SDK defaults are 600s (OpenAI/Anthropic) — one hung provider
+    request then stalls an entire agent turn for up to 10 minutes (observed
+    2026-06-12: a 6.5-minute DeepSeek hang). 120s is generous for the longest
+    real completion while keeping a wedged connection from freezing a turn.
+    """
+    return float(os.getenv("LLM_TIMEOUT_SECONDS", "120"))
 
 
 class LLMError(Exception):
@@ -149,7 +161,11 @@ class _AnthropicBackend(_BaseBackend):
     def __init__(self, model: str, api_key: str) -> None:
         import anthropic  # lazy import: only loaded when this backend is used
         self.model = model
-        self.client = anthropic.Anthropic(api_key=api_key)
+        # max_retries=1: one retry for transient blips; the orchestrator has
+        # its own model-level fallback, so don't burn minutes retrying here.
+        self.client = anthropic.Anthropic(
+            api_key=api_key, timeout=_llm_timeout_seconds(), max_retries=1,
+        )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None) -> dict:
@@ -233,8 +249,16 @@ class _GeminiBackend(_BaseBackend):
 
     def __init__(self, model: str, api_key: str) -> None:
         from google import genai  # lazy import
+        from google.genai import types
         self.model_name = model
-        self.client = genai.Client(api_key=api_key)
+        # WHY http_options: google-genai has no default request timeout —
+        # a hung request stalls the agent turn indefinitely. Value is in ms.
+        self.client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=int(_llm_timeout_seconds() * 1000),
+            ),
+        )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None) -> dict:
@@ -465,7 +489,12 @@ class _OpenAIBackend(_BaseBackend):
         self.model = model
         # WHY: base_url is now a constructor param so each caller (main brain vs tick-brain)
         # can target different endpoints without mutating global env vars.
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        # timeout/max_retries: the SDK default is 600s × 2 retries — a hung
+        # endpoint could stall a turn for tens of minutes (2026-06-12).
+        self.client = OpenAI(
+            api_key=api_key, base_url=base_url,
+            timeout=_llm_timeout_seconds(), max_retries=1,
+        )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None) -> dict:

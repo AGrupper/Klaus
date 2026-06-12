@@ -326,3 +326,38 @@ def test_gemini_backend_convert_tools():
     assert "delegate_to_worker" in names
     assert "recall" in names
 
+
+
+# --------------------------------------------------------------------------- #
+# Client timeouts — a hung provider must never stall an agent turn for the    #
+# SDK-default 10 minutes (observed: 6.5-minute DeepSeek hang on 2026-06-12).  #
+# --------------------------------------------------------------------------- #
+
+
+def test_openai_backend_sets_timeout_and_capped_retries():
+    backend = _OpenAIBackend("deepseek-v4-flash", "fake-api-key")
+    assert backend.client.timeout == 120.0
+    assert backend.client.max_retries == 1
+
+
+def test_anthropic_backend_sets_timeout_and_capped_retries():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-haiku-4-5", "fake-api-key")
+    assert backend.client.timeout == 120.0
+    assert backend.client.max_retries == 1
+
+
+def test_gemini_backend_sets_timeout():
+    with patch("google.genai.Client") as mock_client_cls:
+        _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+    _, kwargs = mock_client_cls.call_args
+    http_options = kwargs["http_options"]
+    # google-genai HttpOptions.timeout is in milliseconds
+    timeout_ms = getattr(http_options, "timeout", None) or http_options["timeout"]
+    assert timeout_ms == 120_000
+
+
+def test_llm_timeout_env_override(monkeypatch):
+    monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "45")
+    backend = _OpenAIBackend("deepseek-v4-flash", "fake-api-key")
+    assert backend.client.timeout == 45.0

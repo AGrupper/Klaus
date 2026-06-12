@@ -826,7 +826,12 @@ TOOL_SCHEMAS: list[dict] = [
             "per calendar date, SERVER-COMPUTED in Python), and `window_totals` "
             "(exact macro totals across the whole window). For any nutrition "
             "total/status question, report the server-computed totals VERBATIM — "
-            "never sum the meals yourself. Default hours=24. Brain-direct."
+            "never sum the meals yourself. CAUTION: HealthKit/Lifesum meal "
+            "timestamps are canonical slot times (breakfast=08:00, lunch=12:00, "
+            "dinner=20:00), NOT the actual eating time — never infer when the "
+            "user actually ate from them. Meals also only sync when the user "
+            "closes Lifesum, so a just-eaten meal may not be here yet. "
+            "Default hours=24. Brain-direct."
         ),
         "input_schema": {
             "type": "object",
@@ -1839,6 +1844,17 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
             "meals": out,
             "totals_by_day": totals_by_day,
             "window_totals": window_totals,
+            # WHY: Lifesum stamps HealthKit samples with canonical meal-slot
+            # times, not the moment the user ate (verified 2026-06-12: every
+            # synced meal sits exactly on 08:00/10:00/12:00/20:00). Without
+            # this note the brain reasons about digestion windows from times
+            # the user never ate at.
+            "timestamp_note": (
+                "HealthKit (Lifesum) meal timestamps are canonical SLOT times "
+                "(breakfast=08:00, lunch=12:00, dinner=20:00) — NOT the actual "
+                "eating time. Do not infer when the user actually ate from "
+                "them; if timing matters, ask."
+            ),
         })
     except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
         return json.dumps({"error": str(exc)})

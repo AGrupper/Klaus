@@ -571,6 +571,7 @@ class AgentOrchestrator:
                     current_messages,
                     system=smart_system,
                     tools=smart_tools,
+                    purpose="smart",
                 )
             except LLMError as exc:
                 logger.warning(
@@ -589,6 +590,7 @@ class AgentOrchestrator:
                             current_messages,
                             system=smart_system,
                             tools=smart_tools,
+                            purpose="smart_fallback",
                         )
                     except LLMError as fallback_exc:
                         logger.error(
@@ -735,6 +737,7 @@ class AgentOrchestrator:
                     worker_messages,
                     system=worker_system,
                     tools=tool_registry.get_worker_schemas(),
+                    purpose="worker",
                 )
             except LLMError as exc:
                 logger.error("Worker agent error (iter %d): %s", iteration, exc)

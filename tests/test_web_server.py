@@ -820,3 +820,90 @@ class TestTelegramWebhook:
         assert resp.status_code == 200
         assert ws._router.handle_update.await_count == 1
         assert len(ws._recent_update_ids) == ws._RECENT_UPDATE_IDS_MAX
+
+    def test_enqueues_to_cloud_tasks_instead_of_background(self, _ws_module):
+        """When Cloud Tasks dispatch succeeds the update must NOT be processed
+        in-process — the turn runs later inside /internal/process-update where
+        Cloud Run allocates full CPU (a BackgroundTask runs after the response
+        and gets throttled CPU)."""
+        ws = _ws_module
+        with patch.object(ws, "enqueue_update", return_value=True) as enq:
+            resp = self._post(ws, update_id=601)
+
+        assert resp.status_code == 200
+        enq.assert_called_once_with({"update_id": 601})
+        ws._router.handle_update.assert_not_awaited()
+
+    def test_falls_back_to_background_when_enqueue_fails(self, _ws_module):
+        """Cloud Tasks unavailable/disabled → degrade to the in-process
+        background path so the message is never dropped."""
+        ws = _ws_module
+        with patch.object(ws, "enqueue_update", return_value=False):
+            resp = self._post(ws, update_id=602)
+
+        assert resp.status_code == 200
+        ws._router.handle_update.assert_awaited_once()
+
+
+# --------------------------------------------------------------------------- #
+# TestInternalProcessUpdate — Cloud Tasks callback target                      #
+# --------------------------------------------------------------------------- #
+
+
+class TestInternalProcessUpdate:
+    """POST /internal/process-update — OIDC-protected Cloud Tasks target that
+    runs the agent turn inside a tracked request (full CPU)."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self, _ws_module):
+        ws = _ws_module
+        original_router = ws._router
+        original_app = ws._application
+        ws._application = MagicMock(name="Application")
+        ws._application.bot = MagicMock(name="bot")
+        ws._router = MagicMock(name="MessageRouter")
+        ws._router.handle_update = AsyncMock(return_value=None)
+        yield
+        ws._router = original_router
+        ws._application = original_app
+
+    def test_processes_update_with_dev_bypass(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _BASE_ENV), patch.object(
+            ws, "Update"
+        ) as mock_update_cls:
+            update = _make_update(700)
+            mock_update_cls.de_json.return_value = update
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post("/internal/process-update", json={"update_id": 700})
+
+        assert resp.status_code == 200
+        ws._router.handle_update.assert_awaited_once_with(update)
+
+    def test_returns_401_without_bearer(self, _ws_module, monkeypatch):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        env = dict(_BASE_ENV)
+        env["CRON_DEV_BYPASS"] = "false"
+        with patch.dict(os.environ, env):
+            monkeypatch.delenv("CLOUD_RUN_URL", raising=False)
+            monkeypatch.delenv("CLOUD_SCHEDULER_SA_EMAIL", raising=False)
+            client = TestClient(ws.app)
+            resp = client.post("/internal/process-update", json={"update_id": 701})
+
+        assert resp.status_code == 401
+        ws._router.handle_update.assert_not_awaited()
+
+    def test_returns_500_when_application_is_none(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        ws._application = None
+        with patch.dict(os.environ, _BASE_ENV):
+            client = TestClient(ws.app, raise_server_exceptions=False)
+            resp = client.post("/internal/process-update", json={"update_id": 702})
+
+        assert resp.status_code == 500

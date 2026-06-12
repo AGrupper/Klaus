@@ -36,6 +36,7 @@ from telegram import Update
 from telegram.ext import Application
 
 from core.main import AgentOrchestrator
+from core.task_dispatch import enqueue_update
 from interfaces._router import MessageRouter, parse_allowed_user_ids
 
 # WHY: override=True ensures .env values win even when the shell has already
@@ -159,14 +160,16 @@ async def health_check() -> JSONResponse:
 
 
 async def _handle_update_background(update: Update) -> None:
-    """Process a Telegram Update off the webhook's critical path.
+    """Fallback: process a Telegram Update in-process, off the critical path.
 
-    WHY: a full agent turn (multi-LLM, tool loop) can take longer than
-    Telegram's webhook patience; if the 200 doesn't arrive quickly Telegram
-    re-delivers the Update and the message gets processed twice. The webhook
-    now ACKs immediately and the turn runs here. The request is still
-    in-flight while this runs, so Cloud Run keeps CPU allocated. Errors are
-    logged here since they can no longer surface in the response.
+    WHY this is only a fallback: a Starlette BackgroundTask runs AFTER the
+    response is sent, so no request is in flight while the agent turn runs
+    and Cloud Run throttles the container CPU — the turn crawls (observed
+    2026-06-12: an 18-minute reply). The primary path is Cloud Tasks
+    (``core.task_dispatch.enqueue_update``), which re-delivers the update to
+    /internal/process-update inside a tracked, full-CPU request. This path
+    survives a Cloud Tasks outage or unset queue config: slow beats dropped.
+    Errors are logged here since they can no longer surface in the response.
     """
     try:
         await _router.handle_update(update)
@@ -268,8 +271,49 @@ async def telegram_webhook(
     while len(_recent_update_ids) > _RECENT_UPDATE_IDS_MAX:
         _recent_update_ids.popitem(last=False)
 
-    # ---- Dispatch (after the response, off the critical path) ----
-    background_tasks.add_task(_handle_update_background, update)
+    # ---- Dispatch ----
+    # Primary: hand the update to Cloud Tasks so the agent turn runs inside
+    # /internal/process-update — a tracked request with full CPU. Fallback:
+    # in-process background task (throttled CPU, but the update is never
+    # dropped) when the queue is unconfigured or Cloud Tasks errors.
+    if not enqueue_update(request_json):
+        background_tasks.add_task(_handle_update_background, update)
+
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/internal/process-update")
+async def internal_process_update(request: Request) -> JSONResponse:
+    """Cloud Tasks target: process one Telegram Update with full CPU.
+
+    The webhook enqueues the raw update JSON via
+    ``core.task_dispatch.enqueue_update``; Cloud Tasks POSTs it here with an
+    OIDC token from the same service account the Cloud Scheduler crons use,
+    verified by ``_verify_cron_request``. Because the agent turn runs inside
+    this request, Cloud Run allocates full CPU for its whole duration —
+    unlike a BackgroundTask, which runs after the response on throttled CPU.
+
+    Raises:
+        HTTPException 401/403: OIDC verification failed.
+        HTTPException 500: Singletons not initialised (Cloud Tasks retries).
+    """
+    await _verify_cron_request(request)
+
+    if _application is None or _router is None:
+        logger.error("/internal/process-update before singletons initialised")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Server is still initialising; please retry."},
+        )
+
+    request_json: dict = await request.json()
+    update = Update.de_json(data=request_json, bot=_application.bot)
+
+    # WHY no try/except: the router already shields user-facing errors (it
+    # replies with an apology and swallows orchestrator exceptions). Anything
+    # that escapes is infrastructure-level — let it surface as a 500 so Cloud
+    # Tasks retries the turn.
+    await _router.handle_update(update)
 
     return JSONResponse(content={"ok": True})
 

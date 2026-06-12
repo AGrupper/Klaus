@@ -75,6 +75,7 @@ Klaus/
 │   ├── nightly_review.py   # Sleep-Focus-triggered nightly review + tomorrow prep (01:00 backstop)
 │   ├── autonomous.py       # */20 7-21: 3-layer gather → tick-brain triage → brain compose
 │   ├── scheduled_message.py# Telegram send + Firestore conversation injection
+│   ├── task_dispatch.py    # Cloud Tasks enqueue → /internal/process-update (full-CPU turns)
 │   ├── self_manifest.py    # Auto-generates docs/SELF.md (CI runs on every deploy)
 │   ├── chat_ingest.py      # Daily 04:00: parse Claude Code JSONL → Pinecone + Notion
 │   ├── chat_export_ingest.py # Daily 04:30: ChatGPT/Claude.ai/Gemini Takeout zips → same pipeline
@@ -146,3 +147,6 @@ Klaus/
 - Autonomous tick cost gating: Layer 0 (gather, $0) → Layer 1 (tick-brain Groq, $0) → Layer 2 (brain, costs money) — brain only runs when tick-brain affirmatively says "speak up"
 - `OutreachLogStore.append` is gated on `send_and_inject` success (D-10) — no log entry if delivery failed
 - `_get_orchestrator()` is a process-wide singleton with double-checked locking — AgentOrchestrator is built once per Cloud Run instance, not 43× per day
+- Agent turns must run INSIDE a tracked request (Cloud Tasks → `/internal/process-update`), never in a Starlette BackgroundTask — background tasks run after the response and Cloud Run throttles CPU once no request is in flight (2026-06-12: 18-minute reply). Telegram still gets its instant webhook ACK
+- Every LLM client carries an explicit timeout (`LLM_TIMEOUT_SECONDS`, default 120s) — SDK defaults are 600s and a single hung provider call stalls the whole turn
+- HealthKit/Lifesum meal timestamps are canonical slot times (08:00/12:00/20:00), NOT actual eating times — never build features that infer eating time from them

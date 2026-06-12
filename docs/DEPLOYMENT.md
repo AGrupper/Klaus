@@ -1256,12 +1256,15 @@ Klaus uses a small number of compound queries that require composite indexes:
 | Collection  | Fields                       | Created by | Notes |
 |-------------|------------------------------|------------|-------|
 | followups   | `status` ASC, `due_at` ASC   | Phase 18   | Required by `FollowupStore.list_due()`. On first production query, Firestore returns a `FAILED_PRECONDITION` error with a link to create the index — follow it once, or run `gcloud firestore indexes composite create --collection-group=followups --field-config=field-path=status,order=ascending --field-config=field-path=due_at,order=ascending` ahead of first cron-tick deploy. |
+| journal     | `__name__` DESC              | 2026-06-12 | Required by `JournalStore.get_recent()` (`order_by("__name__", DESCENDING)`). **Descending `__name__` order is NOT covered by Firestore's automatic indexes** — without this index every conversation turn logged a `FAILED_PRECONDITION` and silently dropped the journal digest from the brain's system prompt (regression shipped in 44443af, caught 2026-06-12). Create with: `gcloud firestore indexes composite create --project=klaus-agent --database=klaus-firestore --collection-group=journal --query-scope=COLLECTION --field-config=field-path=__name__,order=descending` |
 
 The date-windowed read paths (`training_log`, `strength_sessions`,
-`run_details` range/recent queries and `journal.get_recent`) use single-field
-range/equality filters with an `order_by` on the **same** field, which are
-covered by Firestore's automatic single-field indexes — no composite index
-needed for those.
+`run_details` range/recent queries) use single-field range/equality filters
+with an `order_by` on the **same** field, which are covered by Firestore's
+automatic single-field indexes — no composite index needed for those.
+**Gotcha:** that coverage does NOT extend to `order_by("__name__",
+DESCENDING)` — any future "latest N docs by doc-ID" query needs its own
+explicit index like the journal one above.
 
 ---
 
@@ -1401,3 +1404,54 @@ The response `allowed_updates` field should show `["message","callback_query"]`.
 Note: Telegram's allow-list on `callback_query` is for delivery only — the router
 (`interfaces/_router.py`) still enforces the user allow-list on every callback,
 so no additional spoofing surface is opened (T-20-17 accepted).
+
+---
+
+## 25. Cloud Tasks — Telegram update dispatch (full-CPU turns)
+
+**Why this exists (2026-06-12 incident):** the Telegram webhook ACKs with 200
+immediately and used to process the update in a Starlette BackgroundTask.
+Background tasks run AFTER the response is sent, and with Cloud Run's default
+request-based billing the container CPU is throttled to a sliver once no
+request is in flight — an agent turn that should take ~1 minute took 18
+(including a 6.5-minute stall on a single worker-LLM call). `--no-cpu-throttling`
+would fix it but bills the instance ~24/7 (~$30+/month at 1 vCPU).
+
+**Architecture:** webhook → `core/task_dispatch.enqueue_update(raw_update_json)`
+→ Cloud Tasks queue `klaus-updates` (me-central1 — Cloud Tasks is NOT offered
+in me-west1) → OIDC-authenticated POST back to `/internal/process-update` →
+the agent turn runs INSIDE that tracked request with full CPU. If enqueueing
+fails for any reason the webhook falls back to the old in-process background
+path, so updates are never dropped (slow beats dropped).
+
+One-time setup:
+
+```bash
+gcloud services enable cloudtasks.googleapis.com --project=klaus-agent
+
+gcloud tasks queues create klaus-updates \
+  --location=me-central1 --project=klaus-agent \
+  --max-attempts=2 --min-backoff=5s
+
+# Runtime SA must be able to enqueue...
+gcloud tasks queues add-iam-policy-binding klaus-updates \
+  --location=me-central1 --project=klaus-agent \
+  --member="serviceAccount:klaus-runtime@klaus-agent.iam.gserviceaccount.com" \
+  --role="roles/cloudtasks.enqueuer"
+
+# ...and to mint OIDC tokens as the scheduler SA (which already holds
+# run.invoker on the service — same identity the crons use).
+gcloud iam service-accounts add-iam-policy-binding \
+  klaus-heartbeat@klaus-agent.iam.gserviceaccount.com \
+  --project=klaus-agent \
+  --member="serviceAccount:klaus-runtime@klaus-agent.iam.gserviceaccount.com" \
+  --role="roles/iam.serviceAccountUser"
+```
+
+Env vars (set by deploy.yml): `CLOUD_TASKS_QUEUE=klaus-updates`,
+`CLOUD_TASKS_LOCATION=me-central1`. Unsetting `CLOUD_TASKS_QUEUE` disables
+dispatch entirely (clean rollback to the background path).
+
+Timeout chain (each layer must exceed the next):
+Cloud Run `--timeout 600` > task `dispatch_deadline` 540s > per-LLM-call
+timeout `LLM_TIMEOUT_SECONDS` (default 120s, `core/llm_client.py`).
