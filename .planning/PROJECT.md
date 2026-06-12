@@ -31,11 +31,27 @@ dense Garmin pace history, surfaced in the Sunday weekly review as on-track / N-
 (2026-05-23) · v3.0 Project Shifu (2026-06-02) · v4.0 Specific Training & Nutrition Coaching
 (2026-06-08). See `.planning/MILESTONES.md`.
 
-## Next Milestone
+## Current Milestone: v5.0 Klaus Hub
 
-Not yet scoped. Run `/gsd-new-milestone` to define v5.0 (questioning → research →
-requirements → roadmap). Candidate directions carried forward live in the Deferred list below
-and STATE.md § Deferred Items.
+**Goal:** A web PWA (served from the klaus-agent Cloud Run service) that becomes Klaus's
+primary interface — replacing Telegram for chat, TickTick for tasks, and the habit app —
+with a Today timeline as the home screen on phone and desktop.
+
+**Target features:**
+- Hub shell: React + TypeScript PWA served by FastAPI, Google Sign-In (Amit only), Today
+  timeline composing calendar + meals + habits + training plan + Garmin stats + weather
+- Full Klaus chat sharing the Telegram Firestore conversation (same Cloud Tasks full-CPU
+  path); polling while open, Web Push when closed
+- Native tasks: `TaskStore` + Klaus tool swap (TickTick → native) + one-time TickTick import
+- Habits + supplements: `HabitStore` with dose field, daily check-offs, streaks,
+  autonomous-tick adherence awareness
+- Web Push (VAPID) with Telegram mirror flag — hybrid transition, eventually retire Telegram
+- Health pages: training history, nutrition detail, sleep trends
+
+**Design spec:** `docs/superpowers/specs/2026-06-13-klaus-hub-design.md` (approved
+2026-06-13; layout locked via visual mockups — desktop: sidebar + timeline + glance rail +
+docked collapsible chat; phone: bottom tabs with Klaus center tab). Nutrition stays
+display-only (Lifesum → HealthKit pipeline unchanged). Music/PC-control widgets deferred.
 
 ## Requirements
 
@@ -79,7 +95,7 @@ and STATE.md § Deferred Items.
 
 ### Active
 
-No active milestone. v4.0 shipped 2026-06-08 — run `/gsd-new-milestone` to scope the next.
+v5.0 Klaus Hub — requirements being defined (see REQUIREMENTS.md once written).
 
 **Deferred (carried forward):**
 - Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
@@ -153,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-08 after v4.0 milestone — Specific Training & Nutrition Coaching shipped (Phases 21–25, deployed Cloud Run rev klaus-agent-00091-4vz). Next milestone not yet scoped (`/gsd-new-milestone`).*
+*Last updated: 2026-06-13 — milestone v5.0 Klaus Hub started (design spec approved; defining requirements).*

@@ -1,27 +1,26 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: — Specific Training & Nutrition Coaching
-status: Awaiting next milestone
-stopped_at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
-last_updated: "2026-06-09T20:30:00.000Z"
-last_activity: 2026-06-09 — nutrition: accurate+training-aware coaching, HealthKit dedup fix, centralized Garmin-synced bodyweight (rev klaus-agent-00102-9nk)
+milestone: v5.0
+milestone_name: Klaus Hub
+status: planning
+last_updated: "2026-06-12T21:30:46.311Z"
+last_activity: 2026-06-12
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 20
-  completed_plans: 20
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Phase: Milestone v4.0 complete; post-v4.0 increments shipped (latest: per-run Garmin detail)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calibration fix shipped
+Status: Defining requirements
+Last activity: 2026-06-12 — Milestone v5.0 started
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -34,6 +33,7 @@ Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calib
      periodize carbs by the day's training, forward-looking) and **wired into the chat path**
      (`core/main.py`, previously crons-only) + the morning-briefing "Fuel plan for today".
      `nutrition_targets` seeded with build-goal anchors.
+
   2. *HealthKit re-sync duplication fix* (rev `klaus-agent-00101-pbm`): the Shortcut re-sends the
      whole day on every Lifesum close (~9×/day); the synthetic `source_id` embedded integer
      calories, so a meal-time whose total drifted between syncs minted a NEW Firestore doc →
@@ -42,6 +42,7 @@ Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calib
      `(timestamp, source)` keeping latest `updated_at` (corrects history on read).
      `scripts/dedupe_healthkit_meals.py --apply` run 2026-06-09: 18 legacy dup docs purged across
      30 days (storage now matches reads; verified raw_docs == get_day count).
+
   3. *Centralized, Garmin-synced bodyweight* (rev `klaus-agent-00102-9nk`): weight is now a single
      top-level profile field `bodyweight_kg` (=73), auto-refreshed once/day from the latest Garmin
      weigh-in (`garmin_tool.fetch_garmin_weight`, grams→kg, sanity-bounded 30–250) via
@@ -69,6 +70,7 @@ Last activity: 2026-06-09 — per-run Garmin run-detail capture + coaching calib
 - **Training blocks = Training-calendar membership** (2026-06-08, deployed rev `klaus-agent-00095-hcf`): a training
   block is now defined as any event in the dedicated **Training** calendar (excluding its
   `Get Ready:`/`Travel:` buffer blocks), not by title keywords. Removed `WORKOUT_KEYWORDS`
+
   + bare-"Practice" auto-detection from `create_event` (`is_workout` defaults to False; the
   brain decides per event). Read paths follow suit: evening **weather alerts** source
   tomorrow's Training-calendar events (with a decoupled `_OUTDOOR_KEYWORDS` filter for
