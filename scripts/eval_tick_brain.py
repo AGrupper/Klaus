@@ -237,6 +237,20 @@ def _print_report(results: list[dict]) -> None:
         print("0 fixtures loaded — nothing to score.")
         return
 
+    print("=== Per-fixture ===")
+    for r in results:
+        if r["errored"]:
+            verdict = "ERR"
+        elif r["predicted"] == r["ground_truth"]:
+            verdict = "ok "
+        else:
+            verdict = "FP " if r["predicted"] else "FN "
+        print(
+            f"{verdict} {r['id']:<40} pred={str(r['predicted']):<5} "
+            f"gt={str(r['ground_truth']):<5} ({r['trigger_type']})"
+        )
+    print()
+
     overall = _confusion(results)
     m = _metrics(overall)
     print(f"=== Overall ({total} fixtures) ===")

@@ -94,28 +94,26 @@ Detail: see `.planning/MILESTONES.md § v1.0`.
 
 ## Backlog
 
-- **Tune `prompts/autonomous_triage.md` against the expanded eval** — the
-  tick-brain judgment eval now has 25 labeled fixtures (AUTO-08 met
-  2026-06-11; 20 minted from live tick logs via
-  `scripts/export_tick_logs.py`, labels reviewed by Amit). Baseline
-  precision/recall/F1 recorded in `evals/tick_brain/README.md § Baselines` —
-  start prompt tuning from that number.
 - **Fix `hours_since_contact`** — null on all 823 live ticks 2026-05-23 →
   2026-06-10, so the autonomous silence trigger has never had data in
   production (see `core/autonomous.py` gather; surfaced during the
   2026-06-11 fixture-curation pass).
-- **Deploy the Groq tick-brain fix (code fixed 2026-06-11, not yet deployed)** —
-  two stacked bugs meant the Groq primary never worked live (224 triage +
-  heartbeat calls ran on metered Gemini; `llm_usage` shows
-  `tick_autonomous_calls` = 0 ever): wrong default model id (`qwen3-32b` →
-  404; real Groq id is `qwen/qwen3-32b`) and qwen3's `<think>…</think>`
-  preamble breaking the JSON parse. Both fixed in `core/tick_brain.py`
-  (default + think-strip, with tests). **Deploy caution:** the eval shows
-  qwen is the behavioral opposite of the Gemini fallback (P≈0.57/R≈0.8 vs
-  P≈0.84/R≈0.6) and violated the WARNING-8 followup-silence rule in all
-  three baseline runs — deploying without prompt tuning makes Klaus
-  noticeably noisier and double-sends on followup ticks. Recommended:
-  deploy together with the qwen-targeted triage-prompt tuning (next
-  session), starting from `evals/tick_brain/README.md § Baselines`. Groq
-  free tier is 6000 TPM — fine at production cadence (one call per 20 min);
-  only burst usage like eval runs grazes it.
+- ✅ **Tune `prompts/autonomous_triage.md` against the expanded eval** —
+  done 2026-06-12. Restructured the triage prompt for qwen (hard
+  followup-silence rule + ordered vetoes→signals→silence decision
+  procedure) and fixed two request-shape bugs found during tuning
+  (`TICK_BRAIN_MAX_TOKENS=2048` — the global 4096 budget made every Groq
+  request 413 on the 6000-TPM per-request admission check and silently
+  re-route to metered Gemini; `TICK_BRAIN_TEMPERATURE=0.6` — provider
+  default ~1.0 made borderline verdicts flip run-to-run). Post-tuning:
+  P 0.83–0.90 / R 0.73–0.91 / F1 0.80–0.87 over three runs, WARNING-8
+  violations 0/6 (was 3/3), aged-overdue recall preserved. Full numbers in
+  `evals/tick_brain/README.md § Baselines`.
+- **Deploy the Groq tick-brain fix + tuned triage prompt (ready as of
+  2026-06-12)** — ships together: the 2026-06-11 `core/tick_brain.py`
+  fixes (model id `qwen/qwen3-32b`, `<think>` strip), the 2026-06-12
+  request-shape fixes (max_tokens 2048, temperature 0.6 — without the
+  max_tokens fix the Groq primary still never runs), and the tuned
+  `prompts/autonomous_triage.md`. No Cloud Run env changes needed — all
+  new knobs default correctly in code. Next-day verification: `llm_usage`
+  should show `tick_autonomous_calls` > 0 for the first time ever.

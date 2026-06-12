@@ -111,8 +111,14 @@ labels reviewed by Amit).
 python scripts/eval_tick_brain.py
 ```
 
-Output: overall precision/recall/F1 + per-trigger-type breakdown table. See
+Output: per-fixture verdict list (`ok`/`FP`/`FN`/`ERR` vs ground truth) +
+overall precision/recall/F1 + per-trigger-type breakdown table. See
 `scripts/eval_tick_brain.py` (Plan 08) for the full output spec.
+
+Heads-up on Groq free-tier limits during eval bursts: per-request admission
+is input + max_tokens vs 6000 TPM (handled by `TICK_BRAIN_MAX_TOKENS=2048`),
+and ~8+ runs in one day drain the 500k TPD daily cap — late-day runs then
+partially fall back to Gemini (the runner logs each fallback to stderr).
 
 ## Baselines
 
@@ -158,6 +164,39 @@ would double-send on every followup tick in production. Prompt tuning for
 qwen must prioritise the followup-silence rule and quiet-day restraint;
 tuning for Gemini must prioritise task-age urgency. The two models need
 different corrections — tune against whichever one production will run.
+
+### 2026-06-12 — 25 fixtures, post-tuning (`qwen/qwen3-32b`, temp 0.6, max_tokens 2048)
+
+**What was measured:** the tuned stack — `prompts/autonomous_triage.md`
+restructured (hard followup-silence rule up top; ordered decision
+procedure: vetoes → signals → silence), plus two `core/tick_brain.py`
+request changes found during tuning:
+
+- `TICK_BRAIN_MAX_TOKENS=2048` — Groq counts input + max_tokens against
+  the 6000-TPM per-request limit; the global 4096 default pushed every
+  triage request over it (413) and silently re-routed all calls to the
+  metered Gemini fallback. This was a production bug, not just an eval
+  artifact.
+- `TICK_BRAIN_TEMPERATURE=0.6` — qwen3's recommended thinking-mode value.
+  At the provider default (~1.0) the verdict flipped run-to-run on
+  borderline fixtures; 0.6 cut the flapping dramatically (it was the
+  single highest-impact change of the tuning session).
+
+| Run | Precision | Recall | F1 | Errored | Notes |
+|-----|-----------|--------|----|---------|-------|
+| 1 | 0.83 (10/12) | 0.91 (10/11) | 0.87 | 0/25 | pure qwen |
+| 2 | 0.89 (8/9) | 0.73 (8/11) | 0.80 | 0/25 | pure qwen |
+| 3 | 0.90 (9/10) | 0.82 (9/11) | 0.86 | 0/25 | 5/25 fell back to Gemini (Groq 500k-TPD daily cap, drained by eval runs; production cadence never approaches it) |
+
+Target (P ≥ 0.80, R ≥ 0.70) met on every run. **WARNING 8: 0/6 violations**
+(both followup fixtures silent in all three runs — was 3/3 violations at
+baseline). The `0012`/`0013` aged-overdue strength is preserved, and all
+five timing/repeat-suppression negatives (`0017`–`0021`, `0025`) hold.
+Remaining known soft spots: `0009`/`0011` (borderline quiet-positives;
+each missed in 2 of 3 runs) and an occasional flip on `0016`/`0019`.
+`0009` vs `0016` is the hardest pair in the set — near-identical ~250 kcal
+low-protein breakfasts whose labels differ only on whether an active
+protein goal is visible in self-state/journal context.
 
 ## Fixture Inventory
 

@@ -94,7 +94,9 @@ class LLMClient:
 
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None,
-             purpose: str = "") -> dict:
+             purpose: str = "",
+             max_tokens: int | None = None,
+             temperature: float | None = None) -> dict:
         """Send a multi-turn conversation and return a unified response.
 
         Args:
@@ -104,6 +106,14 @@ class LLMClient:
                       converts internally to its own wire format.
             purpose:  Caller label for usage metering (e.g. "smart", "worker", "tick").
                       Stored in LLMUsageStore — has no effect on the LLM call itself.
+            max_tokens: Per-call completion budget override (default MAX_TOKENS).
+                      Groq's free tier counts input + max_tokens against its
+                      6000-TPM per-request limit, so the tick-brain passes a
+                      smaller budget here to keep requests admissible.
+            temperature: Per-call sampling temperature override. None (default)
+                      leaves the provider default. The tick-brain passes a low
+                      value — a binary judgment gate should not flip on
+                      borderline cases run-to-run.
 
         Returns:
             Unified envelope: {"text", "tool_calls", "stop_reason", "usage"}
@@ -112,7 +122,8 @@ class LLMClient:
             "chat backend=%s model=%s messages=%d tools=%d purpose=%s",
             self.backend, self.model, len(messages), len(tools or []), purpose,
         )
-        result = self._impl.chat(messages, system=system, tools=tools)
+        result = self._impl.chat(messages, system=system, tools=tools,
+                                 max_tokens=max_tokens, temperature=temperature)
 
         # --- Cost metering (never raises) ---
         try:
@@ -147,7 +158,9 @@ class _BaseBackend:
     """Marker base class for type-checking."""
 
     def chat(self, messages: list[dict], *, system: str | None,
-             tools: list[dict] | None) -> dict:
+             tools: list[dict] | None,
+             max_tokens: int | None = None,
+             temperature: float | None = None) -> dict:
         raise NotImplementedError
 
 
@@ -168,7 +181,9 @@ class _AnthropicBackend(_BaseBackend):
         )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
-             tools: list[dict] | None = None) -> dict:
+             tools: list[dict] | None = None,
+             max_tokens: int | None = None,
+             temperature: float | None = None) -> dict:
         import anthropic
 
         # Strip thought_signature from messages to prevent Anthropic validation errors on fallback
@@ -187,9 +202,11 @@ class _AnthropicBackend(_BaseBackend):
 
         kwargs: dict[str, Any] = {
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens or MAX_TOKENS,
             "messages": clean_messages,
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if system:
             kwargs["system"] = system
         if tools:
@@ -261,7 +278,9 @@ class _GeminiBackend(_BaseBackend):
         )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
-             tools: list[dict] | None = None) -> dict:
+             tools: list[dict] | None = None,
+             max_tokens: int | None = None,
+             temperature: float | None = None) -> dict:
         from google import genai
         from google.genai import types
 
@@ -269,7 +288,9 @@ class _GeminiBackend(_BaseBackend):
         gemini_tools = self._convert_tools(tools) if tools else None
 
         config_kwargs: dict[str, Any] = {}
-        config_kwargs["max_output_tokens"] = MAX_TOKENS
+        config_kwargs["max_output_tokens"] = max_tokens or MAX_TOKENS
+        if temperature is not None:
+            config_kwargs["temperature"] = temperature
         if system:
             config_kwargs["system_instruction"] = system
         if gemini_tools:
@@ -497,7 +518,9 @@ class _OpenAIBackend(_BaseBackend):
         )
 
     def chat(self, messages: list[dict], *, system: str | None = None,
-             tools: list[dict] | None = None) -> dict:
+             tools: list[dict] | None = None,
+             max_tokens: int | None = None,
+             temperature: float | None = None) -> dict:
         from openai import APIConnectionError, APIStatusError
 
         openai_messages = self._convert_messages(messages, system=system)
@@ -506,8 +529,10 @@ class _OpenAIBackend(_BaseBackend):
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": openai_messages,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens or MAX_TOKENS,
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
         if openai_tools:
             kwargs["tools"] = openai_tools
 

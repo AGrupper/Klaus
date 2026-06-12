@@ -10,6 +10,15 @@ Env vars:
                            the bare "qwen3-32b" returns 404 model_not_found)
     TICK_BRAIN_API_KEY   — Groq API key (required; stored in GCP Secret Manager)
     TICK_BRAIN_BASE_URL  — Groq base URL (default: https://api.groq.com/openai/v1)
+    TICK_BRAIN_MAX_TOKENS — completion budget per call (default 2048). Groq's
+                           free tier counts input + max_tokens against the
+                           6000-TPM per-request limit; the global MAX_TOKENS
+                           of 4096 pushes triage requests over it (413), which
+                           silently re-routes every call to the Gemini fallback.
+    TICK_BRAIN_TEMPERATURE — sampling temperature (default 0.6, qwen3's
+                           recommended thinking-mode value; 0 risks think-block
+                           repetition loops). A judgment gate at the provider
+                           default ~1.0 flips on borderline cases run-to-run.
 
 Fallback uses:
     SMART_AGENT_BACKEND / SMART_AGENT_MODEL / SMART_AGENT_API_KEY
@@ -25,9 +34,11 @@ from core.llm_client import LLMClient, LLMError
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BACKEND  = "openai"
-_DEFAULT_MODEL    = "qwen/qwen3-32b"
-_DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+_DEFAULT_BACKEND     = "openai"
+_DEFAULT_MODEL       = "qwen/qwen3-32b"
+_DEFAULT_BASE_URL    = "https://api.groq.com/openai/v1"
+_DEFAULT_MAX_TOKENS  = 2048  # ample for qwen3's <think> block + the JSON verdict
+_DEFAULT_TEMPERATURE = 0.6   # qwen3 thinking-mode recommendation; tames verdict flapping
 
 _TICK_SYSTEM_PROMPT = """\
 You are Klaus's judgment layer. You receive raw health signals or situation data.
@@ -76,6 +87,18 @@ class TickBrain:
         backend  = os.getenv("TICK_BRAIN_BACKEND",  _DEFAULT_BACKEND)
         model    = os.getenv("TICK_BRAIN_MODEL",    _DEFAULT_MODEL)
         base_url = os.getenv("TICK_BRAIN_BASE_URL", _DEFAULT_BASE_URL)
+        try:
+            self._max_tokens = int(
+                os.getenv("TICK_BRAIN_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS))
+            )
+        except ValueError:
+            self._max_tokens = _DEFAULT_MAX_TOKENS
+        try:
+            self._temperature = float(
+                os.getenv("TICK_BRAIN_TEMPERATURE", str(_DEFAULT_TEMPERATURE))
+            )
+        except ValueError:
+            self._temperature = _DEFAULT_TEMPERATURE
 
         self._client = LLMClient(
             backend=backend,
@@ -141,6 +164,8 @@ class TickBrain:
                 system=active_system,
                 tools=tools,
                 purpose=primary_purpose,
+                max_tokens=self._max_tokens,
+                temperature=self._temperature,
             )
         except LLMError as exc:
             logger.warning(

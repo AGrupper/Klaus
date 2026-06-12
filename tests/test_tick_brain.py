@@ -147,6 +147,25 @@ class TestTickBrainConstructor(unittest.TestCase):
                 self.assertEqual(primary_call["backend"], "openai")
                 self.assertEqual(primary_call["model"], "qwen/qwen3-32b")
                 self.assertEqual(primary_call["base_url"], "https://api.groq.com/openai/v1")
+                self.assertEqual(brain._max_tokens, 2048)
+
+    def test_max_tokens_env_override(self):
+        """TICK_BRAIN_MAX_TOKENS env var overrides the 2048 default; a
+        non-numeric value falls back to the default instead of raising."""
+        class StubLLMClient:
+            def __init__(self, backend, model, api_key, base_url=None):
+                pass
+
+        import core.tick_brain as tb
+        env = {"TICK_BRAIN_API_KEY": "gsk_test", "TICK_BRAIN_MAX_TOKENS": "1500"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(tb, "LLMClient", StubLLMClient):
+                self.assertEqual(tb.TickBrain()._max_tokens, 1500)
+
+        env["TICK_BRAIN_MAX_TOKENS"] = "not-a-number"
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(tb, "LLMClient", StubLLMClient):
+                self.assertEqual(tb.TickBrain()._max_tokens, 2048)
 
 
 class TestTickBrainThink(unittest.TestCase):
@@ -190,6 +209,8 @@ class TestTickBrainThink(unittest.TestCase):
             brain._fallback_model = None
 
         brain._model = "qwen3-32b"
+        brain._max_tokens = 2048
+        brain._temperature = 0.6
         return brain
 
     def test_think_returns_should_act_false_on_good_response(self):
@@ -215,6 +236,26 @@ class TestTickBrainThink(unittest.TestCase):
         brain.think("test prompt")
         call_kwargs = brain._fallback_client.chat.call_args
         self.assertEqual(call_kwargs.kwargs.get("purpose"), "tick_fallback")
+
+    def test_think_passes_tick_budget_to_primary(self):
+        """Primary (Groq) gets the reduced tick budget — Groq's free tier
+        counts input + max_tokens against the 6000-TPM per-request limit,
+        so the global 4096 default 413s and silently re-routes to fallback."""
+        brain = self._make_brain()
+        brain.think("test prompt")
+        kwargs = brain._client.chat.call_args.kwargs
+        self.assertEqual(kwargs.get("max_tokens"), 2048)
+
+    def test_think_fallback_keeps_default_budget(self):
+        """Fallback (Gemini) has no per-request token cap — it must NOT
+        inherit the Groq budget; omitting max_tokens keeps MAX_TOKENS."""
+        from core.llm_client import LLMError
+        brain = self._make_brain(
+            primary_raises=LLMError("rate limit", backend="openai", status_code=429)
+        )
+        brain.think("test prompt")
+        kwargs = brain._fallback_client.chat.call_args.kwargs
+        self.assertNotIn("max_tokens", kwargs)
 
     def test_think_falls_back_on_llm_error(self):
         """On LLMError from primary, fallback client is tried."""
@@ -327,6 +368,8 @@ class TestSystemOverrideAndTopicKey(unittest.TestCase):
             brain._fallback_model = None
 
         brain._model = "qwen3-32b"
+        brain._max_tokens = 2048
+        brain._temperature = 0.6
         return brain
 
     # ---- think() signature: system_override kwarg ----
