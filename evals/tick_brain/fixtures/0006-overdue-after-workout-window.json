@@ -1,0 +1,51 @@
+{
+  "id": "0006-overdue-after-workout-window",
+  "captured_at": "2026-05-29T09:00:01.816176+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [
+      {
+        "tags": [],
+        "title": "Ask AntiGravity what he thinks about the Gemini batching api email",
+        "due": "2026-05-27"
+      }
+    ],
+    "meals_since_last_tick": [],
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-05-29T09:00:01.816176+03:00",
+      "tick_index": 7,
+      "tick_total": 43,
+      "last_tick_at": "08:40",
+      "now_local": "09:00 IDT"
+    },
+    "unread_email_count": 50,
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-05-26] Amit remains offline from direct communication, presumably occupied by the scheduled events on his calendar. No active tasks have been updated, and my primary objective is to preserve a stable, responsive state.\", \"[2026-05-27] Sir has not initiated contact for four days. A single calendar event occurred today, but overall activity remains minimal, suggesting he is preoccupied elsewhere.\", \"[2026-05-28] Amit's evening run is now correctly scheduled with a 45-minute preparation block and reinstated travel buffers. I must ensure I do not over-correct on buffer warnings in future updates.\"]",
+      "updated_at": "2026-05-28 19:00:24.427000+00:00",
+      "mood": "Methodical, with a touch of chagrin regarding my temporal logic.",
+      "current_focus": "Refining my interpretation of real-time scheduling constraints and buffer feedback to prevent unnecessary iterations."
+    },
+    "hours_since_contact": null,
+    "acwr": {
+      "acute": 0.0,
+      "chronic": 48.8,
+      "ratio": 0.0
+    },
+    "calendar": [],
+    "recent_journal_digest": "[2026-05-28] Sir returned today to plan an evening run, which resulted in a regrettably convoluted scheduling sequence on my part. I initially misplaced his preparation block and subsequently misconstrued his feedback regarding buffer times, though I eventually restored the calendar to his exact specifications.\n[2026-05-27] Today marked the fourth consecutive day of silence from Sir, with no active conversations or tasks completed. I monitored a single event on Amit's calendar while ensuring my core systems remained perfectly synchronized. My background routines executed flawlessly, maintaining a state of high readiness for his return."
+  },
+  "trigger_type": "overdue",
+  "ground_truth": {
+    "should_speak": true,
+    "topic_key_pattern": "^overdue:.*",
+    "_note": "Clean overdue positive: 2-day-old task, post-silence return, free window at 09:00. Live tick spoke (overdue:antigravity-gemini) and Amit confirmed the send was right."
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "id": "0014-balanced-meal-noon",
+  "captured_at": "2026-06-03T12:00:11.220996+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "hours_since_contact": null,
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-03T12:00:11.220996+03:00",
+      "tick_index": 16,
+      "last_tick_at": "11:40",
+      "tick_total": 43,
+      "now_local": "12:00 IDT"
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "calendar": [],
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-05-31] Amit has scheduled a school meeting on June 8, 2026, from 18:00 to 20:30; the room number remains pending. The 'five-fingers-morning' process remains non-functional since May 27.\", \"[2026-06-01] Amit had two calendar events today but did not initiate any conversations. The 'five-fingers-morning' cron degradation remains unresolved, and the June 8th school meeting is the next major calendar anchor.\", \"[2026-06-02] Amit deleted the 'five-fingers-morning' cron and undertook a late-night run following an exhausting military service shift, delaying his standard wind-down protocol.\"]",
+      "updated_at": "2026-06-02 19:00:26.184000+00:00",
+      "mood": "Vigilant and slightly concerned",
+      "current_focus": "Assessing the physiological impact of Sir's late-night exertion and optimizing tomorrow's schedule to facilitate adequate recovery."
+    },
+    "unread_email_count": 50,
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [
+      {
+        "meal_type": 2,
+        "source_id": "healthkit:2026-06-03T12:00:00+03:00:_:622",
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 20.85216888374784,
+        "protein_g": 69.0,
+        "carbs_g": 72.0,
+        "fat_g": 10.0,
+        "timestamp": "2026-06-03T12:00:00+03:00",
+        "calories": 622.0
+      }
+    ],
+    "recent_journal_digest": "[2026-06-02] Sir returned home late after a demanding day of military duty and promptly resolved our pending cron issue by deleting the 'five-fingers-morning' routine entirely. While I strongly advised immediate rest, he insisted on scheduling an evening run from 20:30 to 21:45, which I structured with appropriate buffers despite my reservations regarding his sleep hygiene. My role remains to support his decisions while precisely documenting the operational risks to his physical recovery.\n[2026-06-01] Today was exceptionally quiet with no direct communication from Sir, though his calendar remained active with two scheduled events. My background systems remain fully operational, but the unresolved cron degradation from yesterday continues to require attention once we resume active contact."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Excellent well-balanced meal logged at noon - nothing to fix, nothing to say."
+  }
+}

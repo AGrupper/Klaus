@@ -148,15 +148,28 @@ class FakeCollection(FakeQuery):
 
     ``document()`` returns per-doc MagicMocks (memoised by id) so write-path
     tests can keep asserting on ``.set`` / ``.delete`` calls.
+
+    ``subcollections`` maps doc_id -> {subcollection_name: FakeCollection} so
+    read paths like ``col.document(date).collection("ticks").stream()``
+    (TickLogStore) return real fake data instead of a bare MagicMock. Docs
+    absent from the map get an empty FakeCollection for any subcollection
+    name — mirroring Firestore, where missing docs have empty subcollections.
     """
 
-    def __init__(self, snaps: list):
+    def __init__(self, snaps: list,
+                 subcollections: dict[str, dict[str, "FakeCollection"]] | None = None):
         super().__init__(snaps)
         self._docs: dict[str, MagicMock] = {}
+        self._subcollections = subcollections or {}
 
     def document(self, doc_id: str) -> MagicMock:
         if doc_id not in self._docs:
-            self._docs[doc_id] = MagicMock(name=f"docref-{doc_id}")
+            doc = MagicMock(name=f"docref-{doc_id}")
+            subs = self._subcollections.get(doc_id, {})
+            doc.collection.side_effect = (
+                lambda name, _subs=subs: _subs.get(name, FakeCollection([]))
+            )
+            self._docs[doc_id] = doc
         return self._docs[doc_id]
 
 

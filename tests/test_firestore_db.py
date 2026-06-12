@@ -613,6 +613,41 @@ class TestTickLogStore:
 
         assert result is None
 
+    def _store_with_ticks(self, subcollections):
+        from tests.fakes import FakeCollection
+        client = MagicMock()
+        client.collection.return_value = FakeCollection([], subcollections)
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            return firestore_db.TickLogStore("test-project")
+
+    def test_ticks_for_date_sorted_with_time_ids(self):
+        """ticks_for_date returns docs sorted by HH:MM with 'time' attached."""
+        from tests.fakes import FakeCollection, make_snap
+        snaps = [
+            make_snap("14:20", {"captured_at": "b", "situation_snapshot": {}, "decision_trail": {}}),
+            make_snap("07:00", {"captured_at": "a", "situation_snapshot": {}, "decision_trail": {}}),
+        ]
+        store = self._store_with_ticks({self._DATE: {"ticks": FakeCollection(snaps)}})
+
+        ticks = store.ticks_for_date(self._DATE)
+
+        assert [t["time"] for t in ticks] == ["07:00", "14:20"]
+        assert ticks[0]["captured_at"] == "a"
+
+    def test_ticks_for_date_missing_date_returns_empty(self):
+        """A date with no ticks subcollection yields [] — not an error."""
+        store = self._store_with_ticks({})
+        assert store.ticks_for_date("2099-01-01") == []
+
+    def test_ticks_for_date_never_raises(self):
+        """Firestore errors are swallowed and reported as [] (export must not
+        crash on one bad day)."""
+        client, col = _make_mock_client_with_collection()
+        col.document.side_effect = RuntimeError("simulated outage")
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.TickLogStore("test-project")
+        assert store.ticks_for_date(self._DATE) == []
+
 
 # ---------------------------------------------------------------------------
 # TTL read cache — SelfStateStore.get / JournalStore.get / get_recent

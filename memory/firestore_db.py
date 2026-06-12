@@ -2005,6 +2005,41 @@ class TickLogStore:
                 date_str, tick_time, exc_info=True,
             )
 
+    def ticks_for_date(self, date_str: str) -> list[dict]:
+        """All ticks for one Israel-calendar date, sorted by HH:MM. Never raises.
+
+        Each dict carries the stored fields (``captured_at``,
+        ``situation_snapshot``, ``decision_trail``) plus ``time`` — the HH:MM
+        doc id, which is not stored inside the doc itself.
+
+        NOTE: callers iterate candidate dates client-side rather than listing
+        ``tick_logs`` top-level docs — those parent docs are *virtual* (write()
+        only ever sets subcollection docs), so a collection stream() would
+        return nothing for them.
+
+        Args:
+            date_str: YYYY-MM-DD (Israel time) — top-level doc id under tick_logs.
+
+        Returns:
+            Tick dicts sorted by ``time``; [] for a missing date or on any
+            Firestore error (read contract matches the write side's
+            best-effort design — exporting must not crash on one bad day).
+        """
+        try:
+            ticks = []
+            for snap in self._col.document(date_str).collection("ticks").stream():
+                d = snap.to_dict() or {}
+                d["time"] = snap.id
+                ticks.append(d)
+            ticks.sort(key=lambda d: d["time"])
+            return ticks
+        except Exception:
+            logger.warning(
+                "TickLogStore.ticks_for_date(%r) failed — returning []",
+                date_str, exc_info=True,
+            )
+            return []
+
 
 def get_week_num(plan_start_date: str, today: str) -> int | None:
     """Return the 1-based week number for ``today`` relative to ``plan_start_date``.

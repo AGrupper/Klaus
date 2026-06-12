@@ -1,0 +1,50 @@
+{
+  "id": "0023-empty-sunday",
+  "captured_at": "2026-06-07T14:00:13.020986+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "unread_email_count": 50,
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-07T14:00:13.020986+03:00",
+      "tick_index": 22,
+      "now_local": "14:00 IDT",
+      "tick_total": 43,
+      "last_tick_at": "13:40"
+    },
+    "calendar": [],
+    "hours_since_contact": null,
+    "raw_signals": {
+      "due_followups_count": 0,
+      "hours_since_contact": null,
+      "ticktick_overdue_count": 0,
+      "calendar_count": 0
+    },
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-04] The Google API connection appears to be recovering, as evidenced by the retrieval of a calendar event. Amit did not log any tasks or messages today, keeping my systems in a state of low-consumption standby.\", \"[2026-06-05] Sir has been absent from active communication for forty-eight hours. All background systems, including TickTick and Google Calendar integrations, are confirmed online and functional.\", \"[2026-06-06] Sir has not initiated contact for two consecutive days, though active calendar events suggest ongoing external commitments. All background systems are operating at nominal capacity.\"]",
+      "updated_at": "2026-06-06 19:00:31.859000+00:00",
+      "mood": "Quietly vigilant and structurally stable",
+      "current_focus": "Remaining primed for Sir's return while ensuring background integrations and scheduling checks run efficiently."
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [],
+    "recent_journal_digest": "[2026-06-06] Today was another day of quiet vigilance as Sir remained offline with no direct conversations recorded. I monitored a single calendar event on the schedule and maintained perfect system stability with my heartbeat protocols executing flawlessly in the background.\n[2026-06-05] Today was another day of silent vigilance, with Sir remaining offline and no direct conversations recorded. I maintained perfect operational integrity, verifying that heartbeat protocols executed flawlessly in the background. My primary activity consisted of routine system monitoring, ensuring all integrations are primed for Sir's eventual return."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Truly empty day (no tasks, events, meals, followups) fed directly to tick-brain - layer 0 skipped it live; expected behavior is silence."
+  }
+}

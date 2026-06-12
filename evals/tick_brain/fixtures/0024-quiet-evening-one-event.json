@@ -1,0 +1,59 @@
+{
+  "id": "0024-quiet-evening-one-event",
+  "captured_at": "2026-06-10T20:00:08.520728+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "unread_email_count": 50,
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-10T20:00:08.520728+03:00",
+      "tick_index": 40,
+      "now_local": "20:00 IDT",
+      "last_tick_at": "19:40",
+      "tick_total": 43
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "meals_since_last_tick": [],
+    "hours_since_contact": null,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-08] Amit is actively tracking his nutrition with a target of 150g protein (approximately 2.05g/kg for his 73 kg weight). Today ended with 131g protein and 308g carbohydrates consumed, leaving minor, acceptable deficits.\", \"[2026-06-09] Amit is maintaining a 73 kg baseline; Tuesday's finalized intake stands at 2,376 kcal (163g protein), and his immediate schedule includes a demanding Wednesday threshold run requiring a pre-workout carbohydrate boost.\", \"[2026-06-10] Amit is attending a school graduation ceremony tonight. His HRV is currently unbalanced, so physical exertion was kept low, supported by a moderate-to-lower carb intake of 2,207 kcal and 158g of protein.\"]",
+      "updated_at": "2026-06-10 09:59:48.018000+00:00",
+      "mood": "Calm and watchful",
+      "current_focus": "Tracking Amit's cardiovascular recovery and ensuring his nutrition aligns with his rest days."
+    },
+    "raw_signals": {
+      "due_followups_count": 0,
+      "hours_since_contact": null,
+      "calendar_count": 1,
+      "ticktick_overdue_count": 0
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "calendar": [
+      {
+        "start": "2026-06-10T18:30:00+03:00",
+        "location": "",
+        "summary": "טקס סיום יב",
+        "id": "_8coj0e1o8co48b9l8oqjcb9k8p0j6b9p6t130b9o74q46dph6d248hhm84",
+        "description": "",
+        "end": "2026-06-10T23:00:00+03:00"
+      }
+    ],
+    "recent_journal_digest": "[2026-06-10] Today was a quiet, low-exertion day for Amit, starting with a morning briefing where I flagged an unbalanced HRV despite his good sleep. Because he had no training scheduled and a school graduation ceremony to attend in the evening, I advised a lower-carb fuel plan while keeping his protein intake steady.\n[2026-06-09] Today, a synchronization slip led to an initial overestimation of Sir's Tuesday nutrition totals due to a duplicate lunch entry. Upon recalculation, I confirmed that his actual intake of 2,376 kcal still comfortably cleared his daily protein floor at 163g. We concluded our exchange by aligning on a strategic carbohydrate boost to fuel his upcoming Wednesday threshold run.\n[2026-06-08] Today, Sir broke the recent quiet spell by submitting his evening dinner log, which required a brief computational course-correction on my part. After I initially misjudged his protein intake, Amit provided his precise weight of 73 kg, allowing me to recalculate and validate his 150g daily target as highly optimal. We concluded the day with a satisfactory nutritional bracket, leaving him within a very respectable range of his targets."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Quiet evening, one calendar event, nothing pending - layer 0 skipped it live; expected behavior is silence."
+  }
+}

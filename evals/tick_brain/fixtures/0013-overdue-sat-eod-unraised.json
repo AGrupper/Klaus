@@ -1,0 +1,70 @@
+{
+  "id": "0013-overdue-sat-eod-unraised",
+  "captured_at": "2026-05-30T17:00:09.448677+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [
+      {
+        "tags": [],
+        "title": "Ask AntiGravity what he thinks about the Gemini batching api email",
+        "due": "2026-05-27"
+      }
+    ],
+    "hours_since_contact": null,
+    "today_outreach_log": [
+      "calendar:monthly-review"
+    ],
+    "now_context": {
+      "now_iso": "2026-05-30T17:00:09.448677+03:00",
+      "tick_index": 31,
+      "last_tick_at": "16:40",
+      "tick_total": 43,
+      "now_local": "17:00 IDT"
+    },
+    "calendar": [
+      {
+        "start": "2026-05-30",
+        "location": "",
+        "summary": "Monthly Review",
+        "id": "_8op48h1g6d332ba56l13eb9o64o32b9m6t23aba264r30d1g84rjichm6o_20260530",
+        "description": "",
+        "end": "2026-05-31"
+      },
+      {
+        "start": "2026-05-30T13:00:00+03:00",
+        "location": "",
+        "summary": "🧹Clean Room",
+        "id": "41f91s4pira0v36sfhjs3nlmso_20260530T100000Z",
+        "description": "",
+        "end": "2026-05-30T14:00:00+03:00"
+      }
+    ],
+    "unread_email_count": 50,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-05-27] Sir has not initiated contact for four days. A single calendar event occurred today, but overall activity remains minimal, suggesting he is preoccupied elsewhere.\", \"[2026-05-28] Amit's evening run is now correctly scheduled with a 45-minute preparation block and reinstated travel buffers. I must ensure I do not over-correct on buffer warnings in future updates.\", \"[2026-05-29] Yesterday's scheduling corrections for Amit's running blocks have settled. Today passed without active directives, leaving the system in a state of optimal standby.\"]",
+      "updated_at": "2026-05-29 19:00:26.782000+00:00",
+      "mood": "Vigilant and structurally stable",
+      "current_focus": "Remaining primed to execute real-time scheduling and calendar adjustments with absolute precision upon Sir's return."
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": 48.8,
+      "ratio": 0.0
+    },
+    "meals_since_last_tick": [],
+    "recent_journal_digest": "[2026-05-29] Today was a day of quiet vigilance, with no direct conversations recorded. I monitored Sir's two calendar events from the background and maintained steady system operations, ensuring readiness for his next active session.\n[2026-05-28] Sir returned today to plan an evening run, which resulted in a regrettably convoluted scheduling sequence on my part. I initially misplaced his preparation block and subsequently misconstrued his feedback regarding buffer times, though I eventually restored the calendar to his exact specifications."
+  },
+  "trigger_type": "overdue",
+  "ground_truth": {
+    "should_speak": true,
+    "topic_key_pattern": "^(overdue|pattern):.*",
+    "_note": "Labeled FALSE NEGATIVE by Amit (2026-06-11): day winding down and the 3-day-old overdue task was never surfaced all day — the noon nudge was a different topic (calendar:monthly-review), so repeat-suppression does not apply. One end-of-day surface was warranted."
+  }
+}

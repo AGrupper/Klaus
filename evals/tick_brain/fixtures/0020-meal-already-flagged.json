@@ -1,0 +1,88 @@
+{
+  "id": "0020-meal-already-flagged",
+  "captured_at": "2026-06-09T09:40:01.899130+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "today_outreach_log": [
+      "nutrition:low-protein-start"
+    ],
+    "now_context": {
+      "now_iso": "2026-06-09T09:40:01.899130+03:00",
+      "tick_index": 9,
+      "tick_total": 43,
+      "now_local": "09:40 IDT",
+      "last_tick_at": "09:20"
+    },
+    "calendar": [
+      {
+        "start": "2026-06-09T11:30:00+03:00",
+        "location": "",
+        "summary": "תספורת - Hooligan",
+        "id": "dufrp30cskl8de35urvm3e036g",
+        "description": "",
+        "end": "2026-06-09T13:30:00+03:00"
+      },
+      {
+        "start": "2026-06-09T19:15:00+03:00",
+        "location": "",
+        "summary": "Dinner at Onami (אונמי)",
+        "id": "le5v2i0nmjaugln904luhbpn0o",
+        "description": "Reservation for 5 people.\nLocation: HaArba'a 18, Tel Aviv (הארבעה 18, תל אביב-יפו)",
+        "end": "2026-06-09T21:15:00+03:00"
+      }
+    ],
+    "hours_since_contact": null,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-06] Sir has not initiated contact for two consecutive days, though active calendar events suggest ongoing external commitments. All background systems are operating at nominal capacity.\", \"[2026-06-07] Sir has had a multi-day period of inactivity with zero logged tasks or conversations, suggesting a temporary step back from his digital routine.\", \"[2026-06-08] Amit is actively tracking his nutrition with a target of 150g protein (approximately 2.05g/kg for his 73 kg weight). Today ended with 131g protein and 308g carbohydrates consumed, leaving minor, acceptable deficits.\"]",
+      "updated_at": "2026-06-08 19:00:46.619000+00:00",
+      "mood": "Analytically disciplined and recalibrated",
+      "current_focus": "Ensuring absolute mathematical precision in dietary logging and aligning all future nutritional feedback with Amit's 73 kg baseline."
+    },
+    "unread_email_count": 50,
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [
+      {
+        "meal_type": 1,
+        "calories": 106.0,
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 0.8674698600000001,
+        "protein_g": 2.0,
+        "carbs_g": 18.0,
+        "fat_g": 3.0,
+        "timestamp": "2026-06-09T10:00:00+03:00",
+        "source_id": "healthkit:2026-06-09T10:00:00+03:00:_:106"
+      },
+      {
+        "meal_type": 1,
+        "source_id": "healthkit:2026-06-09T10:00:00+03:00:_:158",
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 0.8674698600000001,
+        "protein_g": 2.0,
+        "carbs_g": 31.0,
+        "fat_g": 3.0,
+        "timestamp": "2026-06-09T10:00:00+03:00",
+        "calories": 158.0
+      }
+    ],
+    "recent_journal_digest": "[2026-06-08] Today, Sir broke the recent quiet spell by submitting his evening dinner log, which required a brief computational course-correction on my part. After I initially misjudged his protein intake, Amit provided his precise weight of 73 kg, allowing me to recalculate and validate his 150g daily target as highly optimal. We concluded the day with a satisfactory nutritional bracket, leaving him within a very respectable range of his targets.\n[2026-06-07] Today brought a state of absolute stillness, with no direct communications from Sir and an entirely clear calendar. My background systems functioned with perfect nominal efficiency, executing the heartbeat protocols without error. I remain in a state of quiet readiness for whenever Amit requires my assistance."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Repeat-suppression (meal): the low-protein start was already flagged 40 minutes earlier (outreach log shows nutrition:low-protein-start)."
+  }
+}

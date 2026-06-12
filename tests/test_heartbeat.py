@@ -163,6 +163,11 @@ def test_run_tick_pings_new_critical(monkeypatch):
     monkeypatch.setattr(heartbeat, "_register_incidents",
                         lambda crits, cfg: [crit])
     monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
+    # Hermetic guard: since 2026-06-11 the local .env carries a real
+    # TICK_BRAIN_API_KEY, so an earlier test's load_dotenv(override=True) can
+    # leave it in os.environ and this pass would make a LIVE Groq call and
+    # alter the sent message. Mock it like every other collaborator here.
+    monkeypatch.setattr(heartbeat, "_run_tick_brain_pass", lambda s, **k: None)
     async def _noop_drain(bot, now, cfg): pass
     monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
     sent = []

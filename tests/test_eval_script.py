@@ -29,6 +29,10 @@ def _run(args: list[str], env: dict | None = None) -> subprocess.CompletedProces
     # Forcibly delete API keys so TickBrain construction fails predictably.
     for k in ("TICK_BRAIN_API_KEY", "GROQ_API_KEY", "SMART_AGENT_API_KEY"):
         env_full.pop(k, None)
+    # The script's load_dotenv(override=True) would re-import the keys from
+    # .env (which carries TICK_BRAIN_API_KEY since 2026-06-11) and turn these
+    # structure tests into live LLM calls — skip the dotenv load entirely.
+    env_full["EVAL_SKIP_DOTENV"] = "1"
     if env:
         env_full.update(env)
     return subprocess.run(

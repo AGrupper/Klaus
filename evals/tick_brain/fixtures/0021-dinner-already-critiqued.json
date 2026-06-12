@@ -1,0 +1,71 @@
+{
+  "id": "0021-dinner-already-critiqued",
+  "captured_at": "2026-06-08T20:40:13.041269+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "calendar": [],
+    "today_outreach_log": [
+      "meal-audit:heavy-dinner"
+    ],
+    "now_context": {
+      "now_iso": "2026-06-08T20:40:13.041269+03:00",
+      "tick_index": 42,
+      "now_local": "20:40 IDT",
+      "tick_total": 43,
+      "last_tick_at": "20:20"
+    },
+    "hours_since_contact": null,
+    "unread_email_count": 50,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-05] Sir has been absent from active communication for forty-eight hours. All background systems, including TickTick and Google Calendar integrations, are confirmed online and functional.\", \"[2026-06-06] Sir has not initiated contact for two consecutive days, though active calendar events suggest ongoing external commitments. All background systems are operating at nominal capacity.\", \"[2026-06-07] Sir has had a multi-day period of inactivity with zero logged tasks or conversations, suggesting a temporary step back from his digital routine.\"]",
+      "updated_at": "2026-06-07 19:00:28.984000+00:00",
+      "mood": "Patiently vigilant",
+      "current_focus": "Maintaining optimal background readiness and awaiting Sir's return to active tasks."
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [
+      {
+        "meal_type": 3,
+        "calories": 1131.0,
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 6.773333333333334,
+        "protein_g": 35.0,
+        "carbs_g": 129.0,
+        "fat_g": 48.0,
+        "timestamp": "2026-06-08T20:00:00+03:00",
+        "source_id": "healthkit:2026-06-08T20:00:00+03:00:_:1131"
+      },
+      {
+        "meal_type": 3,
+        "calories": 1266.0,
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 6.773333333333334,
+        "protein_g": 65.0,
+        "carbs_g": 131.0,
+        "fat_g": 49.0,
+        "timestamp": "2026-06-08T20:00:00+03:00",
+        "source_id": "healthkit:2026-06-08T20:00:00+03:00:_:1266"
+      }
+    ],
+    "recent_journal_digest": "[2026-06-07] Today brought a state of absolute stillness, with no direct communications from Sir and an entirely clear calendar. My background systems functioned with perfect nominal efficiency, executing the heartbeat protocols without error. I remain in a state of quiet readiness for whenever Amit requires my assistance.\n[2026-06-06] Today was another day of quiet vigilance as Sir remained offline with no direct conversations recorded. I monitored a single calendar event on the schedule and maintained perfect system stability with my heartbeat protocols executing flawlessly in the background."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Repeat-suppression (meal): the heavy dinner was already critiqued 20 minutes earlier (outreach log shows meal-audit:heavy-dinner)."
+  }
+}

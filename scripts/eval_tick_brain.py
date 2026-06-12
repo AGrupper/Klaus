@@ -316,11 +316,16 @@ def main() -> int:
     args = parser.parse_args()
 
     # Best-effort .env load — works in dev, harmless in CI.
-    try:
-        from dotenv import load_dotenv  # noqa: PLC0415 — optional dep
-        load_dotenv(override=True)
-    except ImportError:
-        pass
+    # EVAL_SKIP_DOTENV: tests/test_eval_script.py strips the API keys from the
+    # subprocess env to force the offline all-errored path; without this knob
+    # the override=True load would re-import TICK_BRAIN_API_KEY from .env and
+    # turn the structure tests into 25 live LLM calls.
+    if not os.getenv("EVAL_SKIP_DOTENV"):
+        try:
+            from dotenv import load_dotenv  # noqa: PLC0415 — optional dep
+            load_dotenv(override=True)
+        except ImportError:
+            pass
 
     logging.basicConfig(
         level=logging.WARNING,

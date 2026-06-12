@@ -54,6 +54,9 @@ ENV/
 # ---------- Logs & local databases ----------
 *.log
 logs/
+# Raw tick-log exports for eval-fixture curation (scripts/export_tick_logs.py)
+# — real personal data; only the labeled fixtures get committed.
+evals/tick_brain/raw/
 *.sqlite
 *.sqlite3
 .firebase/

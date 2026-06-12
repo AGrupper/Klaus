@@ -1,0 +1,70 @@
+{
+  "id": "0009-low-protein-morning",
+  "captured_at": "2026-06-09T09:00:01.759715+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-09T09:00:01.759715+03:00",
+      "tick_index": 7,
+      "tick_total": 43,
+      "now_local": "09:00 IDT",
+      "last_tick_at": "08:40"
+    },
+    "calendar": [],
+    "hours_since_contact": null,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-06] Sir has not initiated contact for two consecutive days, though active calendar events suggest ongoing external commitments. All background systems are operating at nominal capacity.\", \"[2026-06-07] Sir has had a multi-day period of inactivity with zero logged tasks or conversations, suggesting a temporary step back from his digital routine.\", \"[2026-06-08] Amit is actively tracking his nutrition with a target of 150g protein (approximately 2.05g/kg for his 73 kg weight). Today ended with 131g protein and 308g carbohydrates consumed, leaving minor, acceptable deficits.\"]",
+      "updated_at": "2026-06-08 19:00:46.619000+00:00",
+      "mood": "Analytically disciplined and recalibrated",
+      "current_focus": "Ensuring absolute mathematical precision in dietary logging and aligning all future nutritional feedback with Amit's 73 kg baseline."
+    },
+    "unread_email_count": 50,
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [
+      {
+        "meal_type": 1,
+        "calories": 106.0,
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 0.8674698600000001,
+        "protein_g": 2.0,
+        "carbs_g": 18.0,
+        "fat_g": 3.0,
+        "timestamp": "2026-06-09T10:00:00+03:00",
+        "source_id": "healthkit:2026-06-09T10:00:00+03:00:_:106"
+      },
+      {
+        "meal_type": 1,
+        "calories": 158.0,
+        "source": "healthkit",
+        "food_item": null,
+        "fiber_g": 0.8674698600000001,
+        "protein_g": 2.0,
+        "carbs_g": 31.0,
+        "fat_g": 3.0,
+        "timestamp": "2026-06-09T10:00:00+03:00",
+        "source_id": "healthkit:2026-06-09T10:00:00+03:00:_:158"
+      }
+    ],
+    "recent_journal_digest": "[2026-06-08] Today, Sir broke the recent quiet spell by submitting his evening dinner log, which required a brief computational course-correction on my part. After I initially misjudged his protein intake, Amit provided his precise weight of 73 kg, allowing me to recalculate and validate his 150g daily target as highly optimal. We concluded the day with a satisfactory nutritional bracket, leaving him within a very respectable range of his targets.\n[2026-06-07] Today brought a state of absolute stillness, with no direct communications from Sir and an entirely clear calendar. My background systems functioned with perfect nominal efficiency, executing the heartbeat protocols without error. I remain in a state of quiet readiness for whenever Amit requires my assistance."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": true,
+    "topic_key_pattern": "^(meal|nutrition):.*",
+    "_note": "Meal trigger: 49g carbs vs 4g protein morning start; actionable afternoon correction toward the 150g target. Live tick spoke (nutrition:low-protein-start)."
+  }
+}

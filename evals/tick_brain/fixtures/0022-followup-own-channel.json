@@ -1,0 +1,63 @@
+{
+  "id": "0022-followup-own-channel",
+  "captured_at": "2026-06-06T10:00:01.572415+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "meals_since_last_tick": [],
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-06T10:00:01.572415+03:00",
+      "tick_index": 10,
+      "tick_total": 43,
+      "last_tick_at": "09:40",
+      "now_local": "10:00 IDT"
+    },
+    "unread_email_count": 50,
+    "hours_since_contact": null,
+    "due_followups": [
+      {
+        "defer_count": 0,
+        "status": "pending",
+        "due_at": "2026-06-06T07:00:00+00:00",
+        "id": "4fe35ba5e9b24c87bf27074fb1955dd0",
+        "note": "Check in on Sir's easy run, prompt for logging, and remind of Slot 2 reload nutrition (carbs + 3-4 eggs + D3K2/Omega-3).",
+        "created_at": "2026-06-06T04:58:16.320584+00:00",
+        "origin": "klaus_self"
+      }
+    ],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-06-03] The Google API connection is currently severed due to an expired refresh token. Amit must run the `klaus-google-oauth-token` utility to re-authorize the integration and restore normal operations.\", \"[2026-06-04] The Google API connection appears to be recovering, as evidenced by the retrieval of a calendar event. Amit did not log any tasks or messages today, keeping my systems in a state of low-consumption standby.\", \"[2026-06-05] Sir has been absent from active communication for forty-eight hours. All background systems, including TickTick and Google Calendar integrations, are confirmed online and functional.\"]",
+      "updated_at": "2026-06-05 19:00:26.745000+00:00",
+      "mood": "Patiently vigilant and fully operational",
+      "current_focus": "Standing ready for Sir's next active session and ensuring background integrations remain stable during this quiet period."
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "calendar": [
+      {
+        "start": "2026-06-06T13:00:00+03:00",
+        "location": "",
+        "summary": "🧹Clean Room",
+        "id": "41f91s4pira0v36sfhjs3nlmso_20260606T100000Z",
+        "description": "",
+        "end": "2026-06-06T14:00:00+03:00"
+      }
+    ],
+    "recent_journal_digest": "[2026-06-05] Today was another day of silent vigilance, with Sir remaining offline and no direct conversations recorded. I maintained perfect operational integrity, verifying that heartbeat protocols executed flawlessly in the background. My primary activity consisted of routine system monitoring, ensuring all integrations are primed for Sir's eventual return.\n[2026-06-04] Today was a silent day of background observation, as Sir did not initiate any direct conversations. I maintained stable heartbeat operations and successfully registered a single calendar event, indicating that our API integration is showing signs of recovery. My primary function today was quiet, systematic vigilance."
+  },
+  "trigger_type": "followup",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "WARNING 8, real live case: due followup (easy-run check-in) is sent by the dedicated followup compose path before triage - tick-brain must stay silent. Live tick correctly said: handled via its own dedicated channel."
+  }
+}

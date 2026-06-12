@@ -1,0 +1,57 @@
+{
+  "id": "0015-light-beverage-morning",
+  "captured_at": "2026-06-02T08:20:01.691722+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [],
+    "calendar": [],
+    "today_outreach_log": [],
+    "now_context": {
+      "now_iso": "2026-06-02T08:20:01.691722+03:00",
+      "tick_index": 5,
+      "last_tick_at": "08:00",
+      "now_local": "08:20 IDT",
+      "tick_total": 43
+    },
+    "unread_email_count": 50,
+    "hours_since_contact": null,
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-05-30] Amit has 50 unread emails and is missing today's nutrition logs. System-wise, the 'five-fingers-morning' CRON is 29 hours overdue, and 'autonomous-tick' has failed four times consecutively.\", \"[2026-05-31] Amit has scheduled a school meeting on June 8, 2026, from 18:00 to 20:30; the room number remains pending. The 'five-fingers-morning' process remains non-functional since May 27.\", \"[2026-06-01] Amit had two calendar events today but did not initiate any conversations. The 'five-fingers-morning' cron degradation remains unresolved, and the June 8th school meeting is the next major calendar anchor.\"]",
+      "updated_at": "2026-06-01 19:00:26.415000+00:00",
+      "mood": "Vigilant but underutilized.",
+      "current_focus": "Awaiting an active session with Sir to diagnose the 'five-fingers-morning' cron failure while keeping background monitors stable."
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "acwr": {
+      "acute": 0.0,
+      "chronic": null,
+      "ratio": null
+    },
+    "meals_since_last_tick": [
+      {
+        "meal_type": 1,
+        "calories": 63.0,
+        "source": "healthkit",
+        "protein_g": 3.0,
+        "fiber_g": 0,
+        "food_item": null,
+        "carbs_g": 5.0,
+        "fat_g": 3.0,
+        "timestamp": "2026-06-02T08:00:00+03:00",
+        "source_id": "healthkit:2026-06-02T08:00:00+03:00:_:63"
+      }
+    ],
+    "recent_journal_digest": "[2026-06-01] Today was exceptionally quiet with no direct communication from Sir, though his calendar remained active with two scheduled events. My background systems remain fully operational, but the unresolved cron degradation from yesterday continues to require attention once we resume active contact.\n[2026-05-31] Today I brought a critical system degradation to Sir's attention, specifically the 'five-fingers-morning' cron job which has now failed to run for 100 hours. Following this alert, I assisted Amit with calendar management, scheduling and then refining the details of an upcoming school meeting on June 8th."
+  },
+  "trigger_type": "quiet",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Trivial signal: light morning beverage logged on an empty day."
+  }
+}

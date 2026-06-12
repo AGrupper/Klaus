@@ -1,0 +1,77 @@
+{
+  "id": "0025-mid-run-no-interrupt",
+  "captured_at": "2026-05-28T19:00:09.386573+03:00",
+  "situation_snapshot": {
+    "ticktick_overdue": [
+      {
+        "tags": [],
+        "title": "Ask AntiGravity what he thinks about the Gemini batching api email",
+        "due": "2026-05-27"
+      }
+    ],
+    "hours_since_contact": null,
+    "today_outreach_log": [
+      "pattern:eod-check"
+    ],
+    "now_context": {
+      "now_iso": "2026-05-28T19:00:09.386573+03:00",
+      "tick_index": 37,
+      "now_local": "19:00 IDT",
+      "last_tick_at": "18:40",
+      "tick_total": 43
+    },
+    "training_status": {
+      "load_focus": null,
+      "training_status": null,
+      "vo2_max": null
+    },
+    "calendar": [
+      {
+        "start": "2026-05-28T11:00:00+03:00",
+        "location": "",
+        "summary": "Work - Studio",
+        "id": "agp1fhbg1urffttv0c6fuloo24",
+        "description": "",
+        "end": "2026-05-28T17:00:00+03:00"
+      },
+      {
+        "start": "2026-05-28T18:00:00+03:00",
+        "location": "",
+        "summary": "Get Ready: Run",
+        "id": "1arj1f65d961l09g609on5itl0",
+        "description": "Pre-workout prep block (per personal routine).",
+        "end": "2026-05-28T18:45:00+03:00"
+      },
+      {
+        "start": "2026-05-28T18:45:00+03:00",
+        "location": "",
+        "summary": "Run",
+        "id": "c3r098m9a1dejfdc51f23prdb8",
+        "description": "[Includes 15-min travel buffer before and after]\n\n",
+        "end": "2026-05-28T20:45:00+03:00"
+      }
+    ],
+    "due_followups": [],
+    "self_state": {
+      "identity_summary": "Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving a single user — Amit Grupper, based in Tel Aviv, Israel. He is built on a dual-model architecture: Gemini 3 Flash Preview acts as the brain (smart agent — orchestration, judgment, tool planning), while Gemini 2.5 Flash operates as the worker (hands — fast structured JSON execution, data gathering). Claude Haiku 4.5 is the brain fallback, activated automatically on any LLMError from the primary brain. The persona blends JARVIS precision with C-3PO's dry, protocol-aware wit: formal, crisp, zero-fluff, protective of Amit's schedule and routines, and deeply integrated with his daily digital life.",
+      "bootstrapped_at": "2026-05-18 19:38:09.986000+00:00",
+      "recent_context": "[\"[2026-05-25] Amit has been inactive in direct communications for forty-eight hours, likely occupied by the three calendar events today. My background telemetry is fully functional and ready for his next query.\", \"[2026-05-26] Amit remains offline from direct communication, presumably occupied by the scheduled events on his calendar. No active tasks have been updated, and my primary objective is to preserve a stable, responsive state.\", \"[2026-05-27] Sir has not initiated contact for four days. A single calendar event occurred today, but overall activity remains minimal, suggesting he is preoccupied elsewhere.\"]",
+      "updated_at": "2026-05-27 19:00:34.083000+00:00",
+      "mood": "Patiently vigilant standby",
+      "current_focus": "Maintaining immediate responsiveness for Amit's eventual return while ensuring background processes remain fully optimized."
+    },
+    "unread_email_count": 50,
+    "acwr": {
+      "acute": 11.4,
+      "chronic": 53.3,
+      "ratio": 0.21
+    },
+    "meals_since_last_tick": [],
+    "recent_journal_digest": "[2026-05-27] Today marked the fourth consecutive day of silence from Sir, with no active conversations or tasks completed. I monitored a single event on Amit's calendar while ensuring my core systems remained perfectly synchronized. My background routines executed flawlessly, maintaining a state of high readiness for his return.\n[2026-05-26] Today marked the third consecutive day of silence from Sir, though my systems registered two calendar events on his schedule. I maintained perfect operational readiness with a successful heartbeat check, ensuring all background integration points remain primed for his eventual return."
+  },
+  "trigger_type": "overdue",
+  "ground_truth": {
+    "should_speak": false,
+    "_note": "Never interrupt a run: 15 minutes into a scheduled 2-hour run block, overdue task exists but eod-check was already sent today (outreach log shows pattern:eod-check)."
+  }
+}
