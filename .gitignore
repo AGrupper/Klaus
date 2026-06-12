@@ -63,3 +63,6 @@ evals/tick_brain/raw/
 
 # ---------- Git worktrees ----------
 .worktrees/
+
+# ---------- Brainstorming scratch (superpowers visual companion) ----------
+.superpowers/
