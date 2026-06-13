@@ -1,10 +1,11 @@
 ---
 phase: 26
 slug: hub-shell
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-06-13
+reviewed_at: 2026-06-13
 ---
 
 # Phase 26 — UI Design Contract
@@ -55,18 +56,18 @@ Exceptions:
 | Role | Size | Weight | Line Height |
 |------|------|--------|-------------|
 | Body | 16px | 400 (regular) | 1.5 |
-| Label | 13px | 500 (medium) | 1.4 |
+| Label | 13px | 400 (regular) | 1.4 |
 | Heading | 20px | 600 (semibold) | 1.2 |
 | Display | 28px | 600 (semibold) | 1.15 |
 
 **Notes:**
 - Body (16px/400/1.5): chat message text, timeline event titles, glance rail values.
-- Label (13px/500/1.4): timestamps, metadata rows (macros, sleep stats, weather one-liner), badge numbers, sidebar icon labels on desktop, "Week N of 16" block context chip.
+- Label (13px/400/1.4): timestamps, metadata rows (macros, sleep stats, weather one-liner), badge numbers, sidebar icon labels on desktop, "Week N of 16" block context chip. At 13px on dark backgrounds the perceptible contrast difference between weight 400 and 500 is negligible; 400 is sufficient and keeps the weight count to 2.
 - Heading (20px/600/1.2): timeline date header ("Today — Saturday 14 June"), section headings within the glance rail.
 - Display (28px/600/1.15): reserved for the "Klaus" wordmark in the sidebar and the chat window title on phone.
-- Maximum 2 weights in use: regular (400) for all body copy; medium (500) for labels only where 400 is too light at 13px; semibold (600) for all headings and display. Medium (500) is the only exception to the 2-weight rule and is strictly confined to 13px label role.
+- Exactly 2 weights in use: regular (400) for all body copy and all label copy; semibold (600) for all headings and display.
 
-**Source:** GSD template defaults. Sizes chosen to match a personal-productivity PWA — no decorative sizes. Confirmed consistent with Tailwind v4 prose and readable on iPhone screens.
+**Source:** GSD template defaults. Sizes chosen to match a personal-productivity PWA — no decorative sizes. Confirmed consistent with Tailwind v4 prose and readable on iPhone screens. Medium (500) weight removed to satisfy the 2-weight maximum rule.
 
 ---
 
@@ -112,7 +113,7 @@ All components are hand-rolled with Tailwind v4 utility classes. No shadcn block
 
 | Component | File | Notes |
 |-----------|------|-------|
-| `Sidebar` | `components/layout/Sidebar.tsx` | Desktop only; slim icon-width (64px); icons from lucide-react; active icon in accent color |
+| `Sidebar` | `components/layout/Sidebar.tsx` | Desktop only; slim icon-width (64px); icons from lucide-react; active icon in accent color; each icon nav button carries `title="{label}"` and a `<span className="sr-only">{label}</span>` for screen-reader accessibility |
 | `BottomTabs` | `components/layout/BottomTabs.tsx` | Phone only; 5 tabs; Klaus center tab; unread badge on Klaus icon |
 | `GlanceRail` | `components/layout/GlanceRail.tsx` | Desktop right column; nutrition totals + (future) tasks + streaks |
 | `DockChat` | `components/layout/DockChat.tsx` | Desktop right panel; collapsible via chevron toggle; collapses to 48px strip |
@@ -184,7 +185,7 @@ All components are hand-rolled with Tailwind v4 utility classes. No shadcn block
 
 | Element | Copy |
 |---------|------|
-| Primary CTA (chat send) | "Send" |
+| Primary CTA (chat send) | "Send message" |
 | Primary CTA (install banner) | "How to install" |
 | Empty state — no timeline events | "Nothing on the calendar today." |
 | Placeholder — coach note not yet available (D-06) | "Coach note coming after your morning briefing." |
@@ -198,7 +199,7 @@ All components are hand-rolled with Tailwind v4 utility classes. No shadcn block
 | Message send error | "Couldn't send — tap to retry." |
 | iOS install banner heading | "Add Klaus to your home screen" |
 | iOS install banner body | "Tap the Share button below, then choose \"Add to Home Screen\"." |
-| Install banner dismiss button label | "Dismiss" |
+| Install banner dismiss button label | "Dismiss install prompt" |
 | Sign in page heading | "Klaus" |
 | Sign in page subheading | "Your personal agent" |
 | Sign out (in sidebar / settings) | "Sign out" |
@@ -206,7 +207,7 @@ All components are hand-rolled with Tailwind v4 utility classes. No shadcn block
 | Sign out everywhere — confirmation modal heading | "Sign out of all devices?" |
 | Sign out everywhere — confirmation modal body | "This will end all active sessions, including on your phone." |
 | Sign out everywhere — confirmation CTA | "Sign out everywhere" |
-| Sign out everywhere — cancel | "Cancel" |
+| Sign out everywhere — cancel | "Stay signed in" |
 | Session expired redirect notice | "Session expired. Please sign in again." |
 
 **Tone:** Concise, lowercase-casual where appropriate (matching Klaus's JARVIS/C-3PO voice directives from docs/AGENT.md). No ellipsis abuse — use it only for genuinely in-progress states ("syncing…", "thinking…"). Error messages state the problem and the recovery path in one sentence.
@@ -225,7 +226,7 @@ All components are hand-rolled with Tailwind v4 utility classes. No shadcn block
 └──────────────────────────────────────────────────┘
 ```
 
-- Sidebar: 64px wide, full height, icon-only nav with lucide-react icons, active icon in accent.
+- Sidebar: 64px wide, full height, icon-only nav with lucide-react icons, active icon in accent. Each nav icon button includes `title="{label}"` (e.g. `title="Today"`) and `<span className="sr-only">{label}</span>` for accessibility — no visible text label on desktop.
 - Timeline: `flex-1`, min-width 0, scrollable.
 - Glance rail: 280px fixed, non-scrolling header section (nutrition totals + future tasks/streaks).
 - Chat panel: 360px wide, collapsible to 48px strip via header chevron button. Chat panel is the rightmost column.
@@ -264,11 +265,11 @@ No registries declared. All UI is hand-rolled with Tailwind v4. Registry vetting
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved (2026-06-13, revision 1)
