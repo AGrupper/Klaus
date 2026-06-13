@@ -2,9 +2,10 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: roadmap_complete
-last_updated: "2026-06-13T00:00:00.000Z"
-last_activity: 2026-06-13
+status: completed
+stopped_at: Phase 26 context gathered
+last_updated: "2026-06-13T12:00:06.227Z"
+last_activity: 2026-06-13 — v5.0 Klaus Hub roadmap created (Phases 26–30)
 progress:
   total_phases: 5
   completed_phases: 0
@@ -143,9 +144,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-13
-Stopped at: Roadmap written — Phases 26–30, 36 requirements mapped, STATE.md and REQUIREMENTS.md updated
-Resume file: None
+Last session: 2026-06-13T12:00:06.224Z
+Stopped at: Phase 26 context gathered
+Resume file: .planning/phases/26-hub-shell/26-CONTEXT.md
 
 ## Operator Next Steps
 
