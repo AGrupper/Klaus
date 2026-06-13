@@ -12,6 +12,105 @@ This file is a compact milestone summary. Per-milestone phase detail lives in
 - ✅ **v2.0 — Consciousness & Autonomy** — Phases 14–18 (shipped 2026-05-23)
 - ✅ **v3.0 — Project Shifu** — Phases 19–20 (shipped 2026-06-02)
 - ✅ **v4.0 — Specific Training & Nutrition Coaching** — Phases 21–25 (shipped 2026-06-08)
+- [ ] **v5.0 — Klaus Hub** — Phases 26–30 (in progress)
+
+---
+
+## v5.0 — Klaus Hub (Phases 26–30) — In Progress
+
+A React + TypeScript PWA served from the `klaus-agent` Cloud Run service that becomes
+Klaus's primary interface — replacing Telegram for chat, TickTick for tasks, and the
+separate habit tracker. Today timeline as the home screen (phone and desktop), full
+Klaus chat sharing the Telegram Firestore conversation, native task and habit/supplement
+management, Web Push notifications with Telegram mirror transition, and health pages
+visualizing training, nutrition, and sleep data from existing stores.
+
+**Phases:** 5 (26–30) · **Requirements:** 36/36 · Design spec: `docs/superpowers/specs/2026-06-13-klaus-hub-design.md`
+
+## Phases
+
+- [ ] **Phase 26: Hub Shell** — React PWA scaffold, Google auth, FastAPI serving, Today timeline, Klaus chat MVP
+- [ ] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), TickTick import
+- [ ] **Phase 28: Habits & Supplements** — HabitStore, check-off UI, streaks, Klaus integration, habits on timeline
+- [ ] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path
+- [ ] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations
+
+## Phase Details
+
+### Phase 26: Hub Shell
+**Goal**: Amit can open the Klaus Hub on phone or desktop, sign in with Google, see today's full timeline (calendar, meals, training plan, Garmin stats, weather, leave-by times, coach note), and exchange chat messages with Klaus — all reflected in the Telegram conversation history
+**Depends on**: Nothing (first phase of v5.0)
+**Requirements**: HUB-01, HUB-02, HUB-03, HUB-04, HUB-05, CHAT-01, CHAT-02, CHAT-03, CHAT-04, TIME-01, TIME-02, TIME-03, TIME-04, TIME-05, TIME-07, TIME-08
+**Success Criteria** (what must be TRUE):
+  1. Amit can open the hub in Safari on iPhone, tap "Add to Home Screen", install it as a PWA, and sign in with his Google account; unauthenticated requests to `/api/*` are rejected
+  2. The Today timeline shows calendar events in chronological order with all-day events pinned, Garmin morning stats (sleep/HRV/body battery) and a one-line weather summary in the header, today's meals as slot labels with macros (no eating-time inference), and the training plan item with block context ("Week N of 16 — Lower Body A")
+  3. Events with a location show a traffic-aware leave-by / Get Ready time; the glance rail shows the day's running nutrition totals; the timeline shows Klaus's morning coach note
+  4. Amit can send a message to Klaus from the hub chat, see it rendered optimistically with a sending/sent status, and receive Klaus's reply via polling with a "Klaus is thinking…" indicator; the same exchange is visible in Telegram
+  5. Desktop shows sidebar + timeline + glance rail + collapsible docked chat; phone shows bottom tabs with Klaus as the center tab — one responsive layout
+  6. The app shell loads and renders skeletons on a bad connection; a stale cached `index.html` never blocks a new deploy; the frontend is served from `klaus-agent` without breaking any existing route (Telegram webhook, `/cron/*`, `/internal/*`, `/trigger/*`)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 27: Tasks
+**Goal**: Amit can manage all personal tasks natively in the hub (create, edit, complete, delete, recurrence), Klaus uses native task tools instead of TickTick, and the TickTick history is imported before the subscription is cancelled
+**Depends on**: Phase 26
+**Requirements**: TASK-01, TASK-02, TASK-03, TASK-04, TASK-05, TASK-06, TASK-07
+**Success Criteria** (what must be TRUE):
+  1. Amit can create a task with title, notes, due date, priority, and list; edit, complete, and delete it — all persisted in Firestore `TaskStore`
+  2. A task can recur on a simple schedule (daily, weekdays, weekly, monthly, or every-N-days-from-completion); completing one instance generates the next correctly
+  3. Quick-add (FAB on phone, keyboard shortcut on desktop) accepts natural-language dates ("tomorrow", "next week", "friday") and resolves them while typing
+  4. Completing a task produces a visible micro-animation; completed tasks remain viewable in a completed view
+  5. Klaus manages tasks via native tools in `core/tools.py` (TickTick tools removed); the autonomous Layer-0 gather reads native overdue tasks; due and overdue tasks appear on the glance rail and Today timeline
+  6. A one-time TickTick import populates `TaskStore` and produces a reconciliation report that Amit reviews before cancelling the TickTick subscription (import → tool swap → UAT → cancel order preserved)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 28: Habits & Supplements
+**Goal**: Amit can define and track daily habits and supplements natively in the hub with streaks and adherence history, Klaus can read adherence state and nudge via the autonomous tick, and habit/supplement items appear on the Today timeline for one-tap check-off
+**Depends on**: Phase 26
+**Requirements**: HABIT-01, HABIT-02, HABIT-03, HABIT-04, HABIT-05, TIME-06
+**Success Criteria** (what must be TRUE):
+  1. Amit can define a habit or supplement with name, type, optional dose, scheduled days, and time-of-day slot; items are stored in Firestore `HabitStore`
+  2. A single tap on a habit or supplement (from the timeline or Habits tab) marks it complete; supplements show their dose label at check-off
+  3. Streaks count correctly for scheduled days only (non-scheduled days are neutral) and reset on a missed scheduled day, computed in Asia/Jerusalem local time passing DST-boundary tests
+  4. The Habits tab detail view shows a per-habit contribution-style history grid
+  5. Habits and supplements due today appear on the Today timeline with one-tap check-off; Klaus can read today's pending check-offs via tools; the autonomous tick's Layer-0 gather includes habit adherence state so the tick-brain can judge end-of-day nudges
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 29: Web Push & Transition
+**Goal**: Amit receives Klaus's replies and proactive messages as native push notifications on the installed iPhone PWA when the app is closed, Telegram continues to mirror all messages during a transition period, and the installed icon shows an unread-count badge
+**Depends on**: Phase 26
+**Requirements**: PUSH-01, PUSH-02, PUSH-03, PUSH-04
+**Success Criteria** (what must be TRUE):
+  1. Amit can enable push notifications from a button (requiring a user gesture) inside the installed PWA; the VAPID subscription is stored in `PushSubscriptionStore` and re-validated on each hub open
+  2. Klaus's replies and proactive autonomous-tick messages are delivered as push notifications to the iPhone when the app is closed, wrapped in `event.waitUntil` and verified on a physical device
+  3. Proactive messages mirror to Telegram behind a flag that is left ON for at least one week before being disabled; the mirror path is validated in production before Telegram retirement is considered
+  4. The installed PWA icon shows an unread-count badge via the Badging API (not a favicon library)
+**Plans**: TBD
+
+### Phase 30: Health Pages
+**Goal**: Amit can view his training history, nutrition trends, and sleep/recovery patterns visually in the hub, drawing from the existing Firestore stores built in v3.0–v4.0 and the post-v4.0 increments
+**Depends on**: Phase 26
+**Requirements**: HLTH-01, HLTH-02, HLTH-03
+**Success Criteria** (what must be TRUE):
+  1. A training history page shows Hevy strength sessions, Garmin run details, and benchmark results from `StrengthSessionStore`, `RunDetailStore`, and `BenchmarkStore` — browsable by date range
+  2. A nutrition detail page shows macro trends and fueling-slot adherence over time from `MealStore` — distinguishes calories/protein/carbs/fat/fiber with a slot-view
+  3. A sleep & recovery page shows HRV trend, sleep score, and body battery readings from Garmin data with visible patterns over days and weeks
+**Plans**: TBD
+**UI hint**: yes
+
+---
+
+## Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 26. Hub Shell | 0/? | Not started | - |
+| 27. Tasks | 0/? | Not started | - |
+| 28. Habits & Supplements | 0/? | Not started | - |
+| 29. Web Push & Transition | 0/? | Not started | - |
+| 30. Health Pages | 0/? | Not started | - |
 
 ---
 

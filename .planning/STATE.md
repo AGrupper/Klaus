@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: planning
-last_updated: "2026-06-12T21:30:46.311Z"
-last_activity: 2026-06-12
+status: roadmap_complete
+last_updated: "2026-06-13T00:00:00.000Z"
+last_activity: 2026-06-13
 progress:
-  total_phases: 0
+  total_phases: 5
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,10 +17,12 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Not started (roadmap written; ready for planning)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-12 — Milestone v5.0 started
+Status: Roadmap complete — awaiting `/gsd:plan-phase 26`
+Last activity: 2026-06-13 — v5.0 Klaus Hub roadmap created (Phases 26–30)
+
+**Progress bar:** [----------] 0% (0/5 phases)
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -52,78 +54,63 @@ Last activity: 2026-06-12 — Milestone v5.0 started
      **Operator:** first real Garmin pull happens at the next morning briefing — confirm via logs.
 
 - **Per-run Garmin detail capture** (2026-06-09, commits `0de5b2a` + `d72120f`, deployed via CI):
-  gives running the same per-detail depth Hevy gave strength, so coaching is specific not generic.
-  Root insight: Strava is the *wrong* source (downstream of Garmin, strips running dynamics); the
-  installed `garminconnect` client already exposes per-activity detail Klaus never called. New
-  `RunDetailStore` (Firestore `run_details`), `mcp_tools/garmin_tool.py::normalize_run_detail`
-  (recorded laps as the watch lapped them — per-km easy/tempo, per-rep intervals — + whole-run
-  min/avg/max summary + derived split_shape/hr_drift/cadence_drift/pace_cv; NOT raw streams),
-  `core/run_ingest.py` (daily `/cron/run-sync` 05:15, presence-diff backfill→delta), brain-direct
-  `get_run_detail` + fed into `get_training_context`, weekly review reads `run_details`, evening
-  alert optional one-fact ride-along. **Calibration follow-up** (`d72120f`): first real use
-  over-interpreted an easy run (called a watch-pause drink-stop a "negative split"); fixed by
-  gating `split_shape` on ≥4 active laps + ≥4% swing (+ `active_lap_count`) and rewriting the
-  run-coaching prompts to lead with an honest verdict and never narrate noise as strategy. No new
-  secret (reuses `GARMIN_EMAIL`/`GARMIN_PASSWORD`). 37 new tests, suite 1138 green. DEPLOYMENT §19b.
-  Operator: create `klaus-run-sync` job + drain backfill until done:true.
+  gives running the same per-detail depth Hevy gave strength. New `RunDetailStore` (Firestore
+  `run_details`), `mcp_tools/garmin_tool.py::normalize_run_detail`, `core/run_ingest.py`
+  (daily `/cron/run-sync` 05:15, presence-diff backfill→delta), brain-direct `get_run_detail` +
+  fed into `get_training_context`, weekly review reads `run_details`. Suite 1138 green.
 
-- **Training blocks = Training-calendar membership** (2026-06-08, deployed rev `klaus-agent-00095-hcf`): a training
-  block is now defined as any event in the dedicated **Training** calendar (excluding its
-  `Get Ready:`/`Travel:` buffer blocks), not by title keywords. Removed `WORKOUT_KEYWORDS`
-
-  + bare-"Practice" auto-detection from `create_event` (`is_workout` defaults to False; the
-  brain decides per event). Read paths follow suit: evening **weather alerts** source
-  tomorrow's Training-calendar events (with a decoupled `_OUTDOOR_KEYWORDS` filter for
-  indoor/outdoor weather-sensitivity only), and **nutrition anchors** split AM/PM by start
-  time over Training events instead of keywords (the previously-dead calendar fallback is
-  now live). `list_calendar_events` merges primary + Training events (tagged + sorted) so
-  the brain can see training blocks. Tradeoff: weather alerts no longer warn about
-  non-training outdoor events in the *primary* calendar. `is_free` still primary-only
-  (pre-existing). Files: `mcp_tools/calendar_tool.py`, `core/tools.py`,
-  `core/proactive_alerts.py`, `prompts/smart_agent.md`, `docs/USER.md`. Suite 1101 green.
-  Shipped in commit `f4c424f`, deployed via CI/CD to Cloud Run rev `klaus-agent-00095-hcf`.
+- **Training blocks = Training-calendar membership** (2026-06-08, deployed rev `klaus-agent-00095-hcf`):
+  training block defined as any event in the Training calendar. Removed `WORKOUT_KEYWORDS`.
+  Suite 1101 green.
 
 - **Hevy strength integration** (2026-06-08, deployed rev `klaus-agent-00093-dww`):
-  full per-set workout sync from Hevy (Pro API, daily pull `/cron/strength-sync`,
-  backfill→delta). New `StrengthSessionStore`, `mcp_tools/hevy_tool.py`,
-  `core/strength_ingest.py`, brain-direct tools `get_strength_progress` +
-  `get_training_context` (unified cross-domain coaching), weekly review now reads
-  `strength_sessions` with a loosened "think, don't fill a template" prompt.
-  Backfill verified: 35 workouts (2023→2026) in Firestore. 35 new tests, suite 1096 green.
-  Docs: `docs/hevy_integration.md`, DEPLOYMENT §19a/§20a.
+  full per-set workout sync from Hevy (Pro API, daily pull `/cron/strength-sync`, backfill→delta).
+  New `StrengthSessionStore`, `mcp_tools/hevy_tool.py`, `core/strength_ingest.py`. Suite 1096 green.
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-06-08 after v4.0)
+See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** v4.0 + Hevy + per-run Garmin detail + nutrition (accurate/training-aware coaching, HealthKit dedup, Garmin-synced bodyweight) increments live (rev `klaus-agent-00102-9nk`). Planning next milestone — run `/gsd-new-milestone`.
+**Current focus:** v5.0 Klaus Hub — roadmap written; 5 phases (26–30); 36 requirements mapped. Start with `/gsd:plan-phase 26`.
 
 ## Architecture (current)
 
 - Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
-- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) + `RunDetailStore` (Garmin per-run) in Firestore; `UserProfileStore` now populated with Amit's living blueprint (v4.0 Phase 21); `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
-- 10 cron jobs deployed (v4.0 added none; post-v4.0 added `klaus-strength-sync` 05:00 Hevy pull + `klaus-run-sync` 05:15 Garmin per-run detail pull)
+- Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) + `RunDetailStore` (Garmin per-run) in Firestore; `UserProfileStore` populated with Amit's living blueprint; `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
+- 10 cron jobs deployed (heartbeat hourly, proactive-alerts 21:30, morning-briefing */10 6-10, chat-ingest 04:00, chat-export-ingest 04:30, reflect 22:00, autonomous-tick */20 7-21, weekly-training-review Sun 10:00, strength-sync 05:00, run-sync 05:15; plus push-driven `/cron/healthkit-sync`)
+- **v5.0 adds:** React + TypeScript + Vite PWA frontend (Tailwind), served by FastAPI from the `klaus-agent` container; `TaskStore`, `HabitStore`, `PushSubscriptionStore` (new Firestore stores); `/api/*` routes with Google session auth; Web Push (VAPID); multi-stage Dockerfile (Node build stage)
+
+## v5.0 Roadmap Summary
+
+| Phase | Goal | Requirements |
+|-------|------|--------------|
+| 26 - Hub Shell | Amit can open the hub on phone/desktop, sign in, see the Today timeline, and chat with Klaus | HUB-01..05, CHAT-01..04, TIME-01..05, TIME-07, TIME-08 (16 reqs) |
+| 27 - Tasks | Native TaskStore replaces TickTick; hub task pages with recurrence, quick-add, micro-animation | TASK-01..07 (7 reqs) |
+| 28 - Habits & Supplements | HabitStore with check-offs, streaks, Klaus adherence awareness, habits on timeline | HABIT-01..05, TIME-06 (6 reqs) |
+| 29 - Web Push & Transition | VAPID push notifications on iPhone, Telegram mirror flag, unread badge | PUSH-01..04 (4 reqs) |
+| 30 - Health Pages | Training history, nutrition detail, sleep/recovery trend visualizations | HLTH-01..03 (3 reqs) |
 
 ## Accumulated Context
 
 ### Decisions
 
-Recent decisions affecting v4.0 (full log in PROJECT.md):
-
-- [v4.0 research]: `docs/COACHING_GUIDE.md` injected as `{coaching_guide}` via `_load_coaching_guide()` — same startup-cache pattern as `_load_self_md()`. NOT Pinecone RAG.
-- [v4.0 research]: D-13 release is prompt-only. Tier A (blueprint goals) citable as targets; Tier B (measured data) citable only within recency window (lifts ≤14d, pace ≤7d, nutrition ≤2d). Same commit as guard removal.
-- [v4.0 research]: Block-end benchmark trigger via `benchmark_due` flag in `BlockStore` checked by the existing 21:30 cron — no 8th scheduler job.
-- [v4.0 research]: `BlockStore` + `BenchmarkStore` as dedicated Firestore stores (not extending `TrainingLogStore`). Doc ID `{date}_{facet}` makes benchmark logging idempotent.
-- [v4.0 research]: Cross-cron coaching dedup via `OutreachLogStore` extension (or thin `CoachingTouchStore`), covering morning briefing + evening check-in + weekly review + autonomous tick. Not just the autonomous tick.
-- [v4.0 research]: Plan_start_date = 2026-06-21 (Week 1 anchor). Week number always derived from `(today - plan_start_date).days // 7 + 1` — never hardcoded.
-- [Phase ?]: Phase 25 Plan 01
+- [v5.0 design spec 2026-06-13]: Frontend is React + TypeScript + Vite PWA with Tailwind, served by FastAPI from `klaus-agent` — same origin, no CORS, one deploy.
+- [v5.0 design spec 2026-06-13]: Auth is Google Sign-In allowlisted to Amit's account only → session cookie. All hub routes under `/api/*`; existing Telegram/cron/internal routes untouched.
+- [v5.0 design spec 2026-06-13]: Chat reuses Firestore conversation history from `memory/firestore_conversation.py` — one shared history with Telegram. Hub POST → Cloud Tasks → `/internal/process-hub-message` (same full-CPU path as Telegram).
+- [v5.0 design spec 2026-06-13]: Nutrition is display-only in the hub. Lifesum → HealthKit pipeline is unchanged; no second entry path.
+- [v5.0 design spec 2026-06-13]: Supplements are habit-style daily check-offs with a dose field in `HabitStore`; no inventory management.
+- [v5.0 design spec 2026-06-13]: TIME-06 (habits on timeline) depends on `HabitStore` → belongs to Phase 28 (habits phase), not Phase 26.
+- [v5.0 design spec 2026-06-13]: TASK-07 (tasks on glance rail + timeline) depends on `TaskStore` → belongs to Phase 27 (tasks phase).
+- [v5.0 design spec 2026-06-13]: Phase 26 requires a multi-stage Dockerfile (Node build stage) to produce built frontend assets served by FastAPI.
+- [v5.0 design spec 2026-06-13]: Phases 27 (Tasks), 28 (Habits), 29 (Push), 30 (Health) all depend on Phase 26 (shell) but are independent of each other and can be built in any order after Phase 26.
+- [v5.0 design spec 2026-06-13]: Telegram mirror flag (PUSH-03) must be left ON for at least one week of real production use before being disabled — Telegram retirement is a gradual transition, not a hard cutover.
 
 ### Pending Todos
 
-None captured yet.
+- Deploy the Groq tick-brain fix + tuned triage prompt (ready as of 2026-06-12) — ships together: `core/tick_brain.py` fixes, request-shape fixes (max_tokens 2048, temperature 0.6), tuned `prompts/autonomous_triage.md`. No Cloud Run env changes needed.
 
 ### Blockers/Concerns
 
@@ -131,7 +118,7 @@ None.
 
 ## Deferred Items
 
-Carried forward from v3.0 close:
+Carried forward from v4.0 close:
 
 | Category | Item | Status | Resolves when |
 |----------|------|--------|---------------|
@@ -140,19 +127,27 @@ Carried forward from v3.0 close:
 | verification-gap | v2.0 SC-1/SC-2/SC-4 live-staging | acknowledged | operator triggers staging crons |
 | code-quality | 18-REVIEW.md M-2..M-4 + L-1..L-5 | open (housekeeping) | next housekeeping sprint |
 | docs-drift | `docs/TECHNICAL_PLAN.md` stops before v2.0 | open (low priority) | next docs sweep |
+| nyquist-partial | P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false` | acknowledged | retroactive via `/gsd-validate-phase` if desired |
+| design-note | WR-01: cron `plan_start_date` hardcode (D-03) | accepted | n/a |
+| design-note | WR-02: `fueling_timeline` not gathered into crons (D-11) | accepted | n/a |
 
 ## Notes
 
-- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 630+ passing baseline must hold after every v4.0 phase.
+- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 1153+ passing baseline must hold after every v5.0 phase.
 - **Firestore SERVER_TIMESTAMP** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool. See `_jsonsafe_doc` helper in `memory/firestore_db.py`.
 - **Cron jobs (10):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull), run-sync (05:15, Garmin per-run detail pull). Plus push-driven `/cron/healthkit-sync`.
+- **Slot timestamps caveat:** HealthKit/Lifesum meal timestamps are canonical slot times (08:00/12:00/20:00), NOT actual eating times — never build UI that infers eating time from them.
+- **GCP resource casing:** All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404).
+- **Python version:** venv must be Python 3.11 (prod Dockerfile) or 3.13 (local) — NEVER 3.14 (grpc/protobuf GC segfault).
+- **Agent turns:** Must run inside a tracked Cloud Tasks request (`/internal/process-update` or `/internal/process-hub-message`) — never in a Starlette BackgroundTask (CPU throttled after response).
 
 ## Session Continuity
 
-Last session: 2026-06-08T08:30:00Z
-Stopped at: Phase 25 Plan 03 complete — all tasks executed, SUMMARY.md created
+Last session: 2026-06-13
+Stopped at: Roadmap written — Phases 26–30, 36 requirements mapped, STATE.md and REQUIREMENTS.md updated
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Run `/gsd:plan-phase 26` to begin Phase 26 planning (Hub Shell)
+- Deploy the pending Groq tick-brain fix + tuned triage prompt (no Cloud Run env changes needed)

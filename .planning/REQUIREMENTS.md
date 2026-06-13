@@ -97,13 +97,48 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmap) | | |
+| HUB-01 | Phase 26 | Pending |
+| HUB-02 | Phase 26 | Pending |
+| HUB-03 | Phase 26 | Pending |
+| HUB-04 | Phase 26 | Pending |
+| HUB-05 | Phase 26 | Pending |
+| CHAT-01 | Phase 26 | Pending |
+| CHAT-02 | Phase 26 | Pending |
+| CHAT-03 | Phase 26 | Pending |
+| CHAT-04 | Phase 26 | Pending |
+| TIME-01 | Phase 26 | Pending |
+| TIME-02 | Phase 26 | Pending |
+| TIME-03 | Phase 26 | Pending |
+| TIME-04 | Phase 26 | Pending |
+| TIME-05 | Phase 26 | Pending |
+| TIME-07 | Phase 26 | Pending |
+| TIME-08 | Phase 26 | Pending |
+| TASK-01 | Phase 27 | Pending |
+| TASK-02 | Phase 27 | Pending |
+| TASK-03 | Phase 27 | Pending |
+| TASK-04 | Phase 27 | Pending |
+| TASK-05 | Phase 27 | Pending |
+| TASK-06 | Phase 27 | Pending |
+| TASK-07 | Phase 27 | Pending |
+| HABIT-01 | Phase 28 | Pending |
+| HABIT-02 | Phase 28 | Pending |
+| HABIT-03 | Phase 28 | Pending |
+| HABIT-04 | Phase 28 | Pending |
+| HABIT-05 | Phase 28 | Pending |
+| TIME-06 | Phase 28 | Pending |
+| PUSH-01 | Phase 29 | Pending |
+| PUSH-02 | Phase 29 | Pending |
+| PUSH-03 | Phase 29 | Pending |
+| PUSH-04 | Phase 29 | Pending |
+| HLTH-01 | Phase 30 | Pending |
+| HLTH-02 | Phase 30 | Pending |
+| HLTH-03 | Phase 30 | Pending |
 
 **Coverage:**
-- v1 requirements: 32 total
-- Mapped to phases: 0
-- Unmapped: 32 ⚠️ (roadmap pending)
+- v1 requirements: 36 total
+- Mapped to phases: 36
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-13*
-*Last updated: 2026-06-13 after initial definition*
+*Last updated: 2026-06-13 — traceability populated by roadmap*
