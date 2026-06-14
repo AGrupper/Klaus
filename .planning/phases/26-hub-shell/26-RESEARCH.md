@@ -830,27 +830,33 @@ For option 1: The planner should add a task to `core/morning_briefing.py` to wri
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+*All four questions were resolved during planning (Phase 26 plans 26-02 / 26-04). Markers below record the locked decision.*
 
 1. **Coach note field (TIME-07)**
    - What we know: No Firestore field currently stores a daily coach note. Morning briefing composes a message and sends to Telegram but doesn't write a structured field.
    - What's unclear: Whether to add `daily_note` to `SelfStateStore` or a separate store.
    - Recommendation: Add `daily_note` + `daily_note_date` to `SelfStateStore.set()`. Add a write in `core/morning_briefing.py` after compose. Planner should create a Wave 0 task if the field doesn't exist at startup (D-06 empty state).
+   - **RESOLVED:** Add `daily_note` + `daily_note_date` to `SelfStateStore` (no new store) and a best-effort write in `core/morning_briefing.py` after compose. Implemented by plan **26-02** (Tasks 1–2); read by `/api/today` in **26-04** with a `daily_note_date`-staleness → D-06 placeholder.
 
 2. **Telegram user_id for hub auth**
    - What we know: `FirestoreConversationStore` keys on `telegram_user_id`. The hub doesn't have a Telegram user ID for Amit — it has his Google email.
    - What's unclear: How the hub identifies which Firestore conversation doc to read/write. Options: (a) hardcode Amit's Telegram user ID as an env var `HUB_TELEGRAM_USER_ID`; (b) store it in `UserProfileStore`.
    - Recommendation: Add `telegram_user_id: int` to `UserProfileStore` (already exists as a Firestore doc). The hub session is single-user anyway.
+   - **RESOLVED:** Add `telegram_user_id` to the `UserProfileStore` scaffold (option b). Implemented by plan **26-02** (Task 1); consumed by the chat backend in **26-05** to key the shared `FirestoreConversationStore`.
 
 3. **`itsdangerous` in Cloud Run environment**
    - What we know: `itsdangerous` is not in `requirements.txt`. It may already be installed as a transitive dep of `starlette`/`fastapi`.
    - What's unclear: Whether it's available at runtime without being pinned.
    - Recommendation: Add `itsdangerous>=2.2` to `requirements.txt` explicitly. Never depend on transitive availability.
+   - **RESOLVED:** Pin `itsdangerous>=2.2` explicitly in `requirements.txt` (never rely on transitive availability). Implemented by plan **26-02** (Task 1); used for session-cookie signing in **26-03**.
 
 4. **Routes tool call caching in `/api/today`**
    - What we know: `get_travel_time()` makes an HTTP call to Google Routes API per event. This can be ~500ms per event, and some days have many events with locations.
    - What's unclear: Whether a simple in-process TTL dict is sufficient or if Firestore caching is needed.
    - Recommendation: Use a module-level `_routes_cache: dict[str, tuple[float, dict]]` with 30-minute TTL. Key = `(event_id, departure_time_iso)`. No Firestore needed — same process serves all requests (single worker). This mirrors the `_READ_CACHE` pattern in `memory/firestore_db.py`.
+   - **RESOLVED:** Use a module-level in-process TTL dict (30-minute TTL, keyed on `(event_id, departure_time_iso)`) — no Firestore cache, single worker serves all requests. Owned by plan **26-04** (`/api/today` composition).
 
 ---
 
