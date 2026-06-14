@@ -213,6 +213,9 @@ class UserProfileStore:
         "schema_version": 2,          # bumped from 1 → 2 at Phase 21
         # Phase 23 — block tracking FK
         "current_block_id": None,     # FK → training_blocks doc id (primed by seed_training_blocks.py)
+        # Phase 26 — v5.0 Klaus Hub auth fields
+        "session_version": 0,         # bumped by /api/auth/revoke-all (D-02); invalidates all session cookies
+        "telegram_user_id": None,     # Amit's Telegram user_id; hub keys FirestoreConversationStore on this (RESEARCH Open Question 2)
         # Legacy fields — retained for backward compatibility
         "athletic_goals": [],         # read by weekly_training_review.py:188 — do NOT remove
         "training_constraints": [],   # kept for forward-compat

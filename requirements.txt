@@ -36,6 +36,7 @@ python-dotenv>=1.0
 python-dateutil>=2.8.2             # NL datetime parse for schedule_followup (D-12)
 requests>=2.32
 tzdata>=2024.1                     # Timezone database for zoneinfo (needed on Linux/Cloud Run)
+itsdangerous>=2.2                  # HMAC-signed session cookies for hub auth (Phase 26, HUB-01; RESEARCH Open Question 3)
 
 # --- External data connections (Phase 7) ---
 garminconnect>=0.2          # Garmin Connect health data (sleep, HRV, body battery)
