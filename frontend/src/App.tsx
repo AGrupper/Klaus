@@ -23,6 +23,7 @@ import { fetchMe } from './api/auth'
 import { useAuthStore } from './store/auth'
 import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
+import { TimelineDay } from './components/timeline/TimelineDay'
 import { dominant, textSecondary, typography } from './tokens'
 
 // ---------------------------------------------------------------------------
@@ -49,7 +50,7 @@ function ComingSoon({ label }: { label: string }) {
 }
 
 function TodayPage() {
-  return <ComingSoon label="Today" />
+  return <TimelineDay />
 }
 
 function TasksPage() {

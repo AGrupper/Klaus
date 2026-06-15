@@ -18,7 +18,6 @@
 import { useEffect, useRef } from 'react'
 import {
   accent,
-  textSecondary,
   typography,
   fontFamily,
 } from '../../tokens'

@@ -70,11 +70,11 @@ describe('App auth gate', () => {
 
     renderApp()
 
-    // The loader spinner should appear first, then transition to AppShell
+    // The loader spinner should appear first, then transition to AppShell.
+    // TodayPage now renders the real <TimelineDay/> (26-07), so assert on the
+    // AppShell navigation landmark rather than the old "Today — Coming soon" placeholder.
     await waitFor(() => {
-      // AppShell renders nav elements; sign-in page heading "Klaus" is NOT an h1 in AppShell
-      // Check that the Today route slot is visible (ComingSoon renders "Today — Coming soon")
-      expect(screen.getByText(/Today — Coming soon/i)).toBeInTheDocument()
+      expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0)
     })
 
     // SignInPage should NOT be present
@@ -143,7 +143,7 @@ describe('Responsive layout DOM classes', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Today — Coming soon/i)).toBeInTheDocument()
+      expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0)
     })
 
     // Both Sidebar and BottomTabs have aria-label="Main navigation"; use getAllByRole
@@ -170,7 +170,7 @@ describe('Responsive layout DOM classes', () => {
     )
 
     await waitFor(() => {
-      expect(screen.getByText(/Today — Coming soon/i)).toBeInTheDocument()
+      expect(screen.getAllByRole('navigation').length).toBeGreaterThan(0)
     })
 
     // BottomTabs renders a second nav — find it by aria-label "Main navigation"

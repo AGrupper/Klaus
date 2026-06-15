@@ -22,7 +22,7 @@
  *   - type === 'training': training item + block context chip
  */
 
-import { secondary, border, textPrimary, textSecondary, accent, typography, fontFamily } from '../../tokens'
+import { secondary, border, textPrimary, textSecondary, typography, fontFamily } from '../../tokens'
 import type { TimedEvent, MealItem, TrainingItem } from '../../api/today'
 
 // ---------------------------------------------------------------------------

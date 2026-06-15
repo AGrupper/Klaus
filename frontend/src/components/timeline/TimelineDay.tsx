@@ -117,7 +117,7 @@ export function TimelineDay() {
           textAlign: 'center',
         }}
       >
-        {error instanceof Error ? error.message : 'Could not load today's timeline.'}
+        {error instanceof Error ? error.message : "Could not load today's timeline."}
       </div>
     )
   }
