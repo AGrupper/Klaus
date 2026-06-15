@@ -1,0 +1,125 @@
+/**
+ * DockChat.tsx — Desktop collapsible chat panel (right-most column).
+ *
+ * UI-SPEC constraints:
+ *   - Desktop only: hidden md:flex (flex-col)
+ *   - 360px wide; collapses to 48px header strip via chevron toggle
+ *   - Header strip (48px) always visible (contains chevron + "Klaus" label)
+ *   - Expanded state: full-height chat panel (ChatWindow mounts here in 26-08)
+ *   - Accent #6366F1 used only for: send button (26-08), unread badge (26-08)
+ *     NOT for the header chevron button
+ */
+import { useState } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+
+export function DockChat() {
+  const [collapsed, setCollapsed] = useState(false)
+
+  return (
+    /*
+     * hidden md:flex — desktop only.
+     * flex-col: header strip on top, chat content below.
+     * Width transitions between 360px (expanded) and 48px (collapsed).
+     */
+    <div
+      className="hidden md:flex flex-col"
+      style={{
+        width: collapsed ? '48px' : '360px',
+        flexShrink: 0,
+        borderLeft: '1px solid #2A2A2A',
+        backgroundColor: '#1A1A1A',
+        transition: 'width 0.2s ease',
+        overflow: 'hidden',
+        position: 'relative',
+      }}
+      aria-label="Chat panel"
+    >
+      {/* 48px header strip — always visible */}
+      <div
+        style={{
+          height: '48px',
+          minHeight: '48px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: collapsed ? 'center' : 'space-between',
+          padding: collapsed ? '0' : '0 12px',
+          borderBottom: collapsed ? 'none' : '1px solid #2A2A2A',
+          flexShrink: 0,
+        }}
+      >
+        {/* "Klaus" label — only visible when expanded */}
+        {!collapsed && (
+          <span
+            style={{
+              fontSize: '16px',
+              fontWeight: 600,
+              lineHeight: 1.2,
+              color: '#F9FAFB',
+              fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            Klaus
+          </span>
+        )}
+
+        {/* Chevron toggle button */}
+        <button
+          onClick={() => setCollapsed((prev) => !prev)}
+          title={collapsed ? 'Expand chat' : 'Collapse chat'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '32px',
+            height: '32px',
+            borderRadius: '6px',
+            border: 'none',
+            backgroundColor: 'transparent',
+            color: '#9CA3AF',
+            cursor: 'pointer',
+            flexShrink: 0,
+            transition: 'color 0.15s',
+          }}
+          aria-expanded={!collapsed}
+          aria-controls="dock-chat-content"
+        >
+          {collapsed ? (
+            <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+          )}
+          <span className="sr-only">{collapsed ? 'Expand chat' : 'Collapse chat'}</span>
+        </button>
+      </div>
+
+      {/* Chat panel content slot — ChatWindow mounts here in 26-08 */}
+      {!collapsed && (
+        <div
+          id="dock-chat-content"
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Placeholder until 26-08 wires ChatWindow */}
+          <div
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#9CA3AF',
+              fontSize: '13px',
+              fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+            }}
+          >
+            Say hello to Klaus.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
