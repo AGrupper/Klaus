@@ -29,13 +29,8 @@ import hmac
 import logging
 import os
 
-from dotenv import load_dotenv
 from fastapi import HTTPException, Request
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
-
-# WHY override=True: ensures .env values win even when the shell has already
-# exported the variable — the default silently ignores .env in that case.
-load_dotenv(override=True)
 
 logger = logging.getLogger(__name__)
 
