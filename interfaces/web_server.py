@@ -36,7 +36,7 @@ from telegram import Update
 from telegram.ext import Application
 
 from core.main import AgentOrchestrator
-from core.task_dispatch import enqueue_update
+from core.task_dispatch import enqueue_hub_message, enqueue_update
 from interfaces._router import MessageRouter, parse_allowed_user_ids
 from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
@@ -1411,6 +1411,235 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
     })
 
     return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
+# Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
+#                                                                             #
+# POST /api/chat — append user message to shared Firestore conversation and   #
+# enqueue the agent turn via Cloud Tasks full-CPU path (D-09 / CLAUDE.md:     #
+# never a Starlette BackgroundTask). CHAT-01 / CHAT-02.                       #
+#                                                                             #
+# GET /api/chat/messages — return the full conversation window for polling    #
+# and fast first paint (D-08 / CHAT-03 / CHAT-04).                           #
+#                                                                             #
+# POST /internal/process-hub-message — OIDC-gated Cloud Tasks target; runs   #
+# the agent turn inside the tracked request with full CPU, appends the        #
+# assistant reply to the shared conversation without a Telegram send (D-09).  #
+#                                                                             #
+# All three routes MUST be registered BEFORE the SPA mount (Pitfall 1).      #
+# --------------------------------------------------------------------------- #
+
+
+class _ChatBody(object):
+    """Pydantic-lite body parser for POST /api/chat (ASVS V5: non-empty, max length).
+
+    WHY not a real Pydantic model: web_server.py currently doesn't import
+    pydantic at the module level, and a plain class avoids adding a hard
+    startup dependency. Validation is equivalent: non-empty + max-length.
+    FastAPI's json() gives us the raw dict; we validate it here.
+    """
+    pass
+
+
+_CHAT_CONTENT_MAX_LEN = 4000  # ASVS V5 — reasonable upper bound for one message
+
+
+def _resolve_hub_user_id() -> int:
+    """Resolve the Telegram user_id to key FirestoreConversationStore.
+
+    Reads UserProfileStore.telegram_user_id (set by 26-02 operator step).
+    Falls back to the first id in TELEGRAM_ALLOWED_USER_IDS — the same
+    convention used by core/autonomous.py and core/scheduled_message.py.
+
+    WHY this approach: the hub always operates on Amit's single account; there
+    is no per-hub-session telegram_user_id mapping needed for v5.0.
+    """
+    try:
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        if project_id:
+            from memory.firestore_db import UserProfileStore  # lazy import
+            profile = UserProfileStore(project_id=project_id, database=database).load()
+            tid = profile.get("telegram_user_id")
+            if tid is not None:
+                return int(tid)
+    except Exception:
+        logger.warning("_resolve_hub_user_id: UserProfileStore lookup failed", exc_info=True)
+
+    # Fallback: first entry of TELEGRAM_ALLOWED_USER_IDS (mirrors autonomous.py convention)
+    raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")[0].strip()
+    if raw:
+        return int(raw)
+    raise ValueError("Cannot resolve hub user_id: telegram_user_id not in profile and TELEGRAM_ALLOWED_USER_IDS unset")
+
+
+@app.post("/api/chat")
+async def api_chat_send(
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Receive a hub chat message and enqueue the agent turn via Cloud Tasks.
+
+    CHAT-01: appends the user message to the shared FirestoreConversationStore
+    keyed on telegram_user_id — the same document the Telegram path uses —
+    so hub + Telegram share one continuous conversation (one Klaus).
+
+    CHAT-02: the agent turn is enqueued to Cloud Tasks via enqueue_hub_message
+    which targets /internal/process-hub-message. NEVER runs the agent turn in
+    a Starlette BackgroundTask (D-09 / CLAUDE.md invariant: CPU-throttled after
+    response → 18-minute replies observed 2026-06-12).
+
+    Returns:
+        JSONResponse: {"ok": True} on success.
+        JSONResponse: {"ok": False, "error": "..."} with HTTP 503 if Cloud
+                      Tasks enqueue fails. Clients should retry.
+
+    Raises:
+        HTTPException 400: Missing or empty content, or content too long.
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    body = await request.json()
+    content = body.get("content", "")
+
+    # Input validation (ASVS V5 / T-26-05-04)
+    if not content or not content.strip():
+        raise HTTPException(status_code=400, detail={"error": "content must be non-empty"})
+    if len(content) > _CHAT_CONTENT_MAX_LEN:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": f"content exceeds maximum length of {_CHAT_CONTENT_MAX_LEN} characters"},
+        )
+
+    # Resolve the hub user_id (keyed on telegram_user_id per CHAT-01)
+    loop = asyncio.get_running_loop()
+    try:
+        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
+    except ValueError as exc:
+        logger.error("api_chat_send: cannot resolve user_id: %s", exc)
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
+
+    # Append user message to the shared Firestore conversation (CHAT-01)
+    def _append_user_message() -> None:
+        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        store = FirestoreConversationStore(project_id=project_id, database=database)
+        store.append(user_id, "user", content)
+
+    await loop.run_in_executor(None, _append_user_message)
+
+    # Enqueue the agent turn via Cloud Tasks full-CPU path (CHAT-02 / D-09)
+    # NEVER use background_tasks.add_task here — that runs after the response
+    # and gets CPU-throttled by Cloud Run.
+    ok = await loop.run_in_executor(None, enqueue_hub_message, content, user_id)
+    if not ok:
+        logger.error("api_chat_send: enqueue_hub_message returned False (user_id=%s)", user_id)
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "Message queued in conversation but agent turn could not be dispatched — please retry"},
+        )
+
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/api/chat/messages")
+async def api_chat_messages(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return the recent conversation window for polling and fast first paint.
+
+    CHAT-03 / D-08: returns the full stored window (up to max_messages ~100).
+    The client slices the most recent ~50 for first paint; scroll-up reveals
+    older messages from the already-loaded window (no second server round-trip
+    needed for Phase 26 — the array-in-doc schema keeps the whole window small).
+
+    Each message dict carries a stable `seq` index (position in the window)
+    so the client can compute the unread badge (CHAT-04 / D-11):
+      badge = messages.length - last_seen_seq
+
+    Returns:
+        JSONResponse: {"messages": [{"seq": int, "role": str, "content": str}, ...]}
+
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 + Pitfall 4
+
+    loop = asyncio.get_running_loop()
+    try:
+        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
+    except ValueError as exc:
+        logger.error("api_chat_messages: cannot resolve user_id: %s", exc)
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
+
+    def _get_messages() -> list[dict]:
+        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        store = FirestoreConversationStore(project_id=project_id, database=database)
+        msgs = store.get(user_id)
+        # Add stable seq index for unread badge computation (CHAT-04 / D-11)
+        return [{"seq": i, **msg} for i, msg in enumerate(msgs)]
+
+    messages = await loop.run_in_executor(None, _get_messages)
+
+    # _jsonsafe_doc on the full response (Pitfall 4 / T-26-05-06)
+    payload = _jsonsafe_doc({"messages": messages})
+    return JSONResponse(content=payload)
+
+
+@app.post("/internal/process-hub-message")
+async def internal_process_hub_message(request: Request) -> JSONResponse:
+    """Cloud Tasks target: run one hub chat agent turn with full CPU.
+
+    POST /api/chat enqueues the hub message via enqueue_hub_message; Cloud
+    Tasks POSTs it here with an OIDC token from the same service account the
+    Cloud Scheduler crons use, verified by _verify_cron_request.
+
+    The agent turn runs INSIDE this tracked request via asyncio.to_thread so
+    Cloud Run allocates full CPU for its duration — unlike a BackgroundTask,
+    which runs after the response on throttled CPU (D-09 / CLAUDE.md invariant).
+
+    Reply is appended to the shared FirestoreConversationStore without a
+    Telegram send — the hub polls /api/chat/messages to receive it.
+
+    Raises:
+        HTTPException 401/403: OIDC verification failed (T-26-05-02).
+        HTTPException 500: Orchestrator not initialised (Cloud Tasks retries).
+    """
+    # OIDC gate — same verification as /internal/process-update (T-26-05-02)
+    await _verify_cron_request(request)
+
+    # Singleton guard — orchestrator must be initialised (lifespan startup)
+    if _orchestrator is None:
+        logger.error("/internal/process-hub-message before orchestrator initialised")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Server is still initialising; please retry."},
+        )
+
+    request_json: dict = await request.json()
+    content = request_json.get("content", "")
+    user_id = int(request_json.get("user_id", 0))
+
+    # Run the agent turn inside this tracked request (full CPU — D-09)
+    # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
+    reply: str = await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
+
+    # Append the assistant reply to the shared conversation (no Telegram send —
+    # hub source; the client polls /api/chat/messages).
+    def _append_reply() -> None:
+        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        store = FirestoreConversationStore(project_id=project_id, database=database)
+        store.append(user_id, "assistant", reply)
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _append_reply)
+
+    return JSONResponse(content={"ok": True})
 
 
 # --------------------------------------------------------------------------- #
