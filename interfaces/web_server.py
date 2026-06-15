@@ -30,7 +30,7 @@ from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application
@@ -883,6 +883,116 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
         _log_cron_run("heartbeat", ok=False)
         raise
     return JSONResponse(content={"ok": True})
+
+
+# --------------------------------------------------------------------------- #
+# Hub auth routes — /api/auth/*                                               #
+#                                                                             #
+# These routes provide Google Sign-In session auth for the Klaus Hub (HUB-01).#
+# They must be registered BEFORE the SPAStaticFiles mount (Pitfall 1).       #
+# Existing /cron/* and /internal/* routes are untouched (HUB-04).            #
+# --------------------------------------------------------------------------- #
+
+@app.post("/api/auth/google")
+async def api_auth_google(request: Request, response: Response) -> JSONResponse:
+    """Exchange a Google Identity Services ID token for a session cookie.
+
+    Accepts JSON body: {"credential": "<GIS ID token>"}
+
+    The GIS token is verified server-side via verify_oauth2_token (audience =
+    GOOGLE_OAUTH_CLIENT_ID). On success, issues an itsdangerous HMAC-SHA256-signed
+    httpOnly session cookie valid for 365 days (D-01 effectively permanent).
+
+    Raises:
+        HTTPException 401: Invalid or expired GIS token, or email not verified.
+        HTTPException 403: Token valid but email is not the allowlisted account.
+        HTTPException 500: GOOGLE_OAUTH_CLIENT_ID or HUB_SESSION_SECRET unset.
+    """
+    import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
+    body = await request.json()
+    credential = body.get("credential", "")
+    if not credential:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Missing 'credential' in request body"},
+        )
+
+    email = _hub_auth.verify_google_id_token(credential)
+    loop = asyncio.get_running_loop()
+    session_version = await loop.run_in_executor(None, _hub_auth.get_session_version)
+    cookie_value = _hub_auth.create_session_cookie(email, session_version)
+
+    response.set_cookie(
+        _hub_auth._COOKIE_NAME,
+        cookie_value,
+        max_age=365 * 86400,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/",
+    )
+    return JSONResponse(content={"ok": True, "email": email})
+
+
+@app.post("/api/auth/logout")
+async def api_auth_logout(response: Response) -> JSONResponse:
+    """Clear the session cookie (single-device sign-out, D-02).
+
+    Does not bump session_version — only removes the cookie on this device.
+    For sign-out-everywhere use /api/auth/revoke-all.
+    """
+    import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
+    response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/auth/revoke-all")
+async def api_auth_revoke_all(
+    request: Request,
+    response: Response,
+) -> JSONResponse:
+    """Bump session_version to invalidate every previously-issued cookie (D-02).
+
+    Also clears the cookie on the current device. After this call every existing
+    session cookie (on every device) will fail the version check and return 401.
+
+    Requires an active session cookie (Depends(require_hub_session) — enforced
+    via the FastAPI dependency below). Intended for "lost phone" scenarios.
+
+    Raises:
+        HTTPException 401: No valid session cookie.
+        HTTPException 500: HUB_SESSION_SECRET or Firestore unavailable.
+    """
+    import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
+    _email: str = await _hub_auth.require_hub_session(request)  # auth gate
+    loop = asyncio.get_running_loop()
+
+    def _bump_version() -> None:
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        if not project_id:
+            raise ValueError("GCP_PROJECT_ID unset")
+        from memory.firestore_db import UserProfileStore
+        store = UserProfileStore(project_id=project_id, database=database)
+        profile = store.load()
+        new_version = int(profile.get("session_version", 0)) + 1
+        store.update({"session_version": new_version})
+
+    await loop.run_in_executor(None, _bump_version)
+    response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/api/auth/me")
+async def api_auth_me(request: Request) -> JSONResponse:
+    """Return the signed-in email — used by the frontend to check session validity.
+
+    Returns {"email": "..."} with HTTP 200 if the session cookie is valid.
+    Returns HTTP 401 if no valid cookie is present.
+    """
+    import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
+    email: str = await _hub_auth.require_hub_session(request)
+    return JSONResponse(content={"email": email})
 
 
 # --------------------------------------------------------------------------- #
