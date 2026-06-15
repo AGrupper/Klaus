@@ -7,9 +7,9 @@
  *   - Success  → sets zustand auth store + renders AppShell with nested routes
  *
  * Routes:
- *   /         → Today timeline placeholder (real content: 26-07)
+ *   /         → Today timeline (real content: 26-07)
  *   /tasks    → Placeholder — owned by P27
- *   /klaus    → Chat placeholder (real content: 26-08)
+ *   /klaus    → ChatWindow (real content: 26-08)
  *   /habits   → Placeholder — owned by P28
  *   /health   → Placeholder — owned by P30
  *
@@ -24,6 +24,7 @@ import { useAuthStore } from './store/auth'
 import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
 import { TimelineDay } from './components/timeline/TimelineDay'
+import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
 
 // ---------------------------------------------------------------------------
@@ -57,8 +58,18 @@ function TasksPage() {
   return <ComingSoon label="Tasks" />
 }
 
+/**
+ * KlausPage — Full-screen chat on phone (/klaus route).
+ * ChatWindow polls while this page is mounted (isVisible=true default).
+ * On desktop, the DockChat panel shows the same chat; on phone this is
+ * the primary interface.
+ */
 function KlausPage() {
-  return <ComingSoon label="Chat" />
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <ChatWindow isVisible={true} />
+    </div>
+  )
 }
 
 function HabitsPage() {

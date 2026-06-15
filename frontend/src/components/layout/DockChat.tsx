@@ -5,15 +5,24 @@
  *   - Desktop only: hidden md:flex (flex-col)
  *   - 360px wide; collapses to 48px header strip via chevron toggle
  *   - Header strip (48px) always visible (contains chevron + "Klaus" label)
- *   - Expanded state: full-height chat panel (ChatWindow mounts here in 26-08)
- *   - Accent #6366F1 used only for: send button (26-08), unread badge (26-08)
+ *   - Expanded state: full-height ChatWindow (26-08)
+ *   - Accent #6366F1 used only for: send button, unread badge (CHAT-04)
  *     NOT for the header chevron button
  */
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChatWindow } from '../chat/ChatWindow'
+import { UnreadBadge } from '../shared/UnreadBadge'
+import { useChat } from '../../hooks/useChat'
+import { useUnread } from '../../hooks/useUnread'
 
 export function DockChat() {
   const [collapsed, setCollapsed] = useState(false)
+
+  // Poll only when collapsed (badge still needs updating); ChatWindow owns
+  // polling when expanded (isVisible=true is the default in useChat).
+  const { messages } = useChat(collapsed)
+  const { unreadCount } = useUnread(messages.length)
 
   return (
     /*
@@ -47,20 +56,24 @@ export function DockChat() {
           flexShrink: 0,
         }}
       >
-        {/* "Klaus" label — only visible when expanded */}
+        {/* "Klaus" label + unread badge — only visible when expanded */}
         {!collapsed && (
-          <span
-            style={{
-              fontSize: '16px',
-              fontWeight: 600,
-              lineHeight: 1.2,
-              color: '#F9FAFB',
-              fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-              letterSpacing: '-0.01em',
-            }}
-          >
-            Klaus
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span
+              style={{
+                fontSize: '16px',
+                fontWeight: 600,
+                lineHeight: 1.2,
+                color: '#F9FAFB',
+                fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
+                letterSpacing: '-0.01em',
+              }}
+            >
+              Klaus
+            </span>
+            {/* UnreadBadge in the header (CHAT-04) */}
+            <UnreadBadge count={unreadCount} />
+          </div>
         )}
 
         {/* Chevron toggle button */}
@@ -80,12 +93,21 @@ export function DockChat() {
             cursor: 'pointer',
             flexShrink: 0,
             transition: 'color 0.15s',
+            position: 'relative',
           }}
           aria-expanded={!collapsed}
           aria-controls="dock-chat-content"
         >
           {collapsed ? (
-            <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+            <>
+              <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+              {/* Badge on chevron when collapsed (still visible) */}
+              {unreadCount > 0 && (
+                <div style={{ position: 'absolute', top: '-2px', right: '-4px' }}>
+                  <UnreadBadge count={unreadCount} />
+                </div>
+              )}
+            </>
           ) : (
             <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
           )}
@@ -93,7 +115,7 @@ export function DockChat() {
         </button>
       </div>
 
-      {/* Chat panel content slot — ChatWindow mounts here in 26-08 */}
+      {/* Chat panel content — ChatWindow (26-08) */}
       {!collapsed && (
         <div
           id="dock-chat-content"
@@ -104,20 +126,7 @@ export function DockChat() {
             overflow: 'hidden',
           }}
         >
-          {/* Placeholder until 26-08 wires ChatWindow */}
-          <div
-            style={{
-              flex: 1,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#9CA3AF',
-              fontSize: '13px',
-              fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-            }}
-          >
-            Say hello to Klaus.
-          </div>
+          <ChatWindow isVisible={!collapsed} />
         </div>
       )}
     </div>
