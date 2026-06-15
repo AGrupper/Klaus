@@ -17,6 +17,8 @@ import { Sidebar } from './Sidebar'
 import { BottomTabs } from './BottomTabs'
 import { GlanceRail } from './GlanceRail'
 import { DockChat } from './DockChat'
+import { OfflineIndicator } from '../shared/OfflineIndicator'
+import { InstallBanner } from '../shared/InstallBanner'
 
 interface AppShellProps {
   children: ReactNode
@@ -32,6 +34,12 @@ export function AppShell({ children }: AppShellProps) {
       className="flex flex-col md:flex-row"
       style={{ minHeight: '100dvh', backgroundColor: '#0A0A0A' }}
     >
+      {/* Fixed offline indicator — appears at the top of the viewport when offline (HUB-03) */}
+      <OfflineIndicator />
+
+      {/* Fixed iOS install banner — appears at the bottom when on iOS, not standalone, not dismissed (HUB-02 / D-12) */}
+      <InstallBanner />
+
       {/* Desktop only sidebar — 64px wide, full height */}
       <Sidebar />
 
