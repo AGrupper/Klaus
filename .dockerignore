@@ -19,3 +19,7 @@ tests/
 .DS_Store
 .idea/
 .vscode/
+# Frontend build artifacts — the runtime image gets dist fresh from the
+# frontend-builder stage; node_modules must never bloat the Python image.
+frontend/node_modules/
+frontend/dist/

@@ -883,3 +883,46 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
         _log_cron_run("heartbeat", ok=False)
         raise
     return JSONResponse(content={"ok": True})
+
+
+# --------------------------------------------------------------------------- #
+# SPA Static Files — MUST be the absolute last statement in this file.        #
+# ANY route registered after app.mount("/", ...) is unreachable because       #
+# Starlette route matching is first-match and Mount("/") matches everything.  #
+# See RESEARCH.md Pattern 1 and Pitfall 1.                                    #
+# --------------------------------------------------------------------------- #
+
+from fastapi.staticfiles import StaticFiles  # noqa: E402 (end-of-file import is intentional)
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve the Vite SPA build; fall back to index.html for client-side routes.
+
+    WHY lookup_path override (not get_response override): lookup_path is called
+    before the response is built, so a 404 fallback via lookup_path avoids
+    constructing a 404 response that we then discard.  This is slightly more
+    efficient than the get_response override and avoids catching Starlette
+    exceptions in the hot path.
+
+    Any path not matched by a real file in the dist/ directory is routed to
+    index.html so that the React Router can handle it client-side.
+    """
+
+    async def lookup_path(self, path: str):  # type: ignore[override]
+        full_path, stat_result = await super().lookup_path(path)
+        if stat_result is None:
+            # Unknown path — let the React Router handle it
+            return await super().lookup_path("index.html")
+        return full_path, stat_result
+
+
+# IMPORTANT: this must be the VERY LAST statement that registers any route.
+# Guard with os.path.isdir so local dev without a frontend build starts cleanly.
+_DIST_PATH = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.isdir(_DIST_PATH):
+    app.mount("/", SPAStaticFiles(directory=_DIST_PATH, html=True), name="spa")
+else:
+    logger.warning(
+        "frontend/dist not found — SPA will not be served (expected in production; "
+        "run `cd frontend && npm run build` or use the multi-stage Dockerfile)"
+    )

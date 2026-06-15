@@ -907,3 +907,61 @@ class TestInternalProcessUpdate:
             resp = client.post("/internal/process-update", json={"update_id": 702})
 
         assert resp.status_code == 500
+
+
+# --------------------------------------------------------------------------- #
+# TestSPAMountRegression — Phase 26 HUB-04 / threat T-26-01-01                 #
+# The SPAStaticFiles catch-all is mounted at "/" as the absolute last route.  #
+# It must NOT shadow existing API/cron routes like /health.                    #
+# --------------------------------------------------------------------------- #
+
+
+class TestSPAMountRegression:
+    """Prove the SPA catch-all mount does not shadow real routes (HUB-04)."""
+
+    def test_health_still_works(self, monkeypatch):
+        """With the SPA mount ACTIVE, GET /health still returns 200.
+
+        The ``app.mount("/", SPAStaticFiles(...))`` only activates when
+        ``frontend/dist`` exists, so create a minimal ``index.html`` first —
+        this makes the test exercise the real catch-all and stay portable to
+        CI, where ``frontend/dist`` is gitignored and absent.
+        """
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dist_dir = os.path.join(repo_root, "frontend", "dist")
+        index_html = os.path.join(dist_dir, "index.html")
+        made_dir = not os.path.isdir(dist_dir)
+        os.makedirs(dist_dir, exist_ok=True)
+        made_index = not os.path.exists(index_html)
+        if made_index:
+            with open(index_html, "w", encoding="utf-8") as fh:
+                fh.write("<!doctype html><title>Klaus</title>")
+
+        try:
+            stubs = _stub_web_server_imports()
+            with patch.dict(sys.modules, stubs):
+                import interfaces.web_server as ws  # noqa: PLC0415
+                from fastapi.testclient import TestClient  # noqa: PLC0415
+
+                # The SPA catch-all must be registered — otherwise this test
+                # would silently pass without exercising shadow-protection.
+                assert any(
+                    getattr(route, "name", None) == "spa" for route in ws.app.routes
+                ), "SPA mount not registered; test would not prove shadow-protection"
+
+                with patch.dict(os.environ, _BASE_ENV):
+                    client = TestClient(ws.app)
+                    resp = client.get("/health")
+
+            assert resp.status_code == 200, (
+                f"/health shadowed by SPA mount: {resp.status_code}: {resp.text}"
+            )
+            assert resp.json() == {"status": "ok"}
+        finally:
+            if made_index and os.path.exists(index_html):
+                os.remove(index_html)
+            if made_dir and os.path.isdir(dist_dir):
+                try:
+                    os.rmdir(dist_dir)
+                except OSError:
+                    pass
