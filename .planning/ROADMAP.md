@@ -49,8 +49,8 @@ visualizing training, nutrition, and sleep data from existing stores.
   5. Desktop shows sidebar + timeline + glance rail + collapsible docked chat; phone shows bottom tabs with Klaus as the center tab — one responsive layout
   6. The app shell loads and renders skeletons on a bad connection; a stale cached `index.html` never blocks a new deploy; the frontend is served from `klaus-agent` without breaking any existing route (Telegram webhook, `/cron/*`, `/internal/*`, `/trigger/*`)
 **Plans**: 9 plans (5 waves)
-- [ ] 26-01-PLAN.md — Frontend toolchain (Vite/React/TS/Tailwind/PWA) + multi-stage Dockerfile + SPAStaticFiles mount (HUB-03, HUB-04)
-- [ ] 26-02-PLAN.md — Backend data foundation: session_version + telegram_user_id + daily_note + itsdangerous + Wave 0 test stubs (HUB-01 scaffold, TIME-07, CHAT-01)
+- [x] 26-01-PLAN.md — Frontend toolchain (Vite/React/TS/Tailwind/PWA) + multi-stage Dockerfile + SPAStaticFiles mount (HUB-03, HUB-04)
+- [x] 26-02-PLAN.md — Backend data foundation: session_version + telegram_user_id + daily_note + itsdangerous + Wave 0 test stubs (HUB-01 scaffold, TIME-07, CHAT-01)
 - [ ] 26-03-PLAN.md — Hub auth: GIS verify + signed session cookie + require_hub_session + /api/auth/* + SignInPage (HUB-01)
 - [ ] 26-04-PLAN.md — /api/today composition: calendar/Garmin/weather/meals/training/leave-by/coach-note/nutrition totals (TIME-01..05, TIME-08)
 - [ ] 26-05-PLAN.md — Chat backend: /api/chat + /api/chat/messages + /internal/process-hub-message + enqueue_hub_message (CHAT-01..04)
@@ -115,7 +115,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Hub Shell | 0/9 | Planned | - |
+| 26. Hub Shell | 2/9 | In Progress|  |
 | 27. Tasks | 0/? | Not started | - |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |

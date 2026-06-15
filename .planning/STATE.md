@@ -4,8 +4,8 @@ milestone: v5.0
 milestone_name: Klaus Hub
 status: executing
 stopped_at: Phase 26 UI-SPEC approved
-last_updated: "2026-06-14T12:21:14.448Z"
-last_activity: 2026-06-14 -- Phase 26 planning complete
+last_updated: "2026-06-14T12:28:42.434Z"
+last_activity: 2026-06-14 -- Phase 26 execution started
 progress:
   total_phases: 5
   completed_phases: 0
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: Not started (roadmap written; ready for planning)
-Plan: —
-Status: Ready to execute
-Last activity: 2026-06-14 -- Phase 26 planning complete
+Phase: 26 (hub-shell) — EXECUTING
+Plan: 1 of 9
+Status: Executing Phase 26
+Last activity: 2026-06-14 -- Phase 26 execution started
 
 **Progress bar:** [----------] 0% (0/5 phases)
 
@@ -73,7 +73,7 @@ Last activity: 2026-06-14 -- Phase 26 planning complete
 See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** v5.0 Klaus Hub — roadmap written; 5 phases (26–30); 36 requirements mapped. Start with `/gsd:plan-phase 26`.
+**Current focus:** Phase 26 — hub-shell
 
 ## Architecture (current)
 
