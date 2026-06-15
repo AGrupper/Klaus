@@ -1,20 +1,21 @@
-"""Wave 0 test stubs for the hub chat backend (plan 26-05).
+"""Tests for the hub chat backend (plan 26-05).
 
-WHY this module exists: Phase 26 (v5.0 Klaus Hub) adds a dedicated Cloud Tasks
-full-CPU path so hub chat messages run the agent turn exactly like Telegram,
-sharing one continuous Firestore conversation (one Klaus). These tests define the
-behavioral contract that plan 26-05 must satisfy. All test functions are
-skip-marked until plan 26-05 implements the production code; at that point 26-05
-removes the skip markers and flips the stubs to real assertions.
+The hub chat path runs the agent turn exactly like Telegram — POST /api/chat
+appends the user message to the shared FirestoreConversationStore (keyed on
+telegram_user_id, CHAT-01) and enqueues a Cloud Tasks job to the full-CPU
+/internal/process-hub-message worker (CHAT-02 / D-09), which is OIDC-gated
+(CHAT-04). GET /api/chat/messages returns the polling window (CHAT-03).
 
-Pattern: mirrors tests/test_task_dispatch.py (fake_tasks_v2 fixture — a mocked
-Cloud Tasks v2 client) and tests/test_web_server.py (_stub_web_server_imports,
-CRON_DEV_BYPASS OIDC gating).
+Pattern: mirrors tests/test_web_server.py (_stub_web_server_imports + TestClient,
+CRON_DEV_BYPASS OIDC gating). Auth (require_hub_session) is bypassed via FastAPI
+dependency_overrides; the conversation store + enqueue are mocked at their
+import boundaries.
 
-Seeded by plan 26-02 Task 3 per RESEARCH.md § Validation Architecture.
+Implemented by plan 26-05 (Wave-0 skip stubs flipped to real assertions).
 """
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -34,59 +35,144 @@ _ENV = {
     "FIRESTORE_DATABASE": "(default)",
     "CLOUD_TASKS_QUEUE": "klaus-updates",
     "CLOUD_TASKS_LOCATION": "me-central1",
+    "TELEGRAM_ALLOWED_USER_IDS": "123456",
 }
 
 
-@pytest.fixture
-def fake_tasks_v2():
-    """Mocked Cloud Tasks v2 client — mirrors tests/test_task_dispatch.py.
-
-    Plan 26-05 fills this in to assert the hub message is enqueued onto the
-    full-CPU /internal/process-hub-message path (never run inline in the
-    request handler — Cloud Run throttles CPU once no request is in flight).
+def _stub_web_server_imports() -> dict:
+    """Return a sys.modules-stubs dict that lets interfaces.web_server import
+    without real telegram / google-auth / core.main dependencies, and flush the
+    cached web_server so the next import picks up the stubs.
     """
-    return MagicMock()
+    stubs = {
+        "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
+        "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
+        "telegram.error": sys.modules.get("telegram.error", MagicMock()),
+        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.main": MagicMock(name="core.main"),
+        "interfaces._router": MagicMock(name="interfaces._router"),
+    }
+    for key in list(sys.modules.keys()):
+        if key == "interfaces.web_server" or key.startswith("interfaces.web_server."):
+            del sys.modules[key]
+    return stubs
 
 
 # ------------------------------------------------------------------ #
-# Wave 0 test stubs — skip-marked until plan 26-05 implements        #
+# CHAT-01: POST /api/chat appends to the shared Firestore conversation #
 # ------------------------------------------------------------------ #
 
-@pytest.mark.skip(reason="implemented in Wave 1 plan 26-05")
 def test_post_chat_appends_to_firestore():
-    """POST /api/chat appends the user message to the shared Firestore conversation.
+    """POST /api/chat appends the user message to the shared Firestore conversation."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    Covers CHAT-01: the hub keys FirestoreConversationStore on telegram_user_id
-    (26-02 bridge field) so hub + Telegram share one continuous conversation.
-    """
-    raise NotImplementedError("implement in plan 26-05")
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True):
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "hello klaus"})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    assert resp.json() == {"ok": True}
+    # CHAT-01: append(user_id, "user", content) on the shared conversation store
+    fake_store_cls.return_value.append.assert_called_once_with(123456, "user", "hello klaus")
 
 
-@pytest.mark.skip(reason="implemented in Wave 1 plan 26-05")
+# ------------------------------------------------------------------ #
+# CHAT-02: POST /api/chat enqueues the full-CPU agent turn            #
+# ------------------------------------------------------------------ #
+
 def test_post_chat_enqueues_hub_message():
-    """POST /api/chat enqueues a Cloud Tasks job for the full-CPU agent turn.
+    """POST /api/chat enqueues the agent turn via Cloud Tasks (never a BackgroundTask)."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    Covers CHAT-02 + the full-CPU invariant: the agent turn must run inside a
-    tracked Cloud Tasks request, never in a Starlette BackgroundTask.
-    """
-    raise NotImplementedError("implement in plan 26-05")
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch("memory.firestore_conversation.FirestoreConversationStore", MagicMock()), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "hello klaus"})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    mock_enqueue.assert_called_once_with("hello klaus", 123456)
 
 
-@pytest.mark.skip(reason="implemented in Wave 1 plan 26-05")
+def test_post_chat_rejects_empty_content():
+    """POST /api/chat with empty content → 400 (input validation, T-26-05-04)."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            client = TestClient(ws.app)
+            resp = client.post("/api/chat", json={"content": "   "})
+
+    assert resp.status_code == 400
+
+
+# ------------------------------------------------------------------ #
+# CHAT-03: GET /api/chat/messages returns the polling window         #
+# ------------------------------------------------------------------ #
+
 def test_get_messages_returns_window():
-    """GET /api/messages returns the recent conversation window for polling.
+    """GET /api/chat/messages returns the conversation window with stable seq indices."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
 
-    Covers CHAT-03: the frontend useChat hook (26-08) polls this for new
-    assistant turns; the response is the trailing window of the shared thread.
-    """
-    raise NotImplementedError("implement in plan 26-05")
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get.return_value = [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello, Amit"},
+            ]
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages")
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    messages = resp.json()["messages"]
+    assert messages == [
+        {"seq": 0, "role": "user", "content": "hi"},
+        {"seq": 1, "role": "assistant", "content": "hello, Amit"},
+    ]
 
 
-@pytest.mark.skip(reason="implemented in Wave 1 plan 26-05")
-def test_internal_process_hub_message_oidc_gated():
-    """/internal/process-hub-message rejects non-OIDC callers.
+# ------------------------------------------------------------------ #
+# CHAT-04: /internal/process-hub-message is OIDC-gated               #
+# ------------------------------------------------------------------ #
 
-    Covers CHAT-04: the internal full-CPU worker route must be OIDC-protected
-    exactly like /internal/process-update (CRON_DEV_BYPASS only in dev).
-    """
-    raise NotImplementedError("implement in plan 26-05")
+def test_internal_process_hub_message_oidc_gated(monkeypatch):
+    """/internal/process-hub-message rejects callers without a valid OIDC bearer."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        env = dict(_ENV)
+        env["CRON_DEV_BYPASS"] = "false"  # force real OIDC verification
+        with patch.dict(os.environ, env):
+            monkeypatch.delenv("CLOUD_RUN_URL", raising=False)
+            monkeypatch.delenv("CLOUD_SCHEDULER_SA_EMAIL", raising=False)
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/internal/process-hub-message",
+                json={"content": "hi", "user_id": 123456},
+            )
+
+    assert resp.status_code in (401, 403), f"expected 401/403, got {resp.status_code}: {resp.text}"
