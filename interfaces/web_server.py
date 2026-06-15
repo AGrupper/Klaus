@@ -1057,7 +1057,9 @@ def _today_calendar(today_iso: str) -> dict:
                 entry["location"] = location
             # All-day events have a date-only "start" (YYYY-MM-DD, length 10 with no 'T').
             if "T" not in start_str and len(start_str) == 10:
-                all_day.append(entry)
+                # All-day events surface as title strings to match the frontend
+                # contract (TodayData.calendar.all_day: string[]).
+                all_day.append(entry["title"])
             else:
                 timed.append(entry)
 
@@ -1077,13 +1079,12 @@ def _today_garmin() -> dict | None:
     try:
         from mcp_tools.garmin_tool import fetch_garmin_today  # lazy import
         data = fetch_garmin_today()
+        # Field names match the frontend GarminStats contract
+        # (frontend/src/api/today.ts): sleep (hours), hrv (ms), body_battery, resting_hr.
         return {
-            "sleep_score": data.get("sleep_score"),
-            "sleep_hours": data.get("sleep_hours"),
-            "hrv_status": data.get("hrv_status"),
-            "hrv_overnight": data.get("hrv_overnight"),
-            "hrv_baseline": data.get("hrv_baseline"),
-            "body_battery_morning": data.get("body_battery_morning"),
+            "sleep": data.get("sleep_hours"),
+            "hrv": data.get("hrv_overnight"),
+            "body_battery": data.get("body_battery_morning"),
             "resting_hr": data.get("resting_hr"),
         }
     except Exception:
@@ -1224,8 +1225,11 @@ def _today_training(today_iso: str) -> dict | None:
                 block_context = f"Week {week_num} of 16 — {label}"
 
         return {
-            "block_label": block.get("label"),
+            # "item" matches the frontend TrainingItem contract — the day's
+            # workout name (split label, falling back to the block label).
+            "item": split_name or block.get("label"),
             "block_context": block_context,
+            "block_label": block.get("label"),
             "week_num": week_num,
             "split_name": split_name,
             "benchmark_due": block.get("benchmark_due", False),
@@ -1272,6 +1276,25 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
     must not prevent the rest of the calendar from rendering.
     """
     import time as _time
+    from datetime import datetime as _dt, timedelta as _td
+
+    # Get Ready block before leaving (USER.md: 45 min prep before departure).
+    _GET_READY_MINUTES = 45
+
+    def _attach_leave_by(ev: dict, start_iso: str, duration_minutes) -> None:
+        """Set ISO leave_by + get_ready_at on a located event (frontend contract).
+
+        leave_by = event start − travel duration; get_ready_at = leave_by − 45 min.
+        """
+        if duration_minutes is None or not start_iso:
+            return
+        try:
+            start_dt = _dt.fromisoformat(start_iso)
+        except ValueError:
+            return
+        leave_by_dt = start_dt - _td(minutes=duration_minutes)
+        ev["leave_by"] = leave_by_dt.isoformat()
+        ev["get_ready_at"] = (leave_by_dt - _td(minutes=_GET_READY_MINUTES)).isoformat()
 
     try:
         from mcp_tools.routes_tool import get_travel_time  # lazy import
@@ -1292,8 +1315,7 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
                 cache_ts, cached_result = cached
                 if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
                     if cached_result:
-                        ev["leave_by_minutes_before"] = cached_result.get("duration_minutes")
-                        ev["routes_summary"] = cached_result.get("summary")
+                        _attach_leave_by(ev, start_iso, cached_result.get("duration_minutes"))
                     continue
 
             try:
@@ -1304,8 +1326,7 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
                 )
                 _routes_cache[cache_key] = (now_epoch, result)
                 if result:
-                    ev["leave_by_minutes_before"] = result.get("duration_minutes")
-                    ev["routes_summary"] = result.get("summary")
+                    _attach_leave_by(ev, start_iso, result.get("duration_minutes"))
             except Exception:
                 logger.warning(
                     "_today_routes: get_travel_time failed for event %s → %s",

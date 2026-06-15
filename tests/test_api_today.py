@@ -90,10 +90,8 @@ def test_today_returns_expected_keys():
         with patch.dict(os.environ, _ENV):
             # Monkeypatch the 8 per-source helpers so no real I/O occurs.
             ws._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
-            ws._today_garmin = lambda: {"sleep_score": 82, "sleep_hours": 7.5,
-                                        "hrv_status": "BALANCED", "hrv_overnight": 55,
-                                        "hrv_baseline": 52, "body_battery_morning": 78,
-                                        "resting_hr": 52}
+            ws._today_garmin = lambda: {"sleep": 7.5, "hrv": 55,
+                                        "body_battery": 78, "resting_hr": 52}
             ws._today_weather = lambda: "Sunny, 28°C, H 31°/L 22°"
             ws._today_meals = lambda today_iso: [
                 {"slot_label": "Breakfast", "slot_time": "08:00",
@@ -101,8 +99,9 @@ def test_today_returns_expected_keys():
                             "fat_g": 15, "fiber_g": 5}}
             ]
             ws._today_training = lambda today_iso: {
-                "block_label": "Aerobic Base",
+                "item": "Upper Body A",
                 "block_context": "Week 1 of 16 — Upper Body A",
+                "block_label": "Aerobic Base",
                 "week_num": 1,
                 "split_name": "Upper Body A",
                 "benchmark_due": False,
@@ -126,6 +125,14 @@ def test_today_returns_expected_keys():
         # calendar should have all_day + timed sub-keys.
         assert "all_day" in data["calendar"]
         assert "timed" in data["calendar"]
+        # Nested contract the frontend actually reads (TIME-02/04) — guards
+        # against the 26-04/26-07 field-name drift caught in 26-VERIFICATION.md.
+        assert set(data["garmin"]) >= {"sleep", "hrv", "body_battery", "resting_hr"}, (
+            f"garmin contract drift — frontend reads sleep/hrv/body_battery: {data['garmin']}"
+        )
+        assert "item" in data["training"], (
+            f"training contract drift — frontend reads training.item: {data['training']}"
+        )
 
 
 def test_no_datetimewithnanoseconds_leak():
@@ -153,12 +160,9 @@ def test_no_datetimewithnanoseconds_leak():
             # (simulates Firestore SERVER_TIMESTAMP read-back before _jsonsafe_doc).
             ws._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
             ws._today_garmin = lambda: {
-                "sleep_score": 80,
-                "sleep_hours": 7.0,
-                "hrv_status": "BALANCED",
-                "hrv_overnight": 50,
-                "hrv_baseline": 50,
-                "body_battery_morning": 75,
+                "sleep": 7.0,
+                "hrv": 50,
+                "body_battery": 75,
                 "resting_hr": 55,
                 # Simulate a stray DatetimeWithNanoseconds that slipped through
                 "_updated_at": _FakeDatetimeWithNanoseconds(),
@@ -306,3 +310,75 @@ def test_unauthenticated_returns_401():
             f"Expected 401 for unauthenticated request, got {response.status_code}: "
             f"{response.text}"
         )
+
+
+# ------------------------------------------------------------------ #
+# Helper-level contract tests — lock the frontend/backend field names #
+# at the source (guards against the 26-04/26-07 drift in 26-VERIFICATION.md) #
+# ------------------------------------------------------------------ #
+
+
+def test_today_garmin_maps_to_frontend_contract():
+    """_today_garmin maps fetch_garmin_today → the frontend GarminStats keys.
+
+    The frontend reads garmin.sleep / garmin.hrv / garmin.body_battery /
+    garmin.resting_hr — NOT sleep_score/hrv_overnight/body_battery_morning.
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            fake = {
+                "sleep_hours": 7.5,
+                "hrv_overnight": 55,
+                "body_battery_morning": 78,
+                "resting_hr": 52,
+                "sleep_score": 82,  # extra source fields the frontend never reads
+            }
+            with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=fake):
+                out = ws._today_garmin()
+
+    assert out == {"sleep": 7.5, "hrv": 55, "body_battery": 78, "resting_hr": 52}
+
+
+def test_today_routes_computes_iso_leave_by_and_get_ready():
+    """_today_routes attaches ISO leave_by + get_ready_at (= leave_by − 45 min).
+
+    The frontend reads event.leave_by / event.get_ready_at as ISO datetimes,
+    NOT leave_by_minutes_before (int). Get Ready is 45 min before leaving (USER.md).
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            start = "2026-06-15T18:00:00+03:00"
+            calendar = {
+                "all_day": [],
+                "timed": [
+                    {
+                        "id": "e1",
+                        "title": "Gym",
+                        "start": start,
+                        "end": "2026-06-15T19:00:00+03:00",
+                        "location": "Tel Aviv Gym",
+                    }
+                ],
+            }
+            with patch(
+                "mcp_tools.routes_tool.get_travel_time",
+                return_value={"duration_minutes": 30, "summary": "30 min"},
+            ):
+                out = ws._today_routes(calendar, "2026-06-15")
+
+    ev = out["timed"][0]
+    assert "leave_by" in ev and "get_ready_at" in ev
+    assert "leave_by_minutes_before" not in ev  # old (broken) contract removed
+    leave_by = datetime.fromisoformat(ev["leave_by"])
+    get_ready = datetime.fromisoformat(ev["get_ready_at"])
+    start_dt = datetime.fromisoformat(start)
+    assert leave_by == start_dt - timedelta(minutes=30)
+    assert get_ready == leave_by - timedelta(minutes=45)
