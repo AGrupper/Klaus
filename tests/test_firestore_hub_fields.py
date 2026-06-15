@@ -80,7 +80,7 @@ def _flush_firestore_db_module() -> None:
 class TestUserProfileScaffold:
     """Assert that the UserProfileStore._SCAFFOLD carries the new hub fields."""
 
-    def test_userprofile_scaffold_has_session_version(self):
+    def test_userprofile_scaffold_has_session_version(self, isolated_modules):
         """session_version must default to 0 in the scaffold.
 
         Used by /api/auth/revoke-all (D-02) to invalidate all existing
@@ -99,7 +99,7 @@ class TestUserProfileScaffold:
             "session_version must default to 0 (int) — bumped by revoke-all"
         )
 
-    def test_userprofile_scaffold_has_telegram_user_id(self):
+    def test_userprofile_scaffold_has_telegram_user_id(self, isolated_modules):
         """telegram_user_id must default to None in the scaffold.
 
         The hub keys FirestoreConversationStore on this field to bridge the
@@ -133,7 +133,7 @@ class TestSelfStateSetAcceptsDailyNote:
     confirms the keys are forwarded to the underlying doc.set() call.
     """
 
-    def test_selfstate_set_accepts_daily_note(self):
+    def test_selfstate_set_accepts_daily_note(self, isolated_modules):
         """set({"daily_note": ..., "daily_note_date": ...}) must call doc.set
         with both keys merged in (alongside updated_at SERVER_TIMESTAMP).
         """
