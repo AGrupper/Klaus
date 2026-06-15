@@ -53,11 +53,11 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 26-02-PLAN.md — Backend data foundation: session_version + telegram_user_id + daily_note + itsdangerous + Wave 0 test stubs (HUB-01 scaffold, TIME-07, CHAT-01)
 - [x] 26-03-PLAN.md — Hub auth: GIS verify + signed session cookie + require_hub_session + /api/auth/* + SignInPage (HUB-01)
 - [x] 26-04-PLAN.md — /api/today composition: calendar/Garmin/weather/meals/training/leave-by/coach-note/nutrition totals (TIME-01..05, TIME-08)
-- [ ] 26-05-PLAN.md — Chat backend: /api/chat + /api/chat/messages + /internal/process-hub-message + enqueue_hub_message (CHAT-01..04)
+- [x] 26-05-PLAN.md — Chat backend: /api/chat + /api/chat/messages + /internal/process-hub-message + enqueue_hub_message (CHAT-01..04)
 - [x] 26-06-PLAN.md — Responsive app shell + routing + auth gate + apiFetch (HUB-05, HUB-01)
-- [ ] 26-07-PLAN.md — Today timeline UI: now-line/auto-scroll/past-dimming/placeholders + glance rail (TIME-01..05, TIME-08)
+- [x] 26-07-PLAN.md — Today timeline UI: now-line/auto-scroll/past-dimming/placeholders + glance rail (TIME-01..05, TIME-08)
 - [ ] 26-08-PLAN.md — Chat UI: optimistic send + polling + thinking indicator + unread badge (CHAT-03, CHAT-04)
-- [ ] 26-09-PLAN.md — PWA polish: iOS install banner + offline indicator + skeletons (HUB-02, HUB-03)
+- [x] 26-09-PLAN.md — PWA polish: iOS install banner + offline indicator + skeletons (HUB-02, HUB-03)
 **UI hint**: yes
 
 ### Phase 27: Tasks
@@ -115,7 +115,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Hub Shell | 5/9 | In Progress|  |
+| 26. Hub Shell | 8/9 | In Progress|  |
 | 27. Tasks | 0/? | Not started | - |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |
