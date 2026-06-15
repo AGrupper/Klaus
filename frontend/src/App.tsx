@@ -1,57 +1,151 @@
 /**
- * App.tsx — minimal placeholder shell for Phase 26-01.
+ * App.tsx — Route guard + top-level routing.
  *
- * Renders the "Klaus" wordmark on the dark background (#0A0A0A).
- * Real layout (sidebar + timeline + chat) ships in Phase 26-09 (AppShell).
+ * On mount: calls fetchMe() via useQuery to check the session cookie.
+ *   - Loading  → minimal centered spinner on #0A0A0A
+ *   - 401/err  → SignInPage (from 26-03)
+ *   - Success  → sets zustand auth store + renders AppShell with nested routes
+ *
+ * Routes:
+ *   /         → Today timeline placeholder (real content: 26-07)
+ *   /tasks    → Placeholder — owned by P27
+ *   /klaus    → Chat placeholder (real content: 26-08)
+ *   /habits   → Placeholder — owned by P28
+ *   /health   → Placeholder — owned by P30
+ *
+ * Security note: this route guard is a UX gate only. Every /api/* route
+ * enforces require_hub_session server-side (26-03). A bypassed guard returns 401.
  */
-import { dominant, accent, textPrimary, textSecondary, typography } from './tokens'
+import { useEffect } from 'react'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { fetchMe } from './api/auth'
+import { useAuthStore } from './store/auth'
+import { SignInPage } from './components/auth/SignInPage'
+import { AppShell } from './components/layout/AppShell'
+import { dominant, textSecondary, typography } from './tokens'
 
-export default function App() {
+// ---------------------------------------------------------------------------
+// Placeholder pages for routes owned by later plans
+// ---------------------------------------------------------------------------
+
+function ComingSoon({ label }: { label: string }) {
   return (
     <div
       style={{
-        minHeight: '100vh',
-        backgroundColor: dominant,
+        flex: 1,
         display: 'flex',
-        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: '8px',
+        color: textSecondary,
+        fontSize: typography.body.fontSize,
+        fontWeight: typography.body.fontWeight,
+        fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
       }}
     >
-      {/* Klaus wordmark — Display size per UI-SPEC */}
-      <h1
-        style={{
-          fontSize: typography.display.fontSize,
-          fontWeight: typography.display.fontWeight,
-          lineHeight: typography.display.lineHeight,
-          color: textPrimary,
-          letterSpacing: '-0.01em',
-        }}
-      >
-        Klaus
-      </h1>
-      <p
-        style={{
-          fontSize: typography.label.fontSize,
-          fontWeight: typography.label.fontWeight,
-          lineHeight: typography.label.lineHeight,
-          color: textSecondary,
-        }}
-      >
-        Your personal agent
-      </p>
-      {/* Accent indicator — verifies accent color renders */}
+      {label} — Coming soon
+    </div>
+  )
+}
+
+function TodayPage() {
+  return <ComingSoon label="Today" />
+}
+
+function TasksPage() {
+  return <ComingSoon label="Tasks" />
+}
+
+function KlausPage() {
+  return <ComingSoon label="Chat" />
+}
+
+function HabitsPage() {
+  return <ComingSoon label="Habits" />
+}
+
+function HealthPage() {
+  return <ComingSoon label="Health" />
+}
+
+// ---------------------------------------------------------------------------
+// Minimal spinner shown while the session check is in-flight
+// ---------------------------------------------------------------------------
+
+function LoadingScreen() {
+  return (
+    <div
+      style={{
+        minHeight: '100dvh',
+        backgroundColor: dominant,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+      aria-label="Loading…"
+    >
       <div
-        aria-hidden="true"
         style={{
-          marginTop: '24px',
           width: '32px',
-          height: '4px',
-          borderRadius: '2px',
-          backgroundColor: accent,
+          height: '32px',
+          border: '3px solid #2A2A2A',
+          borderTopColor: '#6366F1',
+          borderRadius: '50%',
+          animation: 'spin 0.75s linear infinite',
         }}
       />
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Root component
+// ---------------------------------------------------------------------------
+
+export default function App() {
+  const setSignedIn = useAuthStore((s) => s.setSignedIn)
+  const signOut = useAuthStore((s) => s.signOut)
+
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ['auth', 'me'],
+    queryFn: fetchMe,
+    retry: false,        // a 401 is not a transient failure — don't retry
+    staleTime: Infinity, // session doesn't change mid-session
+  })
+
+  // Sync the zustand store when auth check resolves
+  useEffect(() => {
+    if (data?.email) {
+      setSignedIn(data.email)
+    }
+  }, [data, setSignedIn])
+
+  useEffect(() => {
+    if (isError) {
+      signOut()
+    }
+  }, [isError, signOut])
+
+  if (isLoading) {
+    return <LoadingScreen />
+  }
+
+  if (isError || !data?.email) {
+    return <SignInPage />
+  }
+
+  return (
+    <AppShell>
+      <Routes>
+        <Route path="/" element={<TodayPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/klaus" element={<KlausPage />} />
+        <Route path="/habits" element={<HabitsPage />} />
+        <Route path="/health" element={<HealthPage />} />
+        {/* Catch-all: redirect unknown paths to Today */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </AppShell>
   )
 }
