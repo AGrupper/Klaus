@@ -168,6 +168,33 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
     })
     logger.info("morning_briefing: sent and injected for %s", today_iso)
 
+    # PHASE 26 — TIME-07: best-effort write of a one-line coach note to SelfStateStore
+    # so /api/today can surface it in the hub's Today timeline.
+    # The leading line of the briefing is used as the daily_note — no second LLM call.
+    # daily_note_date guards /api/today: if the stored date != today, the hub shows
+    # D-06 placeholder "Coach note coming after your morning briefing" instead.
+    # Wrapped in try/except so a Firestore write failure NEVER blocks the briefing send.
+    try:
+        _coach_note_one_line = next(
+            (line.strip() for line in text.splitlines() if line.strip()), ""
+        )
+        if _coach_note_one_line:
+            from memory.firestore_db import SelfStateStore
+            _sss = SelfStateStore(
+                project_id=os.environ["GCP_PROJECT_ID"],
+                database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+            )
+            _sss.set({
+                "daily_note": _coach_note_one_line,
+                "daily_note_date": today_iso,
+            })
+    except Exception:
+        logger.warning(
+            "morning_briefing: daily_note write to SelfStateStore failed — "
+            "briefing was already sent; this failure is non-fatal",
+            exc_info=True,
+        )
+
 
 # ------------------------------------------------------------------ #
 # Data gathering                                                     #
