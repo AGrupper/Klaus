@@ -39,8 +39,14 @@ function detectStandalone(): boolean {
 }
 
 function isDismissed(): boolean {
-  if (typeof localStorage === 'undefined') return false
-  return localStorage.getItem(DISMISSED_KEY) === '1'
+  // localStorage access can throw (Safari private mode) or be non-functional in
+  // some runtimes — never let it crash the banner render.
+  try {
+    if (typeof localStorage === 'undefined') return false
+    return localStorage.getItem(DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
 }
 
 export interface UseInstallBannerResult {
@@ -58,7 +64,12 @@ export function useInstallBanner(): UseInstallBannerResult {
   const showBanner = isIOS && !isStandalone && !dismissed
 
   const dismiss = useCallback(() => {
-    localStorage.setItem(DISMISSED_KEY, '1')
+    // setItem can throw in Safari private mode — still hide the banner this session.
+    try {
+      localStorage.setItem(DISMISSED_KEY, '1')
+    } catch {
+      /* ignore — dismissal won't persist, but the banner hides for this session */
+    }
     setDismissed(true)
   }, [])
 
