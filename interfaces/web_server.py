@@ -38,6 +38,7 @@ from telegram.ext import Application
 from core.main import AgentOrchestrator
 from core.task_dispatch import enqueue_update
 from interfaces._router import MessageRouter, parse_allowed_user_ids
+from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
 # WHY: override=True ensures .env values win even when the shell has already
 # exported the variable — the default behaviour silently ignores .env in that
@@ -993,6 +994,423 @@ async def api_auth_me(request: Request) -> JSONResponse:
     import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
     email: str = await _hub_auth.require_hub_session(request)
     return JSONResponse(content={"email": email})
+
+
+# --------------------------------------------------------------------------- #
+# /api/today — read-only Today timeline aggregator (Plan 26-04, TIME-01..05, #
+# TIME-08). Behind require_hub_session (HUB-01). All sync tool calls run via  #
+# run_in_executor + asyncio.gather (Pitfall 2). Every Firestore-derived value #
+# passes through _jsonsafe_doc before JSONResponse (Pitfall 4).               #
+#                                                                              #
+# MUST be registered BEFORE the SPA mount (Pitfall 1).                        #
+# --------------------------------------------------------------------------- #
+
+# Module-level in-process cache for Routes API results (TIME-05 / T-26-04-04).
+# Key: (event_id, departure_iso) → (cache_epoch_seconds, result_dict | None)
+# TTL: 30 minutes — avoids re-hitting the Routes API on D-05 refresh-on-focus.
+_routes_cache: dict = {}
+_ROUTES_CACHE_TTL_SECONDS = 1800  # 30 minutes
+
+
+def _today_calendar(today_iso: str) -> dict:
+    """Fetch today's calendar events — all-day pinned + timed sorted chronologically.
+
+    TIME-01: all-day events are pinned at top; timed events sorted by start ascending.
+    Returns {"all_day": [...], "timed": [...]} or {"all_day": [], "timed": []} on error.
+
+    Each event dict carries: id, title, start, end, location (if present).
+    """
+    try:
+        import core.auth_google as _auth  # lazy import — Shared Pattern 5
+        from mcp_tools.calendar_tool import GoogleCalendarManager
+        from datetime import date as _date, datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+
+        tz = _ZI("Asia/Jerusalem")
+        day_start = _dt.fromisoformat(today_iso).replace(
+            hour=0, minute=0, second=0, tzinfo=tz
+        )
+        day_end = _dt.fromisoformat(today_iso).replace(
+            hour=23, minute=59, second=59, tzinfo=tz
+        )
+
+        auth_manager = _auth.GoogleAuthManager()
+        cal = GoogleCalendarManager(auth_manager)
+        raw_events = cal.list_events(
+            day_start.isoformat(),
+            day_end.isoformat(),
+            max_results=50,
+        )
+
+        all_day = []
+        timed = []
+        for ev in raw_events:
+            start_str = ev.get("start", "")
+            location = ev.get("location", "")
+            entry = {
+                "id": ev.get("id", ""),
+                "title": ev.get("summary", ""),
+                "start": start_str,
+                "end": ev.get("end", ""),
+            }
+            if location:
+                entry["location"] = location
+            # All-day events have a date-only "start" (YYYY-MM-DD, length 10 with no 'T').
+            if "T" not in start_str and len(start_str) == 10:
+                all_day.append(entry)
+            else:
+                timed.append(entry)
+
+        # All-day events are pinned as-is; timed events are already sorted by startTime.
+        return {"all_day": all_day, "timed": timed}
+    except Exception:
+        logger.warning("_today_calendar() failed", exc_info=True)
+        return {"all_day": [], "timed": []}
+
+
+def _today_garmin() -> dict | None:
+    """Fetch today's Garmin morning stats — sleep, HRV, body battery, resting HR.
+
+    TIME-02 stats half. Returns None when Garmin has not yet synced (D-06:
+    client shows "Sleep stats syncing…").
+    """
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_today  # lazy import
+        data = fetch_garmin_today()
+        return {
+            "sleep_score": data.get("sleep_score"),
+            "sleep_hours": data.get("sleep_hours"),
+            "hrv_status": data.get("hrv_status"),
+            "hrv_overnight": data.get("hrv_overnight"),
+            "hrv_baseline": data.get("hrv_baseline"),
+            "body_battery_morning": data.get("body_battery_morning"),
+            "resting_hr": data.get("resting_hr"),
+        }
+    except Exception:
+        logger.warning("_today_garmin() failed — Garmin may not have synced yet", exc_info=True)
+        return None
+
+
+def _today_weather() -> str | None:
+    """Fetch a one-line weather summary string for Tel Aviv.
+
+    TIME-02 weather half. Returns None on any error — client can show "—".
+    """
+    try:
+        from mcp_tools.weather_tool import fetch_weather  # lazy import
+        data = fetch_weather("Tel Aviv")
+        current = data.get("current", {})
+        today = data.get("today", {})
+        cond = current.get("condition", "")
+        temp = current.get("temp_c")
+        high = today.get("max_c")
+        low = today.get("min_c")
+        rain = today.get("rain_chance")
+        parts = []
+        if cond:
+            parts.append(cond)
+        if temp is not None:
+            parts.append(f"{temp}°C")
+        if high is not None and low is not None:
+            parts.append(f"H {high}°/L {low}°")
+        if rain:
+            parts.append(f"{rain}% rain")
+        return ", ".join(parts) if parts else None
+    except Exception:
+        logger.warning("_today_weather() failed", exc_info=True)
+        return None
+
+
+_SLOT_LABELS: dict[str, str] = {
+    "08:00": "Breakfast",
+    "12:00": "Lunch",
+    "20:00": "Dinner",
+}
+
+
+def _today_meals(today_iso: str) -> list[dict]:
+    """Fetch today's meals as slot-label entries with macros.
+
+    TIME-03: meals are rendered as canonical slot LABELS (Breakfast/Lunch/Dinner)
+    derived from the canonical slot timestamps (08:00/12:00/20:00). Per CLAUDE.md §6
+    invariant: these timestamps are NOT actual eating times — they are canonical
+    slot identifiers written by the HealthKit/Lifesum pipeline. The returned dicts
+    MUST NOT include any field named or framed as eaten_at or eating_time.
+    """
+    try:
+        from memory.firestore_db import MealStore  # lazy import
+        store = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        raw_meals = store.get_day(today_iso)
+        result = []
+        for meal in raw_meals:
+            ts = meal.get("timestamp", "")
+            # Derive the slot label from the HH:MM portion of the canonical timestamp.
+            time_part = ""
+            try:
+                time_part = ts[11:16] if len(ts) >= 16 else ts[:5]
+            except (IndexError, TypeError):
+                pass
+            slot_label = _SLOT_LABELS.get(time_part, "Meal")
+            result.append({
+                "slot_label": slot_label,         # canonical display label (TIME-03)
+                "slot_time": time_part,           # HH:MM — the canonical SLOT identifier, NOT eating time
+                "macros": {
+                    "kcal": meal.get("calories"),
+                    "protein_g": meal.get("protein_g"),
+                    "carbs_g": meal.get("carbs_g"),
+                    "fat_g": meal.get("fat_g"),
+                    "fiber_g": meal.get("fiber_g"),
+                },
+            })
+        return result
+    except Exception:
+        logger.warning("_today_meals(%r) failed", today_iso, exc_info=True)
+        return []
+
+
+def _today_training(today_iso: str) -> dict | None:
+    """Fetch today's training plan item + "Week N of 16 — {split name}" block context.
+
+    TIME-04: uses BlockStore.get_current() (date-range resolution) mirroring the
+    morning briefing block-fetch path (core/morning_briefing.py lines 399–420).
+    Returns None when no block is active (pre/post-cycle) so the client can show
+    the D-06 "no training block" placeholder.
+    """
+    try:
+        from datetime import date as _date
+        from memory.firestore_db import BlockStore, UserProfileStore  # lazy import
+
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+
+        block = None
+        if project_id:
+            bs = BlockStore(project_id=project_id, database=database)
+            block = bs.get_current(today_iso)
+
+        split_name = None
+        if project_id:
+            profile = UserProfileStore(project_id=project_id, database=database).load()
+            # weekly_split is keyed by day name e.g. "Monday"
+            try:
+                from datetime import date as _d
+                day_name = _d.fromisoformat(today_iso).strftime("%A")
+                split_today = profile.get("weekly_split", {}).get(day_name) or {}
+                am_slot = split_today.get("am") or {}
+                split_name = am_slot.get("label")
+            except Exception:
+                pass
+
+        if not block:
+            return None
+
+        # Derive week number the same way morning_briefing does — from plan_start_date 2026-06-21.
+        try:
+            plan_start = _date.fromisoformat("2026-06-21")
+            today_date = _date.fromisoformat(today_iso)
+            week_num = max(1, (today_date - plan_start).days // 7 + 1)
+        except Exception:
+            week_num = None
+
+        block_context = None
+        if week_num is not None:
+            label = block.get("label") or "Training"
+            if split_name:
+                block_context = f"Week {week_num} of 16 — {split_name}"
+            else:
+                block_context = f"Week {week_num} of 16 — {label}"
+
+        return {
+            "block_label": block.get("label"),
+            "block_context": block_context,
+            "week_num": week_num,
+            "split_name": split_name,
+            "benchmark_due": block.get("benchmark_due", False),
+        }
+    except Exception:
+        logger.warning("_today_training(%r) failed", today_iso, exc_info=True)
+        return None
+
+
+def _today_coach_note(today_iso: str) -> str | None:
+    """Read the coach note written by the morning briefing from SelfStateStore.
+
+    TIME-07 / D-06: returns `daily_note` ONLY when `daily_note_date` equals today's
+    Asia/Jerusalem date. Returns None when the note is absent or stale — the client
+    shows "Coach note coming after your morning briefing" per D-06.
+    """
+    try:
+        from memory.firestore_db import SelfStateStore, _jsonsafe_doc as _jsd  # lazy import
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        if not project_id:
+            return None
+        state_store = SelfStateStore(project_id=project_id, database=database)
+        state = _jsd(state_store.get())
+        note = state.get("daily_note")
+        note_date = state.get("daily_note_date")
+        if note and note_date == today_iso:
+            return note
+        return None
+    except Exception:
+        logger.warning("_today_coach_note() failed", exc_info=True)
+        return None
+
+
+def _today_routes(calendar: dict, today_iso: str) -> dict:
+    """Attach leave_by + get_ready_at to timed events that have a location.
+
+    TIME-05: calls routes_tool.get_travel_time() per located event. Results are
+    cached 30 minutes in the module-level _routes_cache dict (T-26-04-04) so
+    repeated /api/today calls (D-05 refresh-on-focus) don't exhaust Routes API quota.
+
+    Returns the same calendar dict with leave_by/get_ready_at fields added to
+    located timed events. All errors are swallowed per-event — one bad Routes call
+    must not prevent the rest of the calendar from rendering.
+    """
+    import time as _time
+
+    try:
+        from mcp_tools.routes_tool import get_travel_time  # lazy import
+
+        now_epoch = _time.time()
+        timed_events = calendar.get("timed", [])
+        for ev in timed_events:
+            location = ev.get("location", "")
+            if not location:
+                continue
+            event_id = ev.get("id", "")
+            start_iso = ev.get("start", "")
+            cache_key = (event_id, start_iso)
+
+            # Check in-process TTL cache first (T-26-04-04).
+            cached = _routes_cache.get(cache_key)
+            if cached is not None:
+                cache_ts, cached_result = cached
+                if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
+                    if cached_result:
+                        ev["leave_by_minutes_before"] = cached_result.get("duration_minutes")
+                        ev["routes_summary"] = cached_result.get("summary")
+                    continue
+
+            try:
+                result = get_travel_time(
+                    origin="Tel Aviv",  # Amit's home base per USER.md
+                    destination=location,
+                    departure_time_iso=start_iso,
+                )
+                _routes_cache[cache_key] = (now_epoch, result)
+                if result:
+                    ev["leave_by_minutes_before"] = result.get("duration_minutes")
+                    ev["routes_summary"] = result.get("summary")
+            except Exception:
+                logger.warning(
+                    "_today_routes: get_travel_time failed for event %s → %s",
+                    event_id, location, exc_info=True
+                )
+                _routes_cache[cache_key] = (now_epoch, None)  # negative cache
+
+        return calendar
+    except Exception:
+        logger.warning("_today_routes() failed", exc_info=True)
+        return calendar
+
+
+def _today_nutrition_totals(today_iso: str) -> dict:
+    """Fetch today's nutrition running totals for the glance rail.
+
+    TIME-08: uses MealStore.get_day_aggregate() to get server-computed totals.
+    Returns {kcal, protein_g, carbs_g, fat_g, fiber_g} or {} when no meals logged.
+    """
+    try:
+        from memory.firestore_db import MealStore  # lazy import
+        store = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        agg = store.get_day_aggregate(today_iso)
+        if not agg:
+            return {}
+        totals = agg.get("totals", {})
+        return {
+            "kcal": totals.get("calories"),
+            "protein_g": totals.get("protein_g"),
+            "carbs_g": totals.get("carbs_g"),
+            "fat_g": totals.get("fat_g"),
+            "fiber_g": totals.get("fiber_g"),
+        }
+    except Exception:
+        logger.warning("_today_nutrition_totals(%r) failed", today_iso, exc_info=True)
+        return {}
+
+
+@app.get("/api/today")
+async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
+    """Compose today's full timeline from all sources.
+
+    TIME-01..05, TIME-08 — one endpoint that aggregates calendar events,
+    Garmin stats, weather, meals (slot labels + macros), training plan +
+    block context, traffic-aware leave-by times for located events, the
+    morning coach note, and nutrition running totals.
+
+    Invariants (CLAUDE.md §6):
+      - All sync tool calls run via run_in_executor + asyncio.gather (Pitfall 2).
+      - Every Firestore-derived value passes through _jsonsafe_doc (Pitfall 4).
+      - Meals carry slot LABELS only — no eaten_at/eating_time fields (TIME-03).
+      - coach_note is None before the morning briefing writes daily_note (D-06).
+
+    Returns:
+        JSONResponse: {"today", "calendar", "garmin", "weather", "meals",
+                       "training", "coach_note", "nutrition_totals"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    loop = asyncio.get_running_loop()
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+    # Phase 1: run all independent sources concurrently (Pitfall 2 — never block the event loop).
+    (
+        calendar_data,
+        garmin_data,
+        weather_data,
+        meal_data,
+        training_data,
+        nutrition_totals,
+    ) = await asyncio.gather(
+        loop.run_in_executor(None, _today_calendar, today_iso),
+        loop.run_in_executor(None, _today_garmin),
+        loop.run_in_executor(None, _today_weather),
+        loop.run_in_executor(None, _today_meals, today_iso),
+        loop.run_in_executor(None, _today_training, today_iso),
+        loop.run_in_executor(None, _today_nutrition_totals, today_iso),
+    )
+
+    # Phase 2: routes depends on calendar output (per-event; cached TTL).
+    calendar_with_routes = await loop.run_in_executor(
+        None, _today_routes, calendar_data, today_iso
+    )
+
+    # Phase 3: coach note is a lightweight Firestore read (single cached doc).
+    coach_note = await loop.run_in_executor(None, _today_coach_note, today_iso)
+
+    # Assemble and JSON-safe the entire response (Pitfall 4 — _jsonsafe_doc on ALL Firestore data).
+    payload = _jsonsafe_doc({
+        "today": today_iso,
+        "calendar": calendar_with_routes,
+        "garmin": garmin_data,
+        "weather": weather_data,
+        "meals": meal_data,
+        "training": training_data,
+        "coach_note": coach_note,
+        "nutrition_totals": nutrition_totals,
+    })
+
+    return JSONResponse(content=payload)
 
 
 # --------------------------------------------------------------------------- #
