@@ -7,7 +7,7 @@
  *   - 5 tabs: Today · Tasks · Klaus · Habits · Health (Klaus center)
  *   - Each tab touch target >= 44px (iOS HIG)
  *   - Active icon in accent #6366F1; inactive in textSecondary #9CA3AF
- *   - UnreadBadge slot on Klaus tab (component arrives in 26-08; placeholder slot here)
+ *   - UnreadBadge on Klaus tab (26-08): accent bg, shows count or "9+", hidden at 0
  */
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
@@ -17,6 +17,9 @@ import {
   Activity,
   Heart,
 } from 'lucide-react'
+import { UnreadBadge } from '../shared/UnreadBadge'
+import { useChat } from '../../hooks/useChat'
+import { useUnread } from '../../hooks/useUnread'
 
 interface TabItem {
   label: string
@@ -35,6 +38,12 @@ const TABS: TabItem[] = [
 export function BottomTabs() {
   const navigate = useNavigate()
   const location = useLocation()
+
+  // Poll only when the Klaus tab is NOT active (when it IS active, ChatWindow
+  // owns polling). This keeps badge fresh on other tabs without double-polling.
+  const isKlausTabActive = location.pathname.startsWith('/klaus')
+  const { messages } = useChat(!isKlausTabActive)
+  const { unreadCount } = useUnread(messages.length)
 
   return (
     /*
@@ -88,13 +97,13 @@ export function BottomTabs() {
             }}
             aria-current={isActive ? 'page' : undefined}
           >
-            {/* UnreadBadge slot — placeholder for 26-08 */}
+            {/* UnreadBadge on Klaus tab (CHAT-04) */}
             {isKlaus && (
               <div
-                id="bottom-tab-unread-badge-slot"
                 style={{ position: 'absolute', top: '8px', right: 'calc(50% - 18px)' }}
-                aria-hidden="true"
-              />
+              >
+                <UnreadBadge count={unreadCount} />
+              </div>
             )}
 
             <Icon size={24} strokeWidth={1.75} aria-hidden="true" />
