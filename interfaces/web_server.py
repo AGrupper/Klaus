@@ -1488,6 +1488,16 @@ class _ChatBody(object):
 _CHAT_CONTENT_MAX_LEN = 4000  # ASVS V5 — reasonable upper bound for one message
 
 
+# Process-lifetime cache for _resolve_hub_user_id (WR-06). The hub maps to a
+# single, effectively-static account for the lifetime of the Cloud Run
+# instance (set once by the 26-02 operator step) — re-resolving it on every
+# chat send and every 2.5s poll costs a Firestore read + a lazy import for no
+# benefit. None means "not yet resolved"; a successful resolution is cached
+# and reused. A failed resolution (ValueError) is NOT cached, so a transient
+# Firestore outage doesn't permanently wedge the hub once it recovers.
+_hub_user_id_cache: int | None = None
+
+
 def _resolve_hub_user_id() -> int:
     """Resolve the Telegram user_id to key FirestoreConversationStore.
 
@@ -1497,7 +1507,15 @@ def _resolve_hub_user_id() -> int:
 
     WHY this approach: the hub always operates on Amit's single account; there
     is no per-hub-session telegram_user_id mapping needed for v5.0.
+
+    The resolved value is memoized at module scope for the lifetime of the
+    process (WR-06) — this is called on every /api/chat send and every
+    2.5s /api/chat/messages poll, and the mapping never changes at runtime.
     """
+    global _hub_user_id_cache
+    if _hub_user_id_cache is not None:
+        return _hub_user_id_cache
+
     try:
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
@@ -1506,14 +1524,16 @@ def _resolve_hub_user_id() -> int:
             profile = UserProfileStore(project_id=project_id, database=database).load()
             tid = profile.get("telegram_user_id")
             if tid is not None:
-                return int(tid)
+                _hub_user_id_cache = int(tid)
+                return _hub_user_id_cache
     except Exception:
         logger.warning("_resolve_hub_user_id: UserProfileStore lookup failed", exc_info=True)
 
     # Fallback: first entry of TELEGRAM_ALLOWED_USER_IDS (mirrors autonomous.py convention)
     raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")[0].strip()
     if raw:
-        return int(raw)
+        _hub_user_id_cache = int(raw)
+        return _hub_user_id_cache
     raise ValueError("Cannot resolve hub user_id: telegram_user_id not in profile and TELEGRAM_ALLOWED_USER_IDS unset")
 
 
