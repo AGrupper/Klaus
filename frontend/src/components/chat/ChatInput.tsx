@@ -30,12 +30,15 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    // Desktop Enter sends; Shift+Enter inserts newline (UI-SPEC)
-    if (e.key === 'Enter' && !e.shiftKey) {
-      // Only on non-touch devices — on phone the soft keyboard "Enter" should
-      // not send (user uses the send button). We can't reliably detect touch
-      // vs. keyboard at keydown time, so we apply the shortcut universally
-      // at the textarea level and rely on the 44px send button for phone UX.
+    // Desktop Enter sends; Shift+Enter inserts newline (UI-SPEC).
+    // Gate on a fine pointer (mouse/trackpad) so a phone's soft-keyboard
+    // "Enter" inserts a newline rather than sending prematurely (IN-05).
+    // matchMedia is guarded for non-browser/test environments.
+    const hasFinePointer =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(pointer: fine)').matches
+    if (e.key === 'Enter' && !e.shiftKey && hasFinePointer) {
       e.preventDefault()
       handleSend()
     }
