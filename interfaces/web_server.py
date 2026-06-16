@@ -895,7 +895,7 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
 # --------------------------------------------------------------------------- #
 
 @app.post("/api/auth/google")
-async def api_auth_google(request: Request, response: Response) -> JSONResponse:
+async def api_auth_google(request: Request) -> JSONResponse:
     """Exchange a Google Identity Services ID token for a session cookie.
 
     Accepts JSON body: {"credential": "<GIS ID token>"}
@@ -923,7 +923,12 @@ async def api_auth_google(request: Request, response: Response) -> JSONResponse:
     session_version = await loop.run_in_executor(None, _hub_auth.get_session_version)
     cookie_value = _hub_auth.create_session_cookie(email, session_version)
 
-    response.set_cookie(
+    # The Set-Cookie MUST go on the response object we actually return. Setting it
+    # on a separate injected `response: Response` and then returning a new
+    # JSONResponse silently drops the header — FastAPI does not merge the two — so
+    # the browser never stores the cookie and every subsequent /api/* call 401s.
+    json_response = JSONResponse(content={"ok": True, "email": email})
+    json_response.set_cookie(
         _hub_auth._COOKIE_NAME,
         cookie_value,
         max_age=365 * 86400,
@@ -932,25 +937,26 @@ async def api_auth_google(request: Request, response: Response) -> JSONResponse:
         samesite="strict",
         path="/",
     )
-    return JSONResponse(content={"ok": True, "email": email})
+    return json_response
 
 
 @app.post("/api/auth/logout")
-async def api_auth_logout(response: Response) -> JSONResponse:
+async def api_auth_logout() -> JSONResponse:
     """Clear the session cookie (single-device sign-out, D-02).
 
     Does not bump session_version — only removes the cookie on this device.
     For sign-out-everywhere use /api/auth/revoke-all.
     """
     import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
-    response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
-    return JSONResponse(content={"ok": True})
+    # delete_cookie must be on the returned response (see api_auth_google).
+    json_response = JSONResponse(content={"ok": True})
+    json_response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
+    return json_response
 
 
 @app.post("/api/auth/revoke-all")
 async def api_auth_revoke_all(
     request: Request,
-    response: Response,
 ) -> JSONResponse:
     """Bump session_version to invalidate every previously-issued cookie (D-02).
 
@@ -980,8 +986,10 @@ async def api_auth_revoke_all(
         store.update({"session_version": new_version})
 
     await loop.run_in_executor(None, _bump_version)
-    response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
-    return JSONResponse(content={"ok": True})
+    # delete_cookie must be on the returned response (see api_auth_google).
+    json_response = JSONResponse(content={"ok": True})
+    json_response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")
+    return json_response
 
 
 @app.get("/api/auth/me")

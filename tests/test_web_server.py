@@ -1018,3 +1018,48 @@ class TestSPAMountRegression:
                     os.rmdir(dist_dir)
                 except OSError:
                     pass
+
+
+# --------------------------------------------------------------------------- #
+# TestAuthGoogleCookie — Phase 26 HUB-01                                       #
+# /api/auth/google must actually deliver the Set-Cookie header on the response #
+# it returns. Setting the cookie on an injected `response: Response` and then  #
+# returning a new JSONResponse silently drops the header — the browser stores  #
+# no cookie and every subsequent /api/* call 401s.                            #
+# --------------------------------------------------------------------------- #
+
+
+class TestAuthGoogleCookie:
+    """Prove the sign-in endpoint emits the session Set-Cookie header."""
+
+    def test_signin_emits_session_set_cookie(self, monkeypatch):
+        stubs = _stub_web_server_imports()
+        env = {
+            **_BASE_ENV,
+            "HUB_SESSION_SECRET": "test-secret-32-bytes-long-enough!!",
+            "GOOGLE_OAUTH_CLIENT_ID": "fake.apps.googleusercontent.com",
+            "HUB_ALLOWED_EMAIL": "amit.grupper@gmail.com",
+        }
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            import interfaces.hub_auth as hub_auth  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            with patch.dict(os.environ, env):
+                # Bypass real Google verification + Firestore version read.
+                monkeypatch.setattr(
+                    hub_auth, "verify_google_id_token",
+                    lambda token: "amit.grupper@gmail.com",
+                )
+                monkeypatch.setattr(hub_auth, "get_session_version", lambda: 0)
+
+                client = TestClient(ws.app)
+                resp = client.post("/api/auth/google", json={"credential": "fake"})
+
+        assert resp.status_code == 200, resp.text
+        set_cookie = resp.headers.get("set-cookie", "")
+        assert "hub_session=" in set_cookie, (
+            f"sign-in did not emit the session cookie header: {dict(resp.headers)!r}"
+        )
+        assert "httponly" in set_cookie.lower()
+        assert "samesite=strict" in set_cookie.lower()
