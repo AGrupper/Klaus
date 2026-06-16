@@ -17,6 +17,7 @@
  *   4. On credential callback: POST /api/auth/google → setSignedIn(email)
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { signInWithGoogle } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
 
@@ -48,6 +49,7 @@ declare global {
 
 export function SignInPage() {
   const setSignedIn = useAuthStore((s) => s.setSignedIn)
+  const queryClient = useQueryClient()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const buttonRef = useRef<HTMLDivElement>(null)
@@ -73,6 +75,12 @@ export function SignInPage() {
         const result = await signInWithGoogle(response.credential)
         if (result.ok && result.email) {
           setSignedIn(result.email)
+          // The on-load fetchMe query errored (401, signed out) and is set to
+          // never refetch (staleTime: Infinity). Invalidate it so App re-checks
+          // /api/auth/me with the freshly-set cookie and renders the hub —
+          // otherwise the gate stays on the stale errored query and bounces
+          // back to this sign-in page despite the 200 from /api/auth/google.
+          await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
         } else {
           setError('Sign-in failed. Please try again.')
         }
@@ -82,7 +90,7 @@ export function SignInPage() {
         setLoading(false)
       }
     },
-    [setSignedIn],
+    [setSignedIn, queryClient],
   )
 
   useEffect(() => {
