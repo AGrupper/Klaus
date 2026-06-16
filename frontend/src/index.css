@@ -29,3 +29,15 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* Phone: the bottom tab bar is position:fixed (64px + safe-area), so the main
+   content must reserve that space or the chat input and the last timeline rows
+   render hidden behind it. Desktop (>=768px) has no bottom bar — reset to 0. */
+.hub-main {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+}
+@media (min-width: 768px) {
+  .hub-main {
+    padding-bottom: 0;
+  }
+}

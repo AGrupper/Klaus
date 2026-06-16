@@ -49,7 +49,7 @@ export function AppShell({ children }: AppShellProps) {
        * Phone: flex-1 to fill available height above the bottom tab bar.
        */}
       <main
-        className="flex-1 min-w-0 overflow-y-auto"
+        className="hub-main flex-1 min-w-0 overflow-y-auto"
         style={{ display: 'flex', flexDirection: 'column' }}
       >
         {children}
