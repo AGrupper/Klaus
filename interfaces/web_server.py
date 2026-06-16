@@ -1322,6 +1322,19 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
         from mcp_tools.routes_tool import get_travel_time  # lazy import
 
         now_epoch = _time.time()
+
+        # Opportunistically evict expired keys (IN-03). The cache is only
+        # TTL-checked on read, so without this it accumulates one stale entry
+        # per past (event_id, start_iso) over a long-lived Cloud Run instance.
+        # Pruning here (once per /api/today routes pass) bounds the growth to
+        # roughly the set of events seen within one TTL window.
+        expired = [
+            k for k, (ts, _) in _routes_cache.items()
+            if now_epoch - ts >= _ROUTES_CACHE_TTL_SECONDS
+        ]
+        for k in expired:
+            del _routes_cache[k]
+
         timed_events = calendar.get("timed", [])
         for ev in timed_events:
             location = ev.get("location", "")
@@ -1474,17 +1487,9 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
 # --------------------------------------------------------------------------- #
 
 
-class _ChatBody(object):
-    """Pydantic-lite body parser for POST /api/chat (ASVS V5: non-empty, max length).
-
-    WHY not a real Pydantic model: web_server.py currently doesn't import
-    pydantic at the module level, and a plain class avoids adding a hard
-    startup dependency. Validation is equivalent: non-empty + max-length.
-    FastAPI's json() gives us the raw dict; we validate it here.
-    """
-    pass
-
-
+# POST /api/chat body validation (ASVS V5: non-empty, max length) is done
+# inline in api_chat_send — web_server.py does not import pydantic at module
+# level, and the check is equivalent (non-empty + max-length on the raw dict).
 _CHAT_CONTENT_MAX_LEN = 4000  # ASVS V5 — reasonable upper bound for one message
 
 
