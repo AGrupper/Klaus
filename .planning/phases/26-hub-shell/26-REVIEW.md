@@ -32,10 +32,16 @@ findings:
   warning: 7
   info: 5
   total: 16
-status: issues_found
+critical_resolved: 4
+status: criticals_resolved
 ---
 
 # Phase 26: Code Review Report
+
+> **Resolution (2026-06-16):** All 4 critical findings are fixed.
+> - **CR-01** (Today timeline data-contract break) — fixed in `c004f0e` as the verification gap-closure; contract locked with new helper tests in `tests/test_api_today.py`.
+> - **CR-02** (hub history reset after 6h idle), **CR-03** (stuck "thinking" + double-send on enqueue failure), **CR-04** (coach note rendered raw) — fixed in `ca9c40c`; covered by `tests/test_firestore_conversation.py`, `tests/test_hub_chat.py`, and a coach-note sanitize test. CR-02 decided as "persist hub history for display; keep Telegram's bounded context."
+> The **7 warnings + 5 info remain advisory** — run `/gsd:code-review 26 --fix` to address them.
 
 **Reviewed:** 2026-06-15T00:00:00Z
 **Depth:** standard
