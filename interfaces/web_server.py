@@ -1663,7 +1663,17 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
 
     request_json: dict = await request.json()
     content = request_json.get("content", "")
-    user_id = int(request_json.get("user_id", 0))
+    # Reject a missing/zero user_id explicitly rather than silently defaulting
+    # to 0 (WR-04) — a malformed payload would otherwise run the agent turn
+    # against the phantom conversation document "0" and the reply would never
+    # be visible to the real user. This endpoint is OIDC-gated and only ever
+    # called by enqueue_hub_message (which always supplies a resolved int),
+    # so this guard should be unreachable in practice — but fail loudly
+    # rather than silently misrouting if that assumption is ever violated.
+    raw_user_id = request_json.get("user_id")
+    if not raw_user_id:
+        raise HTTPException(status_code=400, detail={"error": "missing user_id"})
+    user_id = int(raw_user_id)
 
     # Run the agent turn inside this tracked request (full CPU — D-09).
     # handle_message is the single writer: it appends BOTH the user turn and the
