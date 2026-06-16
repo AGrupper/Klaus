@@ -12,6 +12,7 @@
 export async function apiFetch<T>(
   path: string,
   init?: RequestInit,
+  opts?: { redirectOn401?: boolean },
 ): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -23,8 +24,14 @@ export async function apiFetch<T>(
   })
 
   if (res.status === 401) {
-    // Session expired or not authenticated — redirect to sign-in
-    window.location.href = '/?signin=required'
+    // Session expired or not authenticated. By default redirect to sign-in,
+    // but callers that EXPECT a 401 (the on-load auth check, fetchMe) pass
+    // redirectOn401:false — otherwise the full-page redirect fires on first
+    // load for a signed-out user and the app reloads in an infinite loop
+    // before the sign-in page can ever render.
+    if (opts?.redirectOn401 !== false) {
+      window.location.href = '/?signin=required'
+    }
     throw new Error('Not authenticated')
   }
 

@@ -59,10 +59,13 @@ export async function revokeAll(): Promise<AuthOkResponse> {
  * Check whether the current session cookie is valid and return the email.
  *
  * Used on app load to determine whether to show the sign-in page or the hub.
- * Returns null on 401 (no valid session); apiFetch redirects to /?signin=required.
+ * Passes redirectOn401:false so a 401 (the normal signed-out state) THROWS
+ * instead of triggering apiFetch's full-page redirect — App.tsx catches the
+ * error and renders the sign-in page. Without this, a signed-out load reloads
+ * the page in an infinite loop.
  */
 export async function fetchMe(): Promise<MeResponse> {
   return apiFetch<MeResponse>('/api/auth/me', {
     method: 'GET',
-  })
+  }, { redirectOn401: false })
 }
