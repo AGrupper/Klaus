@@ -14,6 +14,13 @@ WORKDIR /frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+# The Google Sign-In client ID is read by the frontend at BUILD time
+# (import.meta.env.VITE_GOOGLE_CLIENT_ID in SignInPage.tsx) and baked into the
+# bundle. It is a public value (OAuth client IDs are not secrets). Pass it at
+# build with `--build-arg VITE_GOOGLE_CLIENT_ID=...`; without it, sign-in silently
+# fails because the bundle ships an empty client_id.
+ARG VITE_GOOGLE_CLIENT_ID=""
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 RUN npm run build
 
 # --------------------------------------------------------------------------- #
