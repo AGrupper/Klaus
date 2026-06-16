@@ -33,7 +33,14 @@ interface MessageBubbleProps {
 // ---------------------------------------------------------------------------
 
 function StatusIcon({ status }: { status: ChatMessage['status'] }) {
-  if (!status || status === 'sent') {
+  // No status = a plain historical message (e.g. loaded from the server,
+  // which never sets `status` — see chat.ts). Show nothing rather than a
+  // misleading "just sent" checkmark on messages from a prior session.
+  if (!status) {
+    return null
+  }
+
+  if (status === 'sent') {
     // sent: green checkmark
     return (
       <svg
