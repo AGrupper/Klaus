@@ -16,7 +16,7 @@
  *   3. Render the sign-in button in #g_id_signin_btn
  *   4. On credential callback: POST /api/auth/google → setSignedIn(email)
  */
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { signInWithGoogle } from '../../api/auth'
 import { useAuthStore } from '../../store/auth'
 
@@ -58,22 +58,32 @@ export function SignInPage() {
     typeof import.meta !== 'undefined' &&
     (import.meta as { env?: Record<string, string> }).env?.VITE_GOOGLE_CLIENT_ID || ''
 
-  const handleCredential = async (response: { credential: string }) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const result = await signInWithGoogle(response.credential)
-      if (result.ok && result.email) {
-        setSignedIn(result.email)
-      } else {
+  // Stable identity across renders (WR-07): the GIS `initialize` call only
+  // ever captures the closure that exists when the mount effect first runs
+  // (deps [clientId]), while `window.handleGisCredential` was previously
+  // reassigned to a fresh closure on every render — two divergent
+  // references to the "same" handler. useCallback with stable deps
+  // ([setSignedIn], a Zustand setter) keeps both references pointed at the
+  // same function for the lifetime of the component.
+  const handleCredential = useCallback(
+    async (response: { credential: string }) => {
+      setLoading(true)
+      setError(null)
+      try {
+        const result = await signInWithGoogle(response.credential)
+        if (result.ok && result.email) {
+          setSignedIn(result.email)
+        } else {
+          setError('Sign-in failed. Please try again.')
+        }
+      } catch {
         setError('Sign-in failed. Please try again.')
+      } finally {
+        setLoading(false)
       }
-    } catch {
-      setError('Sign-in failed. Please try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
+    },
+    [setSignedIn],
+  )
 
   useEffect(() => {
     // Expose the callback globally so the GIS script can call it
@@ -114,8 +124,7 @@ export function SignInPage() {
       // Clean up the global callback reference
       delete window.handleGisCredential
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId])
+  }, [clientId, handleCredential])
 
   return (
     <div
