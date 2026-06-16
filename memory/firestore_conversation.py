@@ -42,17 +42,28 @@ def _txn_append(
     snapshot = doc_ref.get(transaction=transaction)
     doc_data: dict = (snapshot.to_dict() or {}) if snapshot.exists else {}
     updated_at = doc_data.get("updated_at")
+    messages: list[dict] = list(doc_data.get("messages", []))
+    session_start = int(doc_data.get("session_start_index", 0))
+    # On a new session (idle beyond the timeout) start a fresh LLM-context window
+    # WITHOUT deleting history: mark the boundary so the agent only sees the new
+    # session via get(), while the hub can still display the whole thread via
+    # get_full() (CR-02 — "one continuous conversation"). Telegram's bounded
+    # context is unchanged: get() still returns only the active session.
     if updated_at and datetime.now(timezone.utc) - updated_at > timedelta(hours=timeout_hours):
-        messages: list[dict] = []
-    else:
-        messages = list(doc_data.get("messages", []))
+        session_start = len(messages)
     messages.append({"role": role, "content": content})
     if len(messages) > max_messages:
         # WHY: keep the newest messages — they carry the most relevant context.
-        messages = messages[-max_messages:]
+        drop = len(messages) - max_messages
+        messages = messages[drop:]
+        session_start = max(0, session_start - drop)
     transaction.set(
         doc_ref,
-        {"messages": messages, "updated_at": firestore.SERVER_TIMESTAMP},
+        {
+            "messages": messages,
+            "session_start_index": session_start,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
     )
 
 
@@ -122,9 +133,37 @@ class FirestoreConversationStore:
             return []
         doc_data = snapshot.to_dict() or {}
         updated_at = doc_data.get("updated_at")
+        # Idle beyond the timeout → the active LLM-context window is empty until
+        # the next append opens a fresh session (preserves the bounded-context
+        # behaviour the agent relies on). Full history is still available via
+        # get_full() for hub display (CR-02).
         if updated_at and datetime.now(timezone.utc) - updated_at > timedelta(hours=self._timeout_hours):
             return []
-        return list(doc_data.get("messages", []))
+        messages = list(doc_data.get("messages", []))
+        session_start = int(doc_data.get("session_start_index", 0))
+        return messages[session_start:]
+
+    def get_full(self, user_id: int) -> list[dict]:
+        """Return the entire stored history for display, ignoring the timeout.
+
+        The hub renders one continuous conversation, so it reads the full message
+        array (capped at ``max_messages``) regardless of idle time. The agent's
+        LLM-context window still comes from ``get()`` (active session only), so
+        this does not change what the model sees (CR-02).
+        """
+        doc_ref = self._col.document(str(user_id))
+        try:
+            snapshot = doc_ref.get()
+        except GoogleAPICallError:
+            logger.warning(
+                "FirestoreConversationStore.get_full failed for user_id=%d; "
+                "returning empty history.",
+                user_id,
+            )
+            return []
+        if not snapshot.exists:
+            return []
+        return list((snapshot.to_dict() or {}).get("messages", []))
 
     def append(self, user_id: int, role: str, content: str) -> None:
         """Append one message and cap the list via a Firestore transaction."""

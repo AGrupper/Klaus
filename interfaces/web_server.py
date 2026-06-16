@@ -1239,6 +1239,25 @@ def _today_training(today_iso: str) -> dict | None:
         return None
 
 
+_COACH_NOTE_MAX_LEN = 280
+
+
+def _sanitize_coach_note(note: str) -> str:
+    """Strip control/format chars + a leading Markdown header marker and clamp.
+
+    The coach note is the morning briefing's first line — first-party text, but
+    it can carry a Markdown header (``#``) or stray bidi/format control chars
+    (LRM/RLM) that render oddly. React escapes HTML, so this is hardening, not
+    XSS defense (CR-04).
+    """
+    import unicodedata
+    cleaned = "".join(
+        ch for ch in str(note)
+        if ch in ("\n", "\t") or not unicodedata.category(ch).startswith("C")
+    )
+    return cleaned.lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
+
+
 def _today_coach_note(today_iso: str) -> str | None:
     """Read the coach note written by the morning briefing from SelfStateStore.
 
@@ -1257,7 +1276,7 @@ def _today_coach_note(today_iso: str) -> str | None:
         note = state.get("daily_note")
         note_date = state.get("daily_note_date")
         if note and note_date == today_iso:
-            return note
+            return _sanitize_coach_note(note)
         return None
     except Exception:
         logger.warning("_today_coach_note() failed", exc_info=True)
@@ -1540,25 +1559,22 @@ async def api_chat_send(
         logger.error("api_chat_send: cannot resolve user_id: %s", exc)
         raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
 
-    # Append user message to the shared Firestore conversation (CHAT-01)
-    def _append_user_message() -> None:
-        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-        store = FirestoreConversationStore(project_id=project_id, database=database)
-        store.append(user_id, "user", content)
-
-    await loop.run_in_executor(None, _append_user_message)
-
-    # Enqueue the agent turn via Cloud Tasks full-CPU path (CHAT-02 / D-09)
-    # NEVER use background_tasks.add_task here — that runs after the response
-    # and gets CPU-throttled by Cloud Run.
+    # Enqueue the agent turn via Cloud Tasks full-CPU path (CHAT-01/02 / D-09).
+    # We do NOT append the user message here: the worker's handle_message
+    # (core/main.py) appends BOTH the user turn and the assistant reply to the
+    # shared FirestoreConversationStore. Appending here too would double the user
+    # turn; appending BEFORE a failed enqueue would strand a user message with no
+    # agent turn → a permanent "Klaus is thinking…" plus a double-send on retry
+    # (CR-03). Enqueue is the single atomic effect — on failure nothing is
+    # persisted and the client safely retries.
+    # NEVER use background_tasks.add_task — it runs after the response and gets
+    # CPU-throttled by Cloud Run.
     ok = await loop.run_in_executor(None, enqueue_hub_message, content, user_id)
     if not ok:
         logger.error("api_chat_send: enqueue_hub_message returned False (user_id=%s)", user_id)
         return JSONResponse(
             status_code=503,
-            content={"ok": False, "error": "Message queued in conversation but agent turn could not be dispatched — please retry"},
+            content={"ok": False, "error": "Could not dispatch the message — please retry"},
         )
 
     return JSONResponse(content={"ok": True})
@@ -1599,7 +1615,9 @@ async def api_chat_messages(
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
         store = FirestoreConversationStore(project_id=project_id, database=database)
-        msgs = store.get(user_id)
+        # get_full (not get): the hub shows the whole continuous conversation,
+        # not just the active session window the agent uses (CR-02).
+        msgs = store.get_full(user_id)
         # Add stable seq index for unread badge computation (CHAT-04 / D-11)
         return [{"seq": i, **msg} for i, msg in enumerate(msgs)]
 
@@ -1644,21 +1662,14 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     content = request_json.get("content", "")
     user_id = int(request_json.get("user_id", 0))
 
-    # Run the agent turn inside this tracked request (full CPU — D-09)
+    # Run the agent turn inside this tracked request (full CPU — D-09).
+    # handle_message is the single writer: it appends BOTH the user turn and the
+    # assistant reply to the shared FirestoreConversationStore (core/main.py
+    # lines 481/501), with no Telegram send on this hub path — the client polls
+    # /api/chat/messages to receive the reply. We do NOT append here (doing so
+    # double-wrote the assistant reply, CR-03).
     # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
-    reply: str = await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
-
-    # Append the assistant reply to the shared conversation (no Telegram send —
-    # hub source; the client polls /api/chat/messages).
-    def _append_reply() -> None:
-        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-        store = FirestoreConversationStore(project_id=project_id, database=database)
-        store.append(user_id, "assistant", reply)
-
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _append_reply)
+    await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
 
     return JSONResponse(content={"ok": True})
 

@@ -62,8 +62,15 @@ def _stub_web_server_imports() -> dict:
 # CHAT-01: POST /api/chat appends to the shared Firestore conversation #
 # ------------------------------------------------------------------ #
 
-def test_post_chat_appends_to_firestore():
-    """POST /api/chat appends the user message to the shared Firestore conversation."""
+def test_post_chat_does_not_append_directly():
+    """POST /api/chat routes the user turn to the shared conversation via the worker.
+
+    CHAT-01: the user turn lands in the shared FirestoreConversationStore — but the
+    worker's handle_message is the SINGLE writer (it appends BOTH the user turn and
+    the assistant reply, core/main.py). The route must NOT append directly: doing so
+    double-wrote the user turn, and appending before a failed enqueue stranded a
+    message with no agent turn (CR-03). The route's only effect is the enqueue.
+    """
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
@@ -74,14 +81,39 @@ def test_post_chat_appends_to_firestore():
             fake_store_cls = MagicMock(name="FirestoreConversationStore")
             with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
                  patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
-                 patch.object(ws, "enqueue_hub_message", return_value=True):
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
                 client = TestClient(ws.app)
                 resp = client.post("/api/chat", json={"content": "hello klaus"})
 
     assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
     assert resp.json() == {"ok": True}
-    # CHAT-01: append(user_id, "user", content) on the shared conversation store
-    fake_store_cls.return_value.append.assert_called_once_with(123456, "user", "hello klaus")
+    # The route must not write to the store — the worker's handle_message owns it.
+    fake_store_cls.return_value.append.assert_not_called()
+    mock_enqueue.assert_called_once_with("hello klaus", 123456)
+
+
+def test_post_chat_failed_enqueue_persists_nothing():
+    """On enqueue failure the route returns 503 and persists nothing (CR-03).
+
+    No stranded user turn → no permanent 'Klaus is thinking…' and no double-send
+    on retry.
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=False):
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "hello klaus"})
+
+    assert resp.status_code == 503, f"{resp.status_code}: {resp.text}"
+    fake_store_cls.return_value.append.assert_not_called()
 
 
 # ------------------------------------------------------------------ #
@@ -136,7 +168,9 @@ def test_get_messages_returns_window():
         with patch.dict(os.environ, _ENV):
             ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
             fake_store_cls = MagicMock(name="FirestoreConversationStore")
-            fake_store_cls.return_value.get.return_value = [
+            # The hub poll reads the FULL continuous history (CR-02), not the
+            # active-session window get() returns.
+            fake_store_cls.return_value.get_full.return_value = [
                 {"role": "user", "content": "hi"},
                 {"role": "assistant", "content": "hello, Amit"},
             ]
