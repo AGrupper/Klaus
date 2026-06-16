@@ -79,19 +79,23 @@ status: partial
 
 ---
 
-## Out of Scope (not attempted)
+## Info Findings (follow-up — resolved 2026-06-16)
 
-Info findings IN-01..IN-05 were excluded by `fix_scope: critical_warning`:
-- IN-01: dead `_ChatBody` class
-- IN-02: duplicate `@keyframes spin` injected per-message
-- IN-03: `_routes_cache` process-global, never pruned
-- IN-04: stale `today.ts` JSDoc (`leave_by`/`get_ready_at`)
-- IN-05: `ChatInput` Enter-to-send fires on mobile soft keyboards
+Iteration 1 scoped to `critical_warning`. The 5 Info findings were subsequently
+cleared inline (trivial cosmetic/correctness nits):
 
-Re-run `/gsd-code-review --fix --all` to address these.
+| ID | Fix | Commit |
+|----|-----|--------|
+| IN-01 | Removed dead `_ChatBody` class (inline validation kept) | `5a0737f` |
+| IN-02 | `@keyframes spin` defined once in `index.css`; per-component `<style>` injections removed (`MessageBubble.tsx`, `App.tsx`) | `20436c1` |
+| IN-03 | `_routes_cache` now opportunistically evicts expired keys once per `/api/today` routes pass | `5a0737f` |
+| IN-04 | No change needed — already resolved by the CR-01 fix; `_attach_leave_by` populates `leave_by`/`get_ready_at` (`web_server.py:1318-1319`), so the `today.ts` JSDoc is now accurate | — |
+| IN-05 | Enter-to-send gated on `matchMedia('(pointer: fine)')` so phone soft keyboards insert a newline | `8dffde3` |
+
+All 16 findings (4 Critical + 7 Warning + 5 Info) are now closed.
 
 ---
 
-_Fixed: 2026-06-16T14:42:50Z_
-_Fixer: Claude (gsd-code-fixer)_
+_Fixed: 2026-06-16T14:42:50Z (warnings) · 2026-06-16 (info follow-up)_
+_Fixer: Claude (gsd-code-fixer iteration 1; orchestrator inline for info findings)_
 _Iteration: 1_
