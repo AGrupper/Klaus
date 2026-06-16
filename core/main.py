@@ -497,6 +497,21 @@ class AgentOrchestrator:
                 worker_system,
             )
 
+        # Guard against an empty/whitespace-only reply (e.g. an LLM failure
+        # path that yields ""). Without this, an empty assistant turn gets
+        # persisted and the hub UI (which clears "Klaus is thinking..." as
+        # soon as the last role is 'assistant') renders a blank bubble with
+        # no error affordance and no retry (WR-05). Telegram callers get the
+        # same fallback text their own except-path already uses.
+        if not response_text or not response_text.strip():
+            logger.warning(
+                "handle_message: orchestrator produced an empty reply for user_id=%s",
+                user_id,
+            )
+            response_text = (
+                "Something went wrong on my end — give it another go in a moment."
+            )
+
         # Persist the Smart Agent's final text response.
         self.conversation_manager.append(user_id, "assistant", response_text)
         return response_text
