@@ -21,3 +21,11 @@ body {
   min-height: 100vh;
   background-color: #0A0A0A;
 }
+
+/* Shared spinner keyframes — defined once here instead of injected per
+   component/message (IN-02). Used by the loading spinner and chat send state. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

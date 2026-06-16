@@ -186,9 +186,6 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
           {"Couldn't send — tap to retry."}
         </button>
       )}
-
-      {/* CSS for the sending spinner */}
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }

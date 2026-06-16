@@ -106,7 +106,6 @@ function LoadingScreen() {
           animation: 'spin 0.75s linear infinite',
         }}
       />
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   )
 }
