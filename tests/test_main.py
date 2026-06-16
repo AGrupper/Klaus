@@ -244,3 +244,66 @@ class TestPhase24DoublesSendFix:
                "I'm afraid" in CONNECTIVITY_ERROR_TEXT, (
             f"CONNECTIVITY_ERROR_TEXT changed unexpectedly: {CONNECTIVITY_ERROR_TEXT!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# WR-05 (Phase 26) — empty orchestrator reply must not be persisted verbatim
+# ---------------------------------------------------------------------------
+
+def _make_orchestrator_for_handle_message(loop_return: str):
+    """Build a minimal AgentOrchestrator whose _run_smart_loop returns a fixed
+    value, with the prompt/conversation collaborators stubbed out so
+    handle_message can run without real Firestore / prompt state.
+    """
+    from core.main import AgentOrchestrator
+
+    orch = AgentOrchestrator.__new__(AgentOrchestrator)
+    orch.smart_agent = MagicMock()
+    orch.smart_agent_fallback = None
+    orch.worker_agent = MagicMock()
+    orch._smart_prompt_template = "smart"
+    orch._worker_prompt_template = "worker {today_date}"
+    orch._meal_audit_content = ""
+    orch.conversation_manager = MagicMock()
+    orch.conversation_manager.get.return_value = []
+    # Avoid touching real SELF.md / self_state rendering.
+    orch.render_smart_system = lambda template: "rendered-system"
+    # The unit under test is the empty-reply guard, not the loop itself.
+    orch._run_smart_loop = MagicMock(return_value=loop_return)
+    return orch
+
+
+class TestEmptyReplyGuard:
+    """WR-05: an empty/whitespace-only loop result must be replaced with a
+    non-empty fallback before it is persisted — otherwise the hub UI clears
+    'Klaus is thinking…' and renders a blank bubble with no retry affordance.
+    """
+
+    @pytest.mark.parametrize("empty_reply", ["", "   ", "\n\t  "])
+    def test_empty_reply_replaced_with_fallback(self, empty_reply):
+        orch = _make_orchestrator_for_handle_message(loop_return=empty_reply)
+
+        result = orch.handle_message("hello", user_id=123456)
+
+        # The returned text must be non-empty (a fallback was substituted).
+        assert result.strip(), f"empty reply was not replaced, got: {result!r}"
+        # The assistant turn persisted to the conversation must be the same
+        # non-empty fallback — never the empty string.
+        assistant_calls = [
+            c for c in orch.conversation_manager.append.call_args_list
+            if c.args[1] == "assistant"
+        ]
+        assert assistant_calls, "no assistant message was persisted"
+        persisted = assistant_calls[-1].args[2]
+        assert persisted.strip(), f"empty assistant reply persisted: {persisted!r}"
+        assert persisted == result
+
+    def test_substantive_reply_passed_through_unchanged(self):
+        """A normal non-empty reply must be returned verbatim (guard is a no-op)."""
+        orch = _make_orchestrator_for_handle_message(
+            loop_return="Here is your schedule for today."
+        )
+
+        result = orch.handle_message("what's today?", user_id=123456)
+
+        assert result == "Here is your schedule for today."
