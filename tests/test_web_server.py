@@ -965,3 +965,56 @@ class TestSPAMountRegression:
                     os.rmdir(dist_dir)
                 except OSError:
                     pass
+
+    def test_root_serves_spa_index_and_falls_back_for_client_routes(self):
+        """GET / (and unknown client-side routes) must serve index.html, not 500.
+
+        Regression for the production 500 "cannot unpack non-iterable coroutine
+        object": SPAStaticFiles.lookup_path was declared `async`, but Starlette's
+        StaticFiles.lookup_path is synchronous (get_response calls it via
+        anyio.to_thread.run_sync). The async override returned an un-awaited
+        coroutine and 500'd every page load. TestClient defaults to
+        raise_server_exceptions=True, so a regression surfaces as a test error.
+        """
+        repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        dist_dir = os.path.join(repo_root, "frontend", "dist")
+        index_html = os.path.join(dist_dir, "index.html")
+        made_dir = not os.path.isdir(dist_dir)
+        os.makedirs(dist_dir, exist_ok=True)
+        made_index = not os.path.exists(index_html)
+        if made_index:
+            with open(index_html, "w", encoding="utf-8") as fh:
+                fh.write("<!doctype html><title>Klaus</title><div id=root></div>")
+
+        try:
+            stubs = _stub_web_server_imports()
+            with patch.dict(sys.modules, stubs):
+                import interfaces.web_server as ws  # noqa: PLC0415
+                from fastapi.testclient import TestClient  # noqa: PLC0415
+
+                assert any(
+                    getattr(route, "name", None) == "spa" for route in ws.app.routes
+                ), "SPA mount not registered; test would not exercise SPA serving"
+
+                with patch.dict(os.environ, _BASE_ENV):
+                    client = TestClient(ws.app)
+                    root = client.get("/")
+                    # Unknown path with no matching file → React Router fallback.
+                    deep = client.get("/today/anything")
+
+            assert root.status_code == 200, (
+                f"GET / did not serve the SPA shell: {root.status_code}: {root.text}"
+            )
+            assert "Klaus" in root.text
+            assert deep.status_code == 200, (
+                f"client-side route did not fall back to index.html: {deep.status_code}"
+            )
+            assert "Klaus" in deep.text
+        finally:
+            if made_index and os.path.exists(index_html):
+                os.remove(index_html)
+            if made_dir and os.path.isdir(dist_dir):
+                try:
+                    os.rmdir(dist_dir)
+                except OSError:
+                    pass

@@ -1735,11 +1735,15 @@ class SPAStaticFiles(StaticFiles):
     index.html so that the React Router can handle it client-side.
     """
 
-    async def lookup_path(self, path: str):  # type: ignore[override]
-        full_path, stat_result = await super().lookup_path(path)
+    def lookup_path(self, path: str):  # type: ignore[override]
+        # Starlette's StaticFiles.lookup_path is SYNCHRONOUS — get_response calls
+        # it via anyio.to_thread.run_sync(self.lookup_path, path). Declaring this
+        # override `async` returns an un-awaited coroutine and 500s every request
+        # ("cannot unpack non-iterable coroutine object"). Keep it sync.
+        full_path, stat_result = super().lookup_path(path)
         if stat_result is None:
             # Unknown path — let the React Router handle it
-            return await super().lookup_path("index.html")
+            return super().lookup_path("index.html")
         return full_path, stat_result
 
 
