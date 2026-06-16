@@ -31,6 +31,14 @@ dense Garmin pace history, surfaced in the Sunday weekly review as on-track / N-
 (2026-05-23) · v3.0 Project Shifu (2026-06-02) · v4.0 Specific Training & Nutrition Coaching
 (2026-06-08). See `.planning/MILESTONES.md`.
 
+**v5.0 Klaus Hub — in progress:** Phase 26 (Hub Shell) complete 2026-06-16 — a Vite/React/Tailwind
+PWA served from `klaus-agent` (multi-stage Dockerfile + last-mounted `SPAStaticFiles`, no existing
+route shadowed), Google-allowlisted itsdangerous-signed session auth (`require_hub_session` on every
+`/api/*`), the read-only `/api/today` timeline aggregator, a shared-conversation hub chat (Cloud
+Tasks full-CPU path → one Klaus across hub + Telegram), a responsive shell, and PWA polish (iOS
+install banner, offline indicator, skeletons). Suite 1412 passing · frontend 51 vitest · verified
+17/17 must-haves (5 on-device/live items tracked in `26-HUMAN-UAT.md`, pending deploy). Next: Phase 27 Tasks.
+
 ## Current Milestone: v5.0 Klaus Hub
 
 **Goal:** A web PWA (served from the klaus-agent Cloud Run service) that becomes Klaus's
@@ -169,4 +177,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-13 — milestone v5.0 Klaus Hub started (design spec approved; defining requirements).*
+*Last updated: 2026-06-16 — v5.0 Phase 26 (Hub Shell) complete: 9 plans, verified 17/17, suite 1412 + 51 frontend; 5 on-device/live items deferred to 26-HUMAN-UAT.*
