@@ -115,7 +115,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 26. Hub Shell | 9/9 | Complete   | 2026-06-15 |
+| 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 0/? | Not started | - |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |

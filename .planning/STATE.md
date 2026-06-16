@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: executing
-stopped_at: Phase 26 UI-SPEC approved
-last_updated: "2026-06-14T12:28:42.434Z"
+status: ready_to_plan
+stopped_at: Phase 26 complete (9/9) — ready to discuss Phase 27
+last_updated: 2026-06-16T07:44:01.528Z
 last_activity: 2026-06-14 -- Phase 26 execution started
 progress:
   total_phases: 5
   completed_phases: 0
   total_plans: 9
-  completed_plans: 0
+  completed_plans: 9
   percent: 0
 ---
 
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 26 (hub-shell) — EXECUTING
-Plan: 1 of 9
-Status: Executing Phase 26
-Last activity: 2026-06-14 -- Phase 26 execution started
+Phase: 27
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-06-16
 
 **Progress bar:** [----------] 0% (0/5 phases)
 
@@ -73,7 +73,7 @@ Last activity: 2026-06-14 -- Phase 26 execution started
 See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 26 — hub-shell
+**Current focus:** Phase 27 — tasks
 
 ## Architecture (current)
 
