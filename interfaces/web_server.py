@@ -1157,7 +1157,10 @@ def _today_meals(today_iso: str) -> list[dict]:
             slot_label = _SLOT_LABELS.get(time_part, "Meal")
             result.append({
                 "slot_label": slot_label,         # canonical display label (TIME-03)
-                "slot_time": time_part,           # HH:MM — the canonical SLOT identifier, NOT eating time
+                # NOTE: deliberately no `slot_time` field on the wire — the client
+                # contract (MealItem in today.ts) only declares slot_label + macros,
+                # and per CLAUDE.md §6 the HH:MM slot identifier must never be
+                # surfaced as (or risk being rendered as) an eating time.
                 "macros": {
                     "kcal": meal.get("calories"),
                     "protein_g": meal.get("protein_g"),
