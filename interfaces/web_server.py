@@ -1042,7 +1042,7 @@ def _today_calendar(today_iso: str) -> dict:
             hour=23, minute=59, second=59, tzinfo=tz
         )
 
-        auth_manager = _auth.GoogleAuthManager()
+        auth_manager = _auth.build_auth_manager_from_env()
         cal = GoogleCalendarManager(auth_manager)
         raw_events = cal.list_events(
             day_start.isoformat(),
@@ -1396,19 +1396,20 @@ def _today_nutrition_totals(today_iso: str) -> dict:
             database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
         )
         agg = store.get_day_aggregate(today_iso)
-        if not agg:
-            return {}
-        totals = agg.get("totals", {})
+        totals = agg.get("totals", {}) if agg else {}
+        # Always return all five keys as numbers (default 0). A missing key or a
+        # None value crashes the hub's NutritionStrip (.toFixed on undefined),
+        # which blanks the whole SPA on a fresh day before any meal is logged.
         return {
-            "kcal": totals.get("calories"),
-            "protein_g": totals.get("protein_g"),
-            "carbs_g": totals.get("carbs_g"),
-            "fat_g": totals.get("fat_g"),
-            "fiber_g": totals.get("fiber_g"),
+            "kcal": totals.get("calories") or 0,
+            "protein_g": totals.get("protein_g") or 0,
+            "carbs_g": totals.get("carbs_g") or 0,
+            "fat_g": totals.get("fat_g") or 0,
+            "fiber_g": totals.get("fiber_g") or 0,
         }
     except Exception:
         logger.warning("_today_nutrition_totals(%r) failed", today_iso, exc_info=True)
-        return {}
+        return {"kcal": 0, "protein_g": 0, "carbs_g": 0, "fat_g": 0, "fiber_g": 0}
 
 
 @app.get("/api/today")

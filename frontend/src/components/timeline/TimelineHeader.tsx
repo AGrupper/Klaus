@@ -115,12 +115,24 @@ interface NutritionStripProps {
 
 /** Horizontal scroll strip of nutrition running totals — shown below the header on phone. */
 function NutritionStrip({ totals }: NutritionStripProps) {
+  // Defensive coercion: /api/today returns an empty object (or null fields) on a
+  // fresh day before any meal is logged. Calling .toFixed() on a missing value
+  // throws and — with no error boundary — blanks the entire app. Coerce to 0.
+  const kcal = totals?.kcal ?? 0
+  const protein = totals?.protein_g ?? 0
+  const carbs = totals?.carbs_g ?? 0
+  const fat = totals?.fat_g ?? 0
+  const fiber = totals?.fiber_g ?? 0
+
+  // Nothing logged yet — render no strip rather than a row of zeros.
+  if (!kcal && !protein && !carbs && !fat && !fiber) return null
+
   const items = [
-    { label: 'kcal', value: String(totals.kcal) },
-    { label: 'protein', value: `${totals.protein_g.toFixed(0)}g` },
-    { label: 'carbs', value: `${totals.carbs_g.toFixed(0)}g` },
-    { label: 'fat', value: `${totals.fat_g.toFixed(0)}g` },
-    ...(totals.fiber_g > 0 ? [{ label: 'fiber', value: `${totals.fiber_g.toFixed(0)}g` }] : []),
+    { label: 'kcal', value: String(kcal) },
+    { label: 'protein', value: `${protein.toFixed(0)}g` },
+    { label: 'carbs', value: `${carbs.toFixed(0)}g` },
+    { label: 'fat', value: `${fat.toFixed(0)}g` },
+    ...(fiber > 0 ? [{ label: 'fiber', value: `${fiber.toFixed(0)}g` }] : []),
   ]
 
   return (

@@ -114,4 +114,25 @@ describe('TimelineDay', () => {
       screen.getByText(/Coach note coming after your morning briefing/i),
     ).toBeInTheDocument()
   })
+
+  it('renders a fresh new-day payload (empty totals + no meals) without crashing', () => {
+    // Regression: on a new day /api/today returns empty nutrition_totals; the
+    // phone NutritionStrip called .toFixed() on undefined and blanked the whole
+    // app (no error boundary). It must render placeholders instead.
+    const emptyNewDay = {
+      today: '2026-06-17',
+      calendar: { all_day: [], timed: [] },
+      garmin: null,
+      weather: null,
+      meals: [],
+      training: null,
+      coach_note: null,
+      // The API can return an empty object here before any meal is logged.
+      nutrition_totals: {} as TodayData['nutrition_totals'],
+    } as TodayData
+    setToday({ data: emptyNewDay })
+    expect(() => render(<TimelineDay />)).not.toThrow()
+    expect(screen.getByText(/Nothing on the calendar today/i)).toBeInTheDocument()
+    expect(screen.getByText(/No meals logged yet today/i)).toBeInTheDocument()
+  })
 })
