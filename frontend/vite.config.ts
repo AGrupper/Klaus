@@ -10,7 +10,12 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
-      registerType: 'autoUpdate',
+      // Prompt-mode: a new deploy surfaces a "New version available → Refresh"
+      // banner (UpdatePrompt.tsx) instead of silently swapping in on some later
+      // load. injectRegister:false because UpdatePrompt's useRegisterSW hook
+      // owns registration (avoids a double-register with the auto-injected script).
+      registerType: 'prompt',
+      injectRegister: false,
       strategies: 'generateSW',
       workbox: {
         // Precache all build outputs (hashed JS/CSS/HTML/icons)

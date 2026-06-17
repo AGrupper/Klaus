@@ -19,6 +19,7 @@ import { GlanceRail } from './GlanceRail'
 import { DockChat } from './DockChat'
 import { OfflineIndicator } from '../shared/OfflineIndicator'
 import { InstallBanner } from '../shared/InstallBanner'
+import { UpdatePrompt } from '../shared/UpdatePrompt'
 
 interface AppShellProps {
   children: ReactNode
@@ -36,6 +37,9 @@ export function AppShell({ children }: AppShellProps) {
     >
       {/* Fixed offline indicator — appears at the top of the viewport when offline (HUB-03) */}
       <OfflineIndicator />
+
+      {/* "New version available → Refresh" prompt when a new deploy is detected */}
+      <UpdatePrompt />
 
       {/* Fixed iOS install banner — appears at the bottom when on iOS, not standalone, not dismissed (HUB-02 / D-12) */}
       <InstallBanner />
