@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: ready_to_plan
-stopped_at: Phase 26 secured + reviewed + verified + DEPLOYED LIVE (rev klaus-agent-00120-lrj) — ready to discuss Phase 27. Cosmetic/UX fixes deferred to a post-milestone fixes session (see 26-HUMAN-UAT.md).
-last_updated: 2026-06-17T10:30:00.000Z
-last_activity: 2026-06-17 -- Phase 26 closed (security + code-review --fix + go-live, 8 post-deploy bugs fixed)
+status: planning
+stopped_at: Phase 27 context gathered
+last_updated: "2026-06-17T14:33:59.847Z"
+last_activity: 2026-06-17
 progress:
   total_phases: 5
   completed_phases: 1
@@ -144,9 +144,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-13T15:09:08.334Z
-Stopped at: Phase 26 UI-SPEC approved
-Resume file: .planning/phases/26-hub-shell/26-UI-SPEC.md
+Last session: 2026-06-17T14:33:59.843Z
+Stopped at: Phase 27 context gathered
+Resume file: .planning/phases/27-tasks/27-CONTEXT.md
 
 ## Operator Next Steps
 
