@@ -61,7 +61,7 @@ Exceptions:
 
 **Phase 27 usage notes:**
 - Body (16px/400/1.5): task titles in list rows, quick-add input text, task detail title field, edit modal title field.
-- Label (13px/400/1.4): due date chips, priority chips, list name below task title, recurrence summary line, overdue age ("3 days overdue"), undo toast message text, sort/group button labels, "Due today" band header, task count on glance rail, quick-add token preview chips.
+- Label (13px/400/1.4): due date chips, priority chips, list name below task title, recurrence summary line, overdue age ("3d overdue"), undo toast message text, sort/group button labels, "Due today" band header, task count on glance rail, quick-add token preview chips.
 - Heading (20px/600/1.2): Lists sidebar section headers (list names when rendered as header), Tasks page section heading ("Tasks"), task detail modal section labels.
 - Display (28px/600/1.15): not used in this phase (reserved for the Klaus wordmark per Phase 26).
 
@@ -121,14 +121,16 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 | `TasksPage` | `components/tasks/TasksPage.tsx` | Root `/tasks` route; replaces `ComingSoon` placeholder; renders `TaskListSidebar` (desktop) + `TaskListView` |
 | `TaskListView` | `components/tasks/TaskListView.tsx` | Scrollable list of `TaskRow` items; shows empty state when no tasks; sort/group control header |
 | `TaskRow` | `components/tasks/TaskRow.tsx` | Single task row: checkbox, title, priority chip, due date chip, list name; tap opens `TaskDetailSheet`; swipe-left on phone reveals delete action |
-| `TaskDetailSheet` | `components/tasks/TaskDetailSheet.tsx` | Bottom sheet on phone / modal on desktop; edit all task fields (title, notes, due date+time, priority, list, recurrence); "Save" + "Cancel" + "Delete" actions |
+| `TaskDetailSheet` | `components/tasks/TaskDetailSheet.tsx` | Bottom sheet on phone / modal on desktop; edit all task fields (title, notes, due date+time, priority, list, recurrence); context-aware CTA: "Add task" when creating, "Save changes" when editing; "Cancel" + "Delete task" (existing tasks only) |
 | `TaskListSidebar` | `components/tasks/TaskListSidebar.tsx` | Desktop left panel (200px) within the tasks page; lists Inbox + user-created lists; active list highlighted in accent; "New list" button at bottom |
 | `TaskListSelector` | `components/tasks/TaskListSelector.tsx` | Shared dropdown/sheet for selecting a list when creating/editing a task |
 | `RecurrenceSelector` | `components/tasks/RecurrenceSelector.tsx` | Inline recurrence control: cadence select + anchor toggle (stick-to-schedule vs from-completion); shown in `TaskDetailSheet` |
 | `SortGroupControl` | `components/tasks/SortGroupControl.tsx` | Row of two segmented buttons: Sort (Due date / Priority) and Group toggle; rendered at top of `TaskListView` |
-| `QuickAddBar` | `components/tasks/QuickAddBar.tsx` | Single-line input with live token parsing; shows resolved date chip + priority chip + list chip inline while typing; "Add" button; escape/blur dismisses |
-| `TaskFAB` | `components/tasks/TaskFAB.tsx` | Phone only: 56px accent FAB fixed above BottomTabs; tap opens `QuickAddBar` as a bottom sheet |
+| `QuickAddBar` | `components/tasks/QuickAddBar.tsx` | Single-line input with live token parsing; shows resolved date chip + priority chip + list chip inline while typing; "Add task" button; escape/blur dismisses |
+| `TaskFAB` | `components/tasks/TaskFAB.tsx` | Phone only: 56px accent FAB fixed above BottomTabs; tap opens `QuickAddBar` as a bottom sheet; aria-label "Add task" |
 | `UndoToast` | `components/tasks/UndoToast.tsx` | Fixed bottom toast (above BottomTabs on phone, bottom-center on desktop); accent "Undo" action button; auto-dismisses after 4s |
+
+**Desktop task-row kebab menu:** The three-dot icon button rendered on task row hover must carry `aria-label="Task options"`. It exposes "Edit" and "Delete" actions via a small dropdown (secondary background, surface border, label-size text).
 
 ### Timeline Extensions (Phase 27 additions to existing components)
 
@@ -141,12 +143,18 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 
 ## Interaction Contracts
 
+### Primary Focal Point
+
+**Phone:** The FAB (56px accent circle, fixed above BottomTabs) is the primary action anchor — it is the first element the eye should land on when the Tasks page loads, and it is the entry point for all task creation.
+
+**Desktop:** The task list column (`TaskListView`, flex-1) is the primary focus area. The list sidebar (200px) is subordinate; the task detail modal overlays the whole page when open.
+
 ### Tasks Page
 
 **List navigation (desktop):**
-- `TaskListSidebar` is a 200px left panel inside the tasks page content area (not the app sidebar). Inbox is always first. User-created lists follow. Active list has accent `#6366F1` left border (4px) and `#1A1A1A` → slightly lightened `#222222` background.
+- `TaskListSidebar` is a 200px left panel inside the tasks page content area (not the app-level Sidebar). Inbox is always first. User-created lists follow. Active list has accent `#6366F1` left border (4px) and `#1A1A1A` → slightly lightened `#222222` background.
 - Clicking a list loads its tasks in `TaskListView` to the right. No route change per list — state managed via `useState`/`useQueryParam` within `TasksPage`.
-- "New list" button at the sidebar bottom opens an inline input (not a modal) for naming the list; pressing Enter or clicking "Create" saves it.
+- "New list" button at the sidebar bottom opens an inline input (not a modal) for naming the list; pressing Enter or clicking "Create list" saves it.
 
 **List navigation (phone):**
 - No sidebar on phone. A list picker lives in a bottom sheet triggered by tapping the current list name header above the task list. Lists Inbox + all user lists; tap selects and dismisses.
@@ -155,7 +163,7 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 - Tapping the checkbox area (left 44px of row) triggers completion flow.
 - Tapping the task title/body opens `TaskDetailSheet`.
 - Phone: swipe-left on the row reveals a 72px destructive "Delete" action button (standard iOS swipe pattern). Tapping it triggers the undo toast.
-- Desktop: right-click or kebab menu (three-dot icon, shown on row hover) exposes "Edit" and "Delete" actions.
+- Desktop: right-click or kebab menu (three-dot icon, shown on row hover, `aria-label="Task options"`) exposes "Edit" and "Delete" actions.
 - Minimum row height: 52px (body text + label line + 8px padding top/bottom).
 
 **Quick-add (FAB on phone):**
@@ -164,7 +172,7 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
   - "tomorrow" / "friday" / "next week" → resolves to a date chip shown below input (e.g. "Fri 19 Jun").
   - `#list-name` → resolved list chip (fuzzy match to existing lists; unmatched → Inbox).
   - `!high` / `!medium` / `!low` / `!1` / `!2` / `!3` → priority chip.
-- Pressing "Add" or Enter on desktop saves the task and clears the input for another entry.
+- Pressing "Add task" or Enter on desktop saves the task and clears the input for another entry.
 - Escape or tapping outside dismisses without saving.
 
 **Quick-add (keyboard shortcut on desktop):**
@@ -202,8 +210,10 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 - Phone: slides up from bottom as a bottom sheet (same pattern as Phase 26's `DockChat` collapse — CSS transform translateY transition, 250ms ease-out). Drag handle at top. Dismisses by swiping down or tapping outside.
 - Desktop: renders as a centered modal (max-width 480px, centered, `#0A0A0A` scrim with `opacity: 0.7`).
 - Fields in order: Title (body, single-line), Notes (body, multi-line, 3 rows), Due date picker (native `<input type="date">`), Due time toggle (checkbox to add/remove a time; native `<input type="time">` when enabled), Priority select (None / Low / Medium / High), List selector, Recurrence selector.
-- Footer: "Save" button (accent background, 44px height, full-width on phone / right-aligned on desktop) + "Cancel" link + "Delete" destructive text button (left-aligned, only shown on existing tasks, not on new-task creation).
-- Dirty tracking: changes are not saved until "Save" is tapped (no auto-save).
+- Footer (phone: full-width stacked; desktop: right-aligned row):
+  - **New task:** "Add task" button (accent background, 44px height) + "Cancel" link.
+  - **Existing task:** "Save changes" button (accent background, 44px height) + "Cancel" link + "Delete task" destructive text button (left-aligned).
+- Dirty tracking: changes are not saved until the CTA button is tapped (no auto-save).
 
 **Recurring task edit dialog:**
 - When saving an edit to a recurring task, a 2-choice action sheet appears (bottom sheet on phone, inline dropdown on desktop):
@@ -242,15 +252,17 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 | Element | Copy |
 |---------|------|
 | Primary CTA (quick-add submit) | "Add task" |
-| Primary CTA (task detail save) | "Save" |
+| Primary CTA (task detail — new task) | "Add task" |
+| Primary CTA (task detail — existing task) | "Save changes" |
 | Primary CTA (new list) | "Create list" |
 | FAB aria-label | "Add task" |
+| Kebab menu aria-label (task row, desktop) | "Task options" |
 | Quick-add keyboard shortcut hint (desktop) | "Press N to add a task" (shown as a placeholder in the empty-list state only) |
 | Tasks page heading | "Tasks" |
 | Empty state — Inbox empty | "Your Inbox is clear." |
 | Empty state — Inbox empty body | "Press N or tap + to add a task." |
-| Empty state — list empty | "No tasks in this list." |
-| Empty state — list empty body | "Add tasks using the + button." |
+| Empty state — list empty heading | "This list is empty." |
+| Empty state — list empty body | "Add tasks using the + button or press N." |
 | Undo toast — task completed | "Task completed." |
 | Undo toast — task deleted | "Task deleted." |
 | Undo toast — action button | "Undo" |
@@ -281,6 +293,8 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 
 **Tone:** Concise, action-first labels. Error messages state the problem and the recovery in one sentence. Overdue formatting is "Nd overdue" (no padding, just the number — "3d overdue", not "3 days overdue") to fit in a compact chip. Plural forms: N is always the raw count, no "1 day" vs "N days" distinction in chips (space-constrained; full form appears in task detail only).
 
+**Task detail CTA states:** The save button is context-aware. When `TaskDetailSheet` is opened for a new task (from FAB or keyboard shortcut), the CTA reads "Add task". When opened by tapping an existing task row (edit mode), the CTA reads "Save changes". Both use the same accent background, 44px height, full-width on phone / right-aligned on desktop.
+
 **Destructive actions:** Delete has no confirmation modal — undo toast is the only recovery (D-14). The "Delete task" button in the detail sheet is styled with destructive `#EF4444` text color (not a filled button) to signal danger without a heavy confirmation step.
 
 ---
@@ -296,7 +310,7 @@ All components are hand-rolled with Tailwind v4. No shadcn blocks. New Phase 27 
 ```
 
 - The 200px list sidebar sits inside the tasks page's main content area — it is not the app-level Sidebar.
-- `TaskListView` occupies the remaining width.
+- `TaskListView` occupies the remaining width and is the primary focal area.
 - Task detail opens as a centered modal overlay (not a sidebar panel).
 - Sort/group control sits at the top of the task list column.
 - Quick-add bar appears as an inline bar at the top of `TaskListView` when triggered by `N` key.
@@ -342,6 +356,7 @@ No registries declared. All UI is hand-rolled with Tailwind v4 + lucide-react (a
 - `AlertCircle` — overdue indicator
 - `Plus` — FAB icon, new list button
 - `Trash2` — delete action
+- `MoreHorizontal` — desktop kebab menu (three-dot, `aria-label="Task options"`)
 - `ChevronDown` — list picker expand, sort dropdown
 - `GripHorizontal` — bottom sheet drag handle
 
