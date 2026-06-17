@@ -14,7 +14,7 @@
  * Security note (T-26-08-01): All message content rendered via
  * MessageBubble which uses text nodes only, never dangerouslySetInnerHTML.
  */
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useChat } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
 import { MessageBubble } from './MessageBubble'
@@ -76,13 +76,22 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
     }
   }, [messages.length])
 
-  // Initial scroll to bottom on mount
-  useEffect(() => {
+  // Land at the bottom whenever the chat (re)mounts — including when you
+  // navigate away and back. The old version scrolled on mount BEFORE messages
+  // had loaded (empty container → no-op), leaving you partway up the history.
+  // This retries on each messages change until content is actually present,
+  // then stops so it never yanks you while you read older messages.
+  // useLayoutEffect avoids a visible flash at the top before the jump.
+  const didInitialScrollRef = useRef(false)
+  useLayoutEffect(() => {
+    if (didInitialScrollRef.current) return
     const el = scrollContainerRef.current
-    if (el) {
+    if (el && el.scrollHeight > el.clientHeight) {
       el.scrollTop = el.scrollHeight
+      wasNearBottomRef.current = true
+      didInitialScrollRef.current = true
     }
-  }, [])
+  }, [messages.length])
 
   // -------------------------------------------------------------------------
   // IntersectionObserver on the last message → markAllSeen (D-10)
