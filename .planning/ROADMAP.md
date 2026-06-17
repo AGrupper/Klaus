@@ -30,7 +30,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 ## Phases
 
 - [x] **Phase 26: Hub Shell** — React PWA scaffold, Google auth, FastAPI serving, Today timeline, Klaus chat MVP (completed 2026-06-15)
-- [ ] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), TickTick import
+- [ ] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), manual TickTick migration
 - [ ] **Phase 28: Habits & Supplements** — HabitStore, check-off UI, streaks, Klaus integration, habits on timeline
 - [ ] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path
 - [ ] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations
@@ -61,16 +61,16 @@ visualizing training, nutrition, and sleep data from existing stores.
 **UI hint**: yes
 
 ### Phase 27: Tasks
-**Goal**: Amit can manage all personal tasks natively in the hub (create, edit, complete, delete, recurrence), Klaus uses native task tools instead of TickTick, and the TickTick history is imported before the subscription is cancelled
+**Goal**: Amit can manage all personal tasks natively in the hub (create, edit, complete, delete, recurrence), Klaus uses native task tools instead of TickTick, and Amit manually re-creates his open TickTick tasks before the subscription is cancelled
 **Depends on**: Phase 26
 **Requirements**: TASK-01, TASK-02, TASK-03, TASK-04, TASK-05, TASK-06, TASK-07
 **Success Criteria** (what must be TRUE):
-  1. Amit can create a task with title, notes, due date, priority, and list; edit, complete, and delete it — all persisted in Firestore `TaskStore`
-  2. A task can recur on a simple schedule (daily, weekdays, weekly, monthly, or every-N-days-from-completion); completing one instance generates the next correctly
-  3. Quick-add (FAB on phone, keyboard shortcut on desktop) accepts natural-language dates ("tomorrow", "next week", "friday") and resolves them while typing
-  4. Completing a task produces a visible micro-animation; completed tasks remain viewable in a completed view
+  1. Amit can create a task with title, notes, due date, priority, and a user-created list/project (or Inbox); edit, complete, and delete it — all persisted in Firestore `TaskStore`
+  2. A task can recur on a simple schedule (daily, weekdays, weekly, monthly, or every-N-days), with a per-task anchor toggle (stick-to-schedule vs from-completion); completing one instance generates the next correctly
+  3. Quick-add (FAB on phone, keyboard shortcut on desktop) accepts natural-language dates ("tomorrow", "next week", "friday") plus `#list` / `!priority` tokens and resolves them while typing
+  4. Completing a task produces a visible micro-animation; a brief undo toast allows recovery — completed tasks are not retained (no completed view)
   5. Klaus manages tasks via native tools in `core/tools.py` (TickTick tools removed); the autonomous Layer-0 gather reads native overdue tasks; due and overdue tasks appear on the glance rail and Today timeline
-  6. A one-time TickTick import populates `TaskStore` and produces a reconciliation report that Amit reviews before cancelling the TickTick subscription (import → tool swap → UAT → cancel order preserved)
+  6. Amit manually re-creates his open TickTick tasks in `TaskStore`; the migration order is preserved — native tasks verified (UAT) → TickTick tools removed → subscription cancelled
 **Plans**: TBD
 **UI hint**: yes
 

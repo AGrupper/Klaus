@@ -36,12 +36,12 @@ Requirements for milestone v5.0. Each maps to roadmap phases.
 
 ### Tasks (TASK)
 
-- [ ] **TASK-01**: Amit can create, edit, complete, and delete tasks with title, notes, due date, priority, and a fixed set of lists — stored natively in Firestore `TaskStore`
+- [ ] **TASK-01**: Amit can create, edit, complete, and delete tasks with title, notes, due date, priority, and assign them to **user-creatable lists/projects plus a default Inbox** — stored natively in Firestore `TaskStore` *(revised 2026-06-17, Phase 27 discussion: was "a fixed set of lists")*
 - [ ] **TASK-02**: Tasks support simple recurrence: daily, weekdays, weekly, monthly, and every-N-days-from-completion (no complex RRULE)
 - [ ] **TASK-03**: Quick-add (FAB on phone, keyboard shortcut on desktop) parses natural-language dates ("tomorrow", "friday", "next week") while typing
-- [ ] **TASK-04**: Completing a task gives a satisfying micro-animation; completed tasks remain viewable
+- [ ] **TASK-04**: Completing a task gives a satisfying micro-animation; a brief **undo toast** allows recovery from an accidental complete or delete — **completed tasks are not retained (no completed view)** *(revised 2026-06-17, Phase 27 discussion: was "completed tasks remain viewable")*
 - [ ] **TASK-05**: Klaus manages tasks natively — TickTick tools removed from `core/tools.py`, replaced by TaskStore tools; autonomous Layer-0 gather reads native overdue tasks
-- [ ] **TASK-06**: A one-time TickTick import populates TaskStore with a reconciliation report verified before the subscription is cancelled (import → tool swap → UAT → cancel, atomic order)
+- [ ] **TASK-06**: Migration off TickTick is **manual** — Amit re-creates his (few) open tasks in the hub; the atomic safety order is preserved: native tasks live + verified (UAT) → TickTick tools removed from `core/tools.py` → subscription cancelled *(revised 2026-06-17, Phase 27 discussion: was "a one-time TickTick import + reconciliation report" — descoped because Amit has few tasks)*
 - [ ] **TASK-07**: Due and overdue tasks appear on the glance rail and Today timeline
 
 ### Habits & Supplements (HABIT)
@@ -141,4 +141,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-13*
-*Last updated: 2026-06-13 — traceability populated by roadmap*
+*Last updated: 2026-06-17 — TASK-01/04/06 revised during Phase 27 discussion (user-creatable lists; completed tasks not retained + undo toast; manual TickTick migration instead of an import script). See `.planning/phases/27-tasks/27-CONTEXT.md` D-02/D-13/D-08.*
