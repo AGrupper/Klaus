@@ -1,7 +1,8 @@
 ---
 phase: 26-hub-shell
-verified: 2026-06-15T14:00:00Z
-status: human_needed
+verified: 2026-06-17T10:30:00Z
+status: verified
+status_note: "17/17 automated truths verified; human UAT closed against the live deploy (rev klaus-agent-00120-lrj) — core hub verified working on iPhone + desktop. Cosmetic/UX items (chat scroll, leave-by chips live-check, icon art, error-boundary hardening) deferred to a dedicated fixes session — see 26-HUMAN-UAT.md."
 score: 17/17 must-haves verified
 overrides_applied: 0
 re_verification:

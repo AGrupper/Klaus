@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
 status: ready_to_plan
-stopped_at: Phase 26 complete (9/9) — ready to discuss Phase 27
-last_updated: 2026-06-16T07:44:01.528Z
-last_activity: 2026-06-14 -- Phase 26 execution started
+stopped_at: Phase 26 secured + reviewed + verified + DEPLOYED LIVE (rev klaus-agent-00120-lrj) — ready to discuss Phase 27. Cosmetic/UX fixes deferred to a post-milestone fixes session (see 26-HUMAN-UAT.md).
+last_updated: 2026-06-17T10:30:00.000Z
+last_activity: 2026-06-17 -- Phase 26 closed (security + code-review --fix + go-live, 8 post-deploy bugs fixed)
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 9
   completed_plans: 9
-  percent: 0
+  percent: 20
 ---
 
 # State — Klaus
@@ -20,10 +20,10 @@ progress:
 
 Phase: 27
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-06-16
+Status: Ready to plan (Phase 26 closed + live)
+Last activity: 2026-06-17
 
-**Progress bar:** [----------] 0% (0/5 phases)
+**Progress bar:** [██--------] 20% (1/5 phases)
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
