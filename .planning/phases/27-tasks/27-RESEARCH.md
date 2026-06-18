@@ -541,6 +541,34 @@ from zoneinfo import ZoneInfo
 
 _TZ = ZoneInfo("Asia/Jerusalem")
 
+
+def _advance_once(base: date, rule: dict) -> date:
+    """Advance `base` by exactly one cadence step (no roll-forward)."""
+    cadence = rule.get("cadence", "daily")
+
+    if cadence == "daily":
+        return base + timedelta(days=1)
+    elif cadence == "weekdays":
+        candidate = base + timedelta(days=1)
+        while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
+            candidate += timedelta(days=1)
+        return candidate
+    elif cadence == "weekly":
+        return base + timedelta(weeks=1)
+    elif cadence == "monthly":
+        # Month-end clamping: the 31st in a 30-day month clamps to the last day
+        import calendar
+        year = base.year + (base.month // 12)
+        month = (base.month % 12) + 1
+        max_day = calendar.monthrange(year, month)[1]
+        return base.replace(year=year, month=month, day=min(base.day, max_day))
+    elif cadence == "every_n_days":
+        n = int(rule.get("every_n_days") or 1)
+        return base + timedelta(days=n)
+    else:
+        return base + timedelta(days=1)
+
+
 def _next_due_date(
     current_due: date,
     completed_on: date,
@@ -554,41 +582,20 @@ def _next_due_date(
         rule:          The recurrence rule dict.
 
     Returns:
-        The next due date as a date object (always >= tomorrow in Jerusalem).
+        The next due date as a date object (always strictly > completed_on).
     """
-    cadence = rule.get("cadence", "daily")
     anchor = rule.get("anchor", "schedule")
     base = current_due if anchor == "schedule" else completed_on
 
-    if cadence == "daily":
-        candidate = base + timedelta(days=1)
-    elif cadence == "weekdays":
-        candidate = base + timedelta(days=1)
-        while candidate.weekday() >= 5:  # 5=Sat, 6=Sun
-            candidate += timedelta(days=1)
-    elif cadence == "weekly":
-        candidate = base + timedelta(weeks=1)
-    elif cadence == "monthly":
-        # Month-end clamping: the 31st in a 30-day month clamps to the last day
-        import calendar
-        year = base.year + (base.month // 12)
-        month = (base.month % 12) + 1
-        max_day = calendar.monthrange(year, month)[1]
-        candidate = base.replace(year=year, month=month, day=min(base.day, max_day))
-    elif cadence == "every_n_days":
-        n = int(rule.get("every_n_days") or 1)
-        candidate = base + timedelta(days=n)
-    else:
-        candidate = base + timedelta(days=1)
+    candidate = _advance_once(base, rule)
 
-    # D-06: schedule-anchored next that lands in the past rolls forward to
-    # the next future occurrence.
-    today = completed_on  # already Jerusalem local date
+    # D-06: a schedule-anchored next that lands on/before today rolls forward
+    # to the next FUTURE occurrence. This must be a real loop — a task several
+    # cadences in the past (e.g. weekly current_due far behind completed_on)
+    # needs multiple steps to clear `completed_on`, not a single advance.
     if anchor == "schedule":
-        while candidate <= today:
-            # re-apply the same step until we're in the future
-            candidate = _next_due_date(candidate, today, rule)
-            break  # recursion replaced by single forward step; enough for all cadences
+        while candidate <= completed_on:
+            candidate = _advance_once(candidate, rule)
 
     return candidate
 ```
@@ -841,7 +848,7 @@ jobs = {
 
 **Why it happens:** `_next_due_date` adds 7 days from `current_due` without checking if the result is in the future.
 
-**How to avoid:** After computing `candidate`, check `if candidate <= today: roll forward one more step`. The implementation in Unknown 2 above includes this guard.
+**How to avoid:** After computing `candidate`, roll forward with a real loop — `while candidate <= completed_on: candidate = _advance_once(candidate, rule)` — NOT a single `break`-guarded step. A task several cadences in the past (e.g. weekly `current_due` weeks behind `completed_on`) needs multiple advances to clear today; one step is not enough. The implementation in Unknown 2 above uses the loop form.
 
 **Warning signs:** Glance rail shows perpetual overdue tasks; autonomous tick fires every 20 minutes about the same task.
 
@@ -1019,22 +1026,25 @@ class CreateTaskInput(BaseModel):
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **GCP Project ID and Firestore database name in task CRUD routes**
    - What we know: Existing routes in `web_server.py` use env vars `GCP_PROJECT_ID` and `FIRESTORE_DATABASE` via helper functions already in the file.
    - What's unclear: The exact helper function signature used by Phase 26 routes to instantiate stores — needs to be confirmed before writing the task route handlers.
    - Recommendation: Read `interfaces/web_server.py` lines 1415–1478 (`api_today`) for the exact pattern before writing task routes.
+   - **RESOLVED:** Pattern extracted inline into 27-02's `<interfaces>` block — task route handlers instantiate the store as `store = TaskStore(project_id=os.environ.get("GCP_PROJECT_ID", ""), database=os.environ.get("FIRESTORE_DATABASE", "(default)"))`, mirroring the FollowupStore/StrengthSessionStore `__init__(self, project_id, database="(default)")` convention. No further investigation needed at execution time.
 
 2. **TICKTICK_* Secret Manager secrets — operator cleanup timing**
    - What we know: D-09 specifies: native verified → remove TickTick tools → cancel subscription. Secret Manager cleanup follows subscription cancellation.
    - What's unclear: Whether the planner should emit a deployment-operator task to remove the secrets from Secret Manager, or leave it as a manual step.
    - Recommendation: Include as a Wave 5 deployment task (after subscription cancelled) — planner should note it as an operator action, not a code change.
+   - **RESOLVED:** Sequenced in 27-07 as a post-cutover operator action — the "TickTick Retirement" subsection of `docs/DEPLOYMENT.md` (27-07 Task 2) documents removing `TICKTICK_ACCESS_TOKEN`/`TICKTICK_REFRESH_TOKEN`/`TICKTICK_CLIENT_ID`/`TICKTICK_CLIENT_SECRET` AFTER the subscription is cancelled. It is an operator action, not a Claude code change.
 
 3. **Frontend vitest config file path**
    - What we know: `frontend/package.json` has `"test": "vitest"`. An existing `useChat.test.tsx` test file works.
    - What's unclear: The exact vitest config file name and location (not read during research).
    - Recommendation: Not blocking — run `ls frontend/vitest.config*` in Wave 0; if absent, vitest auto-configures from `vite.config.*`.
+   - **RESOLVED (non-blocking):** vitest auto-discovers its config from `vite.config.*`; no separate `vitest.config.*` is required. Existing `useChat.test.tsx` already runs under this setup, so the Wave 0 frontend stubs (27-01 Task 3) run without additional config.
 
 ---
 
