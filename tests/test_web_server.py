@@ -1029,6 +1029,76 @@ class TestSPAMountRegression:
 # --------------------------------------------------------------------------- #
 
 
+# ---------------------------------------------------------------------------
+# TestTaskRoutes — Phase 27 Wave 0 scaffold (implemented in 27-02)
+# ---------------------------------------------------------------------------
+
+
+class TestTaskRoutes:
+    """Wave 0 scaffold for /api/tasks* CRUD + summary routes.
+
+    All tests are skip-marked — implemented in plan 27-02.
+    The class must exist now so downstream plans have an automated target.
+
+    Covers TASK-01 and TASK-07:
+      - POST   /api/tasks           → create a task
+      - GET    /api/tasks           → list active tasks
+      - PATCH  /api/tasks/{id}      → update a task
+      - POST   /api/tasks/{id}/complete   → soft-mark completing
+      - POST   /api/tasks/{id}/undo       → revert to active
+      - POST   /api/tasks/{id}/hard-delete → hard-delete from Firestore
+      - GET    /api/tasks/summary   → {due_today, overdue} counts
+      - POST   /api/task-lists      → create a task list
+      - GET    /api/task-lists      → list all task lists
+      - PATCH  /api/task-lists/{id} → rename a list
+      - DELETE /api/task-lists/{id} → delete a list
+    """
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_post_tasks_returns_201_with_id(self):
+        """POST /api/tasks creates a task and returns the stored dict with id."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_get_tasks_returns_active_only(self):
+        """GET /api/tasks returns only status=active tasks (not completing)."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_get_tasks_by_list_id(self):
+        """GET /api/tasks?list_id=inbox filters by list_id."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_patch_tasks_updates_title(self):
+        """PATCH /api/tasks/{id} with {title: 'New'} updates the task."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_post_tasks_complete_sets_completing_status(self):
+        """POST /api/tasks/{id}/complete sets status=completing."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_post_tasks_undo_reverts_to_active(self):
+        """POST /api/tasks/{id}/undo reverts completing → active."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_post_tasks_hard_delete_removes_doc(self):
+        """POST /api/tasks/{id}/hard-delete hard-removes the Firestore doc."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_get_tasks_summary_returns_due_today_and_overdue(self):
+        """GET /api/tasks/summary returns {due_today: int, overdue: int}."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_tasks_routes_require_hub_session(self):
+        """All /api/tasks/* routes must reject unauthenticated requests with 401."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_post_task_lists_creates_a_list(self):
+        """POST /api/task-lists creates a user-defined task list."""
+
+    @pytest.mark.skip(reason="implemented in 27-02")
+    def test_get_task_lists_returns_all_lists(self):
+        """GET /api/task-lists returns all user-created lists (no inbox doc)."""
+
+
 class TestAuthGoogleCookie:
     """Prove the sign-in endpoint emits the session Set-Cookie header."""
 
