@@ -233,14 +233,26 @@ def _gather_calendar(now: datetime) -> list:
         return []
 
 
-def _gather_ticktick_overdue() -> list:
-    """(b) TickTick overdue (BLOCKER 1 — module function, not a class method)."""
+def _gather_native_overdue() -> list:
+    """(b) Native TaskStore overdue — replaces TickTick gather (D-17 / TASK-05).
+
+    Reads TaskStore.get_overdue(today_iso) and returns a TickTick-compatible
+    list of {"title": str, "due": str} dicts so the situation key
+    'ticktick_overdue' and all downstream triage/compose references need zero
+    changes (Pitfall 3 — exact shape preserved).
+    """
     try:
-        from mcp_tools import ticktick_tool
-        tasks = ticktick_tool.get_today_tasks() or {}
-        return tasks.get("overdue", []) or []
+        from zoneinfo import ZoneInfo
+        from memory.firestore_db import TaskStore
+        today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        store = TaskStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        tasks = store.get_overdue(today_iso) or []
+        return [{"title": t["title"], "due": t.get("due_date", "")} for t in tasks]
     except Exception:
-        logger.warning("autonomous: ticktick gather failed", exc_info=True)
+        logger.warning("autonomous: native overdue gather failed", exc_info=True)
         return []
 
 
@@ -430,7 +442,7 @@ def gather_situation(now: datetime) -> dict:
 
     jobs: dict[str, callable] = {
         "calendar": lambda: _gather_calendar(now),
-        "ticktick_overdue": _gather_ticktick_overdue,
+        "ticktick_overdue": _gather_native_overdue,
         "unread_email_count": _gather_unread_email_count,
         "due_followups": lambda: _gather_due_followups(now, project_id, database),
         "hours_since_contact": lambda: _gather_hours_since_contact(
