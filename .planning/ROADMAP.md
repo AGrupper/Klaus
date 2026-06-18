@@ -71,7 +71,14 @@ visualizing training, nutrition, and sleep data from existing stores.
   4. Completing a task produces a visible micro-animation; a brief undo toast allows recovery — completed tasks are not retained (no completed view)
   5. Klaus manages tasks via native tools in `core/tools.py` (TickTick tools removed); the autonomous Layer-0 gather reads native overdue tasks; due and overdue tasks appear on the glance rail and Today timeline
   6. Amit manually re-creates his open TickTick tasks in `TaskStore`; the migration order is preserved — native tasks verified (UAT) → TickTick tools removed → subscription cancelled
-**Plans**: TBD
+**Plans**: 7 plans (5 waves)
+- [ ] 27-01-PLAN.md — TaskStore + TaskListStore + recurrence engine + Wave 0 tests + composite indexes (TASK-01/02/04/07)
+- [ ] 27-02-PLAN.md — /api/tasks/* + /api/task-lists/* CRUD + summary + Pydantic validation (TASK-01/02/04/07)
+- [ ] 27-03-PLAN.md — Klaus native task tool swap + autonomous overdue gather repoint (TASK-05)
+- [ ] 27-04-PLAN.md — Frontend data layer: chrono-node + parseTaskInput + api/hooks + undoStore (TASK-01/03/04/07)
+- [ ] 27-05-PLAN.md — Tasks page UI: list/row/detail-sheet/recurrence/sort + completion animation + undo (TASK-01/02/04)
+- [ ] 27-06-PLAN.md — Quick-add (FAB + N-key) + Due-today timeline band + glance-rail tasks section (TASK-03/07)
+- [ ] 27-07-PLAN.md — TickTick cutover: UAT gate → manual migration → remove TickTick files (TASK-05/06)
 **UI hint**: yes
 
 ### Phase 28: Habits & Supplements
@@ -116,7 +123,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
-| 27. Tasks | 0/? | Not started | - |
+| 27. Tasks | 0/7 | Planned | - |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |
 | 30. Health Pages | 0/? | Not started | - |
