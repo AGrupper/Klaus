@@ -73,9 +73,9 @@ visualizing training, nutrition, and sleep data from existing stores.
   6. Amit manually re-creates his open TickTick tasks in `TaskStore`; the migration order is preserved — native tasks verified (UAT) → TickTick tools removed → subscription cancelled
 **Plans**: 7 plans (5 waves)
 - [x] 27-01-PLAN.md — TaskStore + TaskListStore + recurrence engine + Wave 0 tests + composite indexes (TASK-01/02/04/07)
-- [ ] 27-02-PLAN.md — /api/tasks/* + /api/task-lists/* CRUD + summary + Pydantic validation (TASK-01/02/04/07)
-- [ ] 27-03-PLAN.md — Klaus native task tool swap + autonomous overdue gather repoint (TASK-05)
-- [ ] 27-04-PLAN.md — Frontend data layer: chrono-node + parseTaskInput + api/hooks + undoStore (TASK-01/03/04/07)
+- [x] 27-02-PLAN.md — /api/tasks/* + /api/task-lists/* CRUD + summary + Pydantic validation (TASK-01/02/04/07)
+- [x] 27-03-PLAN.md — Klaus native task tool swap + autonomous overdue gather repoint (TASK-05)
+- [x] 27-04-PLAN.md — Frontend data layer: chrono-node + parseTaskInput + api/hooks + undoStore (TASK-01/03/04/07)
 - [ ] 27-05-PLAN.md — Tasks page UI: list/row/detail-sheet/recurrence/sort + completion animation + undo (TASK-01/02/04)
 - [ ] 27-06-PLAN.md — Quick-add (FAB + N-key) + Due-today timeline band + glance-rail tasks section (TASK-03/07)
 - [ ] 27-07-PLAN.md — TickTick cutover: UAT gate → manual migration → remove TickTick files (TASK-05/06)
@@ -123,7 +123,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
-| 27. Tasks | 1/7 | In Progress|  |
+| 27. Tasks | 4/7 | In Progress|  |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |
 | 30. Health Pages | 0/? | Not started | - |
