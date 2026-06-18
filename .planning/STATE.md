@@ -4,8 +4,8 @@ milestone: v5.0
 milestone_name: Klaus Hub
 status: executing
 stopped_at: Phase 27 UI-SPEC approved
-last_updated: "2026-06-18T09:11:40.316Z"
-last_activity: 2026-06-18 -- Phase 27 planning complete
+last_updated: "2026-06-18T09:31:29.741Z"
+last_activity: 2026-06-18 -- Phase 27 execution started
 progress:
   total_phases: 5
   completed_phases: 1
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 27
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-18 -- Phase 27 planning complete
+Phase: 27 (tasks) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 27
+Last activity: 2026-06-18 -- Phase 27 execution started
 
 **Progress bar:** [██--------] 20% (1/5 phases)
 

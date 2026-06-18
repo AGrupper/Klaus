@@ -72,7 +72,7 @@ visualizing training, nutrition, and sleep data from existing stores.
   5. Klaus manages tasks via native tools in `core/tools.py` (TickTick tools removed); the autonomous Layer-0 gather reads native overdue tasks; due and overdue tasks appear on the glance rail and Today timeline
   6. Amit manually re-creates his open TickTick tasks in `TaskStore`; the migration order is preserved — native tasks verified (UAT) → TickTick tools removed → subscription cancelled
 **Plans**: 7 plans (5 waves)
-- [ ] 27-01-PLAN.md — TaskStore + TaskListStore + recurrence engine + Wave 0 tests + composite indexes (TASK-01/02/04/07)
+- [x] 27-01-PLAN.md — TaskStore + TaskListStore + recurrence engine + Wave 0 tests + composite indexes (TASK-01/02/04/07)
 - [ ] 27-02-PLAN.md — /api/tasks/* + /api/task-lists/* CRUD + summary + Pydantic validation (TASK-01/02/04/07)
 - [ ] 27-03-PLAN.md — Klaus native task tool swap + autonomous overdue gather repoint (TASK-05)
 - [ ] 27-04-PLAN.md — Frontend data layer: chrono-node + parseTaskInput + api/hooks + undoStore (TASK-01/03/04/07)
@@ -123,7 +123,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
-| 27. Tasks | 0/7 | Planned | - |
+| 27. Tasks | 1/7 | In Progress|  |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |
 | 30. Health Pages | 0/? | Not started | - |
