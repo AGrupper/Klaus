@@ -208,41 +208,134 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["message_id"],
         },
     },
+    # --- Native TaskStore tools (Phase 27 Plan 03 — replaces add_task) ---
     {
-        "name": "add_task",
+        "name": "task_create",
         "description": (
-            "Add a to-do item to TickTick. Tasks appear immediately on all of Amit's "
-            "TickTick devices (phone, web, etc.). Use 'reminder' (YYYY-MM-DDTHH:MM) "
-            "for a time-specific push notification; use 'deadline' (YYYY-MM-DD) for a "
-            "silent hard due date. If both are supplied, reminder takes precedence."
+            "Create a new native task in Klaus's task store. Prefer due_date + due_time "
+            "over reminder strings. list_id defaults to 'inbox' when omitted."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "Task title."},
                 "notes": {"type": "string", "description": "Optional notes or details."},
-                "deadline": {
+                "due_date": {
                     "type": "string",
-                    "description": (
-                        "Optional hard deadline (YYYY-MM-DD). Shows as a due date in "
-                        "TickTick. Date-only — no push notification fires."
-                    ),
+                    "description": "Optional due date (YYYY-MM-DD).",
                 },
-                "reminder": {
+                "due_time": {
                     "type": "string",
-                    "description": (
-                        "Optional scheduled time (YYYY-MM-DDTHH:MM, local time). "
-                        "TickTick will fire a push notification at this exact time. "
-                        "Use for 'remind me at HH:MM' requests."
-                    ),
+                    "description": "Optional due time (HH:MM, 24-hour, local time). Only meaningful when due_date is also set.",
                 },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Optional list of tag strings.",
+                "priority": {
+                    "type": "string",
+                    "enum": ["none", "low", "medium", "high"],
+                    "description": "Task priority level. Defaults to 'none'.",
+                },
+                "list_id": {
+                    "type": "string",
+                    "description": "ID of the task list. Defaults to 'inbox'.",
+                },
+                "recurrence": {
+                    "type": "object",
+                    "description": "Optional recurrence rule. E.g. {\"cadence\": \"daily\", \"anchor\": \"completion\"}.",
                 },
             },
             "required": ["title"],
+        },
+    },
+    {
+        "name": "task_list",
+        "description": (
+            "Query Amit's native tasks by list, date, priority, or overdue flag. "
+            "All filters are optional — omitting all returns all active tasks."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "list_id": {
+                    "type": "string",
+                    "description": "Filter by list ID (e.g. 'inbox').",
+                },
+                "date": {
+                    "type": "string",
+                    "description": "Filter tasks due on this date (YYYY-MM-DD).",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["none", "low", "medium", "high"],
+                    "description": "Filter by priority level.",
+                },
+                "overdue": {
+                    "type": "boolean",
+                    "description": "If true, return only tasks whose due_date is before today.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "task_complete",
+        "description": (
+            "Mark a task as complete. If the task is recurring, this creates the next "
+            "instance automatically and returns its id in 'next_id'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to complete."},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "task_reschedule",
+        "description": "Reschedule a task to a new due date (and optionally a new time).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to reschedule."},
+                "due_date": {
+                    "type": "string",
+                    "description": "New due date (YYYY-MM-DD).",
+                },
+                "due_time": {
+                    "type": "string",
+                    "description": "New due time (HH:MM, 24-hour). Optional.",
+                },
+            },
+            "required": ["task_id", "due_date"],
+        },
+    },
+    {
+        "name": "task_edit",
+        "description": "Edit a task's title, notes, priority, or list. Only provided fields are updated.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to edit."},
+                "title": {"type": "string", "description": "New title."},
+                "notes": {"type": "string", "description": "New notes."},
+                "priority": {
+                    "type": "string",
+                    "enum": ["none", "low", "medium", "high"],
+                    "description": "New priority level.",
+                },
+                "list_id": {"type": "string", "description": "Move to this list ID."},
+            },
+            "required": ["task_id"],
+        },
+    },
+    {
+        "name": "task_delete",
+        "description": "Permanently delete a task. This cannot be undone.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "The task ID to delete."},
+            },
+            "required": ["task_id"],
         },
     },
     {
@@ -1354,14 +1447,120 @@ def _handle_get_email(message_id: str) -> str:
     return json.dumps(result)
 
 
-def _handle_add_task(title: str, notes: str = "", deadline: str | None = None,
-                     reminder: str | None = None,
-                     tags: list[str] | None = None) -> str:
-    """Delegate to ticktick_tool.add_task and serialise the result."""
-    result = _ticktick_add_task(
-        title=title, notes=notes or None, deadline=deadline, reminder=reminder, tags=tags,
+# --- Native TaskStore handlers (Phase 27 Plan 03 — replaces _handle_add_task) ---
+
+def _get_task_store():
+    """Return a TaskStore instance using env-driven project/database config."""
+    from memory.firestore_db import TaskStore
+    return TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
+
+
+def _task_today_iso() -> str:
+    """Return today's date in Asia/Jerusalem as YYYY-MM-DD."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+
+def _handle_task_create(
+    title: str,
+    notes: str | None = None,
+    due_date: str | None = None,
+    due_time: str | None = None,
+    priority: str | None = None,
+    list_id: str | None = None,
+    recurrence: dict | None = None,
+) -> str:
+    """Create a new task in TaskStore and return the created document."""
+    store = _get_task_store()
+    kwargs: dict = {"title": title}
+    if notes is not None:
+        kwargs["notes"] = notes
+    if due_date is not None:
+        kwargs["due_date"] = due_date
+    if due_time is not None:
+        kwargs["due_time"] = due_time
+    if priority is not None:
+        kwargs["priority"] = priority
+    if list_id is not None:
+        kwargs["list_id"] = list_id
+    if recurrence is not None:
+        kwargs["recurrence"] = recurrence
+    result = store.create(**kwargs)
     return json.dumps(result)
+
+
+def _handle_task_list(
+    list_id: str | None = None,
+    date: str | None = None,
+    priority: str | None = None,
+    overdue: bool | None = None,
+) -> str:
+    """Query tasks from TaskStore with optional filters."""
+    store = _get_task_store()
+    if overdue:
+        tasks = store.get_overdue(_task_today_iso())
+    elif date:
+        # list all tasks then filter by due_date in Python (simple approach)
+        all_tasks = store.list(list_id=list_id)
+        tasks = [t for t in all_tasks if t.get("due_date") == date]
+    else:
+        tasks = store.list(list_id=list_id)
+        if priority:
+            tasks = [t for t in tasks if t.get("priority") == priority]
+    return json.dumps(tasks)
+
+
+def _handle_task_complete(task_id: str) -> str:
+    """Mark a task complete. Generates next recurring instance if applicable."""
+    store = _get_task_store()
+    result = store.complete(task_id, completed_on_iso=_task_today_iso())
+    return json.dumps(result)
+
+
+def _handle_task_reschedule(
+    task_id: str,
+    due_date: str,
+    due_time: str | None = None,
+) -> str:
+    """Update due_date (and optionally due_time) on a task."""
+    store = _get_task_store()
+    updates: dict = {"due_date": due_date}
+    if due_time is not None:
+        updates["due_time"] = due_time
+    result = store.update(task_id, **updates)
+    return json.dumps(result)
+
+
+def _handle_task_edit(
+    task_id: str,
+    title: str | None = None,
+    notes: str | None = None,
+    priority: str | None = None,
+    list_id: str | None = None,
+) -> str:
+    """Edit title, notes, priority, and/or list of a task."""
+    store = _get_task_store()
+    updates: dict = {}
+    if title is not None:
+        updates["title"] = title
+    if notes is not None:
+        updates["notes"] = notes
+    if priority is not None:
+        updates["priority"] = priority
+    if list_id is not None:
+        updates["list_id"] = list_id
+    result = store.update(task_id, **updates)
+    return json.dumps(result)
+
+
+def _handle_task_delete(task_id: str) -> str:
+    """Permanently delete a task."""
+    store = _get_task_store()
+    store.delete(task_id)
+    return json.dumps({"deleted": task_id})
 
 
 def _handle_fetch_weather(location: str = "Tel Aviv") -> str:
@@ -2255,7 +2454,13 @@ _HANDLERS: dict[str, object] = {
     "delete_calendar_event":  lambda args: _handle_delete_calendar_event(**args),
     "list_unread_emails":    lambda args: _handle_list_unread_emails(**args),
     "get_email":             lambda args: _handle_get_email(**args),
-    "add_task":              lambda args: _handle_add_task(**args),
+    # Phase 27 Plan 03 — native TaskStore tools (replaces add_task)
+    "task_create":           lambda args: _handle_task_create(**args),
+    "task_list":             lambda args: _handle_task_list(**args),
+    "task_complete":         lambda args: _handle_task_complete(**args),
+    "task_reschedule":       lambda args: _handle_task_reschedule(**args),
+    "task_edit":             lambda args: _handle_task_edit(**args),
+    "task_delete":           lambda args: _handle_task_delete(**args),
     "remember":              lambda args: _handle_remember(**args),
     "recall":                lambda args: _handle_recall(**args),
     "search_chat_history":   lambda args: _handle_search_chat_history(**args),
