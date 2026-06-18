@@ -850,6 +850,56 @@ class TestPhase24CoachingGuideFuzzyHardening:
 # --------------------------------------------------------------------------- #
 
 
+# ---------------------------------------------------------------------------
+# TestNativeTaskTools — Phase 27 Wave 0 scaffold (implemented in 27-03)
+# ---------------------------------------------------------------------------
+
+
+class TestNativeTaskTools:
+    """Wave 0 scaffold for native task tool registration in core/tools.py.
+
+    All tests are skip-marked — implemented in plan 27-03.
+    Covers TASK-05: native task schemas registered; add_task schema removed.
+    """
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_create_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_create'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_list_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_list'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_complete_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_complete'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_reschedule_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_reschedule'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_edit_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_edit'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_task_delete_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'task_delete'."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_add_task_schema_removed_from_tool_schemas(self):
+        """TOOL_SCHEMAS must NOT contain 'add_task' after the TickTick tool swap."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_all_six_native_task_handlers_registered_in_handlers(self):
+        """_HANDLERS must have keys: task_create, task_list, task_complete,
+        task_reschedule, task_edit, task_delete."""
+
+    @pytest.mark.skip(reason="implemented in 27-03")
+    def test_add_task_handler_removed_from_handlers(self):
+        """_HANDLERS must NOT contain 'add_task' after the tool swap."""
+
+
 class TestFetchRecentMealsSlotTimeNote:
     """Lifesum stamps HealthKit samples with canonical meal-slot times
     (breakfast=08:00, lunch=12:00, dinner=20:00) — NOT the actual eating
