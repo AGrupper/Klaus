@@ -2403,6 +2403,100 @@ class BenchmarkStore:
             return []
 
 
+# ---------------------------------------------------------------------------
+# Recurrence engine (Phase 27 — TASK-02 / D-05 / D-06)
+# ---------------------------------------------------------------------------
+
+from zoneinfo import ZoneInfo as _ZoneInfo
+
+_TZ = _ZoneInfo("Asia/Jerusalem")
+
+
+def _advance_once(base, rule: dict):
+    """Advance *base* (a ``datetime.date``) by exactly one cadence step.
+
+    Used by ``_next_due_date`` so the roll-forward loop can call this
+    repeatedly without any D-06 guard inside it.  The D-06 guard lives
+    in ``_next_due_date`` instead.
+
+    cadence values: "daily" | "weekdays" | "weekly" | "monthly" | "every_n_days"
+    """
+    from datetime import date as _date, timedelta
+    import calendar
+
+    cadence = rule.get("cadence", "daily")
+
+    if cadence == "daily":
+        return base + timedelta(days=1)
+
+    elif cadence == "weekdays":
+        candidate = base + timedelta(days=1)
+        while candidate.weekday() >= 5:  # 5=Saturday, 6=Sunday
+            candidate += timedelta(days=1)
+        return candidate
+
+    elif cadence == "weekly":
+        return base + timedelta(weeks=1)
+
+    elif cadence == "monthly":
+        # Month-end clamping: Jan 31 → Feb 28 (or Feb 29 in a leap year)
+        year = base.year + (base.month // 12)
+        month = (base.month % 12) + 1
+        max_day = calendar.monthrange(year, month)[1]
+        return base.replace(year=year, month=month, day=min(base.day, max_day))
+
+    elif cadence == "every_n_days":
+        n = int(rule.get("every_n_days") or 1)
+        return base + timedelta(days=n)
+
+    else:
+        # Unknown cadence — default to daily so we never return the same date
+        return base + timedelta(days=1)
+
+
+def _next_due_date(current_due, completed_on, rule: dict):
+    """Compute the next due date for a recurring task.
+
+    Args:
+        current_due:  The task's current ``due_date`` as a ``datetime.date``
+                      object (or YYYY-MM-DD string — auto-converted).
+        completed_on: The date the task was completed (Asia/Jerusalem) as a
+                      ``datetime.date`` object or YYYY-MM-DD string.
+        rule:         The recurrence-rule dict:
+                      ``{"cadence": ..., "every_n_days": int|null, "anchor": ...}``
+
+    Returns:
+        Next due ``datetime.date``.  Always strictly > *completed_on* (D-06).
+
+    D-06 (roll-forward):  A schedule-anchored ``candidate`` that lands on or
+    before *completed_on* is advanced repeatedly (a real loop — not a single
+    step) until it clears *completed_on*.  This handles tasks several cadences
+    in the past (e.g. a weekly task last set for May 1 completed June 18
+    requires multiple weekly advances to land after June 18).
+    """
+    from datetime import date as _date
+
+    # Coerce strings to date objects
+    if isinstance(current_due, str):
+        current_due = _date.fromisoformat(current_due)
+    if isinstance(completed_on, str):
+        completed_on = _date.fromisoformat(completed_on)
+
+    anchor = rule.get("anchor", "schedule")
+    base = current_due if anchor == "schedule" else completed_on
+
+    candidate = _advance_once(base, rule)
+
+    # D-06: schedule-anchored next that still lands on/before completed_on
+    # must roll forward until strictly future.  This MUST be a real loop —
+    # a task many cadences behind needs multiple iterations.
+    if anchor == "schedule":
+        while candidate <= completed_on:
+            candidate = _advance_once(candidate, rule)
+
+    return candidate
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
