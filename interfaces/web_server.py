@@ -1722,6 +1722,382 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
 
 
 # --------------------------------------------------------------------------- #
+# Task + Task-list routes — /api/tasks/* and /api/task-lists/*                #
+# Plan 27-02, TASK-01 / TASK-07                                               #
+#                                                                             #
+# All routes are behind Depends(require_hub_session) (T-27-AC).              #
+# All sync Firestore calls run via loop.run_in_executor (Pitfall 2).         #
+# All Firestore output passes through _jsonsafe_doc (Pitfall 4).             #
+# Place BEFORE the SPA mount so these routes are reachable (Pitfall 1).      #
+# --------------------------------------------------------------------------- #
+
+from pydantic import BaseModel, Field  # noqa: E402 (lazy placement — keeps cold-start fast)
+from typing import Literal  # noqa: E402
+
+
+class CreateTaskInput(BaseModel):
+    """Pydantic model for POST /api/tasks bodies (ASVS V5 / T-27-IV).
+
+    Field constraints mirror the RESEARCH § Security Domain definition:
+      - title: 1..500 chars (non-empty, bounded)
+      - notes: optional ≤10 000 chars
+      - due_date: YYYY-MM-DD or None
+      - due_time: HH:MM (24h) or None
+      - priority: one of the four legal values
+      - list_id: free string or None (defaults to "inbox" in the route)
+    """
+
+    title: str = Field(..., min_length=1, max_length=500)
+    notes: str | None = Field(None, max_length=10_000)
+    due_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    due_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    priority: Literal["none", "low", "medium", "high"] = "none"
+    list_id: str | None = None  # None → coerced to "inbox" in the route
+
+
+class UpdateTaskInput(BaseModel):
+    """Pydantic model for PATCH /api/tasks/{id} bodies (all fields optional)."""
+
+    title: str | None = Field(None, min_length=1, max_length=500)
+    notes: str | None = Field(None, max_length=10_000)
+    due_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    due_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    priority: Literal["none", "low", "medium", "high"] | None = None
+    list_id: str | None = None
+
+
+class CreateListInput(BaseModel):
+    """Pydantic model for POST /api/task-lists bodies."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+# ------------------------------------------------------------------
+# /api/tasks routes
+# ------------------------------------------------------------------
+
+@app.post("/api/tasks")
+async def api_create_task(
+    body: CreateTaskInput,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Create a new task in TaskStore.
+
+    POST /api/tasks with a CreateTaskInput body.  list_id defaults to "inbox"
+    when None is supplied (Inbox is implicit — no Firestore doc exists for it).
+
+    Returns:
+        JSONResponse: The created task dict (id, title, status, …).
+    Raises:
+        HTTPException 401: No valid session cookie.
+        HTTPException 422: Pydantic validation failure (T-27-IV).
+    """
+    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    task_dict = body.model_dump(exclude_none=False)
+    # Coerce None list_id → "inbox" (D-07 from RESEARCH: Inbox is implicit)
+    if not task_dict.get("list_id"):
+        task_dict["list_id"] = "inbox"
+
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    task = await loop.run_in_executor(None, store.create, task_dict)
+    return JSONResponse(content=_jsonsafe_doc(task))
+
+
+@app.get("/api/tasks/summary")
+async def api_tasks_summary(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return due-today + overdue counts in Asia/Jerusalem.
+
+    GET /api/tasks/summary — TASK-07.
+
+    WHY this route is declared before /api/tasks: FastAPI registers routes in
+    declaration order.  The literal path /api/tasks/summary must match before
+    the parametric /api/tasks/{task_id} would shadow it.
+
+    Returns:
+        JSONResponse: {"due_today": int, "overdue": int}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    summary = await loop.run_in_executor(None, store.get_summary, today_iso)
+    return JSONResponse(content=_jsonsafe_doc(summary))
+
+
+@app.get("/api/tasks")
+async def api_list_tasks(
+    list_id: str | None = None,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """List active tasks, optionally filtered by list_id.
+
+    GET /api/tasks?list_id=<id> — TASK-01.
+
+    Returns:
+        JSONResponse: {"tasks": [...]}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    tasks = await loop.run_in_executor(None, lambda: store.list(list_id=list_id))
+    return JSONResponse(content=_jsonsafe_doc({"tasks": tasks}))
+
+
+@app.patch("/api/tasks/{task_id}")
+async def api_update_task(
+    task_id: str,
+    body: UpdateTaskInput,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Partially update a task.
+
+    PATCH /api/tasks/{task_id} — TASK-01.
+
+    Returns:
+        JSONResponse: The updated task dict.
+    Raises:
+        HTTPException 401: No valid session cookie.
+        HTTPException 422: Pydantic validation failure (T-27-IV).
+    """
+    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+
+    # Only pass fields that were explicitly provided (exclude unset so None
+    # values don't overwrite set fields that weren't sent in this PATCH).
+    patch = body.model_dump(exclude_unset=True)
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    updated = await loop.run_in_executor(None, store.update, task_id, patch)
+    return JSONResponse(content=_jsonsafe_doc(updated))
+
+
+@app.post("/api/tasks/{task_id}/complete")
+async def api_complete_task(
+    task_id: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Soft-mark a task as completing and generate the next recurring instance.
+
+    POST /api/tasks/{task_id}/complete — D-07.
+
+    Returns:
+        JSONResponse: {"next_id": str | None}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+
+    completed_on_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    result = await loop.run_in_executor(None, store.complete, task_id, completed_on_iso)
+    return JSONResponse(content=_jsonsafe_doc(result))
+
+
+@app.post("/api/tasks/{task_id}/undo")
+async def api_undo_task(
+    task_id: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Revert a completing task back to active.
+
+    POST /api/tasks/{task_id}/undo — D-07.
+
+    Returns:
+        JSONResponse: {"ok": True}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskStore  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    await loop.run_in_executor(None, store.undo_complete, task_id)
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/tasks/{task_id}/hard-delete")
+async def api_hard_delete_task(
+    task_id: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Hard-delete a task from Firestore — only allowed when status='completing'.
+
+    POST /api/tasks/{task_id}/hard-delete — T-27-REP.
+
+    A replayed or forged hard-delete of an active task is rejected with 409:
+    the task must first go through the soft-complete flow so the UI always has
+    an undo window before the doc is permanently removed.
+
+    Returns:
+        JSONResponse: {"ok": True}
+    Raises:
+        HTTPException 401: No valid session cookie.
+        HTTPException 409: Task is not in 'completing' state (T-27-REP).
+    """
+    from memory.firestore_db import TaskStore  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+    task = await loop.run_in_executor(None, store.get, task_id)
+    if task is None or task.get("status") != "completing":
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "task not in completing state"},
+        )
+
+    await loop.run_in_executor(None, store.delete, task_id)
+    return JSONResponse(content={"ok": True})
+
+
+# ------------------------------------------------------------------
+# /api/task-lists routes
+# ------------------------------------------------------------------
+
+@app.post("/api/task-lists")
+async def api_create_task_list(
+    body: CreateListInput,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Create a user-defined task list.
+
+    POST /api/task-lists — TASK-02.
+
+    Returns:
+        JSONResponse: The created list dict (id, name).
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskListStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    created = await loop.run_in_executor(None, store.create, body.name)
+    return JSONResponse(content=_jsonsafe_doc(created))
+
+
+@app.get("/api/task-lists")
+async def api_list_task_lists(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """List all user-defined task lists, with the implicit Inbox prepended.
+
+    GET /api/task-lists — TASK-02.
+
+    WHY Inbox is prepended: the "inbox" list_id is implicit (no Firestore doc);
+    TaskListStore.list() never returns it.  The route always inserts it at
+    position 0 so the frontend can render a stable "Inbox" entry without
+    special-casing an empty-document fallback.
+
+    Returns:
+        JSONResponse: {"lists": [{"id": "inbox", "name": "Inbox"}, ...user lists]}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskListStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    user_lists = await loop.run_in_executor(None, store.list)
+    # Prepend implicit Inbox (decision from 27-01: Inbox has no Firestore doc)
+    lists = [{"id": "inbox", "name": "Inbox"}, *user_lists]
+    return JSONResponse(content=_jsonsafe_doc({"lists": lists}))
+
+
+@app.patch("/api/task-lists/{list_id}")
+async def api_rename_task_list(
+    list_id: str,
+    body: CreateListInput,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Rename a user-defined task list.
+
+    PATCH /api/task-lists/{list_id} — TASK-02.
+
+    Returns:
+        JSONResponse: The updated list dict (id, name).
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskListStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    updated = await loop.run_in_executor(None, store.rename, list_id, body.name)
+    return JSONResponse(content=_jsonsafe_doc(updated))
+
+
+@app.delete("/api/task-lists/{list_id}")
+async def api_delete_task_list(
+    list_id: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Delete a user-defined task list.
+
+    DELETE /api/task-lists/{list_id} — TASK-02.
+
+    Tasks previously in the deleted list retain their list_id.  They will
+    appear under "Unknown list" in the UI until reassigned.  A future plan may
+    add a reassign-to-inbox sweep; for now the behaviour matches TickTick's
+    own delete-list semantics (tasks persist under their prior list_id).
+
+    Returns:
+        JSONResponse: {"ok": True}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskListStore  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskListStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    await loop.run_in_executor(None, store.delete, list_id)
+    return JSONResponse(content={"ok": True})
+
+
+# --------------------------------------------------------------------------- #
 # SPA Static Files — MUST be the absolute last statement in this file.        #
 # ANY route registered after app.mount("/", ...) is unreachable because       #
 # Starlette route matching is first-match and Mount("/") matches everything.  #
