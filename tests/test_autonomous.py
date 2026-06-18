@@ -1143,48 +1143,92 @@ class TestPhase19Gather:
 
 
 class TestNativeOverdueGather:
-    """Wave 0 scaffold for the native task overdue gather in core/autonomous.py.
+    """Native task overdue gather in core/autonomous.py.
 
-    All tests are skip-marked — implemented in plan 27-03.
     Covers TASK-05 / D-17: _gather_native_overdue replaces _gather_ticktick_overdue
     while keeping the same return shape [{title, due}, ...].
     """
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_gather_native_overdue_exists_in_autonomous(self):
         """core/autonomous.py must define _gather_native_overdue (not _gather_ticktick_overdue)."""
+        import core.autonomous as auto
+        assert hasattr(auto, "_gather_native_overdue"), (
+            "_gather_native_overdue not found in core.autonomous"
+        )
+        assert not hasattr(auto, "_gather_ticktick_overdue"), (
+            "_gather_ticktick_overdue still present — must be renamed"
+        )
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_gather_native_overdue_returns_list_of_title_due_dicts(self):
         """_gather_native_overdue() must return [{title: str, due: str}, ...] shape."""
+        from unittest.mock import MagicMock, patch
+        import core.autonomous as auto
 
-    @pytest.mark.skip(reason="implemented in 27-03")
+        fake_store = MagicMock()
+        fake_store.get_overdue.return_value = [
+            {"task_id": "abc", "title": "Buy milk", "due_date": "2026-06-17",
+             "status": "active", "list_id": "inbox"},
+        ]
+        with patch("memory.firestore_db.TaskStore", return_value=fake_store):
+            result = auto._gather_native_overdue()
+
+        assert isinstance(result, list), "must return a list"
+        assert len(result) == 1
+        item = result[0]
+        assert set(item.keys()) == {"title", "due"}, (
+            f"must have exactly {{title, due}} keys, got {set(item.keys())}"
+        )
+        assert item["title"] == "Buy milk"
+        assert item["due"] == "2026-06-17"
+
     def test_gather_native_overdue_reads_from_task_store_not_ticktick(self):
-        """_gather_native_overdue imports from memory.firestore_db.TaskStore,
+        """_gather_native_overdue source must import from memory.firestore_db.TaskStore,
         NOT from mcp_tools.ticktick_tool."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        # The function body must reference TaskStore
+        assert "TaskStore" in src, "core/autonomous.py must import TaskStore"
+        # And _gather_native_overdue must not call ticktick_tool.get_today_tasks
+        func_start = src.find("def _gather_native_overdue")
+        assert func_start != -1, "_gather_native_overdue not found in source"
+        # Find end of function (next def or class at same indentation)
+        func_body = src[func_start:func_start + 800]
+        assert "ticktick_tool" not in func_body, (
+            "_gather_native_overdue body must not reference ticktick_tool"
+        )
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_gather_native_overdue_returns_empty_list_on_exception(self):
         """_gather_native_overdue must never raise — returns [] on any error."""
+        from unittest.mock import patch, MagicMock
+        import core.autonomous as auto
+
+        with patch("memory.firestore_db.TaskStore", side_effect=Exception("boom")):
+            result = auto._gather_native_overdue()
+
+        assert result == [], f"must return [] on exception, got {result!r}"
 
 
 class TestJobsDict:
-    """Wave 0 scaffold for the jobs dict key name in core/autonomous.py.
+    """Jobs dict key name in core/autonomous.py.
 
-    All tests are skip-marked — implemented in plan 27-03.
     Covers TASK-05 / D-17: situation key 'ticktick_overdue' MUST be preserved
     (zero prompt changes) even after the data source swap.
     """
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_ticktick_overdue_key_present_in_jobs_dict(self):
-        """The jobs dict in core/autonomous.py must have key 'ticktick_overdue'
-        pointing to _gather_native_overdue (key name preserved per D-17)."""
+        """The jobs dict source must still contain the key 'ticktick_overdue' (D-17)."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        assert '"ticktick_overdue"' in src, (
+            'The string "ticktick_overdue" must remain in core/autonomous.py (D-17)'
+        )
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_jobs_dict_ticktick_overdue_value_is_gather_native_overdue(self):
-        """jobs['ticktick_overdue'] must reference _gather_native_overdue,
-        not the old _gather_ticktick_overdue function."""
+        """The 'ticktick_overdue' key must map to _gather_native_overdue in source."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        # The jobs dict entry must reference _gather_native_overdue
+        assert '"ticktick_overdue": _gather_native_overdue' in src, (
+            '"ticktick_overdue" entry must point to _gather_native_overdue, '
+            "not the old _gather_ticktick_overdue"
+        )
 
 
 class TestPhase19MealAuditWiring:
