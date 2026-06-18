@@ -856,48 +856,61 @@ class TestPhase24CoachingGuideFuzzyHardening:
 
 
 class TestNativeTaskTools:
-    """Wave 0 scaffold for native task tool registration in core/tools.py.
+    """Native task tool registration in core/tools.py.
 
-    All tests are skip-marked — implemented in plan 27-03.
     Covers TASK-05: native task schemas registered; add_task schema removed.
     """
 
-    @pytest.mark.skip(reason="implemented in 27-03")
+    def _schema_names(self):
+        from core.tools import TOOL_SCHEMAS
+        return [s["name"] for s in TOOL_SCHEMAS]
+
     def test_task_create_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_create'."""
+        assert "task_create" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_task_list_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_list'."""
+        assert "task_list" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_task_complete_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_complete'."""
+        assert "task_complete" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_task_reschedule_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_reschedule'."""
+        assert "task_reschedule" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_task_edit_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_edit'."""
+        assert "task_edit" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_task_delete_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_delete'."""
+        assert "task_delete" in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_add_task_schema_removed_from_tool_schemas(self):
         """TOOL_SCHEMAS must NOT contain 'add_task' after the TickTick tool swap."""
+        assert "add_task" not in self._schema_names()
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_all_six_native_task_handlers_registered_in_handlers(self):
         """_HANDLERS must have keys: task_create, task_list, task_complete,
         task_reschedule, task_edit, task_delete."""
+        from core.tools import _HANDLERS
+        for name in ("task_create", "task_list", "task_complete",
+                     "task_reschedule", "task_edit", "task_delete"):
+            assert name in _HANDLERS, f"_HANDLERS missing '{name}'"
 
-    @pytest.mark.skip(reason="implemented in 27-03")
     def test_add_task_handler_removed_from_handlers(self):
         """_HANDLERS must NOT contain 'add_task' after the tool swap."""
+        from core.tools import _HANDLERS
+        assert "add_task" not in _HANDLERS
+
+    def test_import_core_tools_no_nameerror(self):
+        """Importing core.tools must not raise NameError (dead _ticktick_add_task removed)."""
+        import importlib
+        import core.tools
+        importlib.reload(core.tools)  # force re-evaluation to catch runtime NameErrors
 
 
 class TestFetchRecentMealsSlotTimeNote:
