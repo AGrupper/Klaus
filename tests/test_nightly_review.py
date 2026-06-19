@@ -58,6 +58,84 @@ def test_plain_text_fallback_empty_tomorrow():
     assert "Nothing on the calendar." in txt
 
 
+def test_plain_text_fallback_includes_planned_training():
+    from core.nightly_review import _plain_text_fallback
+    tomorrow = {
+        "calendar": [],
+        "planned_workouts": {
+            "weekday": "Monday",
+            "am": {"label": "Easy Run", "modality": "run"},
+            "pm": {"label": "Lower Body A", "modality": "strength"},
+        },
+    }
+    txt = _plain_text_fallback(None, tomorrow)
+    assert "training" in txt.lower()
+    assert "Easy Run" in txt
+    assert "Lower Body A" in txt
+
+
+# ---------------------------------------------------------------------------
+# Planned-workout gather — tomorrow's weekly_split sessions
+# ---------------------------------------------------------------------------
+
+def _profile_stores_mock(weekly_split: dict):
+    """Patch target for core.tools._block_stores → (_, _, profiles) with .load()."""
+    profiles = MagicMock()
+    profiles.load.return_value = {"weekly_split": weekly_split}
+    return (MagicMock(), MagicMock(), profiles)
+
+
+def test_planned_workouts_returns_tomorrow_split():
+    from core.nightly_review import _planned_workouts_for
+    split = {
+        "Monday": {
+            "am": {"label": "Easy Run", "modality": "run", "priority": "A"},
+            "pm": {"label": "Lower Body A", "modality": "strength", "priority": "A"},
+        },
+    }
+    with patch("core.tools._block_stores", return_value=_profile_stores_mock(split)):
+        # 2026-06-15 is a Monday
+        out = _planned_workouts_for("2026-06-15")
+    assert out["weekday"] == "Monday"
+    assert out["am"]["label"] == "Easy Run"
+    assert out["pm"]["label"] == "Lower Body A"
+
+
+def test_planned_workouts_case_insensitive_day_key():
+    from core.nightly_review import _planned_workouts_for
+    split = {"monday": {"am": {"label": "Easy Run"}, "pm": {"label": "Lower A"}}}
+    with patch("core.tools._block_stores", return_value=_profile_stores_mock(split)):
+        out = _planned_workouts_for("2026-06-15")  # Monday
+    assert out is not None
+    assert out["am"]["label"] == "Easy Run"
+
+
+def test_planned_workouts_absent_returns_none():
+    from core.nightly_review import _planned_workouts_for
+    with patch("core.tools._block_stores", return_value=_profile_stores_mock({})):
+        out = _planned_workouts_for("2026-06-15")
+    assert out is None
+
+
+def test_planned_workouts_swallows_errors():
+    from core.nightly_review import _planned_workouts_for
+    with patch("core.tools._block_stores", side_effect=RuntimeError("firestore down")):
+        out = _planned_workouts_for("2026-06-15")
+    assert out is None
+
+
+def test_gather_tomorrow_includes_planned_workouts():
+    """_gather_tomorrow wires _planned_workouts_for into its output under planned_workouts."""
+    import core.nightly_review as nr
+    split_out = {"weekday": "Monday", "am": {"label": "Easy Run"}, "pm": {"label": "Lower A"}}
+    with patch.object(nr, "_planned_workouts_for", return_value=split_out), \
+         patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")), \
+         patch("mcp_tools.ticktick_tool.get_today_tasks", side_effect=RuntimeError("skip")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
+        data = nr._gather_tomorrow("2026-06-15")
+    assert data["planned_workouts"] == split_out
+
+
 # ---------------------------------------------------------------------------
 # run_nightly — idempotency + send/mark-after-build
 # ---------------------------------------------------------------------------

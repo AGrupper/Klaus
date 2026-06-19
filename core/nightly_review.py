@@ -127,9 +127,49 @@ def _ensure_reflection(target_date: str) -> dict | None:
 # Tomorrow gather (schedule, tasks, weather, recovery)               #
 # ------------------------------------------------------------------ #
 
+def _planned_workouts_for(tomorrow_iso: str) -> dict | None:
+    """Tomorrow's planned AM/PM sessions from the training program's weekly_split.
+
+    Reads the users/amit profile via the same store path as the get_plan tool
+    (core.tools._block_stores → UserProfileStore.load), keys into weekly_split by
+    tomorrow's weekday name (case-insensitive). Returns
+    {"weekday", "am": {...}, "pm": {...}} or None when there's no entry. The raw
+    AM/PM session data is passed through untouched — the nightly prompt decides which
+    are real workouts vs. rest/mobility slots (generative-coaching philosophy).
+    """
+    try:
+        from core.tools import _block_stores
+        _blocks, _benchmarks, profiles = _block_stores()
+        weekly_split = (profiles.load() or {}).get("weekly_split") or {}
+        if not weekly_split:
+            return None
+        weekday = datetime.fromisoformat(tomorrow_iso).strftime("%A")  # e.g. "Monday"
+        slots = weekly_split.get(weekday)
+        if slots is None:  # case-insensitive fallback for lowercase/odd keys
+            slots = next(
+                (v for k, v in weekly_split.items() if str(k).lower() == weekday.lower()),
+                None,
+            )
+        if not isinstance(slots, dict):
+            return None
+        return {
+            "weekday": weekday,
+            "am": slots.get("am") or {},
+            "pm": slots.get("pm") or {},
+        }
+    except Exception:
+        logger.warning("nightly_review: planned-workout lookup failed", exc_info=True)
+        return None
+
+
 def _gather_tomorrow(tomorrow_iso: str) -> dict:
     """Gather tomorrow-facing context; each source isolated, silent-omit on failure."""
     data: dict = {"tomorrow_date": tomorrow_iso}
+
+    # Tomorrow's planned workouts from the training program (weekly_split)
+    planned = _planned_workouts_for(tomorrow_iso)
+    if planned:
+        data["planned_workouts"] = planned
 
     # Tomorrow's calendar
     try:
@@ -244,6 +284,14 @@ def _plain_text_fallback(journal: dict | None, tomorrow: dict) -> str:
     else:
         lines.append("Nothing on the calendar.")
 
+    planned = tomorrow.get("planned_workouts") or {}
+    if planned:
+        am = (planned.get("am") or {}).get("label")
+        pm = (planned.get("pm") or {}).get("label")
+        sessions = [s for s in (am, pm) if s and s != "—"]
+        if sessions:
+            lines += ["", f"Tomorrow's training: {' / '.join(sessions)}."]
+
     tasks = tomorrow.get("tasks") or {}
     overdue = tasks.get("overdue") or []
     if overdue:
@@ -267,6 +315,7 @@ def _build_nightly(target_date: str) -> dict:
         "tomorrow_events": tomorrow.get("calendar") or [],
         "tomorrow_tasks_overdue": (tomorrow.get("tasks") or {}).get("overdue", []),
         "tomorrow_tasks_today": (tomorrow.get("tasks") or {}).get("today", []),
+        "planned_workouts": tomorrow.get("planned_workouts") or {},
     }
     return {"text": text, "structured": structured}
 
