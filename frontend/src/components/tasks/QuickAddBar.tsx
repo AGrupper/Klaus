@@ -47,6 +47,12 @@ interface QuickAddBarProps {
   onSubmit?: () => void
   /** Whether to auto-focus the input on mount. Defaults to true. */
   autoFocus?: boolean
+  /**
+   * Persistent mode (desktop top bar): the bar is always mounted, so blur and
+   * Escape do NOT dismiss it (Escape just blurs the input). Defaults to false
+   * (phone bottom-sheet mode, where blur/Escape close the sheet).
+   */
+  persistent?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -83,13 +89,15 @@ export function QuickAddBar({
   onClose,
   onSubmit,
   autoFocus = true,
+  persistent = false,
 }: QuickAddBarProps) {
   const [value, setValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const { data: userLists = [] } = useTaskLists()
-  // All lists including implicit Inbox
-  const allLists = [{ id: 'inbox', name: 'Inbox' }, ...userLists]
+  // GET /api/task-lists already prepends the implicit Inbox; use it directly.
+  const allLists = userLists
+  const defaultListName = allLists.find((l) => l.id === defaultListId)?.name ?? 'Inbox'
 
   // Parse the current input value for live chip display
   const parsed = parseTaskInput(value, new Date())
@@ -129,7 +137,11 @@ export function QuickAddBar({
       e.preventDefault()
       handleSubmit()
     } else if (e.key === 'Escape') {
-      onClose?.()
+      if (persistent) {
+        inputRef.current?.blur()
+      } else {
+        onClose?.()
+      }
     }
   }
 
@@ -160,7 +172,11 @@ export function QuickAddBar({
     <div
       style={{
         backgroundColor: secondary,
-        borderTop: `1px solid ${border}`,
+        // Persistent desktop bar sits at the TOP of the column → border below it.
+        // Phone bottom-sheet sits at the BOTTOM → border above it.
+        ...(persistent
+          ? { borderBottom: `1px solid ${border}` }
+          : { borderTop: `1px solid ${border}` }),
         padding: '12px 16px',
         display: 'flex',
         flexDirection: 'column',
@@ -182,6 +198,8 @@ export function QuickAddBar({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           onBlur={(e) => {
+            // Persistent (desktop) bar never auto-dismisses on blur.
+            if (persistent) return
             // Dismiss if focus moves completely outside the quick-add area
             // (not to the submit button or chips within)
             const relatedTarget = e.relatedTarget as HTMLElement | null
@@ -189,7 +207,7 @@ export function QuickAddBar({
               onClose?.()
             }
           }}
-          placeholder="Add a task…  #list  !priority  date"
+          placeholder={`Add a task to "${defaultListName}"…`}
           aria-label="Quick add task"
           style={{
             flex: 1,

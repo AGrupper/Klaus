@@ -15,10 +15,10 @@
  *   - detailTask: which task is open in TaskDetailSheet (null = create mode)
  *   - detailOpen: whether the sheet is open
  *   - listPickerOpen: phone list picker bottom sheet
- *   - quickAddOpen: desktop inline quick-add bar (triggered by N key)
  *
- * N-key shortcut (desktop, D-10): pressing N when not focused in an input/textarea
- * opens QuickAddBar inline above the TaskListView. Escape or blur dismisses it.
+ * Quick-add: desktop shows a persistent QuickAddBar at the top of the task
+ * column (always visible). The N-key shortcut (D-10) — pressed when not focused
+ * in an input/textarea — focuses that bar. Phone uses the FAB → bottom sheet.
  *
  * UndoToast is rendered here (global, fixed position) so it's always visible
  * regardless of scroll position.
@@ -57,8 +57,6 @@ export function TasksPage() {
   const [detailTask, setDetailTask] = useState<Task | null>(null)
   const [detailOpen, setDetailOpen] = useState(false)
   const [listPickerOpen, setListPickerOpen] = useState(false)
-  // Desktop N-key inline quick-add bar
-  const [quickAddOpen, setQuickAddOpen] = useState(false)
 
   const { data: lists = [] } = useTaskLists()
 
@@ -83,7 +81,9 @@ export function TasksPage() {
 
       if (e.key === 'n' || e.key === 'N') {
         e.preventDefault()
-        setQuickAddOpen(true)
+        // Focus the always-present desktop quick-add input.
+        const input = document.querySelector('[data-quickadd] input') as HTMLInputElement | null
+        input?.focus()
       }
     }
 
@@ -272,23 +272,16 @@ export function TasksPage() {
 
           {/* Main task column: desktop inline quick-add bar + task list */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            {/* Desktop inline QuickAddBar — shown when N key pressed (hidden on phone) */}
-            {quickAddOpen && (
-              <div
-                className="hidden md:block"
-                data-quickadd
-                style={{ flexShrink: 0 }}
-              >
-                <QuickAddBar
-                  defaultListId={activeListId}
-                  onClose={() => setQuickAddOpen(false)}
-                  onSubmit={() => {
-                    // Keep open for rapid multi-entry
-                  }}
-                  autoFocus={true}
-                />
-              </div>
-            )}
+            {/* Desktop persistent quick-add bar — always visible at the top of
+                the task column (the N key focuses it). Hidden on phone, which
+                uses the FAB → bottom-sheet QuickAddBar instead. */}
+            <div className="hidden md:block" data-quickadd style={{ flexShrink: 0 }}>
+              <QuickAddBar
+                defaultListId={activeListId}
+                persistent
+                autoFocus={false}
+              />
+            </div>
 
             <TaskListView
               listId={activeListId}
