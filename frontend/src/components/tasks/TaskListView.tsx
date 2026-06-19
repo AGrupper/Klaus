@@ -16,8 +16,8 @@
  *   - On: group into Today / This week / Later / No date buckets
  *   - Off: flat list, sorted by current sort mode
  *
- * T-27-TI: task titles and notes are rendered as plain text children. Never
- * use dangerouslySetInnerHTML on task content.
+ * T-27-TI: task titles and notes are rendered as plain text React children —
+ * never via raw HTML injection.
  */
 
 import { useState, useMemo } from 'react'

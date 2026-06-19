@@ -16,8 +16,8 @@
  *   - Same 4s soft-mark → hard-delete (no confirmation modal — D-14)
  *   - Toast copy: "Task deleted."
  *
- * Security note (T-27-TI): title and notes rendered as plain text children.
- * dangerouslySetInnerHTML is never used on task content.
+ * Security note (T-27-TI): title and notes are rendered as plain text React
+ * children — never via raw HTML injection.
  */
 
 import { useState, useRef } from 'react'

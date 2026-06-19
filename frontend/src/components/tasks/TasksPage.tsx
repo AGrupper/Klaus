@@ -19,8 +19,8 @@
  * UndoToast is rendered here (global, fixed position) so it's always visible
  * regardless of scroll position.
  *
- * Security note (T-27-TI): task content flows through TaskRow/TaskDetailSheet;
- * dangerouslySetInnerHTML is never used on task content (enforced in those files).
+ * Security note (T-27-TI): task content flows through TaskRow/TaskDetailSheet
+ * as plain text React children — never via raw HTML injection (enforced there).
  */
 
 import { useState } from 'react'
