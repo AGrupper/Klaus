@@ -345,9 +345,9 @@ class AgentOrchestrator:
                             line += f": {metric_str}"
                         lines.append(line)
 
-                # weekly_split — flexible template (label + modality + priority, no attendance)
+                # weekly_split — intended template (label + modality + priority); NOT a record of what was done
                 if weekly_split := non_empty.get("weekly_split"):
-                    lines.append("Weekly split (template — label / modality / priority):")
+                    lines.append("Weekly split (intended template — what's PLANNED, not a record of what was done — label / modality / priority):")
                     for day, slots in weekly_split.items():
                         am = slots.get("am") or {} if isinstance(slots, dict) else {}
                         pm = slots.get("pm") or {} if isinstance(slots, dict) else {}
