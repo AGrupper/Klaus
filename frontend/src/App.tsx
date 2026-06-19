@@ -8,7 +8,7 @@
  *
  * Routes:
  *   /         → Today timeline (real content: 26-07)
- *   /tasks    → Placeholder — owned by P27
+ *   /tasks    → TasksPage (real content: 27-05)
  *   /klaus    → ChatWindow (real content: 26-08)
  *   /habits   → Placeholder — owned by P28
  *   /health   → Placeholder — owned by P30
@@ -26,6 +26,7 @@ import { AppShell } from './components/layout/AppShell'
 import { TimelineDay } from './components/timeline/TimelineDay'
 import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
+import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 
 // ---------------------------------------------------------------------------
 // Placeholder pages for routes owned by later plans
@@ -55,7 +56,7 @@ function TodayPage() {
 }
 
 function TasksPage() {
-  return <ComingSoon label="Tasks" />
+  return <TasksPageComponent />
 }
 
 /**
