@@ -7,10 +7,19 @@
  *   - "Nutrition" section heading at Heading (20px/600)
  *   - Running nutrition totals (TIME-08) from /api/today via useToday()
  *
+ * Phase 27 addition (D-12):
+ *   - "Tasks" card below the Nutrition card, consuming useTaskSummary()
+ *   - Shows "N due today" (textPrimary value) + "N overdue" (destructive #EF4444 when >0,
+ *     hidden when 0). Tapping the card navigates to /tasks.
+ *   - useTaskSummary shares TASK_SUMMARY_QUERY_KEY with DueTasksBand — react-query
+ *     deduplicates: one fetch serves both consumers.
+ *
  * useToday() shares the cached ['today'] query (React Query dedupes), so this
  * does not add a second network round-trip alongside the timeline.
  */
+import { useNavigate } from 'react-router-dom'
 import { useToday } from '../../hooks/useToday'
+import { useTaskSummary } from '../../hooks/useTaskSummary'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
@@ -32,9 +41,15 @@ function NutritionRow({ label, value }: { label: string; value: string }) {
 }
 
 export function GlanceRail() {
+  const navigate = useNavigate()
   const { data } = useToday()
+  const { data: taskSummary } = useTaskSummary()
+
   const totals = data?.nutrition_totals
   const hasData = !!totals && totals.kcal > 0
+
+  const dueToday = taskSummary?.due_today ?? 0
+  const overdue = taskSummary?.overdue ?? 0
 
   return (
     /*
@@ -51,6 +66,9 @@ export function GlanceRail() {
         backgroundColor: '#0A0A0A',
         overflowY: 'auto',
         padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
       }}
       aria-label="At a glance"
     >
@@ -98,6 +116,74 @@ export function GlanceRail() {
           >
             No meals logged yet today.
           </p>
+        )}
+      </div>
+
+      {/* Tasks card (D-12) — tappable, navigates to /tasks */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => navigate('/tasks')}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate('/tasks')}
+        aria-label="Tasks overview — navigate to tasks"
+        style={{
+          backgroundColor: '#1A1A1A',
+          border: '1px solid #2A2A2A',
+          borderRadius: '10px',
+          padding: '16px',
+          cursor: 'pointer',
+        }}
+      >
+        {/* Section heading */}
+        <h2
+          style={{
+            fontSize: '20px',
+            fontWeight: 600,
+            lineHeight: 1.2,
+            color: '#F9FAFB',
+            margin: '0 0 12px',
+            fontFamily: FONT,
+          }}
+        >
+          Tasks
+        </h2>
+
+        {/* "N due today" row — always shown */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+            padding: '6px 0',
+            fontFamily: FONT,
+          }}
+        >
+          <span style={{ fontSize: '13px', fontWeight: 400, color: '#9CA3AF' }}>
+            due today
+          </span>
+          <span style={{ fontSize: '14px', fontWeight: 600, color: '#F9FAFB' }}>
+            {dueToday}
+          </span>
+        </div>
+
+        {/* "N overdue" row — hidden when overdue === 0 */}
+        {overdue > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'baseline',
+              padding: '6px 0',
+              fontFamily: FONT,
+            }}
+          >
+            <span style={{ fontSize: '13px', fontWeight: 400, color: '#9CA3AF' }}>
+              overdue
+            </span>
+            <span style={{ fontSize: '14px', fontWeight: 600, color: '#EF4444' }}>
+              {overdue}
+            </span>
+          </div>
         )}
       </div>
     </aside>
