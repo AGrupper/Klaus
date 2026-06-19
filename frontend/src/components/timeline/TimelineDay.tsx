@@ -42,6 +42,7 @@ import { TimelineHeader } from './TimelineHeader'
 import { TimelineItem } from './TimelineItem'
 import { NowLine } from './NowLine'
 import { PlaceholderCard } from './PlaceholderCard'
+import { DueTasksBand } from './DueTasksBand'
 import type { TimedEvent } from '../../api/today'
 
 // ---------------------------------------------------------------------------
@@ -237,6 +238,9 @@ export function TimelineDay() {
             ))}
           </div>
         )}
+
+        {/* Section 3.5: Due Tasks Band — after all-day events, before timed events (D-11) */}
+        <DueTasksBand />
 
         {/* Section 4: Timed events + NowLine (D-04) interleaved chronologically */}
         {calendarEmpty ? (

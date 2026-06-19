@@ -23,6 +23,21 @@ vi.mock('../../hooks/useToday', () => ({
   useRefreshToday: () => () => {},
 }))
 
+// Mock task hooks so DueTasksBand renders without a real QueryClientProvider.
+// Returns zero counts → DueTasksBand renders nothing (no tasks due today).
+vi.mock('../../hooks/useTaskSummary', () => ({
+  TASK_SUMMARY_QUERY_KEY: ['tasks', 'summary'],
+  useTaskSummary: () => ({ data: { due_today: 0, overdue: 0 }, isLoading: false, isError: false }),
+  useRefreshTaskSummary: () => () => {},
+}))
+vi.mock('../../hooks/useTasks', () => ({
+  tasksQueryKey: (listId?: string) => ['tasks', listId ?? 'all'],
+  useTasks: () => ({ data: [], isLoading: false, isError: false }),
+  useCreateTask: () => ({ mutate: vi.fn() }),
+  useUpdateTask: () => ({ mutate: vi.fn() }),
+  useCompleteTask: () => ({ mutate: vi.fn() }),
+}))
+
 import { useToday } from '../../hooks/useToday'
 import { TimelineDay } from './TimelineDay'
 
