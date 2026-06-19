@@ -62,7 +62,9 @@ export function TasksPage() {
 
   const { data: lists = [] } = useTaskLists()
 
-  const allLists = [{ id: 'inbox', name: 'Inbox' }, ...lists]
+  // GET /api/task-lists already prepends the implicit Inbox; use the API list
+  // directly so the Inbox entry is not duplicated in the picker/header.
+  const allLists = lists
   const activeListName = allLists.find((l) => l.id === activeListId)?.name ?? 'Inbox'
 
   // ---------------------------------------------------------------------------
@@ -218,9 +220,11 @@ export function TasksPage() {
           backgroundColor: dominant,
         }}
       >
-        {/* Phone header: current list name + picker chevron */}
+        {/* Phone header: current list name + picker chevron (phone only).
+            md:hidden lives on this wrapper — NOT on the inline-styled flex row,
+            because an inline `display` would override the Tailwind utility. */}
+        <div className="md:hidden">
         <div
-          className="md:hidden"
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -253,6 +257,7 @@ export function TasksPage() {
             {activeListName}
             <ChevronDown size={16} color={textSecondary} aria-hidden="true" />
           </button>
+        </div>
         </div>
 
         {/* Desktop + phone content row */}

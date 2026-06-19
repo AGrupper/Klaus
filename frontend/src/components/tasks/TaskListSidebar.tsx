@@ -3,7 +3,7 @@
  *
  * Layout:
  *   - "Tasks" heading
- *   - Inbox (always first, implicit, never from API)
+ *   - Inbox (prepended server-side by GET /api/task-lists, rendered first)
  *   - User-created lists (from useTaskLists)
  *   - "New list" inline input at bottom
  *
@@ -82,10 +82,9 @@ export function TaskListSidebar({ activeListId, onSelect }: TaskListSidebarProps
     }
   }
 
-  const allLists = [
-    { id: 'inbox', name: 'Inbox' },
-    ...lists,
-  ]
+  // GET /api/task-lists already prepends the implicit Inbox; render the API
+  // list directly. (Prepending Inbox here too would duplicate the entry.)
+  const allLists = lists
 
   return (
     <nav

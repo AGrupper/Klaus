@@ -50,11 +50,13 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
   }
 
   return (
-    <>
-      {/* FAB button — phone only (md:hidden) */}
+    // md:hidden lives on this wrapper (no inline `display`) so it actually
+    // hides on desktop — an inline `display` on the button itself would
+    // override the Tailwind utility and leak the phone FAB onto desktop.
+    <div className="md:hidden">
+      {/* FAB button — phone only */}
       <button
         onClick={handleOpen}
-        className="md:hidden"
         aria-label="Add task"
         style={{
           position: 'fixed',
@@ -143,6 +145,6 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
           </div>
         </>
       )}
-    </>
+    </div>
   )
 }
