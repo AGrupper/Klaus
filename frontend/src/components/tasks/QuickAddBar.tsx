@@ -226,6 +226,12 @@ export function QuickAddBar({
         {/* "Add task" submit button */}
         <button
           onClick={handleSubmit}
+          // Keep focus on the input when the button is pressed. Without this,
+          // tapping the button blurs the input first; on iOS the blur fires with
+          // a null relatedTarget, so the onBlur handler above closes the sheet
+          // before this click runs and the submit is lost. preventDefault on
+          // mousedown stops the focus shift while still allowing the click.
+          onMouseDown={(e) => e.preventDefault()}
           disabled={!parsed.title.trim()}
           style={{
             height: '44px',
