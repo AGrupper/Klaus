@@ -36,13 +36,13 @@ Requirements for milestone v5.0. Each maps to roadmap phases.
 
 ### Tasks (TASK)
 
-- [ ] **TASK-01**: Amit can create, edit, complete, and delete tasks with title, notes, due date, priority, and assign them to **user-creatable lists/projects plus a default Inbox** — stored natively in Firestore `TaskStore` *(revised 2026-06-17, Phase 27 discussion: was "a fixed set of lists")*
-- [ ] **TASK-02**: Tasks support simple recurrence: daily, weekdays, weekly, monthly, and every-N-days-from-completion (no complex RRULE)
-- [ ] **TASK-03**: Quick-add (FAB on phone, keyboard shortcut on desktop) parses natural-language dates ("tomorrow", "friday", "next week") while typing
-- [ ] **TASK-04**: Completing a task gives a satisfying micro-animation; a brief **undo toast** allows recovery from an accidental complete or delete — **completed tasks are not retained (no completed view)** *(revised 2026-06-17, Phase 27 discussion: was "completed tasks remain viewable")*
-- [ ] **TASK-05**: Klaus manages tasks natively — TickTick tools removed from `core/tools.py`, replaced by TaskStore tools; autonomous Layer-0 gather reads native overdue tasks
-- [ ] **TASK-06**: Migration off TickTick is **manual** — Amit re-creates his (few) open tasks in the hub; the atomic safety order is preserved: native tasks live + verified (UAT) → TickTick tools removed from `core/tools.py` → subscription cancelled *(revised 2026-06-17, Phase 27 discussion: was "a one-time TickTick import + reconciliation report" — descoped because Amit has few tasks)*
-- [ ] **TASK-07**: Due and overdue tasks appear on the glance rail and Today timeline
+- [x] **TASK-01**: Amit can create, edit, complete, and delete tasks with title, notes, due date, priority, and assign them to **user-creatable lists/projects plus a default Inbox** — stored natively in Firestore `TaskStore` *(revised 2026-06-17, Phase 27 discussion: was "a fixed set of lists")*
+- [x] **TASK-02**: Tasks support simple recurrence: daily, weekdays, weekly, monthly, and every-N-days-from-completion (no complex RRULE)
+- [x] **TASK-03**: Quick-add (FAB on phone, keyboard shortcut on desktop) parses natural-language dates ("tomorrow", "friday", "next week") while typing
+- [x] **TASK-04**: Completing a task gives a satisfying micro-animation; a brief **undo toast** allows recovery from an accidental complete or delete — **completed tasks are not retained (no completed view)** *(revised 2026-06-17, Phase 27 discussion: was "completed tasks remain viewable")*
+- [x] **TASK-05**: Klaus manages tasks natively — TickTick tools removed from `core/tools.py`, replaced by TaskStore tools; autonomous Layer-0 gather reads native overdue tasks
+- [x] **TASK-06**: Migration off TickTick is **manual** — Amit re-creates his (few) open tasks in the hub; the atomic safety order is preserved: native tasks live + verified (UAT) → TickTick tools removed from `core/tools.py` → subscription cancelled *(revised 2026-06-17, Phase 27 discussion: was "a one-time TickTick import + reconciliation report" — descoped because Amit has few tasks)*
+- [x] **TASK-07**: Due and overdue tasks appear on the glance rail and Today timeline
 
 ### Habits & Supplements (HABIT)
 
@@ -113,13 +113,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | TIME-05 | Phase 26 | Complete |
 | TIME-07 | Phase 26 | Complete |
 | TIME-08 | Phase 26 | Complete |
-| TASK-01 | Phase 27 | Pending |
-| TASK-02 | Phase 27 | Pending |
-| TASK-03 | Phase 27 | Pending |
-| TASK-04 | Phase 27 | Pending |
-| TASK-05 | Phase 27 | Pending |
-| TASK-06 | Phase 27 | Pending |
-| TASK-07 | Phase 27 | Pending |
+| TASK-01 | Phase 27 | Complete |
+| TASK-02 | Phase 27 | Complete |
+| TASK-03 | Phase 27 | Complete |
+| TASK-04 | Phase 27 | Complete |
+| TASK-05 | Phase 27 | Complete |
+| TASK-06 | Phase 27 | Complete |
+| TASK-07 | Phase 27 | Complete |
 | HABIT-01 | Phase 28 | Pending |
 | HABIT-02 | Phase 28 | Pending |
 | HABIT-03 | Phase 28 | Pending |
