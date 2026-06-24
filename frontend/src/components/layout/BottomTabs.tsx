@@ -51,7 +51,10 @@ export function BottomTabs() {
      * fixed bottom bar: above safe-area inset on iOS.
      */
     <nav
-      className="md:hidden"
+      // `flex md:hidden`: display:flex on phone, display:none on desktop.
+      // The display MUST come from the class (not an inline `display`), or an
+      // inline value would override md:hidden and leak the bar onto desktop.
+      className="flex md:hidden"
       style={{
         position: 'fixed',
         bottom: 0,
@@ -60,7 +63,6 @@ export function BottomTabs() {
         height: '64px',
         backgroundColor: '#1A1A1A',
         borderTop: '1px solid #2A2A2A',
-        display: 'flex',
         alignItems: 'stretch',
         zIndex: 100,
         // Safe-area inset for iPhone notch/home indicator

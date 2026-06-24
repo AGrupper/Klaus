@@ -58,7 +58,10 @@ export function GlanceRail() {
      * header is rendered in the TimelineHeader component (26-07).
      */
     <aside
-      className="hidden md:block"
+      // `hidden md:flex md:flex-col`: display:none on phone, flex column on
+      // desktop. The display MUST come from the class (not an inline `display`),
+      // or an inline value would override `hidden` and leak the rail onto phone.
+      className="hidden md:flex md:flex-col"
       style={{
         width: '280px',
         flexShrink: 0,
@@ -66,8 +69,6 @@ export function GlanceRail() {
         backgroundColor: '#0A0A0A',
         overflowY: 'auto',
         padding: '16px',
-        display: 'flex',
-        flexDirection: 'column',
         gap: '12px',
       }}
       aria-label="At a glance"
