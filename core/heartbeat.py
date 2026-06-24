@@ -201,7 +201,11 @@ def check_cron_health() -> list[Signal]:
 
 
 def check_tokens() -> list[Signal]:
-    """Token/integration health: Google OAuth and TickTick OAuth refresh probes."""
+    """Token/integration health: Google OAuth refresh probe.
+
+    (The TickTick OAuth probe was removed with the D-09 TickTick retirement —
+    Phase 27 replaced TickTick with the native TaskStore.)
+    """
     signals: list[Signal] = []
 
     try:
@@ -214,18 +218,6 @@ def check_tokens() -> list[Signal]:
             title="Google OAuth refresh failed",
             detail=str(exc)[:200],
             remediation="Re-run the Google OAuth bootstrap; refresh klaus-google-oauth-token.",
-        ))
-
-    try:
-        from mcp_tools.ticktick_auth import get_valid_access_token
-        get_valid_access_token()
-    except Exception as exc:
-        signals.append(Signal(
-            fingerprint="token:ticktick:refresh-failed",
-            severity=SEVERITY_CRITICAL, area="token",
-            title="TickTick OAuth refresh failed",
-            detail=str(exc)[:200],
-            remediation="Run scripts/ticktick_oauth_bootstrap.py to re-issue the token pair.",
         ))
 
     return signals

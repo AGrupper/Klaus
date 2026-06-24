@@ -182,10 +182,16 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
     except Exception:
         logger.warning("nightly_review: tomorrow calendar fetch failed", exc_info=True)
 
-    # Tasks (overdue + today's open carry into tomorrow)
+    # Tasks (overdue + today's open carry into tomorrow) — native TaskStore,
+    # evaluated as of tonight (the current day, not tomorrow_iso).
     try:
-        from mcp_tools.ticktick_tool import get_today_tasks
-        data["tasks"] = get_today_tasks()
+        from memory.firestore_db import TaskStore
+        _today = datetime.now(_TZ).date().isoformat()
+        _ts = TaskStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        data["tasks"] = _ts.get_today_and_overdue(_today)
     except Exception:
         logger.warning("nightly_review: task fetch failed", exc_info=True)
 

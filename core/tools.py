@@ -3,8 +3,8 @@
 Defines the full set of tools available to the agent in Anthropic's tool_use
 JSON format.  Phase 3 replaced the Gmail/Calendar mock handlers with real
 Google API calls.  Phase 4 added the add_task tool (originally Firestore/Things 3
-queue; now replaced by TickTick Open API).  Phase 6 adds remember and recall tools
-for long-term Pinecone-backed memory.
+queue; later TickTick; replaced in Phase 27 by the native TaskStore task_* tools).
+Phase 6 adds remember and recall tools for long-term Pinecone-backed memory.
 
 Switching tool backends requires only editing this file — the orchestrator,
 LLM client, and callers do not need to change.
@@ -483,7 +483,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "run_morning_briefing",
         "description": (
             "Compose and send the morning briefing to Telegram immediately. "
-            "Fetches weather, calendar, email, Garmin health, and TickTick tasks "
+            "Fetches weather, calendar, email, Garmin health, and today's tasks "
             "for today, then sends a single briefing message. "
             "Use when the user asks for the morning briefing, daily briefing, "
             "or any variant of 'morning briefing' / 'give me my briefing'."

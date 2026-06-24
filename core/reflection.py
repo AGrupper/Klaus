@@ -173,13 +173,17 @@ def _gather_day(target_date: str) -> dict:
     except Exception:
         logger.warning("reflection: calendar gather failed", exc_info=True)
 
-    # (d) TickTick tasks due today (RESOLVED: count of today's due tasks — no "completed today" accessor)
+    # (d) Tasks due today from the native TaskStore (count of today's due tasks)
     try:
-        from mcp_tools.ticktick_tool import get_today_tasks
-        tasks_data = get_today_tasks()
+        from memory.firestore_db import TaskStore
+        _ts = TaskStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        tasks_data = _ts.get_today_and_overdue(target_date)
         gathered["tasks_completed"] = len(tasks_data.get("today", []))
     except Exception:
-        logger.warning("reflection: TickTick gather failed", exc_info=True)
+        logger.warning("reflection: task gather failed", exc_info=True)
 
     # (e) Heartbeat cron status
     try:

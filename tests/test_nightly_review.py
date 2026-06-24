@@ -130,7 +130,7 @@ def test_gather_tomorrow_includes_planned_workouts():
     split_out = {"weekday": "Monday", "am": {"label": "Easy Run"}, "pm": {"label": "Lower A"}}
     with patch.object(nr, "_planned_workouts_for", return_value=split_out), \
          patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")), \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", side_effect=RuntimeError("skip")), \
+         patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
          patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
         data = nr._gather_tomorrow("2026-06-15")
     assert data["planned_workouts"] == split_out

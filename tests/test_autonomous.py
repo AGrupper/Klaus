@@ -235,7 +235,6 @@ def test_pre_flight_imports_resolve():
     would catch it before runtime.
     """
     from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: F401
-    from mcp_tools.ticktick_tool import get_today_tasks       # noqa: F401
     from mcp_tools.gmail_tool import GmailTool                # noqa: F401
     from memory.firestore_conversation import (                # noqa: F401
         FirestoreConversationStore,
@@ -249,7 +248,7 @@ def test_gather_situation_isolation(fixed_now):
     raising_calendar.list_events.side_effect = RuntimeError("kaboom")
 
     with patch("core.tools._get_calendar_tool", return_value=raising_calendar), \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}), \
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
          patch("core.tools._get_gmail_tool") as get_gm, \
          patch("memory.firestore_db.FollowupStore") as fs_cls, \
          patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
@@ -281,7 +280,7 @@ def test_gather_situation_parallel_fanout_completes_all_keys(fixed_now):
     """The thread-pool fan-out fills every gather key even when one source
     raises inside a worker thread (sentinel, no sibling poisoning)."""
     with patch("core.tools._get_calendar_tool") as get_cal, \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}), \
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
          patch("core.tools._get_gmail_tool") as get_gm, \
          patch("memory.firestore_db.FollowupStore") as fs_cls, \
          patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
@@ -320,7 +319,7 @@ def test_gather_situation_parallel_fanout_completes_all_keys(fixed_now):
 def test_gather_situation_now_context_block(fixed_now):
     """D-08 — now_context contains the 5 required keys; tick_total == 43."""
     with patch("core.tools._get_calendar_tool"), \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}), \
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
          patch("core.tools._get_gmail_tool") as get_gm, \
          patch("memory.firestore_db.FollowupStore") as fs_cls, \
          patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
@@ -342,7 +341,7 @@ def test_gather_situation_now_context_block(fixed_now):
 def test_gather_situation_empty_signal_detection(fixed_now):
     """D-11 — fully empty sources => empty=True."""
     with patch("core.tools._get_calendar_tool") as get_cal, \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}), \
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
          patch("core.tools._get_gmail_tool") as get_gm, \
          patch("memory.firestore_db.FollowupStore") as fs_cls, \
          patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
@@ -998,7 +997,7 @@ class TestPhase19Gather:
         to no-op stubs so we can isolate Phase-19 source behavior."""
         return [
             patch("core.tools._get_calendar_tool"),
-            patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": []}),
+            patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}),
             patch("core.tools._get_gmail_tool"),
             patch("memory.firestore_db.FollowupStore"),
             patch("memory.firestore_conversation.FirestoreConversationStore"),

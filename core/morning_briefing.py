@@ -343,12 +343,16 @@ def _gather_data(today_iso: str) -> dict:
         logger.warning("morning_briefing: recovery_concern computation failed", exc_info=True)
         # silent omit — no "all clear" placeholder (D-13 guardrail)
 
-    # TickTick tasks
+    # Tasks due today + overdue (native TaskStore)
     try:
-        from mcp_tools.ticktick_tool import get_today_tasks
-        data["tasks"] = get_today_tasks()
+        from memory.firestore_db import TaskStore
+        _ts = TaskStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        data["tasks"] = _ts.get_today_and_overdue(today_iso)
     except Exception:
-        logger.warning("morning_briefing: TickTick task fetch failed", exc_info=True)
+        logger.warning("morning_briefing: task fetch failed", exc_info=True)
         data["tasks"] = {"staleness_warning": "Task data unavailable, sir."}
 
     # PHASE 19 — NUTR-05: yesterday's nutrition recap. NUTR-07 silent-omit

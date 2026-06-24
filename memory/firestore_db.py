@@ -2807,6 +2807,38 @@ class TaskStore:
             logger.warning("TaskStore.get_summary(%r) failed", today_iso, exc_info=True)
             return {"due_today": 0, "overdue": 0}
 
+    def get_today_and_overdue(self, today_iso: str) -> dict:
+        """Return today's + overdue active tasks for the cron readers.
+
+        Drop-in replacement for the retired ``ticktick_tool.get_today_tasks()``
+        (D-09 cutover) — the morning briefing, nightly review, and reflection
+        crons consume this exact shape:
+
+            {
+                "today":    [{"title": str, "tags": []}, ...],
+                "overdue":  [{"title": str, "due": str, "tags": []}, ...],
+                "due_today": [],            # legacy key; matches "today"
+                "staleness_warning": None,  # Firestore is the source of truth
+            }
+
+        Native tasks have no tags concept → ``tags`` is always ``[]``.
+        Never raises.
+        """
+        today: list[dict] = []
+        overdue: list[dict] = []
+        try:
+            for t in self.list():  # active tasks only
+                due = t.get("due_date")
+                if not due:
+                    continue
+                if due == today_iso:
+                    today.append({"title": t.get("title", ""), "tags": []})
+                elif due < today_iso:
+                    overdue.append({"title": t.get("title", ""), "due": due, "tags": []})
+        except Exception:
+            logger.warning("TaskStore.get_today_and_overdue(%r) failed", today_iso, exc_info=True)
+        return {"today": today, "overdue": overdue, "due_today": [], "staleness_warning": None}
+
 
 class TaskListStore:
     """User-creatable task lists.

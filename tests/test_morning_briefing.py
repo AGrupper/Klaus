@@ -288,7 +288,7 @@ class TestPhase19MorningBriefing:
             patch("mcp_tools.weather_tool.fetch_weather", return_value=None),
             patch("core.tools._get_calendar_tool"),
             patch("core.tools._get_gmail_tool"),
-            patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={"overdue": [], "today": []}),
+            patch("memory.firestore_db.TaskStore", **{"return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}}),
         ]
 
     def test_aggregates_yesterday_meals(self, monkeypatch):
@@ -462,7 +462,7 @@ def _quiet_gather(block_store):
          patch("core.tools._get_gmail_tool", side_effect=Exception("no mail")), \
          patch("mcp_tools.weather_tool.fetch_weather", side_effect=Exception("no wx")), \
          patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={}):
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}}):
         ms.return_value.get_day_aggregate.return_value = None
         yield
 
@@ -529,7 +529,7 @@ def _quiet_gather_with_topics(block_store, coaching_topic_store):
          patch("core.tools._get_gmail_tool", side_effect=Exception("no mail")), \
          patch("mcp_tools.weather_tool.fetch_weather", side_effect=Exception("no wx")), \
          patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
-         patch("mcp_tools.ticktick_tool.get_today_tasks", return_value={}):
+         patch("memory.firestore_db.TaskStore", **{"return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}}):
         ms.return_value.get_day_aggregate.return_value = None
         yield
 
