@@ -90,8 +90,6 @@ Klaus/
 │   ├── database_tool.py    # Analytical PostgreSQL read-only queries
 │   ├── gmail_tool.py       # Read-only Gmail
 │   ├── calendar_tool.py    # Google Calendar list/create/free-busy/delete + Get Ready
-│   ├── ticktick_tool.py    # TickTick Open API (deadline + reminder)
-│   ├── ticktick_auth.py    # TickTick OAuth 2 token mgmt
 │   ├── notion_tool.py      # 5 tools: search, get_page, query_db, create_page, append_blocks
 │   ├── weather_tool.py     # wttr.in
 │   ├── readwise_tool.py    # Daily reading highlights

@@ -1457,3 +1457,40 @@ dispatch entirely (clean rollback to the background path).
 Timeout chain (each layer must exceed the next):
 Cloud Run `--timeout 600` > task `dispatch_deadline` 540s > per-LLM-call
 timeout `LLM_TIMEOUT_SECONDS` (default 120s, `core/llm_client.py`).
+
+## 26. TickTick Retirement (Phase 27, v5.0)
+
+Phase 27 (D-09) replaced TickTick with the native `TaskStore` (Klaus Hub). The
+agent tool (`task_*`), the autonomous overdue gather, and the morning-briefing /
+nightly-review / reflection crons all read the native store now. `mcp_tools/
+ticktick_tool.py` and `mcp_tools/ticktick_auth.py` were **deleted**.
+
+Migration was **manual** (D-08): no importer or reconciliation report — the open
+TickTick tasks were re-created by hand in the hub during UAT before the code was
+removed. Native tasks live in Firestore collections `tasks` / `task_lists` with
+the two composite indexes from §21.
+
+**Operator cleanup — do these AFTER this cutover is deployed (Open Question 2):**
+
+1. **Cancel the TickTick subscription** (developer app + account). Do this first.
+2. **After** the subscription is cancelled, remove the four now-unused secrets
+   from the `klaus-agent` Cloud Run config and Secret Manager:
+
+   ```bash
+   # 1) Drop them from the running service's env/secret bindings (deploy.yml no
+   #    longer references them; this clears any lingering binding):
+   gcloud run services update klaus-agent --region me-west1 --project klaus-agent \
+     --remove-secrets=TICKTICK_ACCESS_TOKEN,TICKTICK_REFRESH_TOKEN,TICKTICK_CLIENT_ID,TICKTICK_CLIENT_SECRET
+
+   # 2) Delete the secrets themselves:
+   for s in TICKTICK_ACCESS_TOKEN TICKTICK_REFRESH_TOKEN TICKTICK_CLIENT_ID TICKTICK_CLIENT_SECRET; do
+     gcloud secrets delete "$s" --project=klaus-agent --quiet
+   done
+   ```
+
+   (Run step 1 only for secrets actually bound to the service; harmless if a name
+   isn't bound. Verify current bindings first with
+   `gcloud run services describe klaus-agent --region me-west1 --format=yaml | grep -i ticktick`.)
+
+The standalone `scripts/ticktick_oauth_bootstrap.py` is now dead but left in
+place as historical reference; it imports nothing from the deleted modules.
