@@ -1735,6 +1735,18 @@ from pydantic import BaseModel, Field  # noqa: E402 (lazy placement — keeps co
 from typing import Literal  # noqa: E402
 
 
+class RecurrenceInput(BaseModel):
+    """Recurrence rule for a task (matches TaskStore + the recurrence engine).
+
+    ``every_n`` is only meaningful for the ``every_n_days`` cadence. The engine
+    (``_advance_once``) reads ``every_n``/``every_n_days`` tolerantly.
+    """
+
+    cadence: Literal["daily", "weekdays", "weekly", "monthly", "every_n_days"]
+    anchor: Literal["schedule", "completion"] = "schedule"
+    every_n: int | None = Field(None, ge=1, le=365)
+
+
 class CreateTaskInput(BaseModel):
     """Pydantic model for POST /api/tasks bodies (ASVS V5 / T-27-IV).
 
@@ -1745,6 +1757,7 @@ class CreateTaskInput(BaseModel):
       - due_time: HH:MM (24h) or None
       - priority: one of the four legal values
       - list_id: free string or None (defaults to "inbox" in the route)
+      - recurrence: optional recurrence rule or None
     """
 
     title: str = Field(..., min_length=1, max_length=500)
@@ -1753,6 +1766,7 @@ class CreateTaskInput(BaseModel):
     due_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     priority: Literal["none", "low", "medium", "high"] = "none"
     list_id: str | None = None  # None → coerced to "inbox" in the route
+    recurrence: RecurrenceInput | None = None
 
 
 class UpdateTaskInput(BaseModel):
@@ -1764,6 +1778,7 @@ class UpdateTaskInput(BaseModel):
     due_time: str | None = Field(None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     priority: Literal["none", "low", "medium", "high"] | None = None
     list_id: str | None = None
+    recurrence: RecurrenceInput | None = None
 
 
 class CreateListInput(BaseModel):
@@ -1889,7 +1904,9 @@ async def api_update_task(
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
     updated = await loop.run_in_executor(None, store.update, task_id, patch)
-    return JSONResponse(content=_jsonsafe_doc(updated))
+    # store.update re-fetches and returns the doc; guard None so a missing task
+    # never reaches _jsonsafe_doc(None) (which would 500 — the old edit bug).
+    return JSONResponse(content=_jsonsafe_doc(updated or {}))
 
 
 @app.post("/api/tasks/{task_id}/complete")
@@ -1940,6 +1957,35 @@ async def api_undo_task(
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
     await loop.run_in_executor(None, store.undo_complete, task_id)
+    return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/tasks/{task_id}/soft-delete")
+async def api_soft_delete_task(
+    task_id: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Soft-mark a task as 'completing' for the delete→undo→hard-delete flow.
+
+    POST /api/tasks/{task_id}/soft-delete — D-13/D-14.
+
+    Unlike /complete this NEVER generates a recurring next instance. It opens
+    the undo window and satisfies the hard-delete gate (T-27-REP); /undo
+    reverts it to active if the user taps Undo.
+
+    Returns:
+        JSONResponse: {"ok": True}
+    Raises:
+        HTTPException 401: No valid session cookie.
+    """
+    from memory.firestore_db import TaskStore  # lazy import
+
+    loop = asyncio.get_running_loop()
+    store = TaskStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+    await loop.run_in_executor(None, store.soft_delete, task_id)
     return JSONResponse(content={"ok": True})
 
 

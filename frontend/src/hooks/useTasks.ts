@@ -17,6 +17,7 @@ import {
   createTask,
   updateTask,
   completeTask,
+  softDeleteTask,
   type Task,
 } from '../api/tasks'
 
@@ -178,6 +179,44 @@ export function useCompleteTask(listId?: string) {
 
     onSettled: () => {
       // Invalidate both the task list and the summary counts
+      queryClient.invalidateQueries({ queryKey })
+      queryClient.invalidateQueries({ queryKey: ['tasks', 'summary'] })
+    },
+  })
+}
+
+// ---------------------------------------------------------------------------
+// useSoftDeleteTask — optimistic delete mutation (soft-mark → undo → hard-delete)
+// ---------------------------------------------------------------------------
+
+/**
+ * Optimistically removes the task from the list and soft-marks it 'completing'
+ * on the server (NO recurring next instance). The caller drives the undo
+ * countdown via undoStore; the 4s timer then hard-deletes, or undo reverts it.
+ */
+export function useSoftDeleteTask(listId?: string) {
+  const queryClient = useQueryClient()
+  const queryKey = tasksQueryKey(listId)
+
+  return useMutation({
+    mutationFn: ({ id }: { id: string }) => softDeleteTask(id),
+
+    onMutate: async ({ id }) => {
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueryData<Task[]>(queryKey)
+      queryClient.setQueryData<Task[]>(queryKey, (old) =>
+        (old ?? []).filter((t) => t.id !== id),
+      )
+      return { previous }
+    },
+
+    onError: (_err, _vars, context) => {
+      if (context?.previous !== undefined) {
+        queryClient.setQueryData<Task[]>(queryKey, context.previous)
+      }
+    },
+
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey })
       queryClient.invalidateQueries({ queryKey: ['tasks', 'summary'] })
     },

@@ -31,7 +31,7 @@ import {
   MoreHorizontal,
   Trash2,
 } from 'lucide-react'
-import { useCompleteTask } from '../../hooks/useTasks'
+import { useCompleteTask, useSoftDeleteTask } from '../../hooks/useTasks'
 import { useUndoStore } from '../../store/undoStore'
 import { hardDeleteTask } from '../../api/tasks'
 import type { Task, Priority } from '../../api/tasks'
@@ -147,6 +147,7 @@ function DueDateChip({ dueDate, dueTime }: { dueDate: string; dueTime: string | 
 
 export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
   const completeTaskMutation = useCompleteTask(listId)
+  const softDeleteMutation = useSoftDeleteTask(listId)
   const undoShow = useUndoStore((s) => s.show)
   const undoActiveItem = useUndoStore((s) => s.activeItem)
 
@@ -228,18 +229,29 @@ export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
     setAnimating(true)
     setCollapsed(true)
 
+    // After the collapse animation, soft-mark the task 'completing' on the
+    // server (so the deferred hard-delete is allowed — without this the row
+    // reappeared because hard-delete 409'd on an active task), then open the
+    // undo window. The 4s timer in UndoToast fires hardDeleteTask; Undo reverts.
     setTimeout(() => {
-      // Fire hard-delete immediately for delete action (goes to undo toast)
-      // Note: "delete" flow uses undoStore too — toast shows "Task deleted."
-      // The hard-delete is deferred to the toast's 4s timer.
-      undoShow({
-        id: task.id,
-        action: 'delete',
-        listId,
-        nextId: null,
-      })
-      // Remove from local cache optimistically (completeTask filter approach)
-      // In practice: the task row has already collapsed via setCollapsed(true)
+      softDeleteMutation.mutate(
+        { id: task.id },
+        {
+          onSuccess: () => {
+            undoShow({
+              id: task.id,
+              action: 'delete',
+              listId,
+              nextId: null,
+            })
+          },
+          onError: () => {
+            // Rollback the collapse animation if the soft-delete failed
+            setAnimating(false)
+            setCollapsed(false)
+          },
+        },
+      )
     }, 200)
   }
 
@@ -276,7 +288,10 @@ export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
   const rowStyle: React.CSSProperties = {
     position: 'relative' as const,
     maxHeight: collapsed ? '0' : '200px',
-    overflow: 'hidden',
+    // Must be visible while the kebab menu is open, or the absolutely-positioned
+    // dropdown is clipped by this row (invisible). Hidden otherwise so the
+    // collapse animation + phone swipe clip cleanly.
+    overflow: kebabOpen ? 'visible' : 'hidden',
     transition: collapsed ? 'max-height 0.2s ease-out' : 'none',
     backgroundColor: dominant,
     borderBottom: `1px solid ${border}`,

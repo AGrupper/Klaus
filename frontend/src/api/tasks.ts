@@ -128,9 +128,18 @@ export async function undoTask(id: string): Promise<void> {
 }
 
 /**
+ * Soft-mark a task for deletion (status → completing) WITHOUT generating a
+ * recurring next instance. Opens the undo window; the 4s timer then calls
+ * hardDeleteTask (which requires status=completing), and undoTask reverts it.
+ */
+export async function softDeleteTask(id: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>(`/api/tasks/${id}/soft-delete`, { method: 'POST' })
+}
+
+/**
  * Permanently delete a task. Called after the 4-second undo window expires,
- * or when the user explicitly deletes (bypassing undo).
- * The route also handles undoing the next-instance when undoing a recurrence completion.
+ * or when the user explicitly deletes (bypassing undo). Requires the task to
+ * already be in the 'completing' state (set by complete or soft-delete).
  */
 export async function hardDeleteTask(id: string): Promise<void> {
   await apiFetch<{ ok: boolean }>(`/api/tasks/${id}/hard-delete`, { method: 'POST' })

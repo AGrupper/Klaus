@@ -2446,7 +2446,7 @@ def _advance_once(base, rule: dict):
         return base.replace(year=year, month=month, day=min(base.day, max_day))
 
     elif cadence == "every_n_days":
-        n = int(rule.get("every_n_days") or 1)
+        n = int(rule.get("every_n_days") or rule.get("every_n") or 1)
         return base + timedelta(days=n)
 
     else:
@@ -2597,12 +2597,16 @@ class TaskStore:
             logger.warning("TaskStore.list(list_id=%r) failed", list_id, exc_info=True)
             return []
 
-    def update(self, task_id: str, fields: dict) -> None:
-        """Patch a task with ``fields``.  Re-raises on failure.
+    def update(self, task_id: str, fields: dict) -> dict | None:
+        """Patch a task with ``fields`` and return the updated doc.  Re-raises on failure.
 
         ``updated_at`` is refreshed automatically.
         ``due_date``/``due_time`` fields in *fields* must be plain strings —
         the caller is responsible for format ("YYYY-MM-DD" / "HH:MM").
+
+        Returns the re-fetched task dict so callers (the HTTP route) can echo
+        the updated task back to the client — Firestore ``.update()`` itself
+        returns write metadata, not the document.
         """
         try:
             self._col.document(task_id).update(
@@ -2610,6 +2614,26 @@ class TaskStore:
             )
         except Exception:
             logger.error("TaskStore.update(%r) failed", task_id, exc_info=True)
+            raise
+        return self.get(task_id)
+
+    def soft_delete(self, task_id: str) -> None:
+        """Soft-mark a task as ``completing`` for the delete→undo→hard-delete flow.
+
+        Unlike ``complete``, this NEVER generates a recurring next instance — a
+        deleted recurring task must not spawn a replacement.  The ``completing``
+        status opens the same undo window and satisfies the hard-delete gate
+        (T-27-REP); ``undo_complete`` reverts it to ``active``.
+
+        Re-raises any Firestore write failure after logging.
+        """
+        try:
+            self._col.document(task_id).update({
+                "status": "completing",
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            logger.error("TaskStore.soft_delete(%r) failed", task_id, exc_info=True)
             raise
 
     def complete(self, task_id: str, completed_on_iso: str) -> dict:

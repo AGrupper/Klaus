@@ -1488,7 +1488,9 @@ def _handle_task_create(
         kwargs["list_id"] = list_id
     if recurrence is not None:
         kwargs["recurrence"] = recurrence
-    result = store.create(**kwargs)
+    # TaskStore.create takes a single task dict (not kwargs) — passing **kwargs
+    # raised TypeError and made Klaus's task_create reject every entry.
+    result = store.create(kwargs)
     return json.dumps(result)
 
 

@@ -559,6 +559,32 @@ class TestTaskStoreCRUD:
         store.update("task1", {"title": "New title"})
         assert col._docs["task1"]["title"] == "New title"
 
+    def test_update_returns_updated_doc(self):
+        # Regression: update() returned None, so the route wrapped None in
+        # _jsonsafe_doc(None) → 500 on every edit. It must echo the doc back.
+        store, col = _make_store(firestore_db.TaskStore)
+        col._docs["task1"] = {
+            "id": "task1", "status": "active", "title": "Old title", "list_id": "inbox"
+        }
+        result = store.update("task1", {"title": "New title"})
+        assert result is not None
+        assert result["title"] == "New title"
+
+    def test_soft_delete_sets_completing_without_recurrence(self):
+        # Regression: delete never soft-marked, so the deferred hard-delete 409'd
+        # and the task reappeared. soft_delete must set status='completing' and
+        # must NOT spawn a recurring next instance.
+        store, col = _make_store(firestore_db.TaskStore)
+        col._docs["task1"] = {
+            "id": "task1", "status": "active", "title": "Bye",
+            "list_id": "inbox", "due_date": "2026-06-24",
+            "recurrence": {"cadence": "daily", "anchor": "schedule"},
+        }
+        store.soft_delete("task1")
+        assert col._docs["task1"]["status"] == "completing"
+        # No next instance created (still exactly one doc).
+        assert len(col._docs) == 1
+
     def test_get_returns_task_by_id(self):
         store, col = _make_store(firestore_db.TaskStore)
         col._docs["task1"] = {"id": "task1", "status": "active", "title": "My task"}

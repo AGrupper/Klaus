@@ -32,7 +32,7 @@
 
 import { useState, useEffect } from 'react'
 import { GripHorizontal, ChevronDown } from 'lucide-react'
-import { useCreateTask, useUpdateTask } from '../../hooks/useTasks'
+import { useCreateTask, useUpdateTask, useSoftDeleteTask } from '../../hooks/useTasks'
 import { useTaskLists } from '../../hooks/useTaskLists'
 import { RecurrenceSelector } from './RecurrenceSelector'
 import { useUndoStore } from '../../store/undoStore'
@@ -226,6 +226,7 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
   const { data: lists = [] } = useTaskLists()
   const createTask = useCreateTask(defaultListId)
   const updateTask = useUpdateTask(task?.list_id)
+  const softDelete = useSoftDeleteTask(task?.list_id)
 
   // Form state
   const [title, setTitle] = useState('')
@@ -353,18 +354,28 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
 
   function handleDelete() {
     if (!task) return
+    const t = task
 
     // Replace any existing undo item
-    if (undoActiveItem && undoActiveItem.id !== task.id) {
+    if (undoActiveItem && undoActiveItem.id !== t.id) {
       hardDeleteTask(undoActiveItem.id).catch(() => {})
     }
 
-    undoShow({
-      id: task.id,
-      action: 'delete',
-      listId: task.list_id,
-      nextId: null,
-    })
+    // Soft-mark 'completing' on the server so the deferred hard-delete is
+    // allowed (an active task 409s), then open the undo window.
+    softDelete.mutate(
+      { id: t.id },
+      {
+        onSuccess: () => {
+          undoShow({
+            id: t.id,
+            action: 'delete',
+            listId: t.list_id,
+            nextId: null,
+          })
+        },
+      },
+    )
     onClose()
   }
 
@@ -372,7 +383,9 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
   // Layout helpers
   // ---------------------------------------------------------------------------
 
-  const allLists = [{ id: 'inbox', name: 'Inbox' }, ...lists]
+  // GET /api/task-lists already prepends the implicit Inbox; use it directly
+  // (prepending here too duplicated "Inbox" in the List dropdown).
+  const allLists = lists
   const selectedListName = allLists.find((l) => l.id === listId)?.name ?? 'Inbox'
 
   const inputCss: React.CSSProperties = {

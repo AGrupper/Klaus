@@ -869,6 +869,31 @@ class TestNativeTaskTools:
         """TOOL_SCHEMAS must contain a schema named 'task_create'."""
         assert "task_create" in self._schema_names()
 
+    def test_task_create_handler_passes_dict_to_store(self, monkeypatch):
+        """Regression: the handler must call TaskStore.create(dict), not
+        create(**kwargs) — kwargs raised TypeError and made Klaus reject every
+        task ('the tool is currently rejecting new entries')."""
+        import json as _json
+        from core import tools
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        mock_store = MagicMock()
+        mock_store.create.return_value = {"id": "t1", "title": "Call dentist", "status": "active"}
+        mock_store_cls = MagicMock(return_value=mock_store)
+
+        with patch("memory.firestore_db.TaskStore", mock_store_cls):
+            result = tools._HANDLERS["task_create"]({"title": "Call dentist", "due_date": "2026-06-25"})
+
+        # create was called once, with a single positional dict (not kwargs)
+        assert mock_store.create.call_count == 1
+        assert mock_store.create.call_args.kwargs == {}
+        passed = mock_store.create.call_args.args[0]
+        assert isinstance(passed, dict)
+        assert passed["title"] == "Call dentist"
+        assert passed["due_date"] == "2026-06-25"
+        assert _json.loads(result)["title"] == "Call dentist"
+
     def test_task_list_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_list'."""
         assert "task_list" in self._schema_names()
