@@ -287,10 +287,12 @@ export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
 
   const rowStyle: React.CSSProperties = {
     position: 'relative' as const,
+    // While the kebab menu is open: (1) overflow visible so the dropdown isn't
+    // clipped by this row, and (2) lift the whole row above sibling rows — each
+    // row's inner div has a `transform` (its own stacking context), so without
+    // this the next row in the DOM paints over the open menu.
+    zIndex: kebabOpen ? 30 : undefined,
     maxHeight: collapsed ? '0' : '200px',
-    // Must be visible while the kebab menu is open, or the absolutely-positioned
-    // dropdown is clipped by this row (invisible). Hidden otherwise so the
-    // collapse animation + phone swipe clip cleanly.
     overflow: kebabOpen ? 'visible' : 'hidden',
     transition: collapsed ? 'max-height 0.2s ease-out' : 'none',
     backgroundColor: dominant,
