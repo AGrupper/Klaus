@@ -30,7 +30,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 ## Phases
 
 - [x] **Phase 26: Hub Shell** — React PWA scaffold, Google auth, FastAPI serving, Today timeline, Klaus chat MVP (completed 2026-06-15)
-- [ ] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), manual TickTick migration
+- [x] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), manual TickTick migration (completed 2026-06-24)
 - [ ] **Phase 28: Habits & Supplements** — HabitStore, check-off UI, streaks, Klaus integration, habits on timeline
 - [ ] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path
 - [ ] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations
@@ -78,7 +78,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 27-04-PLAN.md — Frontend data layer: chrono-node + parseTaskInput + api/hooks + undoStore (TASK-01/03/04/07)
 - [x] 27-05-PLAN.md — Tasks page UI: list/row/detail-sheet/recurrence/sort + completion animation + undo (TASK-01/02/04)
 - [x] 27-06-PLAN.md — Quick-add (FAB + N-key) + Due-today timeline band + glance-rail tasks section (TASK-03/07)
-- [ ] 27-07-PLAN.md — TickTick cutover: UAT gate → manual migration → remove TickTick files (TASK-05/06)
+- [x] 27-07-PLAN.md — TickTick cutover: UAT gate → manual migration → remove TickTick files (TASK-05/06)
 **UI hint**: yes
 
 ### Phase 28: Habits & Supplements
@@ -123,7 +123,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
-| 27. Tasks | 6/7 | In Progress|  |
+| 27. Tasks | 7/7 | Complete   | 2026-06-24 |
 | 28. Habits & Supplements | 0/? | Not started | - |
 | 29. Web Push & Transition | 0/? | Not started | - |
 | 30. Health Pages | 0/? | Not started | - |
