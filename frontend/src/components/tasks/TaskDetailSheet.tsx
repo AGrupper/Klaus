@@ -34,6 +34,7 @@ import { useState, useEffect } from 'react'
 import { GripHorizontal, ChevronDown } from 'lucide-react'
 import { useCreateTask, useUpdateTask, useSoftDeleteTask } from '../../hooks/useTasks'
 import { useTaskLists } from '../../hooks/useTaskLists'
+import { useVisualViewport } from '../../hooks/useVisualViewport'
 import { RecurrenceSelector } from './RecurrenceSelector'
 import { useUndoStore } from '../../store/undoStore'
 import { hardDeleteTask } from '../../api/tasks'
@@ -103,14 +104,14 @@ interface RecurringScopeSheetProps {
 function RecurringScopeSheet({ onSelect, onCancel }: RecurringScopeSheetProps) {
   return (
     <>
-      {/* Backdrop */}
+      {/* Backdrop — above the detail sheet (z:191) it is launched from */}
       <div
         onClick={onCancel}
         style={{
           position: 'fixed',
           inset: 0,
           backgroundColor: 'rgba(10,10,10,0.7)',
-          zIndex: 110,
+          zIndex: 200,
         }}
         aria-hidden="true"
       />
@@ -127,7 +128,7 @@ function RecurringScopeSheet({ onSelect, onCancel }: RecurringScopeSheetProps) {
           borderTop: `1px solid ${border}`,
           borderRadius: '16px 16px 0 0',
           padding: '16px',
-          zIndex: 120,
+          zIndex: 201,
           display: 'flex',
           flexDirection: 'column',
           gap: '8px',
@@ -247,6 +248,9 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
   const undoShow = useUndoStore((s) => s.show)
   const undoActiveItem = useUndoStore((s) => s.activeItem)
 
+  // On-screen-keyboard inset — anchors the phone sheet above the iOS keyboard.
+  const { keyboardInset } = useVisualViewport()
+
   // Animation
   const [slideIn, setSlideIn] = useState(false)
 
@@ -280,6 +284,17 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
       requestAnimationFrame(() => setSlideIn(true))
     } else {
       setSlideIn(false)
+    }
+  }, [open])
+
+  // Lock background scroll while the sheet is open so iOS can't pan the layout
+  // viewport (which on a fixed bottom sheet shows up as a horizontal shift).
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
     }
   }, [open])
 
@@ -415,14 +430,14 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
 
   return (
     <>
-      {/* Scrim */}
+      {/* Scrim — above BottomTabs (z:100) so it covers the phone tab bar too */}
       <div
         onClick={onClose}
         style={{
           position: 'fixed',
           inset: 0,
           backgroundColor: 'rgba(10,10,10,0.7)',
-          zIndex: 90,
+          zIndex: 190,
         }}
         aria-hidden="true"
       />
@@ -433,14 +448,18 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
         aria-modal="true"
         aria-label={isCreate ? 'Add task' : 'Edit task'}
         style={{
+          // z:191 sits above BottomTabs (z:100); scrim (z:190) covers the tab bar.
           position: 'fixed',
-          zIndex: 91,
+          zIndex: 191,
           ...(isPhone
             ? {
-                // Phone: bottom sheet
+                // Phone: bottom sheet. `bottom: keyboardInset` rides the sheet
+                // directly above the iOS soft keyboard; maxHeight is the space
+                // above the keyboard so the pinned footer stays visible.
                 left: 0,
                 right: 0,
-                bottom: 0,
+                bottom: keyboardInset,
+                maxHeight: `calc(100dvh - ${keyboardInset}px - 24px)`,
                 borderRadius: '16px 16px 0 0',
                 transform: slideIn ? 'translateY(0)' : 'translateY(100%)',
                 transition: 'transform 0.25s ease-out',
@@ -455,12 +474,14 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
                 transition: 'transform 0.25s ease-out, opacity 0.25s ease-out',
                 maxWidth: '480px',
                 width: '100%',
+                maxHeight: '90dvh',
                 borderRadius: '16px',
               }),
           backgroundColor: secondary,
           border: `1px solid ${border}`,
-          maxHeight: '90dvh',
-          overflowY: 'auto',
+          // Container itself does not scroll — the form body scrolls and the
+          // footer stays pinned (so "Save changes" is always reachable).
+          overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
         }}
@@ -478,7 +499,9 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
           <GripHorizontal size={20} color={textSecondary} strokeWidth={2} />
         </div>
 
-        {/* Form body */}
+        {/* Form body — the scrollable region (footer below stays pinned).
+            minHeight:0 lets this flex child shrink so overflow scrolling works;
+            WebkitOverflowScrolling gives iOS momentum scrolling. */}
         <div
           style={{
             padding: '16px',
@@ -486,6 +509,9 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
             flexDirection: 'column',
             gap: '14px',
             flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
           {errorMsg && <ErrorMessage message={errorMsg} />}
@@ -498,7 +524,9 @@ export function TaskDetailSheet({ task, defaultListId = 'inbox', onClose, open }
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Task title"
-              autoFocus
+              // Desktop only: on phone, autofocusing pops the keyboard the instant
+              // the sheet opens and iOS pans the layout mid-slide (the left-shift).
+              autoFocus={!isPhone}
               style={inputCss}
               aria-label="Task title"
             />

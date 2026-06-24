@@ -16,9 +16,10 @@
  * Security (T-27-TI): no user content rendered here — static UI chrome only.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Plus } from 'lucide-react'
 import { QuickAddBar } from './QuickAddBar'
+import { useVisualViewport } from '../../hooks/useVisualViewport'
 import {
   accent,
   border,
@@ -41,6 +42,9 @@ interface TaskFABProps {
 export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
   const [open, setOpen] = useState(false)
 
+  // On-screen-keyboard inset — anchors the quick-add sheet above the iOS keyboard.
+  const { keyboardInset } = useVisualViewport()
+
   function handleOpen() {
     setOpen(true)
   }
@@ -48,6 +52,16 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
   function handleClose() {
     setOpen(false)
   }
+
+  // Lock background scroll while the sheet is open (prevents iOS layout panning).
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [open])
 
   return (
     // md:hidden lives on this wrapper (no inline `display`) so it actually
@@ -82,7 +96,8 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
       {/* Quick-add bottom sheet — phone only, slides up when FAB tapped */}
       {open && (
         <>
-          {/* Scrim — tapping outside dismisses */}
+          {/* Scrim — tapping outside dismisses. z:190 sits above BottomTabs
+              (z:100) so the tab bar can't paint over the sheet. */}
           <div
             onClick={handleClose}
             className="md:hidden"
@@ -90,12 +105,13 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
               position: 'fixed',
               inset: 0,
               backgroundColor: 'rgba(10,10,10,0.7)',
-              zIndex: 80,
+              zIndex: 190,
             }}
             aria-hidden="true"
           />
 
-          {/* Bottom sheet */}
+          {/* Bottom sheet — `bottom: keyboardInset` rides it above the iOS
+              keyboard so the input and live chips stay visible while typing. */}
           <div
             role="dialog"
             aria-modal="true"
@@ -106,12 +122,12 @@ export function TaskFAB({ defaultListId = 'inbox' }: TaskFABProps) {
               position: 'fixed',
               left: 0,
               right: 0,
-              bottom: 0,
+              bottom: keyboardInset,
               backgroundColor: secondary,
               borderTop: `1px solid ${border}`,
               borderRadius: '16px 16px 0 0',
-              zIndex: 81,
-              paddingBottom: 'env(safe-area-inset-bottom, 16px)',
+              zIndex: 191,
+              paddingBottom: keyboardInset > 0 ? 0 : 'env(safe-area-inset-bottom, 16px)',
             }}
           >
             {/* Drag handle */}

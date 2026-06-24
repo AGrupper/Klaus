@@ -130,18 +130,18 @@ export function TasksPage() {
     if (!listPickerOpen) return null
     return (
       <>
-        {/* Scrim */}
+        {/* Scrim — z:190 covers BottomTabs (z:100) so the picker isn't buried. */}
         <div
           onClick={() => setListPickerOpen(false)}
           style={{
             position: 'fixed',
             inset: 0,
             backgroundColor: 'rgba(10,10,10,0.7)',
-            zIndex: 80,
+            zIndex: 190,
           }}
           aria-hidden="true"
         />
-        {/* Bottom sheet */}
+        {/* Bottom sheet — z:191 above the tab bar so the full list is visible. */}
         <div
           role="dialog"
           aria-modal="true"
@@ -154,7 +154,7 @@ export function TasksPage() {
             backgroundColor: secondary,
             borderTop: `1px solid ${border}`,
             borderRadius: '16px 16px 0 0',
-            zIndex: 81,
+            zIndex: 191,
             maxHeight: '60dvh',
             overflowY: 'auto',
             paddingBottom: 'env(safe-area-inset-bottom, 16px)',

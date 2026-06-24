@@ -12,7 +12,7 @@
  *   2. 4s browser setTimeout (in UndoToast) → hardDeleteTask(id)
  *   3. Undo: undoTask(id) + invalidate query
  *
- * Delete flow (swipe phone / kebab desktop):
+ * Delete flow (swipe or ⋯ menu on phone / ⋯ menu on desktop):
  *   - Same 4s soft-mark → hard-delete (no confirmation modal — D-14)
  *   - Toast copy: "Task deleted."
  *
@@ -156,7 +156,7 @@ export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
   const [collapsed, setCollapsed] = useState(false)
   const [showCheckmark, setShowCheckmark] = useState(false)
 
-  // Kebab menu state (desktop)
+  // Kebab (⋯) menu state — shown on all breakpoints (phone + desktop)
   const [kebabOpen, setKebabOpen] = useState(false)
   const kebabRef = useRef<HTMLDivElement>(null)
 
@@ -452,11 +452,12 @@ export function TaskRow({ task, listId, onOpenTask }: TaskRowProps) {
           )}
         </button>
 
-        {/* Desktop kebab menu */}
+        {/* Task options (⋯) menu — shown on phone and desktop. No inline
+            `display` here, so nothing fights a Tailwind class; it renders on
+            every breakpoint. (Phone also keeps swipe-to-delete, above.) */}
         <div
           ref={kebabRef}
           style={{ position: 'relative' as const, flexShrink: 0, marginRight: '8px' }}
-          className="hidden md:block"
         >
           <button
             onClick={() => setKebabOpen((p) => !p)}
