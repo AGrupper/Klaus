@@ -455,6 +455,62 @@ def test_run_weekly_review_no_topic_write_when_send_fails(monkeypatch):
     assert add_topic_calls == []
 
 
+def test_run_weekly_review_retries_send_on_timeout(monkeypatch):
+    """OPS: a transient Telegram TimedOut on the first send is retried, not fatal.
+
+    Root cause of the 3x-in-a-row cron 500s: the synchronous gather+compose
+    starved the event loop and the subsequent bot.send_message raised TimedOut,
+    which propagated to a 500. With gather/compose offloaded AND a one-retry on
+    TimedOut, a single transient timeout no longer costs Amit a whole week's
+    review.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from telegram.error import TimedOut
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = AsyncMock()
+
+    # First send raises TimedOut, second succeeds.
+    mock_send = AsyncMock(side_effect=[TimedOut("Timed out"), MagicMock()])
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review", return_value="Review text"), \
+         patch("core.scheduled_message.send_and_inject", mock_send):
+        # Must NOT raise — the retry recovers.
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    assert mock_send.call_count == 2
+
+
+def test_run_weekly_review_propagates_persistent_timeout(monkeypatch):
+    """OPS: if BOTH attempts time out, the failure still surfaces (HTTP 500 →
+    heartbeat stale-cron ledger). The retry must not silently swallow a genuine
+    outage.
+    """
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from telegram.error import TimedOut
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = AsyncMock()
+    mock_send = AsyncMock(side_effect=TimedOut("Timed out"))
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review", return_value="Review text"), \
+         patch("core.scheduled_message.send_and_inject", mock_send):
+        with pytest.raises(TimedOut):
+            asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    assert mock_send.call_count == 2
+
+
 def test_weekly_review_prompt_has_per_facet_instruction():
     """PROG-01 / D-17: prompt must instruct per-facet within-block reporting."""
     content = open("prompts/weekly_training_review.md", encoding="utf-8").read()

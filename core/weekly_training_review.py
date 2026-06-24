@@ -13,6 +13,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -463,10 +464,30 @@ async def run_weekly_review(bot, today_iso: str) -> None:
         bot:       Telegram bot instance (_application.bot).
         today_iso: YYYY-MM-DD string (Asia/Jerusalem date at cron fire time).
     """
-    week_data = _gather_week_data(today_iso)
-    message = _compose_review(week_data, today_iso)
+    # WHY run_in_executor: _gather_week_data does a blocking Garmin login (~28s) +
+    # a synchronous requests-based activities fetch (15s read-timeout) + Postgres +
+    # Firestore reads, and _compose_review makes a blocking brain-LLM call. Running
+    # them directly on the event loop starved it for ~110s, which left the Telegram
+    # client's connection unusable so bot.send_message raised TimedOut → the cron
+    # 500'd 3 Sundays in a row. Offload both to a thread so the loop stays
+    # responsive, mirroring nightly_review.run / autonomous (Pitfall 2).
+    loop = asyncio.get_running_loop()
+    week_data = await loop.run_in_executor(None, _gather_week_data, today_iso)
+    message = await loop.run_in_executor(None, _compose_review, week_data, today_iso)
+
+    # D-24 always send. One retry on a transient Telegram TimedOut so a single
+    # flake never silently costs Amit a whole week's review; a persistent failure
+    # still propagates (→ HTTP 500 → heartbeat stale-cron ledger). send_and_inject's
+    # re-raise contract is unchanged — the retry lives here in the caller.
+    from telegram.error import TimedOut
+
     from core.scheduled_message import send_and_inject
-    await send_and_inject(bot, message, inject_into_conversation=True)  # D-24 always send
+    try:
+        await send_and_inject(bot, message, inject_into_conversation=True)
+    except TimedOut:
+        logger.warning("weekly_review: Telegram send timed out — retrying once", exc_info=True)
+        await asyncio.sleep(2)
+        await send_and_inject(bot, message, inject_into_conversation=True)
 
     # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
     # review to CoachingTopicStore AFTER send succeeds — never before.
