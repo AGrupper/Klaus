@@ -49,8 +49,9 @@ Exceptions:
 - Touch targets: minimum 44px (iOS HIG) — applies to check-off buttons, FAB, all interactive rows.
 - BottomTabs fixed height: 64px + `env(safe-area-inset-bottom)` — unchanged invariant from Phase 26.
 - FAB position: `bottom: calc(env(safe-area-inset-bottom, 0px) + 76px)` — 64px tabs + 12px gap.
-- Drag handle pill: 36px × 4px, borderRadius 2px, `#3A3A3A` — same as TaskFAB bottom sheet.
-- Contribution grid cells: 12px × 12px with 2px gap (see Grid section below).
+- Drag handle pill: 36px × 4px, borderRadius 2px, `#3A3A3A` — carry-over from the Phase 27 TaskFAB bottom sheet. Both dimensions are multiples of 4 (36 = 4×9), just outside the standard token set; declared here as a named exception so the registry is complete.
+- Contribution grid cell gap: 2px — GitHub contribution-grid convention; intra-component grid rhythm, not a layout spacing token. Do NOT round up to 4px (destroys the density aesthetic).
+- Band section-header padding: `10px 14px 6px` — mirrors the live `DueTasksBand.tsx` exactly (line 252, `frontend/src/components/timeline/DueTasksBand.tsx`). HabitsBand must match this value precisely so the two bands are visually identical. This is a carry-over from live code, not a new choice; the spacing checker must accept it as a named band-header exception.
 
 ---
 
@@ -58,12 +59,16 @@ Exceptions:
 
 Locked by Phase 26 UI-SPEC. Exactly 4 sizes, exactly 2 weights. Source: `frontend/src/tokens.ts`.
 
+Confirmed: `tokens.ts` declares `13px`, `16px`, `20px`, `28px` only. `14px` is **not** a declared token and must not be used anywhere in Phase 28.
+
 | Role | Size | Weight | Line Height | Usage in Phase 28 |
 |------|------|--------|-------------|-------------------|
 | Display | 28px | 600 (semibold) | 1.15 | Not used in this phase |
 | Heading | 20px | 600 (semibold) | 1.2 | Section headings in GlanceRail streaks card; Habits tab page title |
 | Body | 16px | 400 (regular) | 1.5 | Habit/supplement name in rows and detail view; form field values; check-off confirmation text; dose label |
 | Label | 13px | 400 (regular) | 1.4 | Slot chip ("Morning"), streak count, metadata rows, field labels (uppercase 0.04em tracking), grid axis labels, nudge timing |
+
+GlanceRail streak value: rendered as `13px/600` (Label size, semibold weight) — sits with surrounding rail metadata at the same size, distinguished by weight only. This is the compact-metric pattern the rail already uses for all secondary values. **Not** 14px (which is not on the scale).
 
 No intermediate weights (500 is not used). No font sizes outside this set.
 
@@ -128,7 +133,8 @@ All values from `frontend/src/tokens.ts`. Locked by Phase 26.
 | Dose label at check-off | "[Name] — [dose]" e.g., "Creatine — 5g" |
 | Dose edit prompt (inline) | "Adjust dose taken:" (label above the inline input in the check-off sheet) |
 | Dose input placeholder | "e.g. 5g" |
-| Save dose | "Save" (44px accent button in dose-edit inline sheet) |
+| DoseEditSheet primary CTA | "Save dose" (accent button, 44px, full-width on phone) |
+| DoseEditSheet dismiss | "Discard dose" (textSecondary text button — no state change, closes sheet) |
 
 ### Contribution Grid (detail view)
 
@@ -183,11 +189,11 @@ Pattern basis: `TaskRow.tsx` (from Phase 27). Simplifications:
 - Supplement type: shows dose label below name in Label (13px) textSecondary
 - Slot chip: `#2A2A2A` background, Label (13px) textSecondary, 3px 8px padding, borderRadius 6px
 - Streak chip: plain Label (13px) textSecondary inline after slot chip
-- Kebab (⋯) menu: "Edit" + "Delete" — same dropdown pattern as TaskRow
+- Kebab (⋯) menu: "Edit" + "Delete" — same dropdown pattern as TaskRow; button must carry `aria-label="Habit options"` (icon-only, no visible label)
 
 Layout per row (minHeight 52px):
 ```
-[CheckButton 44px] [HabitBody flex-1] [KebabButton 32px]
+[CheckButton 44px] [HabitBody flex-1] [KebabButton 32px aria-label="Habit options"]
   HabitBody:
     [Name — Body 16px textPrimary]
     [SlotChip] [" · "] [StreakText — Label 13px textSecondary]
@@ -225,7 +231,7 @@ Purpose: GitHub-style rolling ~365-day history grid in HabitDetailView.
 
 Grid layout:
 - 52 columns (weeks), 7 rows (Mon–Sun from top)
-- Each cell: 12px × 12px, borderRadius 2px, gap 2px between cells
+- Each cell: 12px × 12px, borderRadius 2px, gap 2px between cells (named exception — see Spacing section)
 - Cell colors: four states (see Color section above)
 - Week axis labels: abbreviated month name every ~4 weeks, Label 13px textSecondary
 - Day axis: single-letter day initials (M T W T F S S), Label 13px textSecondary
@@ -260,8 +266,8 @@ Sheet contains:
 - Name + default dose label (Body 16px textPrimary)
 - "Adjust dose taken:" label (Label 13px textSecondary uppercase)
 - Dose input (prefilled with default dose)
-- "Save" button (accent, 44px, full-width on phone)
-- "Cancel" text button (textSecondary)
+- "Save dose" button (accent, 44px, full-width on phone) — primary CTA; verb + noun label
+- "Discard dose" text button (textSecondary) — dismiss; closes sheet with no state change
 
 Sheet z-index: z:192 (above HabitDetailView z:191 and HabitsPage sheet).
 iOS notes: same keyboard/scroll-lock/no-autoFocus rules as HabitCreateEditSheet.
@@ -272,7 +278,7 @@ Purpose: TIME-06 — habits and supplements due today appear on the Today timeli
 
 Pattern basis: `DueTasksBand.tsx` (from Phase 27). The band renders after the DueTasksBand, before timed calendar events, using the same slot-group ordering as HabitsPage (Morning → Noon → Evening → Bedtime → then "any time" items).
 
-Section header: "Habits" label, accent 4px × 32px left-border stripe, 10px 14px padding — identical to DueTasksBand header.
+Section header: "Habits" label, accent 4px × 32px left-border stripe, padding `10px 14px 6px` — mirrors the live DueTasksBand header exactly (source: `DueTasksBand.tsx` line 252). This is a carry-over value from the live pattern, declared as a named exception in the Spacing section.
 
 Per-row:
 - CheckButton 44px (tap to check off; tap again to uncheck — toggle, D-07)
@@ -289,7 +295,7 @@ Add a "Habits" card below the "Tasks" card. Tappable (navigates to /habits).
 
 Structure mirrors "Tasks" card pattern (from Phase 27 GlanceRail):
 - Heading "Habits" (20px/600 textPrimary)
-- One row per habit with the longest active streak: `[name]` label (13px textSecondary) + `[N]-day streak` value (14px/600 textPrimary)
+- One row per habit with the longest active streak: `[name]` label (13px/400 textSecondary) + `[N]-day streak` value (13px/600 textPrimary) — Label size, semibold weight; 14px is not a declared token
 - Maximum 4 rows to avoid dominating the rail
 - Empty: "No habits defined." (13px textSecondary)
 
@@ -317,8 +323,8 @@ For **habit** type:
 For **supplement** type:
 1. Tap circle: opens DoseEditSheet (not an immediate toggle)
 2. DoseEditSheet shows name + prefilled default dose
-3. Tap "Save": fires API PATCH with dose-taken value, closes sheet, circle fills accent
-4. Tap "Cancel": no state change, sheet closes
+3. Tap "Save dose": fires API PATCH with dose-taken value, closes sheet, circle fills accent
+4. Tap "Discard dose": no state change, sheet closes
 
 ### Contribution Grid (HABIT-04, D-13)
 
@@ -345,7 +351,7 @@ All bottom sheets in this phase (HabitCreateEditSheet, HabitDetailView, DoseEdit
 3. **Keyboard tracking**: use `useVisualViewport` hook (already in `frontend/src/hooks/useVisualViewport.ts`) to set `bottom: keyboardInset` and `maxHeight: calc(100dvh - {keyboardInset}px - 24px)` — position:fixed does not track the iOS soft keyboard.
 4. **Scroll-lock**: `document.body.style.overflow = 'hidden'` while any sheet is open; restore on close.
 5. **No phone autoFocus**: do NOT set `autoFocus` on any input inside a phone bottom sheet — iOS pans the layout viewport mid-slide animation (produces the left-shift bug). Desktop can use `autoFocus`.
-6. **Blur-before-click trap**: for any button that dismisses the sheet (Cancel, scrim tap), use `onMouseDown={(e) => e.preventDefault()}` to prevent iOS from firing blur on the active input before the click fires — otherwise blur eats the submit. See Phase 26 DockChat pattern for reference.
+6. **Blur-before-click trap**: for any button that dismisses the sheet ("Discard dose", scrim tap), use `onMouseDown={(e) => e.preventDefault()}` to prevent iOS from firing blur on the active input before the click fires — otherwise blur eats the submit. See Phase 26 DockChat pattern for reference.
 
 ### Completion Animation (on check-off)
 
@@ -367,7 +373,7 @@ Mirrors task completion animation from Phase 27 (TaskRow.tsx), adapted for toggl
 - HabitDetailView: bottom sheet (same as TaskDetailSheet phone mode)
 - HabitCreateEditSheet: bottom sheet
 - ContributionGrid: horizontally scrollable (overflow-x: auto), shows ~12 weeks visible by default
-- Habits band in Timeline: renders inline, same padding as DueTasksBand (`14px` sides)
+- Habits band in Timeline: renders inline, same padding as DueTasksBand (`10px 14px 6px` header, `0 14px 10px` rows)
 - DoseEditSheet: bottom sheet, z:192
 
 ### Desktop (≥ 768px — md breakpoint)
