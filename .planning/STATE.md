@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: ready_to_plan
-stopped_at: Phase 27 complete (7/7) — ready to discuss Phase 28
-last_updated: 2026-06-24T10:56:05.990Z
-last_activity: 2026-06-18 -- Phase 27 execution started
+status: planning
+stopped_at: Phase 28 context gathered
+last_updated: "2026-06-26T15:26:39.831Z"
+last_activity: 2026-06-24
 progress:
   total_phases: 5
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 16
   completed_plans: 16
-  percent: 20
+  percent: 40
 ---
 
 # State — Klaus
@@ -144,9 +144,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-17T14:53:34.818Z
-Stopped at: Phase 27 UI-SPEC approved
-Resume file: .planning/phases/27-tasks/27-UI-SPEC.md
+Last session: 2026-06-26T15:26:39.828Z
+Stopped at: Phase 28 context gathered
+Resume file: .planning/phases/28-habits-supplements/28-CONTEXT.md
 
 ## Operator Next Steps
 
