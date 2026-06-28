@@ -1095,6 +1095,19 @@ Notes:
 - Klaus's heartbeat picks up each job-id's last-run timestamp and alerts on staleness
   per `core/heartbeat.py:_CRON_MAX_STALENESS_HOURS`. The `autonomous-tick` threshold
   is 1 hour (3 missed 20-minute ticks) — see Phase 18 Pitfall 5.
+- **Ghost "failed Nx in a row" alerts after a fix.** `check_cron_health` raises the
+  CRITICAL `cron:<job>:failing` signal purely on `heartbeat_runs/<job>.consecutive_failures
+  >= 3`, and that counter only resets on a *successful* run. So after you deploy a fix
+  for a low-frequency cron (e.g. `weekly-training-review`, Sundays only), the heartbeat
+  keeps re-pinging the same message every 24h until the next scheduled run actually
+  succeeds — the system can't tell you already fixed it. Clear the stale streak yourself:
+  ```bash
+  python scripts/reset_cron_streak.py --list                 # show streaks
+  python scripts/reset_cron_streak.py weekly-training-review  # clear one (+ resolve incident)
+  ```
+  Safe: if the fix were wrong, the next real run re-raises the alert legitimately. This
+  is intentionally manual — auto-resetting on deploy would silence a genuinely-still-broken
+  weekly cron for up to 3 weeks while it re-accrues 3 failures.
 
 ### §14d. klaus-reflect (Phase 17)
 
