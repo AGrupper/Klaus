@@ -861,7 +861,7 @@ export function useCheckOffHabit() {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Subcollection recursive delete on hard-delete (D-20)**
    - What we know: Firestore subcollections are not automatically deleted when a parent doc is deleted.

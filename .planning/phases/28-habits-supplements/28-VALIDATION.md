@@ -52,7 +52,8 @@ created: 2026-06-26
 | TBD | TBD | 0 | HABIT-02 | T-28-backfill | `/api/habits/{id}/checkin` 200 + optimistic state | integration | `pytest tests/test_habits_api.py::TestCheckinEndpoint -x` | ❌ W0 | ⬜ pending |
 | TBD | TBD | 0 | HABIT-05 | — | `_gather_habit_adherence` returns [] on error (sentinel) | unit | `pytest tests/test_autonomous.py::test_habit_gather_returns_empty_on_error -x` | ❌ W0 | ⬜ pending |
 | TBD | TBD | 0 | HABIT-05 | — | `get_habit_adherence` tool registered in `core/tools.py` | unit | `pytest tests/test_tools.py -x -k habit` | ❌ W0 | ⬜ pending |
-| TBD | TBD | 0 | TIME-06 | — | `/api/today` includes habits due today | integration | `pytest tests/test_api_today.py::test_today_includes_habits -x` | ❌ W0 | ⬜ pending |
+| TBD | 28-02 | 0 | TIME-06 | — | GET /api/habits flags `scheduled_today`/`done_today` for the timeline band | integration | `pytest tests/test_habits_api.py -x -k scheduled_today` | ❌ W0 | ⬜ pending |
+| TBD | 28-05 | 3 | TIME-06 | T-28-xss | HabitsBand mounted on Today timeline; one-tap check-off; class-driven display | tsc+grep | `cd frontend && npx tsc --noEmit -p tsconfig.json` then `grep -q HabitsBand frontend/src/components/timeline/TimelineDay.tsx` | ❌ FE | ⬜ pending |
 | TBD | TBD | — | SLOT_SUPPLEMENTS rewire | T-28-schedule | 21:30 alert reads HabitStore; falls back to dict if empty | unit | `pytest tests/test_proactive_alerts.py -x -k supplement` | extends existing | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
@@ -62,7 +63,7 @@ created: 2026-06-26
 ## Wave 0 Requirements
 
 - [ ] `tests/test_habit_store.py` — HabitStore CRUD + streak computation + four-state grid + **DST fixtures** (HABIT-01/02/03/04)
-- [ ] `tests/test_habits_api.py` — FastAPI `/api/habits/*` endpoints + `require_hub_session` + checkin toggle + yesterday-backfill gate (HABIT-02, TIME-06 API side)
+- [ ] `tests/test_habits_api.py` — FastAPI `/api/habits/*` endpoints + `require_hub_session` + checkin toggle + yesterday-backfill gate + `scheduled_today`/`done_today` flags (HABIT-02, TIME-06 API side). TIME-06 surfaces via the GET /api/habits flags (no `/api/today` test file); the frontend HabitsBand (28-05) is verified by tsc + grep, not pytest.
 - [ ] Extend (do **not** replace) `tests/test_autonomous.py` and `tests/test_proactive_alerts.py` for HABIT-05 + the SLOT_SUPPLEMENTS rewire
 - [ ] Framework install: none — pytest already present
 
@@ -73,7 +74,7 @@ created: 2026-06-26
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
 | Contribution grid renders correctly across breakpoints | HABIT-04 | Visual/responsive — Tailwind `md:` vs inline-`display` gotcha | Open a habit detail on phone + desktop; confirm grid + no leaked phone-only UI |
-| One-tap check-off feel (optimistic + toggle) on Today timeline | HABIT-02 / TIME-06 | Touch interaction + optimistic UX | Tap a due habit on phone timeline; confirm instant check + tap-again un-check |
+| One-tap check-off feel (optimistic + toggle) on Today timeline (HabitsBand, 28-05) | HABIT-02 / TIME-06 | Touch interaction + optimistic UX | Tap a due habit on phone timeline; confirm instant check + tap-again un-check; supplement tap opens dose sheet |
 | iOS create/edit + dose-edit bottom sheets | HABIT-01 / HABIT-02 | iOS-Safari z-index/keyboard/blur-before-click traps | Open sheets on iOS; confirm above BottomTabs, keyboard tracking, submit works |
 | Per-slot adherence nudge fires once and is deduped vs 21:30 alert | HABIT-05 | Depends on live autonomous tick + tick-brain judgment | Leave a scheduled item unchecked past its slot; confirm at most one nudge, no double-nag |
 
