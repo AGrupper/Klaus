@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: executing
+status: verifying
 stopped_at: Phase 28 UI-SPEC approved
-last_updated: "2026-06-30T14:39:51.662Z"
+last_updated: "2026-06-30T14:54:29.798Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 5
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 21
-  completed_plans: 20
-  percent: 40
+  completed_plans: 21
+  percent: 60
 ---
 
 # State — Klaus
@@ -20,7 +20,7 @@ progress:
 
 Phase: 28 (habits-supplements) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-06-30
 
 **Progress bar:** [██--------] 20% (1/5 phases)
@@ -109,6 +109,10 @@ See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 - [v5.0 design spec 2026-06-13]: Phases 27 (Tasks), 28 (Habits), 29 (Push), 30 (Health) all depend on Phase 26 (shell) but are independent of each other and can be built in any order after Phase 26.
 - [v5.0 design spec 2026-06-13]: Telegram mirror flag (PUSH-03) must be left ON for at least one week of real production use before being disabled — Telegram retirement is a gradual transition, not a hard cutover.
 - [Phase ?]: avoids duplicate color declarations
+- [28-03 D-15]: habit_pending is a Layer-0 gather trigger (non-empty list wakes tick-brain at $0 cost, D-15 per-slot salience)
+- [28-03 D-17]: per-item dedup topic key = plain string habit-nudge:{habit_id}:{today_iso} (CoachingTopicStore, Pitfall 4)
+- [28-03 D-01]: SLOT_SUPPLEMENTS kept unchanged as fallback; _get_supplement_checkoffs overlays real HabitStore data when available
+- [28-03 D-18]: Bedtime/pre-bed supplements outside the 7-21 tick window — 21:30 alert covers that slot cleanly
 
 ### Pending Todos
 
@@ -145,8 +149,8 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-30T14:39:51.659Z
-Stopped at: Phase 28 UI-SPEC approved
+Last session: 2026-06-30T14:53:27Z
+Stopped at: Completed 28-03-PLAN.md (habit adherence tool + autonomous gather + SLOT_SUPPLEMENTS rewire)
 Resume file: None
 
 ## Operator Next Steps

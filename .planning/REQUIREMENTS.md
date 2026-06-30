@@ -50,7 +50,7 @@ Requirements for milestone v5.0. Each maps to roadmap phases.
 - [x] **HABIT-02**: Each item is checked off with a single tap (from the timeline or Habits tab), with dose shown as a label at check-off
 - [x] **HABIT-03**: Streaks count and break only on scheduled days (non-scheduled days are neutral), computed in Asia/Jerusalem local time with DST-boundary tests
 - [x] **HABIT-04**: The Habits tab shows a per-habit history grid (contribution-style) in the detail view
-- [ ] **HABIT-05**: Klaus can read habit/supplement adherence via tools, and the autonomous tick's Layer-0 gather includes today's pending check-offs so he can nudge before end of day
+- [x] **HABIT-05**: Klaus can read habit/supplement adherence via tools, and the autonomous tick's Layer-0 gather includes today's pending check-offs so he can nudge before end of day
 
 ### Web Push & Transition (PUSH)
 
@@ -124,7 +124,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HABIT-02 | Phase 28 | Complete |
 | HABIT-03 | Phase 28 | Complete |
 | HABIT-04 | Phase 28 | Complete |
-| HABIT-05 | Phase 28 | Pending |
+| HABIT-05 | Phase 28 | Complete |
 | TIME-06 | Phase 28 | Complete |
 | PUSH-01 | Phase 29 | Pending |
 | PUSH-02 | Phase 29 | Pending |
