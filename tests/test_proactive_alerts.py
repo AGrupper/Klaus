@@ -1341,3 +1341,180 @@ class TestPromptContent:
             "queries — named session, deficit in concrete units, single ranked rec, "
             "'your call, Sir' (COACH-03/04)"
         )
+
+
+# ====================================================================== #
+# Phase 28 Plan 03 — SLOT_SUPPLEMENTS rewire (D-01/D-02)                 #
+# _get_supplement_checkoffs + _HABIT_SLOT_TO_FUELING + fallback           #
+# ====================================================================== #
+
+
+class TestSupplementCheckoffs:
+    """Unit tests for _get_supplement_checkoffs and _HABIT_SLOT_TO_FUELING.
+
+    Covers D-01 (HabitStore supplement check-offs as source of truth),
+    D-02 (slot→fueling-slot mapping), fallback to SLOT_SUPPLEMENTS constant
+    when HabitStore is empty (backward compat), and error swallowing.
+    """
+
+    def _make_firestore_habit_mock(
+        self,
+        *,
+        active_supplements=None,
+        completions=None,
+        raises=False,
+    ):
+        """Build a sys.modules-level mock for memory.firestore_db with HabitStore."""
+        import sys
+        from types import ModuleType
+        from unittest.mock import MagicMock
+
+        fake_db = ModuleType("memory.firestore_db")
+
+        if raises:
+            fake_db.HabitStore = MagicMock(side_effect=Exception("Firestore down"))
+        else:
+            mock_hs_inst = MagicMock()
+            mock_hs_inst.list_active.return_value = active_supplements or []
+            mock_hs_inst.get_completions_for_date.return_value = completions or {}
+            fake_db.HabitStore = MagicMock(return_value=mock_hs_inst)
+
+        # Passthrough attrs the real module exposes
+        fake_db._make_firestore_client = MagicMock()
+        fake_db.CoachingTopicStore = MagicMock()
+        fake_db.BlockStore = MagicMock()
+        return fake_db
+
+    def _call_get_supplement_checkoffs(self, today_iso, fake_db):
+        """Call _get_supplement_checkoffs with a patched memory.firestore_db."""
+        import sys
+        from unittest.mock import patch as _patch
+
+        old = sys.modules.get("memory.firestore_db")
+        sys.modules["memory.firestore_db"] = fake_db
+        import memory as _mem
+        old_attr = getattr(_mem, "firestore_db", None)
+        _mem.firestore_db = fake_db
+        try:
+            with _patch.dict(os.environ, {"GCP_PROJECT_ID": "test-proj"}):
+                from core.proactive_alerts import _get_supplement_checkoffs
+                return _get_supplement_checkoffs(today_iso)
+        finally:
+            if old is not None:
+                sys.modules["memory.firestore_db"] = old
+            else:
+                sys.modules.pop("memory.firestore_db", None)
+            if old_attr is not None:
+                _mem.firestore_db = old_attr
+            elif hasattr(_mem, "firestore_db"):
+                delattr(_mem, "firestore_db")
+
+    def test_habit_slot_to_fueling_mapping_exists(self):
+        """_HABIT_SLOT_TO_FUELING must be defined in core.proactive_alerts."""
+        import core.proactive_alerts as pa
+        assert hasattr(pa, "_HABIT_SLOT_TO_FUELING"), (
+            "_HABIT_SLOT_TO_FUELING must be defined at module level in core.proactive_alerts"
+        )
+        mapping = pa._HABIT_SLOT_TO_FUELING
+        assert "Morning" in mapping
+        assert "Bedtime" in mapping
+        # Morning maps to post-am-run, Bedtime to pre-bed
+        assert "post-am-run" in mapping["Morning"]
+        assert "pre-bed" in mapping["Bedtime"]
+
+    def test_get_supplement_checkoffs_function_exists(self):
+        """_get_supplement_checkoffs must be importable from core.proactive_alerts."""
+        from core.proactive_alerts import _get_supplement_checkoffs  # noqa: F401
+
+    def test_get_supplement_checkoffs_maps_slots(self):
+        """With active supplements, _get_supplement_checkoffs returns {fueling_slot: {name, done, habit_id}}."""
+        supplements = [
+            {"id": "sup1", "type": "supplement", "name": "Creatine",
+             "slot": "Evening", "status": "active"},
+        ]
+        fake_db = self._make_firestore_habit_mock(active_supplements=supplements, completions={})
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+
+        # Evening maps to pm-post-lift
+        assert "pm-post-lift" in result, (
+            f"Evening slot must map to pm-post-lift. Got: {result}"
+        )
+        item = result["pm-post-lift"]
+        assert item["name"] == "Creatine"
+        assert item["done"] is False
+        assert item["habit_id"] == "sup1"
+
+    def test_supplement_checkoffs_reflects_completion(self):
+        """A supplement with a completion record reports done=True; without → done=False."""
+        supplements = [
+            {"id": "sup1", "type": "supplement", "name": "Omega-3",
+             "slot": "Morning", "status": "active"},
+            {"id": "sup2", "type": "supplement", "name": "Creatine",
+             "slot": "Evening", "status": "active"},
+        ]
+        completions = {"sup1": {"habit_id": "sup1", "done": True}}
+        fake_db = self._make_firestore_habit_mock(
+            active_supplements=supplements, completions=completions
+        )
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+
+        post_am = result.get("post-am-run", {})
+        assert post_am.get("done") is True, "sup1 (Morning→post-am-run) has completion → done=True"
+
+        pm_post = result.get("pm-post-lift", {})
+        assert pm_post.get("done") is False, "sup2 (Evening→pm-post-lift) no completion → done=False"
+
+    def test_supplement_checkoffs_empty_falls_back(self):
+        """When HabitStore has no supplements, _get_supplement_checkoffs returns {}
+        and the existing SLOT_SUPPLEMENTS constant is unchanged (backward compat)."""
+        fake_db = self._make_firestore_habit_mock(active_supplements=[], completions={})
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+        assert result == {}, (
+            f"Empty HabitStore must return {{}} — no fabricated data. Got: {result}"
+        )
+
+        # SLOT_SUPPLEMENTS constant must be unchanged (the fallback is kept as-is)
+        import core.proactive_alerts as pa
+        assert pa.SLOT_SUPPLEMENTS.get("post-am-run") == "D3+K2/Omega-3"
+        assert pa.SLOT_SUPPLEMENTS.get("pm-post-lift") == "Creatine"
+        assert pa.SLOT_SUPPLEMENTS.get("pre-bed") == "Mg-Glycinate/Zinc/Copper"
+
+    def test_get_supplement_checkoffs_swallows_errors(self):
+        """_get_supplement_checkoffs returns {} on any exception (non-fatal)."""
+        fake_db = self._make_firestore_habit_mock(raises=True)
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+        assert result == {}, (
+            f"_get_supplement_checkoffs must return {{}} on exception, got: {result}"
+        )
+
+    def test_bedtime_supplement_maps_to_pre_bed(self):
+        """Bedtime slot maps to pre-bed fueling slot."""
+        supplements = [
+            {"id": "sup3", "type": "supplement", "name": "Mg-Glycinate",
+             "slot": "Bedtime", "status": "active"},
+        ]
+        fake_db = self._make_firestore_habit_mock(active_supplements=supplements, completions={})
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+
+        assert "pre-bed" in result, f"Bedtime must map to pre-bed. Got: {result}"
+        assert result["pre-bed"]["name"] == "Mg-Glycinate"
+
+    def test_noon_supplement_maps_to_pm_post_lift(self):
+        """Noon slot maps to pm-post-lift fueling slot."""
+        supplements = [
+            {"id": "sup4", "type": "supplement", "name": "Zinc",
+             "slot": "Noon", "status": "active"},
+        ]
+        fake_db = self._make_firestore_habit_mock(active_supplements=supplements, completions={})
+        result = self._call_get_supplement_checkoffs("2026-06-30", fake_db)
+
+        assert "pm-post-lift" in result, f"Noon must map to pm-post-lift. Got: {result}"
+
+    def test_slot_supplements_constant_still_exists_and_unchanged(self):
+        """SLOT_SUPPLEMENTS constant must remain unchanged (fallback for empty store)."""
+        import core.proactive_alerts as pa
+        assert hasattr(pa, "SLOT_SUPPLEMENTS"), "SLOT_SUPPLEMENTS must be defined at module level"
+        ss = pa.SLOT_SUPPLEMENTS
+        assert ss.get("post-am-run") == "D3+K2/Omega-3"
+        assert ss.get("pm-post-lift") == "Creatine"
+        assert ss.get("pre-bed") == "Mg-Glycinate/Zinc/Copper"
