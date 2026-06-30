@@ -7,8 +7,8 @@
  *
  * Mechanics (D-13, D-14, UI-SPEC § Undo toast):
  *   - Single active item (last-action-wins) from undoStore.
- *   - 4-second countdown; on expiry → hardDeleteTask(id) + clear().
- *   - "Undo" button → undoTask(id) + restore query cache + clear().
+ *   - 4-second countdown; on expiry → hardDelete(id) + clear().
+ *   - "Undo" button → restore(id) + restore query cache + clear().
  *   - 200ms fade-out on dismiss.
  *   - Second action before first expires: UndoToast fires hardDelete for old
  *     item immediately when show() is called (store replaces activeItem;
@@ -16,14 +16,19 @@
  *
  * The 4s timer is a browser setTimeout — NOT a server call (T-27-REP, CLAUDE.md §6).
  *
- * Security note (T-27-TI): toast message is static copy, not task content.
+ * Phase 28 extension: `resourceType` discriminator on UndoItem drives whether
+ * hardDeleteTask/undoTask (tasks) or hardDeleteHabit/restoreHabit (habits) fire.
+ *
+ * Security note (T-27-TI): toast message is static copy, not task/habit content.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useUndoStore } from '../../store/undoStore'
 import { undoTask, hardDeleteTask } from '../../api/tasks'
+import { hardDeleteHabit, restoreHabit } from '../../api/habits'
 import { tasksQueryKey } from '../../hooks/useTasks'
+import { HABITS_QUERY_KEY } from '../../hooks/useHabits'
 import {
   accent,
   border,
@@ -50,13 +55,20 @@ export function UndoToast() {
   // Ref to track which id the current timer was started for
   const timerItemIdRef = useRef<string | null>(null)
   // Snapshot of the item for the fade-out cleanup
-  const pendingDeleteRef = useRef<{ id: string; listId: string } | null>(null)
+  const pendingDeleteRef = useRef<{ id: string; listId: string; resourceType?: 'task' | 'habit' } | null>(null)
 
-  // Helper: fire hard-delete for an item that's being replaced or expired
-  function fireHardDelete(id: string) {
-    hardDeleteTask(id).catch(() => {
-      // Best-effort — server will garbage-collect orphaned "completing" docs
-    })
+  // Helper: fire hard-delete for an item that's being replaced or expired.
+  // Dispatches hardDeleteHabit for habits, hardDeleteTask for tasks.
+  function fireHardDelete(id: string, resourceType?: 'task' | 'habit') {
+    if (resourceType === 'habit') {
+      hardDeleteHabit(id).catch(() => {
+        // Best-effort — server will garbage-collect orphaned "completing" docs
+      })
+    } else {
+      hardDeleteTask(id).catch(() => {
+        // Best-effort — server will garbage-collect orphaned "completing" docs
+      })
+    }
   }
 
   useEffect(() => {
@@ -68,7 +80,7 @@ export function UndoToast() {
         timerItemIdRef.current !== activeItem.id &&
         pendingDeleteRef.current
       ) {
-        fireHardDelete(pendingDeleteRef.current.id)
+        fireHardDelete(pendingDeleteRef.current.id, pendingDeleteRef.current.resourceType)
       }
 
       // Clear any existing timer
@@ -80,13 +92,13 @@ export function UndoToast() {
       // Show the toast
       setVisible(true)
       timerItemIdRef.current = activeItem.id
-      pendingDeleteRef.current = { id: activeItem.id, listId: activeItem.listId }
+      pendingDeleteRef.current = { id: activeItem.id, listId: activeItem.listId, resourceType: activeItem.resourceType }
 
       // Start the 4s countdown
       timerRef.current = setTimeout(() => {
         // Timer expired: fire hard-delete and dismiss
         if (pendingDeleteRef.current) {
-          fireHardDelete(pendingDeleteRef.current.id)
+          fireHardDelete(pendingDeleteRef.current.id, pendingDeleteRef.current.resourceType)
         }
         // Fade out
         setVisible(false)
@@ -126,7 +138,7 @@ export function UndoToast() {
       timerRef.current = null
     }
 
-    const { id, listId } = activeItem
+    const { id, listId, resourceType } = activeItem
 
     // Clear store first (optimistic UI restore)
     clear()
@@ -135,11 +147,17 @@ export function UndoToast() {
     pendingDeleteRef.current = null
 
     try {
-      await undoTask(id)
-      // Invalidate the query to refetch the task back into the list
-      queryClient.invalidateQueries({ queryKey: tasksQueryKey(listId) })
+      if (resourceType === 'habit') {
+        // Habit undo: restore the soft-deleted habit and invalidate the habits cache
+        await restoreHabit(id)
+        queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
+      } else {
+        // Task undo: undo the task completion and invalidate the tasks cache
+        await undoTask(id)
+        queryClient.invalidateQueries({ queryKey: tasksQueryKey(listId) })
+      }
     } catch {
-      // Undo failed — the task was already hard-deleted server-side or the
+      // Undo failed — the resource was already hard-deleted server-side or the
       // undo window expired. There's nothing to restore; show no additional error
       // (the user already acknowledged the action).
     }
@@ -149,7 +167,11 @@ export function UndoToast() {
   if (!activeItem) return null
 
   const message =
-    activeItem.action === 'complete' ? 'Task completed.' : 'Task deleted.'
+    activeItem.resourceType === 'habit'
+      ? 'Habit deleted.'
+      : activeItem.action === 'complete'
+      ? 'Task completed.'
+      : 'Task deleted.'
 
   return (
     <div
