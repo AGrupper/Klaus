@@ -27,6 +27,7 @@ import { TimelineDay } from './components/timeline/TimelineDay'
 import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
+import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
 
 // ---------------------------------------------------------------------------
 // Placeholder pages for routes owned by later plans
@@ -74,7 +75,7 @@ function KlausPage() {
 }
 
 function HabitsPage() {
-  return <ComingSoon label="Habits" />
+  return <HabitsPageComponent />
 }
 
 function HealthPage() {
