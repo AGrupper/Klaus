@@ -38,6 +38,19 @@ vi.mock('../../hooks/useTasks', () => ({
   useCompleteTask: () => ({ mutate: vi.fn() }),
 }))
 
+// Mock habit hooks so HabitsBand renders without a real QueryClientProvider.
+// Returns empty list → HabitsBand renders nothing (guard: scheduled_today filter yields []).
+vi.mock('../../hooks/useHabits', () => ({
+  HABITS_QUERY_KEY: ['habits'],
+  useHabits: () => ({ data: [], isLoading: false, isError: false }),
+  useHabitSummary: () => ({ data: { pending_today: 0, streak_leaders: [] }, isLoading: false }),
+  useCheckOffHabit: () => ({ mutate: vi.fn() }),
+  useCreateHabit: () => ({ mutate: vi.fn() }),
+  useEditHabit: () => ({ mutate: vi.fn() }),
+  useSoftDeleteHabit: () => ({ mutate: vi.fn() }),
+  useHabitHistory: () => ({ data: undefined, isLoading: false }),
+}))
+
 import { useToday } from '../../hooks/useToday'
 import { TimelineDay } from './TimelineDay'
 

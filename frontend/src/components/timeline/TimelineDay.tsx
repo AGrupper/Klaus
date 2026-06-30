@@ -43,6 +43,7 @@ import { TimelineItem } from './TimelineItem'
 import { NowLine } from './NowLine'
 import { PlaceholderCard } from './PlaceholderCard'
 import { DueTasksBand } from './DueTasksBand'
+import { HabitsBand } from './HabitsBand'
 import type { TimedEvent } from '../../api/today'
 
 // ---------------------------------------------------------------------------
@@ -241,6 +242,9 @@ export function TimelineDay() {
 
         {/* Section 3.5: Due Tasks Band — after all-day events, before timed events (D-11) */}
         <DueTasksBand />
+
+        {/* Section 3.6: Habits Band — scheduled today (TIME-06, D-08) */}
+        <HabitsBand />
 
         {/* Section 4: Timed events + NowLine (D-04) interleaved chronologically */}
         {calendarEmpty ? (
