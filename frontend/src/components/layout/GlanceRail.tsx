@@ -20,6 +20,8 @@
 import { useNavigate } from 'react-router-dom'
 import { useToday } from '../../hooks/useToday'
 import { useTaskSummary } from '../../hooks/useTaskSummary'
+import { useHabitSummary } from '../../hooks/useHabits'
+import { textPrimary, textSecondary, typography } from '../../tokens'
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
@@ -44,12 +46,16 @@ export function GlanceRail() {
   const navigate = useNavigate()
   const { data } = useToday()
   const { data: taskSummary } = useTaskSummary()
+  const { data: habitSummary } = useHabitSummary()
 
   const totals = data?.nutrition_totals
   const hasData = !!totals && totals.kcal > 0
 
   const dueToday = taskSummary?.due_today ?? 0
   const overdue = taskSummary?.overdue ?? 0
+
+  // Top streak leaders for the Habits card (max 4 rows, UI-SPEC § GlanceRail Streaks Card)
+  const streakLeaders = (habitSummary?.streak_leaders ?? []).slice(0, 4)
 
   return (
     /*
@@ -185,6 +191,98 @@ export function GlanceRail() {
               {overdue}
             </span>
           </div>
+        )}
+      </div>
+
+      {/*
+       * Habits card (Phase 28, D-08) — tappable, navigates to /habits.
+       * Shows up to 4 streak leaders from useHabitSummary().
+       *
+       * Responsive visibility: this card sits inside the rail's existing
+       * `hidden md:flex md:flex-col` wrapper (line ~64) — no inline display
+       * override needed or added here (T-28-display).
+       *
+       * Typography: 13px/600 for streak values (UI-SPEC line 71) — NOT 14px.
+       * Security (T-28-xss): habit name rendered as plain React text only.
+       */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => navigate('/habits')}
+        onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && navigate('/habits')}
+        aria-label="Habits overview — navigate to habits"
+        style={{
+          backgroundColor: '#1A1A1A',
+          border: '1px solid #2A2A2A',
+          borderRadius: '10px',
+          padding: '16px',
+          cursor: 'pointer',
+        }}
+      >
+        {/* Section heading — Heading 20px/600 textPrimary */}
+        <h2
+          style={{
+            fontSize: typography.heading.fontSize,
+            fontWeight: typography.heading.fontWeight,
+            lineHeight: typography.heading.lineHeight,
+            color: textPrimary,
+            margin: '0 0 12px',
+            fontFamily: FONT,
+          }}
+        >
+          Habits
+        </h2>
+
+        {streakLeaders.length > 0 ? (
+          <div>
+            {streakLeaders.map((leader) => (
+              <div
+                key={leader.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  padding: '6px 0',
+                  fontFamily: FONT,
+                }}
+              >
+                {/* Habit name — Label 13px/400 textSecondary (T-28-xss: plain text) */}
+                <span
+                  style={{
+                    fontSize: typography.label.fontSize,
+                    fontWeight: typography.label.fontWeight,
+                    color: textSecondary,
+                  }}
+                >
+                  {leader.name}
+                </span>
+                {/* Streak value — Label 13px/600 textPrimary (UI-SPEC line 71: NOT 14px) */}
+                <span
+                  style={{
+                    fontSize: typography.label.fontSize,
+                    fontWeight: 600,
+                    color: textPrimary,
+                  }}
+                >
+                  {leader.streak > 0 ? `${leader.streak}-day streak` : 'No streak'}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          /* Empty state — shown when no habits are defined */
+          <p
+            style={{
+              fontSize: typography.label.fontSize,
+              fontWeight: typography.label.fontWeight,
+              lineHeight: typography.label.lineHeight,
+              color: textSecondary,
+              margin: 0,
+              fontFamily: FONT,
+            }}
+          >
+            No habits defined.
+          </p>
         )}
       </div>
     </aside>
