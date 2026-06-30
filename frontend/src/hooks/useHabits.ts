@@ -150,6 +150,10 @@ export function useCheckOffHabit() {
 
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: HABITS_QUERY_KEY })
+      // WR-04: a check-off changes streak leaders + pending count, so the
+      // summary query (GlanceRail / timeline) must also refetch — otherwise it
+      // goes stale until the next manual refresh.
+      queryClient.invalidateQueries({ queryKey: ['habits', 'summary'] })
     },
   })
 }
