@@ -93,6 +93,54 @@ SLOT_SUPPLEMENTS: dict[str, str] = {
     "pre-bed": "Mg-Glycinate/Zinc/Copper",
 }
 
+# Phase 28 Plan 03 (D-01/D-02): Habit slot → fueling-slot mapping.
+# Maps the simple UI time-slots (Morning/Noon/Evening/Bedtime) to the v4.0
+# fueling-slot vocabulary so supplement check-off data from HabitStore can be
+# looked up keyed by the existing v4.0 fueling slot names.
+_HABIT_SLOT_TO_FUELING: dict[str, list[str]] = {
+    "Morning":  ["post-am-run"],
+    "Noon":     ["pm-post-lift"],
+    "Evening":  ["pm-post-lift"],
+    "Bedtime":  ["pre-bed"],
+}
+
+
+def _get_supplement_checkoffs(today_iso: str) -> dict:
+    """Query HabitStore for supplement check-off state for today (D-01/D-02).
+
+    Returns {fueling_slot: {"name": str, "done": bool, "habit_id": str}} for all active
+    supplements scheduled today, keyed by their mapped v4.0 fueling slot.
+    Falls back to empty dict on any error (non-fatal — the 21:30 alert degrades
+    to the existing hardcoded SLOT_SUPPLEMENTS riders rather than crashing).
+
+    Phase 28 Plan 03 — HABIT-05 cross-domain link.
+    """
+    try:
+        from memory.firestore_db import HabitStore
+        store = HabitStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+        active_supplements = [
+            h for h in store.list_active()
+            if h.get("type") == "supplement"
+        ]
+        completions = store.get_completions_for_date(today_iso)
+        result: dict = {}
+        for sup in active_supplements:
+            slot = sup.get("slot", "")
+            for fueling_slot in _HABIT_SLOT_TO_FUELING.get(slot, []):
+                result[fueling_slot] = {
+                    "name": sup.get("name", ""),
+                    "done": sup["id"] in completions,
+                    "habit_id": sup["id"],
+                }
+        return result
+    except Exception:
+        logger.warning("proactive_alerts: supplement checkoff query failed", exc_info=True)
+        return {}
+
+
 # Slot-window definitions for the 6 named fueling slots (D-10, Finding 3).
 # Hard slots (#2, #5, #6) are flagged on miss; soft slots (#1, #3, #4) are not nagged.
 # Windows for anchor-relative slots: offset_min and window_min from the anchor start.
@@ -871,6 +919,15 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     except Exception:
         logger.warning("proactive_alerts: nutrition gather failed", exc_info=True)
         # silent omit — no fabrication (D-13 guardrail)
+
+    # Phase 28 Plan 03 (D-01/D-02): query HabitStore for real supplement check-off state.
+    # Non-fatal: an empty result degrades the prompt to hardcoded SLOT_SUPPLEMENTS riders.
+    try:
+        supplement_checkoffs = _get_supplement_checkoffs(today_iso)
+        if supplement_checkoffs:
+            alerts_context["supplement_checkoffs"] = supplement_checkoffs
+    except Exception:
+        logger.warning("proactive_alerts: supplement checkoff gather failed", exc_info=True)
 
     # Phase 24 — COACH-05: coaching topic dedup gate.
     # Filter detected topics to only un-raised ones before compose context.

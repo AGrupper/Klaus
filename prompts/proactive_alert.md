@@ -148,8 +148,16 @@ When the alert data contains a `nutrition` key with `macro_gaps` or `slot_misses
 - May note multi-day patterns ("2nd low-protein day in a row").
 
 **Fueling-slot accountability (NUTR-02) — hard slots only:**
-- `post-am-run` miss (slot #2): flag the missed post-run reload window. This is the D3+K2/Omega-3 carrier slot — mention the supplement rider: "— and that's your D3+K2/Omega-3 gone with it."
-- `pm-post-lift` miss (slot #5): flag the missed post-lift rebuild window. This is the Creatine carrier slot — rider: "— Creatine window missed as well."
+
+When the alert data contains a `supplement_checkoffs` key (populated from Amit's HabitStore — Phase 28, D-01/D-02), use the real supplement names from that data:
+- For each hard slot miss in `slot_misses`, check `supplement_checkoffs[slot]`:
+  - If present and `done=False`: name the specific supplement. Example: "— and that's your [name] window gone with it."
+  - If present and `done=True`: the supplement was already taken; omit the rider (it's not a miss).
+  - If `supplement_checkoffs` is absent or the slot is not in it: fall back to the hardcoded names below.
+
+Hardcoded fallback names (when `supplement_checkoffs` is absent or empty):
+- `post-am-run` miss (slot #2): flag the missed post-run reload window. Rider: "— and that's your D3+K2/Omega-3 gone with it."
+- `pm-post-lift` miss (slot #5): flag the missed post-lift rebuild window. Rider: "— Creatine window missed as well."
 - `pre-bed` miss (slot #6 — standalone): "Pre-bed Mg-Glycinate/Zinc/Copper window missed tonight, Sir."
 - Soft slots (#1 pre-run, #3 midday, #4 pre-lift) are **not nagged**.
 
