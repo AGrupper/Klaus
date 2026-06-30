@@ -1012,3 +1012,102 @@ class TestUpdateCalendarEventRegistration:
                 {"event_id": "evt1", "calendar_id": "training_cal_id"}
             )
         mock_cal.delete_event.assert_called_once_with("evt1", calendar_id="training_cal_id")
+
+
+class TestNativeHabitTools:
+    """Native habit/adherence tool registration in core/tools.py.
+
+    Covers HABIT-05: get_habit_adherence schema + handler + _HANDLERS entry.
+    """
+
+    def _schema_names(self):
+        from core.tools import TOOL_SCHEMAS
+        return [s["name"] for s in TOOL_SCHEMAS]
+
+    def test_get_habit_adherence_schema_registered_in_tool_schemas(self):
+        """TOOL_SCHEMAS must contain a schema named 'get_habit_adherence'."""
+        assert "get_habit_adherence" in self._schema_names(), (
+            "'get_habit_adherence' missing from TOOL_SCHEMAS"
+        )
+
+    def test_get_habit_adherence_schema_has_optional_slot_and_type(self):
+        """get_habit_adherence schema must expose optional slot + type filter props."""
+        from core.tools import TOOL_SCHEMAS
+        schema = next(s for s in TOOL_SCHEMAS if s["name"] == "get_habit_adherence")
+        props = schema["input_schema"]["properties"]
+        assert "slot" in props, "get_habit_adherence schema missing 'slot' property"
+        assert "type" in props, "get_habit_adherence schema missing 'type' property"
+        # Both are optional (required is [] or absent)
+        required = schema["input_schema"].get("required", [])
+        assert "slot" not in required
+        assert "type" not in required
+
+    def test_get_habit_adherence_handler_registered_in_handlers(self):
+        """_HANDLERS must contain 'get_habit_adherence'."""
+        from core.tools import _HANDLERS
+        assert "get_habit_adherence" in _HANDLERS, (
+            "'get_habit_adherence' missing from _HANDLERS"
+        )
+
+    def test_get_habit_adherence_handler_returns_json(self, monkeypatch):
+        """_handle_get_habit_adherence returns JSON-serializable list."""
+        import json as _json
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        pending_items = [
+            {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+             "slot": "Morning", "streak": 7, "dose": "5g"},
+        ]
+        mock_store = MagicMock()
+        mock_store.get_pending_today.return_value = pending_items
+
+        with patch("memory.firestore_db.HabitStore", return_value=mock_store):
+            result = tools._HANDLERS["get_habit_adherence"]({})
+
+        parsed = _json.loads(result)
+        assert isinstance(parsed, list)
+        assert len(parsed) == 1
+        assert parsed[0]["name"] == "Creatine"
+
+    def test_get_habit_adherence_handler_filters_by_slot(self, monkeypatch):
+        """Slot filter applies correctly to reduce the returned list."""
+        import json as _json
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        pending_items = [
+            {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+             "slot": "Morning", "streak": 5, "dose": "5g"},
+            {"habit_id": "h2", "name": "Meditation", "type": "habit",
+             "slot": "Evening", "streak": 3, "dose": None},
+        ]
+        mock_store = MagicMock()
+        mock_store.get_pending_today.return_value = pending_items
+
+        with patch("memory.firestore_db.HabitStore", return_value=mock_store):
+            result = tools._HANDLERS["get_habit_adherence"]({"slot": "Evening"})
+
+        parsed = _json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["habit_id"] == "h2"
+
+    def test_get_habit_adherence_handler_filters_by_type(self, monkeypatch):
+        """Type filter applies correctly to reduce the returned list."""
+        import json as _json
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        pending_items = [
+            {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+             "slot": "Morning", "streak": 5, "dose": "5g"},
+            {"habit_id": "h2", "name": "Meditation", "type": "habit",
+             "slot": "Evening", "streak": 3, "dose": None},
+        ]
+        mock_store = MagicMock()
+        mock_store.get_pending_today.return_value = pending_items
+
+        with patch("memory.firestore_db.HabitStore", return_value=mock_store):
+            result = tools._HANDLERS["get_habit_adherence"]({"type": "supplement"})
+
+        parsed = _json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["habit_id"] == "h1"

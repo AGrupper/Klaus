@@ -1254,3 +1254,231 @@ class TestPhase19MealAuditWiring:
             f"core/autonomous.py must reference meal_audit.md at least 2 times "
             f"(found {src.count('meal_audit.md')})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Phase 28 Plan 03 — habit_pending Layer-0 gather + threading (HABIT-05)
+# ---------------------------------------------------------------------------
+
+
+class TestPhase28HabitGather:
+    """Tests for _gather_habit_adherence, habit_pending in jobs/empty/triage/compose.
+
+    Covers D-15 (per-slot salience as trigger), D-16 (streak passed through),
+    D-17 (per-item-per-day dedup via CoachingTopicStore).
+    """
+
+    def test_get_habit_adherence_tool_registered(self):
+        """HABIT-05: 'get_habit_adherence' must be in _HANDLERS and TOOL_SCHEMAS."""
+        from core.tools import _HANDLERS, TOOL_SCHEMAS
+        assert "get_habit_adherence" in _HANDLERS, (
+            "'get_habit_adherence' missing from _HANDLERS"
+        )
+        schema_names = [s["name"] for s in TOOL_SCHEMAS]
+        assert "get_habit_adherence" in schema_names, (
+            "'get_habit_adherence' missing from TOOL_SCHEMAS"
+        )
+
+    def test_handle_get_habit_adherence_filters(self, monkeypatch):
+        """Handler returns JSON of pending items; slot/type args filter the list."""
+        import json as _json
+        from unittest.mock import MagicMock, patch as _patch
+        from core import tools
+
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+        pending_items = [
+            {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+             "slot": "Morning", "streak": 5, "dose": "5g"},
+            {"habit_id": "h2", "name": "Meditation", "type": "habit",
+             "slot": "Evening", "streak": 3, "dose": None},
+        ]
+        mock_store = MagicMock()
+        mock_store.get_pending_today.return_value = pending_items
+
+        with _patch("memory.firestore_db.HabitStore", return_value=mock_store):
+            # No filters — all items returned
+            result_all = _json.loads(tools._HANDLERS["get_habit_adherence"]({}))
+            assert len(result_all) == 2
+
+            # Filter by slot=Morning
+            result_slot = _json.loads(
+                tools._HANDLERS["get_habit_adherence"]({"slot": "Morning"})
+            )
+            assert len(result_slot) == 1
+            assert result_slot[0]["habit_id"] == "h1"
+
+            # Filter by type=habit
+            result_type = _json.loads(
+                tools._HANDLERS["get_habit_adherence"]({"type": "habit"})
+            )
+            assert len(result_type) == 1
+            assert result_type[0]["habit_id"] == "h2"
+
+    def test_habit_gather_returns_empty_on_error(self):
+        """_gather_habit_adherence returns [] when HabitStore raises (sentinel)."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from unittest.mock import patch as _patch
+        import core.autonomous as auto
+
+        now = datetime(2026, 6, 30, 10, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
+        with _patch("memory.firestore_db.HabitStore", side_effect=Exception("db down")):
+            result = auto._gather_habit_adherence(now, "test-proj", "(default)")
+
+        assert result == [], f"Must return [] on exception, got {result!r}"
+
+    def test_habit_pending_makes_signals_nonempty(self):
+        """D-15: a non-empty habit_pending list makes _is_empty_signals return False."""
+        import core.autonomous as auto
+
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "hours_since_contact": None,
+            "now_context": {},
+            "habit_pending": [{"habit_id": "h1", "name": "Creatine", "streak": 5}],
+        }
+        assert auto._is_empty_signals(situation) is False, (
+            "_is_empty_signals must return False when habit_pending is non-empty (D-15)"
+        )
+
+    def test_empty_habit_pending_keeps_signals_empty(self):
+        """An empty habit_pending list must NOT trigger non-empty (only non-empty list matters)."""
+        import core.autonomous as auto
+
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "hours_since_contact": None,
+            "now_context": {},
+            "habit_pending": [],
+        }
+        assert auto._is_empty_signals(situation) is True, (
+            "_is_empty_signals must return True when habit_pending is [] (no pending items)"
+        )
+
+    def test_habit_gather_dedups_already_nudged(self):
+        """D-17: items already nudged today (CoachingTopicStore) are excluded from gather."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from unittest.mock import MagicMock, patch as _patch
+        import core.autonomous as auto
+
+        now = datetime(2026, 6, 30, 10, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+        today_iso = "2026-06-30"
+
+        pending = [
+            {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+             "slot": "Morning", "streak": 5, "dose": "5g"},
+            {"habit_id": "h2", "name": "Meditation", "type": "habit",
+             "slot": "Evening", "streak": 3, "dose": None},
+        ]
+        mock_store = MagicMock()
+        mock_store.get_pending_today.return_value = pending
+
+        mock_cts = MagicMock()
+        # h1 already nudged today; h2 not
+        already_nudged = {f"habit-nudge:h1:{today_iso}"}
+        mock_cts.has_topic.side_effect = lambda d, t: t in already_nudged
+
+        with _patch("memory.firestore_db.HabitStore", return_value=mock_store), \
+             _patch("memory.firestore_db.CoachingTopicStore", return_value=mock_cts):
+            result = auto._gather_habit_adherence(now, "test-proj", "(default)")
+
+        # Only h2 survives dedup
+        assert len(result) == 1, f"Expected 1 item after dedup, got {len(result)}: {result}"
+        assert result[0]["habit_id"] == "h2"
+
+    def test_triage_prompt_includes_habit_pending(self, fixed_now):
+        """_build_triage_prompt JSON snapshot includes habit_pending key (D-16)."""
+        import core.autonomous as auto
+
+        situation = {
+            "calendar": [],
+            "ticktick_overdue": [],
+            "unread_email_count": 0,
+            "due_followups": [],
+            "hours_since_contact": 2.0,
+            "recent_journal_digest": "",
+            "self_state": {},
+            "today_outreach_log": [],
+            "now_context": {"label": "morning"},
+            "meals_since_last_tick": [],
+            "training_status": {},
+            "acwr": {"ratio": None},
+            "habit_pending": [
+                {"habit_id": "h1", "name": "Creatine", "type": "supplement",
+                 "slot": "Morning", "streak": 5, "dose": "5g"}
+            ],
+        }
+        prompt = auto._build_triage_prompt(situation, "")
+        assert "habit_pending" in prompt, (
+            "_build_triage_prompt must include 'habit_pending' in the situation snapshot"
+        )
+        assert "Creatine" in prompt, (
+            "_build_triage_prompt must serialize the habit_pending list (D-16: streak context)"
+        )
+
+    def test_compose_layer2_includes_habit_pending(self, fixed_now):
+        """_compose_layer2 snap_summary includes habit_pending key (D-16)."""
+        import core.autonomous as auto
+
+        situation = {
+            "calendar": [],
+            "ticktick_overdue": [],
+            "unread_email_count": 0,
+            "due_followups": [],
+            "hours_since_contact": 2.0,
+            "recent_journal_digest": "",
+            "self_state": {},
+            "today_outreach_log": [],
+            "now_context": {},
+            "meals_since_last_tick": [],
+            "training_status": {},
+            "acwr": {"ratio": None},
+            "habit_pending": [
+                {"habit_id": "h1", "name": "Omega-3", "type": "supplement",
+                 "slot": "Morning", "streak": 10, "dose": "1 cap"}
+            ],
+        }
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured_snap = {}
+
+        def _capture_args(messages, smart_sys, worker_sys):
+            captured_snap["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture_args
+
+        with patch.object(auto, "_get_orchestrator", return_value=fake_orchestrator):
+            auto._compose_layer2(situation, "draft", "reason")
+
+        content = captured_snap.get("content", "")
+        assert "habit_pending" in content, (
+            "_compose_layer2 snap_summary must include 'habit_pending'"
+        )
+        assert "Omega-3" in content, (
+            "_compose_layer2 snap_summary must serialize the habit_pending list"
+        )
+
+    def test_habit_pending_key_in_jobs_dict(self):
+        """core/autonomous.py source must contain 'habit_pending' in the jobs dict."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        assert '"habit_pending"' in src, (
+            "core/autonomous.py jobs dict must include the 'habit_pending' key (D-15)"
+        )
+
+    def test_gather_habit_adherence_defined_in_autonomous(self):
+        """core/autonomous.py must define _gather_habit_adherence."""
+        import core.autonomous as auto
+        assert hasattr(auto, "_gather_habit_adherence"), (
+            "_gather_habit_adherence not found in core.autonomous"
+        )
