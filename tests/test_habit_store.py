@@ -294,7 +294,9 @@ class _FakeRecordsCol:
     def stream(self):
         date_data = self._store._data.get(self._date_str, {})
         for hid, data in date_data.items():
-            yield _FakeDoc(data)
+            doc = _FakeDoc(data)
+            doc.id = hid  # Override: doc ID is the habit_id key, not data["id"]
+            yield doc
 
 
 class _FakeRecordRef:
@@ -511,18 +513,30 @@ class TestHabitCompletion:
         assert result["h1"]["done"] is True
 
     def test_get_completions_for_date_applies_jsonsafe(self):
-        """Pitfall 1: DatetimeWithNanoseconds in updated_at must not leak into the dict."""
+        """Pitfall 1: DatetimeWithNanoseconds in updated_at must not leak into the dict.
+
+        Firestore SERVER_TIMESTAMP reads back as DatetimeWithNanoseconds which has
+        .isoformat() but is not json-serializable.  _jsonsafe_doc converts it to a
+        plain string.  This test simulates that with a MagicMock that has .isoformat().
+        """
         import json
         store, col, comps = _make_habit_store()
-        # Simulate a SERVER_TIMESTAMP object that json.dumps would choke on
-        sentinel = object()  # non-serializable sentinel
+        # Simulate DatetimeWithNanoseconds: has isoformat() but is not JSON-serializable
+        dt_sentinel = MagicMock()
+        dt_sentinel.isoformat.return_value = "2026-06-28T10:00:00+00:00"
+        # Verify that this sentinel itself is NOT json-serializable (precondition)
+        try:
+            json.dumps({"x": dt_sentinel})
+            pytest.skip("MagicMock is accidentally JSON-safe in this env — test invalid")
+        except TypeError:
+            pass  # expected: MagicMock is not json-serializable
         comps._data["2026-06-28"] = {
             "h1": {
                 "habit_id": "h1",
                 "date": "2026-06-28",
                 "done": True,
                 "dose_taken": None,
-                "updated_at": sentinel,
+                "updated_at": dt_sentinel,
             }
         }
         result = store.get_completions_for_date("2026-06-28")
@@ -751,20 +765,21 @@ class TestGridDerivation:
         Scenario: habit was daily until 2026-06-15, then switched to Mon-only.
         Dates before 2026-06-15 must be computed under "daily".
         Dates from 2026-06-15 onward must be computed under [0] (Monday only).
+
+        today = 2026-06-29 (Monday, weekday=0).
+        2026-06-14 = Sunday (before revision) → under "daily" → scheduled → done.
+        2026-06-21 = Sunday (after revision) → under [0] Mon-only → not-scheduled.
+        2026-06-29 = Monday (today, after revision) → under [0] → pending.
         """
         schedule = [
             {"effective_from": "2026-01-01", "days": "daily"},
             {"effective_from": "2026-06-15", "days": [0]},  # Mon only from June 15
         ]
-        # today = 2026-06-30 (Monday)
-        # 2026-06-14 is a Sunday — under the first (daily) revision, it IS scheduled.
-        # Under the second revision ([0] = Mon only), Sunday is NOT scheduled.
-        # D-19 says pre-revision dates use the earlier revision → Sunday IS scheduled.
         completions = {
             "2026-06-14": {"done": True},  # Sunday, before revision, should be "done"
         }
         result = firestore_db.compute_streak_and_grid(
-            "h1", schedule, completions, today=date(2026, 6, 30)
+            "h1", schedule, completions, today=date(2026, 6, 29)   # Monday
         )
         grid_by_date = {c["date"]: c["state"] for c in result["grid"]}
 
@@ -776,5 +791,7 @@ class TestGridDerivation:
         assert grid_by_date["2026-06-21"] == "not-scheduled", (
             "Post-revision Sunday must be 'not-scheduled' under the Mon-only revision"
         )
-        # 2026-06-30 = Monday, after revision: under [0] → pending (today, no completion)
-        assert grid_by_date["2026-06-30"] == "pending"
+        # 2026-06-29 = Monday, today, after revision: under [0] → pending (no completion)
+        assert grid_by_date["2026-06-29"] == "pending", (
+            "Post-revision Monday (today) must be 'pending' under Mon-only revision"
+        )
