@@ -124,7 +124,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 |-------|----------------|--------|-----------|
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
-| 28. Habits & Supplements | 2/5 | In Progress|  |
+| 28. Habits & Supplements | 3/5 | In Progress|  |
 | 29. Web Push & Transition | 0/? | Not started | - |
 | 30. Health Pages | 0/? | Not started | - |
 

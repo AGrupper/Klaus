@@ -4,13 +4,13 @@ milestone: v5.0
 milestone_name: Klaus Hub
 status: executing
 stopped_at: Phase 28 UI-SPEC approved
-last_updated: "2026-06-30T08:51:55.982Z"
+last_updated: "2026-06-30T14:28:58.785Z"
 last_activity: 2026-06-30
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 21
-  completed_plans: 18
+  completed_plans: 19
   percent: 40
 ---
 
@@ -19,7 +19,7 @@ progress:
 ## Current Position
 
 Phase: 28 (habits-supplements) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-06-30
 
@@ -108,6 +108,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 - [v5.0 design spec 2026-06-13]: Phase 26 requires a multi-stage Dockerfile (Node build stage) to produce built frontend assets served by FastAPI.
 - [v5.0 design spec 2026-06-13]: Phases 27 (Tasks), 28 (Habits), 29 (Push), 30 (Health) all depend on Phase 26 (shell) but are independent of each other and can be built in any order after Phase 26.
 - [v5.0 design spec 2026-06-13]: Telegram mirror flag (PUSH-03) must be left ON for at least one week of real production use before being disabled — Telegram retirement is a gradual transition, not a hard cutover.
+- [Phase ?]: avoids duplicate color declarations
 
 ### Pending Todos
 
@@ -144,7 +145,7 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-30T08:51:55.979Z
+Last session: 2026-06-30T14:28:52.846Z
 Stopped at: Phase 28 UI-SPEC approved
 Resume file: None
 
