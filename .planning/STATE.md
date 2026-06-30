@@ -4,13 +4,13 @@ milestone: v5.0
 milestone_name: Klaus Hub
 status: executing
 stopped_at: Phase 28 UI-SPEC approved
-last_updated: "2026-06-28T09:22:42.066Z"
-last_activity: 2026-06-28 -- Phase 28 planning complete
+last_updated: "2026-06-30T08:34:06.604Z"
+last_activity: 2026-06-30
 progress:
   total_phases: 5
   completed_phases: 2
   total_plans: 21
-  completed_plans: 16
+  completed_plans: 17
   percent: 40
 ---
 
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 28
-Plan: Not started
+Phase: 28 (habits-supplements) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-06-28 -- Phase 28 planning complete
+Last activity: 2026-06-30
 
 **Progress bar:** [██--------] 20% (1/5 phases)
 
@@ -73,7 +73,7 @@ Last activity: 2026-06-28 -- Phase 28 planning complete
 See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 28 — habits & supplements
+**Current focus:** Phase 28 — habits-supplements
 
 ## Architecture (current)
 
@@ -144,9 +144,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-26T18:03:02.103Z
+Last session: 2026-06-30T08:34:06.600Z
 Stopped at: Phase 28 UI-SPEC approved
-Resume file: .planning/phases/28-habits-supplements/28-UI-SPEC.md
+Resume file: None
 
 ## Operator Next Steps
 
