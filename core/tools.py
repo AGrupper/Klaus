@@ -144,6 +144,14 @@ TOOL_SCHEMAS: list[dict] = [
                         "on your judgment; if omitted it defaults to false (non-workout)."
                     ),
                 },
+                "calendar_id": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Explicit target calendar ID (from list_calendar_events) to create the "
+                        "event in. Overrides the default primary/Training routing — use it to add an event "
+                        "to a specific calendar (e.g. Personal). Omit to use the default routing."
+                    ),
+                },
             },
             "required": ["summary", "start_iso", "end_iso"],
         },
@@ -163,8 +171,9 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "delete_calendar_event",
         "description": (
-            "Delete an event from the user's Google Calendar by event ID. "
-            "First call list_calendar_events to obtain the event_id. "
+            "Delete an event from any of the user's Google Calendars by event ID. "
+            "First call list_calendar_events to obtain the event_id AND its calendar_id, "
+            "then pass both here. "
             "Note: workout events created via create_calendar_event also have a "
             "paired 'Get Ready: <name>' prep block — delete both IDs to fully "
             "remove a workout."
@@ -175,6 +184,55 @@ TOOL_SCHEMAS: list[dict] = [
                 "event_id": {
                     "type": "string",
                     "description": "The Calendar event ID returned by list_calendar_events.",
+                },
+                "calendar_id": {
+                    "type": "string",
+                    "description": (
+                        "The calendar_id of the event, as returned by list_calendar_events. "
+                        "Required to delete events outside the primary calendar (e.g. Training). "
+                        "If omitted, defaults to primary and falls back to searching your calendars."
+                    ),
+                },
+            },
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "update_calendar_event",
+        "description": (
+            "Edit an existing calendar event IN PLACE — change its title, time, or description. "
+            "ALWAYS prefer this over deleting + recreating when the user asks to change an event; "
+            "do NOT create a duplicate. First call list_calendar_events to obtain the event_id and "
+            "its calendar_id, then pass only the fields you want to change. "
+            "Note: if you move a workout's time, also move its paired 'Get Ready: <name>' block."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "event_id": {
+                    "type": "string",
+                    "description": "The Calendar event ID returned by list_calendar_events.",
+                },
+                "calendar_id": {
+                    "type": "string",
+                    "description": (
+                        "The calendar_id of the event, as returned by list_calendar_events. "
+                        "Required to edit events outside the primary calendar (e.g. Training). "
+                        "If omitted, defaults to primary and falls back to searching your calendars."
+                    ),
+                },
+                "summary": {"type": "string", "description": "New event title (omit to leave unchanged)."},
+                "start_iso": {
+                    "type": "string",
+                    "description": "New start datetime, ISO 8601 (omit to leave unchanged).",
+                },
+                "end_iso": {
+                    "type": "string",
+                    "description": "New end datetime, ISO 8601 (omit to leave unchanged).",
+                },
+                "description": {
+                    "type": "string",
+                    "description": "New description (omit to leave unchanged).",
                 },
             },
             "required": ["event_id"],
@@ -1381,25 +1439,16 @@ def _get_memory_tool() -> MemoryTool:
 # ------------------------------------------------------------------ #
 
 def _handle_list_calendar_events(time_min_iso: str, time_max_iso: str) -> str:
-    """List events from the primary AND Training calendars, merged chronologically.
+    """List events across ALL of the user's writable calendars, merged.
 
-    Training blocks live in the dedicated Training calendar, so reading only the
-    primary calendar would hide them from the brain. We merge both views (Training
-    events already have their Get Ready:/Travel: buffer blocks stripped by
-    list_training_events) and tag each event with its source calendar so the brain
-    can tell a training block from a regular event.
+    Events live in many calendars (primary, Training, Personal, ...), so reading
+    only one would hide the rest from the brain. list_all_events enumerates every
+    writable calendar and tags each event with its display name ("calendar") and
+    real "calendar_id" — the latter must be passed back to edit/delete an event in
+    its own calendar.
     """
     cal = _get_calendar_tool()
-
-    primary = cal.list_events(time_min_iso, time_max_iso)
-    for ev in primary:
-        ev.setdefault("calendar", "primary")
-
-    training = cal.list_training_events(time_min_iso, time_max_iso)
-    for ev in training:
-        ev["calendar"] = "Training"
-
-    events = sorted(primary + training, key=lambda e: e.get("start") or "")
+    events = cal.list_all_events(time_min_iso, time_max_iso)
     return json.dumps({"events": events, "count": len(events)})
 
 
@@ -1410,6 +1459,7 @@ def _handle_create_calendar_event(
     description: str = "",
     travel_minutes_each_way: int | None = None,
     is_workout: bool | None = None,
+    calendar_id: str | None = None,
 ) -> str:
     """Delegate to GoogleCalendarManager.create_event and serialise the result."""
     result = _get_calendar_tool().create_event(
@@ -1419,6 +1469,7 @@ def _handle_create_calendar_event(
         description=description,
         travel_minutes_each_way=travel_minutes_each_way,
         is_workout=is_workout,
+        calendar_id=calendar_id,
     )
     return json.dumps(result)
 
@@ -1429,9 +1480,29 @@ def _handle_check_calendar_free(start_iso: str, end_iso: str) -> str:
     return json.dumps(result)
 
 
-def _handle_delete_calendar_event(event_id: str) -> str:
+def _handle_delete_calendar_event(event_id: str, calendar_id: str | None = None) -> str:
     """Delegate to GoogleCalendarManager.delete_event and serialise the result."""
-    result = _get_calendar_tool().delete_event(event_id)
+    result = _get_calendar_tool().delete_event(event_id, calendar_id=calendar_id)
+    return json.dumps(result)
+
+
+def _handle_update_calendar_event(
+    event_id: str,
+    calendar_id: str | None = None,
+    summary: str | None = None,
+    start_iso: str | None = None,
+    end_iso: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Delegate to GoogleCalendarManager.update_event and serialise the result."""
+    result = _get_calendar_tool().update_event(
+        event_id,
+        calendar_id=calendar_id,
+        summary=summary,
+        start_iso=start_iso,
+        end_iso=end_iso,
+        description=description,
+    )
     return json.dumps(result)
 
 
@@ -2454,6 +2525,7 @@ _HANDLERS: dict[str, object] = {
     "create_calendar_event":  lambda args: _handle_create_calendar_event(**args),
     "check_calendar_free":    lambda args: _handle_check_calendar_free(**args),
     "delete_calendar_event":  lambda args: _handle_delete_calendar_event(**args),
+    "update_calendar_event":  lambda args: _handle_update_calendar_event(**args),
     "list_unread_emails":    lambda args: _handle_list_unread_emails(**args),
     "get_email":             lambda args: _handle_get_email(**args),
     # Phase 27 Plan 03 — native TaskStore tools (replaces add_task)

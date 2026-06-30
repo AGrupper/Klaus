@@ -968,3 +968,47 @@ class TestFetchRecentMealsSlotTimeNote:
             f"Lifesum slot times, got: {result.keys()}"
         )
         assert "not" in note.lower() and "actual" in note.lower()
+
+
+class TestUpdateCalendarEventRegistration:
+    """update_calendar_event must be registered (schema + dispatch) and routed to
+    GoogleCalendarManager.update_event with the supplied fields."""
+
+    def test_update_calendar_event_schema_registered(self):
+        names = {s["name"] for s in tools.TOOL_SCHEMAS}
+        assert "update_calendar_event" in names
+
+    def test_update_calendar_event_in_handlers(self):
+        assert "update_calendar_event" in tools._HANDLERS
+
+    def test_update_calendar_event_available_to_worker(self):
+        """Calendar mutations run through the worker, so the new tool must be in
+        WORKER_TOOL_SCHEMAS."""
+        names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "update_calendar_event" in names
+
+    def test_update_calendar_event_dispatches_to_manager(self):
+        mock_cal = MagicMock()
+        mock_cal.update_event.return_value = {"ok": True, "event_id": "evt1"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = tools._HANDLERS["update_calendar_event"](
+                {"event_id": "evt1", "calendar_id": "training_cal_id", "summary": "New"}
+            )
+        assert json.loads(out)["ok"] is True
+        mock_cal.update_event.assert_called_once_with(
+            "evt1",
+            calendar_id="training_cal_id",
+            summary="New",
+            start_iso=None,
+            end_iso=None,
+            description=None,
+        )
+
+    def test_delete_calendar_event_forwards_calendar_id(self):
+        mock_cal = MagicMock()
+        mock_cal.delete_event.return_value = {"ok": True, "event_id": "evt1"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            tools._HANDLERS["delete_calendar_event"](
+                {"event_id": "evt1", "calendar_id": "training_cal_id"}
+            )
+        mock_cal.delete_event.assert_called_once_with("evt1", calendar_id="training_cal_id")

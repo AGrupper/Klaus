@@ -181,6 +181,138 @@ class GoogleCalendarManager:
             )
             return None
 
+    # Calendars the user can write to (owner/writer). Read-only subscribed
+    # calendars (holidays, birthdays, week-numbers) are excluded so listings and
+    # briefings aren't flooded — and so Klaus never tries to edit/delete an event
+    # on a calendar where the API would reject the write anyway.
+    _WRITABLE_ACCESS_ROLES: frozenset[str] = frozenset({"owner", "writer"})
+
+    def list_writable_calendars(self) -> list[dict]:
+        """Return the user's calendars that allow writes (owner/writer access).
+
+        Paginates ``calendarList().list()`` (Pitfall 6) and filters out read-only
+        subscribed calendars. Used by the generic list/edit/delete paths so Klaus
+        can act on any calendar he controls — not just primary + Training.
+
+        Returns:
+            A list of dicts, each with ``"id"``, ``"summary"``, ``"primary"``
+            (bool), and ``"access_role"``. Returns ``[]`` on any API error;
+            never raises.
+        """
+        try:
+            service = self._get_service()
+            calendars: list[dict] = []
+            page_token = None
+            while True:
+                kwargs: dict = {}
+                if page_token:
+                    kwargs["pageToken"] = page_token
+                result = service.calendarList().list(**kwargs).execute()
+                for item in result.get("items", []):
+                    access_role = item.get("accessRole", "")
+                    if access_role not in self._WRITABLE_ACCESS_ROLES:
+                        continue
+                    calendars.append(
+                        {
+                            "id": item.get("id", ""),
+                            "summary": item.get("summary", ""),
+                            "primary": bool(item.get("primary", False)),
+                            "access_role": access_role,
+                        }
+                    )
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+            return calendars
+        except Exception:
+            logger.error("Calendar calendarList error in list_writable_calendars", exc_info=True)
+            return []
+
+    def list_all_events(
+        self,
+        time_min_iso: str,
+        time_max_iso: str,
+        max_results: int = 20,
+    ) -> list[dict]:
+        """List events across ALL of the user's writable calendars, merged.
+
+        Unlike :meth:`list_events` (primary only) this enumerates every calendar
+        the user can write to and tags each event with both its calendar display
+        name (``"calendar"``) and the real ``"calendar_id"`` — the latter is what
+        the edit/delete tools need to act on an event in its own calendar.
+
+        Buffer blocks (``Get Ready:`` / ``Travel:``) are intentionally NOT
+        stripped here so Klaus can see and manage a workout's prep block himself.
+        (:meth:`list_training_events` keeps its stripped view for the training
+        check-in.)
+
+        Args:
+            time_min_iso: RFC 3339 / ISO 8601 window start.
+            time_max_iso: RFC 3339 / ISO 8601 window end.
+            max_results:  Maximum events to return per calendar (default 20).
+
+        Returns:
+            A chronologically sorted list of event dicts, each with ``"id"``,
+            ``"summary"``, ``"start"``, ``"end"``, ``"description"``,
+            ``"location"``, ``"calendar"``, and ``"calendar_id"``. Returns ``[]``
+            on error; never raises.
+        """
+        calendars = self.list_writable_calendars()
+        if not calendars:
+            # Fall back to the primary-only view so we degrade gracefully rather
+            # than returning nothing if calendarList is unavailable.
+            events = self.list_events(time_min_iso, time_max_iso, max_results)
+            for ev in events:
+                ev.setdefault("calendar", "primary")
+                ev.setdefault("calendar_id", "primary")
+            return events
+
+        try:
+            service = self._get_service()
+            merged: list[dict] = []
+            for cal in calendars:
+                cal_id = cal["id"]
+                cal_name = cal["summary"]
+                result = (
+                    service.events()
+                    .list(
+                        calendarId=cal_id,
+                        timeMin=time_min_iso,
+                        timeMax=time_max_iso,
+                        singleEvents=True,
+                        orderBy="startTime",
+                        maxResults=max_results,
+                    )
+                    .execute()
+                )
+                for item in result.get("items", []):
+                    start_field = item.get("start", {})
+                    end_field = item.get("end", {})
+                    start = start_field.get("dateTime") or start_field.get("date", "")
+                    end = end_field.get("dateTime") or end_field.get("date", "")
+                    merged.append(
+                        {
+                            "id": item.get("id", ""),
+                            "summary": item.get("summary", ""),
+                            "start": start,
+                            "end": end,
+                            "description": item.get("description", ""),
+                            "location": item.get("location", ""),
+                            "calendar": cal_name,
+                            "calendar_id": cal_id,
+                        }
+                    )
+            merged.sort(key=lambda e: e.get("start") or "")
+            return merged
+        except HttpError as exc:
+            logger.error(
+                "Calendar API error in list_all_events(%s, %s): %s",
+                time_min_iso,
+                time_max_iso,
+                exc,
+            )
+            return []
+
     def list_training_events(
         self,
         time_min_iso: str,
@@ -255,11 +387,13 @@ class GoogleCalendarManager:
             return []
 
     def is_free(self, start_iso: str, end_iso: str) -> dict:
-        """Check whether the primary calendar has no events in the given window.
+        """Check whether ALL writable calendars are free in the given window.
 
         Uses the `freebusy().query` endpoint, which is cheaper than listing
-        events and is specifically designed for availability checks.  If the
-        slot is busy, a follow-up `list_events` call identifies the first
+        events and is specifically designed for availability checks.  It queries
+        every calendar the user can write to (primary, Training, etc.) so a
+        workout in the Training calendar correctly registers as busy.  If the
+        slot is busy, a follow-up `list_all_events` call identifies the first
         conflicting event so the agent can report it to the user.
 
         Args:
@@ -277,6 +411,16 @@ class GoogleCalendarManager:
         try:
             service = self._get_service()
 
+            # Check every calendar the user can write to, not just primary —
+            # otherwise a Training-calendar workout never registers as busy.
+            # Fall back to primary-only if calendarList is unavailable.
+            writable = self.list_writable_calendars()
+            items = (
+                [{"id": cal["id"]} for cal in writable]
+                if writable
+                else [{"id": "primary"}]
+            )
+
             # WHY freebusy instead of events().list: freebusy is a single
             # query optimised for availability — it returns only busy intervals,
             # not full event objects, so it's lighter on quota and latency.
@@ -287,22 +431,25 @@ class GoogleCalendarManager:
                         "timeMin": start_iso,
                         "timeMax": end_iso,
                         # "items" tells the API which calendars to check.
-                        # "primary" is the user's default calendar.
-                        "items": [{"id": "primary"}],
+                        "items": items,
                     }
                 )
                 .execute()
             )
 
-            busy_slots: list[dict] = result["calendars"]["primary"]["busy"]
+            # Busy if ANY queried calendar reports a busy interval.
+            calendars = result.get("calendars", {})
+            any_busy = any(
+                cal.get("busy") for cal in calendars.values()
+            )
 
-            if not busy_slots:
-                # No busy intervals — the slot is completely free.
+            if not any_busy:
+                # No busy intervals on any calendar — the slot is completely free.
                 return {"is_free": True, "conflicting_event": None}
 
             # Slot is busy — identify the first conflicting event title so the
             # agent can give the user a meaningful explanation.
-            conflicting_events = self.list_events(start_iso, end_iso, max_results=1)
+            conflicting_events = self.list_all_events(start_iso, end_iso, max_results=1)
             conflicting_title: str | None = None
             if conflicting_events:
                 conflicting_title = conflicting_events[0].get("summary") or None
@@ -326,6 +473,7 @@ class GoogleCalendarManager:
         description: str = "",
         travel_minutes_each_way: int | None = None,
         is_workout: bool | None = None,
+        calendar_id: str | None = None,
     ) -> dict:
         """Create a calendar event, automatically applying travel buffers and
         workout prep blocks per the user's personal routines.
@@ -357,6 +505,10 @@ class GoogleCalendarManager:
                                       False when None. When True, the event is
                                       routed to the Training calendar and gets a
                                       travel buffer + Get Ready prep block.
+            calendar_id:              Optional explicit target calendar ID. When
+                                      set it overrides the primary/Training
+                                      routing, so callers can create an event in
+                                      any writable calendar.
 
         Returns:
             A dict containing:
@@ -433,11 +585,16 @@ class GoogleCalendarManager:
             # Workouts go to the dedicated Training calendar (D-01) so the evening
             # training check-in — which reads ONLY the Training calendar — can see
             # them. Fall back to the primary calendar if no Training calendar exists.
-            target_cal = "primary"
-            if is_workout:
-                training_cal_id = self.get_calendar_id_by_name(self._TRAINING_CALENDAR_NAME)
-                if training_cal_id:
-                    target_cal = training_cal_id
+            # An explicit calendar_id always wins; otherwise workouts route to the
+            # Training calendar and everything else to primary.
+            if calendar_id:
+                target_cal = calendar_id
+            else:
+                target_cal = "primary"
+                if is_workout:
+                    training_cal_id = self.get_calendar_id_by_name(self._TRAINING_CALENDAR_NAME)
+                    if training_cal_id:
+                        target_cal = training_cal_id
 
             event_body: dict = {
                 "summary": summary,
@@ -552,11 +709,36 @@ class GoogleCalendarManager:
             )
             return {"error": str(exc), "summary": summary}
 
-    def delete_event(self, event_id: str) -> dict:
-        """Delete an event from the primary calendar by ID.
+    def _find_calendar_for_event(self, event_id: str) -> str | None:
+        """Return the ID of the writable calendar that contains ``event_id``.
+
+        Used as a fallback by delete/update when the caller didn't pass the right
+        ``calendar_id`` — Klaus's listing now hands back ``calendar_id`` per event,
+        but this keeps mutations robust if it's ever omitted or stale. Probes each
+        writable calendar with a cheap ``events().get`` until one succeeds.
+
+        Returns:
+            The matching calendar ID, or ``None`` if no writable calendar holds it.
+        """
+        service = self._get_service()
+        for cal in self.list_writable_calendars():
+            cal_id = cal["id"]
+            try:
+                service.events().get(calendarId=cal_id, eventId=event_id).execute()
+                return cal_id
+            except HttpError:
+                continue
+        return None
+
+    def delete_event(self, event_id: str, calendar_id: str | None = None) -> dict:
+        """Delete an event from any calendar by ID.
 
         Args:
-            event_id: The Calendar event ID (returned by list_events).
+            event_id:    The Calendar event ID (returned by list_calendar_events).
+            calendar_id: The calendar the event lives on (returned alongside each
+                event by the listing). Defaults to ``"primary"``. If the event
+                isn't found there, falls back to searching the user's writable
+                calendars so the delete still lands on the right calendar.
 
         Returns:
             A dict with:
@@ -568,10 +750,26 @@ class GoogleCalendarManager:
                 - "event_id" (str)  — The requested event ID.
                 - "error"    (str)  — Exception message.
         """
+        target_cal = calendar_id or "primary"
         try:
             service = self._get_service()
-            service.events().delete(calendarId="primary", eventId=event_id).execute()
-            logger.info("Deleted calendar event: %s", event_id)
+            try:
+                service.events().delete(calendarId=target_cal, eventId=event_id).execute()
+            except HttpError as exc:
+                # 404 → the event isn't on the assumed calendar. Find its real
+                # home among the writable calendars and retry once before failing.
+                if exc.resp.status == 404:
+                    found = self._find_calendar_for_event(event_id)
+                    if found and found != target_cal:
+                        target_cal = found
+                        service.events().delete(
+                            calendarId=target_cal, eventId=event_id
+                        ).execute()
+                    else:
+                        raise
+                else:
+                    raise
+            logger.info("Deleted calendar event %s from %s", event_id, target_cal)
             return {
                 "ok": True,
                 "event_id": event_id,
@@ -587,4 +785,80 @@ class GoogleCalendarManager:
                     "confirmation": f"Event {event_id} was already deleted.",
                 }
             logger.error("Calendar API error in delete_event('%s'): %s", event_id, exc)
+            return {"ok": False, "event_id": event_id, "error": str(exc)}
+
+    def update_event(
+        self,
+        event_id: str,
+        calendar_id: str | None = None,
+        summary: str | None = None,
+        start_iso: str | None = None,
+        end_iso: str | None = None,
+        description: str | None = None,
+    ) -> dict:
+        """Edit an existing event in place (partial update via PATCH).
+
+        Only the fields you pass are changed; everything else is left as-is. This
+        is what lets Klaus modify an event Amit asked to change instead of
+        creating a duplicate.
+
+        Args:
+            event_id:    The Calendar event ID (returned by list_calendar_events).
+            calendar_id: The calendar the event lives on (returned alongside each
+                event by the listing). Defaults to ``"primary"``; if the event
+                isn't found there, falls back to searching writable calendars.
+            summary:     New title, if changing.
+            start_iso:   New start datetime (RFC 3339 / ISO 8601), if changing.
+            end_iso:     New end datetime (RFC 3339 / ISO 8601), if changing.
+            description: New description, if changing.
+
+        Returns:
+            A dict with ``"ok"``, ``"event_id"``, and ``"confirmation"`` on
+            success, or ``"ok": False`` + ``"error"`` on failure.
+        """
+        # Build the patch body from supplied fields only — PATCH leaves the rest.
+        body: dict = {}
+        if summary is not None:
+            body["summary"] = summary
+        if description is not None:
+            body["description"] = description
+        if start_iso is not None:
+            body["start"] = {"dateTime": start_iso, "timeZone": "Asia/Jerusalem"}
+        if end_iso is not None:
+            body["end"] = {"dateTime": end_iso, "timeZone": "Asia/Jerusalem"}
+
+        if not body:
+            return {
+                "ok": False,
+                "event_id": event_id,
+                "error": "No fields to update were provided.",
+            }
+
+        target_cal = calendar_id or "primary"
+        try:
+            service = self._get_service()
+            try:
+                service.events().patch(
+                    calendarId=target_cal, eventId=event_id, body=body
+                ).execute()
+            except HttpError as exc:
+                if exc.resp.status == 404:
+                    found = self._find_calendar_for_event(event_id)
+                    if found and found != target_cal:
+                        target_cal = found
+                        service.events().patch(
+                            calendarId=target_cal, eventId=event_id, body=body
+                        ).execute()
+                    else:
+                        raise
+                else:
+                    raise
+            logger.info("Updated calendar event %s on %s (%s)", event_id, target_cal, list(body))
+            return {
+                "ok": True,
+                "event_id": event_id,
+                "confirmation": f"Event {event_id} updated.",
+            }
+        except HttpError as exc:
+            logger.error("Calendar API error in update_event('%s'): %s", event_id, exc)
             return {"ok": False, "event_id": event_id, "error": str(exc)}
