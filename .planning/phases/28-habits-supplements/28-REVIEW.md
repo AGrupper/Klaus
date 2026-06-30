@@ -93,6 +93,8 @@ editHabit.mutate({
 
 ### WR-02: Soft-deleted habits become unrecoverable zombies when the user navigates away during the undo window
 
+**Status: RESOLVED** (2026-06-30) — Added `HabitStore.reclaim_stale_deletions()` (option (a), read-time instead of cron): `list_active()` now best-effort hard-deletes any `status='completing'` doc whose `updated_at` is older than 120s (≫ the 4s undo window, so a legitimately-pending undo is never reclaimed). Missing-timestamp docs are treated as stale. The misleading UndoToast comment was corrected. Covered by 5 tests in `tests/test_habit_store.py::TestReclaimStaleDeletions`.
+
 **File:** `frontend/src/components/tasks/UndoToast.tsx:123-129`, `memory/firestore_db.py:3171-3183`
 **Issue:** `handleDelete` soft-deletes (status → `completing`), which removes the
 habit from `list_active()` (and thus the entire UI). The hard-delete only fires
@@ -127,6 +129,9 @@ boundaries), or emit `not-scheduled`/empty leading cells to fill the first colum
 to the correct weekday offset, and size the grid columns to the actual week count.
 
 ### WR-04: Check-off does not invalidate the habit summary query — GlanceRail/Today counts go stale
+
+**Status: RESOLVED** (2026-06-30) — `useCheckOffHabit.onSettled` now also invalidates `['habits','summary']` (matching `useSoftDeleteHabit`), so GlanceRail streak leaders and the pending count refetch after a check-off. Verified by `npx tsc --noEmit` + 82/82 vitest.
+
 
 **File:** `frontend/src/hooks/useHabits.ts:151-154`
 **Issue:** `useCheckOffHabit.onSettled` invalidates only `HABITS_QUERY_KEY`
