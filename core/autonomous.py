@@ -202,6 +202,10 @@ def _is_empty_signals(situation: dict) -> bool:
     hsc = situation.get("hours_since_contact")
     if isinstance(hsc, (int, float)) and hsc >= _SILENCE_TRIGGER_HOURS:
         return False
+    # Phase 28 Plan 03 (HABIT-05 / D-15): pending habits/supplements are a valid tick trigger.
+    # A non-empty list means a scheduled slot has passed without a check-off — salient signal.
+    if situation.get("habit_pending"):
+        return False
     return True
 
 
@@ -253,6 +257,32 @@ def _gather_native_overdue() -> list:
         return [{"title": t["title"], "due": t.get("due_date", "")} for t in tasks]
     except Exception:
         logger.warning("autonomous: native overdue gather failed", exc_info=True)
+        return []
+
+
+def _gather_habit_adherence(now: datetime, project_id: str, database: str) -> list[dict]:
+    """Layer-0 gather: today's pending habits/supplements with streak (D-15/D-16).
+
+    Returns list of pending items: [{"habit_id", "name", "type", "slot", "streak", "dose"}, ...]
+    Filtered by CoachingTopicStore dedup (D-17): items already nudged today are excluded.
+    Empty list on any error (sentinel pattern — a HabitStore failure must never break the tick).
+
+    Phase 28 Plan 03 (HABIT-05).
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        from memory.firestore_db import HabitStore, CoachingTopicStore
+        today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        store = HabitStore(project_id=project_id, database=database)
+        pending = store.get_pending_today(today_iso)
+        # D-17: filter out items already nudged today (per-item-per-day dedup)
+        cts = CoachingTopicStore(project_id=project_id, database=database)
+        return [
+            h for h in pending
+            if not cts.has_topic(today_iso, f"habit-nudge:{h['habit_id']}:{today_iso}")
+        ]
+    except Exception:
+        logger.warning("autonomous: habit_adherence gather failed", exc_info=True)
         return []
 
 
@@ -458,6 +488,8 @@ def gather_situation(now: datetime) -> dict:
         ),
         "training_status": _gather_training_status,
         "acwr": _gather_acwr,
+        # Phase 28 Plan 03 (HABIT-05 / D-15/D-16/D-17): pending habit/supplement adherence
+        "habit_pending": lambda: _gather_habit_adherence(now, project_id, database),
     }
 
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="gather") as pool:
@@ -533,6 +565,9 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         "meals_since_last_tick": situation.get("meals_since_last_tick", []),
         "training_status": situation.get("training_status", {}),
         "acwr": situation.get("acwr", {"ratio": None}),
+        # Phase 28 Plan 03 (HABIT-05 / D-15/D-16): pending habit/supplement adherence
+        # with streak context so tick-brain can weight long streaks at risk (D-16).
+        "habit_pending": situation.get("habit_pending", []),
     }
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
@@ -702,6 +737,8 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "meals_since_last_tick": situation.get("meals_since_last_tick", []),
         "training_status": situation.get("training_status", {}),
         "acwr": situation.get("acwr", {"ratio": None}),
+        # Phase 28 Plan 03 (HABIT-05 / D-15/D-16): pending habits/supplements with streak.
+        "habit_pending": situation.get("habit_pending", []),
     }, indent=2, ensure_ascii=False)
 
     synthetic_content = (

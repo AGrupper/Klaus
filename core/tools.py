@@ -396,6 +396,31 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["task_id"],
         },
     },
+    # --- Native HabitStore tools (Phase 28 Plan 03 — HABIT-05) ---
+    {
+        "name": "get_habit_adherence",
+        "description": (
+            "Read today's pending habits and supplements with streak info. "
+            "Returns list of items not yet checked off today with their current streak. "
+            "Use to assess adherence or to prepare a coaching note."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "slot": {
+                    "type": "string",
+                    "enum": ["Morning", "Noon", "Evening", "Bedtime"],
+                    "description": "Filter by time slot. Omit for all slots.",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["habit", "supplement"],
+                    "description": "Filter by item type. Omit for both.",
+                },
+            },
+            "required": [],
+        },
+    },
     {
         "name": "remember",
         "description": (
@@ -2513,6 +2538,43 @@ def _handle_end_block(block_id: str) -> str:
         return json.dumps({"error": str(exc)})
 
 
+# --- Native HabitStore handlers (Phase 28 Plan 03 — HABIT-05) ---
+
+def _get_habit_store():
+    """Return a HabitStore instance using env-driven project/database config."""
+    from memory.firestore_db import HabitStore
+    return HabitStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _habit_today_iso() -> str:
+    """Return today's date in Asia/Jerusalem as YYYY-MM-DD."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+
+
+def _handle_get_habit_adherence(
+    slot: str | None = None,
+    type: str | None = None,
+) -> str:
+    """Return pending habits/supplements for today with streaks (HABIT-05).
+
+    Queries HabitStore.get_pending_today for today's Asia/Jerusalem date.
+    Optional filters: slot (Morning/Noon/Evening/Bedtime) and type (habit/supplement).
+    Returns a JSON list of pending items with streak info (D-16).
+    """
+    store = _get_habit_store()
+    today_iso = _habit_today_iso()
+    pending = store.get_pending_today(today_iso)
+    if slot:
+        pending = [h for h in pending if h.get("slot") == slot]
+    if type:
+        pending = [h for h in pending if h.get("type") == type]
+    return json.dumps(pending)
+
+
 # ------------------------------------------------------------------ #
 # Dispatch table — maps tool names to handler callables.             #
 # ------------------------------------------------------------------ #
@@ -2579,6 +2641,8 @@ _HANDLERS: dict[str, object] = {
     "end_block":               lambda args: _handle_end_block(**args),
     # Phase 25 — progress projection (PROG-02), brain-direct
     "get_goal_projection":     lambda args: _handle_get_goal_projection(**args),
+    # Phase 28 Plan 03 — native HabitStore tools (HABIT-05)
+    "get_habit_adherence":     lambda args: _handle_get_habit_adherence(**args),
 }
 
 
