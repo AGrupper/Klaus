@@ -463,6 +463,66 @@ class TestHabitStoreCRUD:
         assert firestore_db.HabitStore._COMPLETIONS == "habit_completions"
 
 
+class TestReclaimStaleDeletions:
+    """WR-02: self-heal habits stranded in status='completing' past the undo window."""
+
+    def test_reclaim_hard_deletes_stale_completing_doc(self):
+        from datetime import datetime, timezone, timedelta
+        store, col, _ = _make_habit_store()
+        old = datetime.now(timezone.utc) - timedelta(minutes=10)
+        col._docs["zombie"] = {
+            "id": "zombie", "name": "Stranded", "type": "habit",
+            "status": "completing", "updated_at": old,
+        }
+        reclaimed = store.reclaim_stale_deletions()
+        assert reclaimed == 1
+        assert "zombie" not in col._docs, "stale 'completing' doc must be hard-deleted"
+
+    def test_reclaim_preserves_doc_inside_undo_window(self):
+        from datetime import datetime, timezone
+        store, col, _ = _make_habit_store()
+        # updated_at is "now" — well inside the 4s undo window, must NOT be reclaimed
+        col._docs["pending"] = {
+            "id": "pending", "name": "Just deleted", "type": "habit",
+            "status": "completing", "updated_at": datetime.now(timezone.utc),
+        }
+        reclaimed = store.reclaim_stale_deletions()
+        assert reclaimed == 0
+        assert "pending" in col._docs, "a freshly soft-deleted doc must survive reclaim"
+
+    def test_reclaim_ignores_active_docs(self):
+        from datetime import datetime, timezone, timedelta
+        store, col, _ = _make_habit_store()
+        old = datetime.now(timezone.utc) - timedelta(minutes=10)
+        col._docs["a"] = {"id": "a", "name": "Run", "type": "habit",
+                          "status": "active", "updated_at": old}
+        reclaimed = store.reclaim_stale_deletions()
+        assert reclaimed == 0
+        assert "a" in col._docs
+
+    def test_reclaim_treats_missing_timestamp_as_stale(self):
+        store, col, _ = _make_habit_store()
+        # No updated_at — can't prove it's inside the window, so reclaim to avoid a permanent strand
+        col._docs["notime"] = {"id": "notime", "name": "Old", "type": "habit",
+                               "status": "completing"}
+        reclaimed = store.reclaim_stale_deletions()
+        assert reclaimed == 1
+        assert "notime" not in col._docs
+
+    def test_list_active_self_heals_stale_completing(self):
+        from datetime import datetime, timezone, timedelta
+        store, col, _ = _make_habit_store()
+        old = datetime.now(timezone.utc) - timedelta(minutes=10)
+        col._docs["a"] = {"id": "a", "name": "Run", "type": "habit", "status": "active",
+                          "schedule_history": [{"effective_from": "2026-01-01", "days": "daily"}]}
+        col._docs["zombie"] = {"id": "zombie", "name": "Stranded", "type": "habit",
+                               "status": "completing", "updated_at": old}
+        results = store.list_active()
+        names = [r["name"] for r in results]
+        assert names == ["Run"]
+        assert "zombie" not in col._docs, "list_active must reclaim the stranded doc"
+
+
 # ---------------------------------------------------------------------------
 # TestHabitCompletion — HABIT-01/02 check-off toggle
 # ---------------------------------------------------------------------------

@@ -62,11 +62,12 @@ export function UndoToast() {
   function fireHardDelete(id: string, resourceType?: 'task' | 'habit') {
     if (resourceType === 'habit') {
       hardDeleteHabit(id).catch(() => {
-        // Best-effort — server will garbage-collect orphaned "completing" docs
+        // Best-effort. If this never fires (tab closed mid-window), HabitStore
+        // .reclaim_stale_deletions() finishes the delete on the next list load.
       })
     } else {
       hardDeleteTask(id).catch(() => {
-        // Best-effort — server will garbage-collect orphaned "completing" docs
+        // Best-effort retry of the hard-delete; failures are non-fatal here.
       })
     }
   }

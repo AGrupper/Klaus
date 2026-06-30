@@ -3122,11 +3122,52 @@ class HabitStore:
             logger.warning("HabitStore.get(%r) failed", habit_id, exc_info=True)
             return None
 
+    def reclaim_stale_deletions(self, *, older_than_seconds: int = 120) -> int:
+        """Self-heal habits stranded in ``status == 'completing'`` (WR-02).
+
+        The undo-toast hard-delete is a *client-side* 4s timer; if the user
+        navigates away or closes the PWA during the undo window the timer never
+        fires, leaving the doc invisible (filtered from :meth:`list_active`) yet
+        never deleted and with no UI path to restore or remove it.
+
+        This finishes the delete the user intended for any ``completing`` doc
+        whose ``updated_at`` is older than ``older_than_seconds`` — chosen well
+        above the 4s undo window so a legitimately-pending undo is never
+        reclaimed early. Returns the number of docs reclaimed. Never raises.
+        """
+        from datetime import datetime, timezone, timedelta
+        reclaimed = 0
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            cutoff = datetime.now(timezone.utc) - timedelta(seconds=older_than_seconds)
+            query = self._col.where(filter=FieldFilter("status", "==", "completing"))
+            for snap in query.stream():
+                data = snap.to_dict() or {}
+                updated = data.get("updated_at")
+                # updated_at is a Firestore timestamp (tz-aware datetime). A
+                # missing/unparseable value means we can't prove the doc is
+                # still inside its undo window, so reclaim it rather than risk a
+                # permanent strand.
+                stale = True
+                if isinstance(updated, datetime):
+                    aware = updated if updated.tzinfo else updated.replace(tzinfo=timezone.utc)
+                    stale = aware < cutoff
+                if stale:
+                    self.delete(snap.id)
+                    reclaimed += 1
+        except Exception:
+            logger.warning("HabitStore.reclaim_stale_deletions failed", exc_info=True)
+        return reclaimed
+
     def list_active(self) -> list[dict]:
         """Return all habits/supplements with ``status == 'active'``.
 
+        Best-effort self-heals stranded soft-deletes first (WR-02), then lists.
         Never raises — returns [] on any Firestore error.
         """
+        # Reclaim never raises; run it before listing so a zombie 'completing'
+        # doc is cleaned the next time the Habits page loads.
+        self.reclaim_stale_deletions()
         try:
             from google.cloud.firestore_v1.base_query import FieldFilter
             query = self._col.where(filter=FieldFilter("status", "==", "active"))
