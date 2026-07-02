@@ -112,6 +112,9 @@ instead of silently abandoning it. Update the misleading comment to match realit
 
 ### WR-03: ContributionGrid rows do not align to weekdays and overflow the 52×7 layout
 
+**Status: RESOLVED** (2026-07-02) — Surfaced in UAT: a day-old habit's only coloured cell is today, which as the 365th cell overflowed the fixed 52×7 (364-slot) grid into an invisible implicit column, so the grid looked empty. ContributionGrid now (a) prepends `leadingPad = mondayIndex(cells[0])` transparent cells so every cell sits on its true weekday row, (b) derives column count from `pad + cells` (≈53) so no cell is dropped, and (c) auto-scrolls the container to the right on mount so today is visible on phones. 3 regression tests in `ContributionGrid.test.tsx`.
+
+
 **File:** `frontend/src/components/habits/ContributionGrid.tsx:71-104`, `memory/firestore_db.py:3010-3026`
 **Issue:** The grid is declared `gridTemplateColumns: repeat(52, 12px)` ×
 `gridTemplateRows: repeat(7, 12px)` (364 slots) with `gridAutoFlow: column`, and
