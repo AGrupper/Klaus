@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: ready_to_plan
-stopped_at: Phase 28 complete (5/5) — ready to discuss Phase 29
-last_updated: 2026-07-02T12:04:23.157Z
-last_activity: 2026-06-30
+status: planning
+stopped_at: Phase 29 context gathered
+last_updated: "2026-07-02T12:48:34.309Z"
+last_activity: 2026-07-02
 progress:
   total_phases: 5
   completed_phases: 3
@@ -149,9 +149,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-06-30T14:53:27Z
-Stopped at: Completed 28-03-PLAN.md (habit adherence tool + autonomous gather + SLOT_SUPPLEMENTS rewire)
-Resume file: None
+Last session: 2026-07-02T12:48:34.306Z
+Stopped at: Phase 29 context gathered
+Resume file: .planning/phases/29-web-push-transition/29-CONTEXT.md
 
 ## Operator Next Steps
 
