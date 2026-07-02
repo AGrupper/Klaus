@@ -103,7 +103,17 @@ visualizing training, nutrition, and sleep data from existing stores.
   2. Klaus's replies and proactive autonomous-tick messages are delivered as push notifications to the iPhone when the app is closed, wrapped in `event.waitUntil` and verified on a physical device
   3. Proactive messages mirror to Telegram behind a flag that is left ON for at least one week before being disabled; the mirror path is validated in production before Telegram retirement is considered
   4. The installed PWA icon shows an unread-count badge via the Badging API (not a favicon library)
-**Plans**: TBD
+**Plans**: 10 plans
+- [ ] 29-01-PLAN.md — Backend deps (pywebpush) + VAPID secret setup + docs
+- [ ] 29-02-PLAN.md — Frontend workbox devDeps + 29-HUMAN-UAT.md
+- [ ] 29-03-PLAN.md — PushSubscriptionStore + HubSettingsStore (Firestore)
+- [ ] 29-04-PLAN.md — core/push_sender.py fan-out (TTL, 404/410 cleanup, VAPID)
+- [ ] 29-05-PLAN.md — Brain tools (mirror toggle + push health) + heartbeat checker
+- [ ] 29-06-PLAN.md — /api/push/* + /api/settings routes
+- [ ] 29-07-PLAN.md — generateSW→injectManifest custom service worker (push + badge)
+- [ ] 29-08-PLAN.md — send_and_inject push/mirror/visibility + all 3 send paths
+- [ ] 29-09-PLAN.md — usePush + useAppBadge hooks
+- [ ] 29-10-PLAN.md — Settings page + enable banner + nav + device UAT
 
 ### Phase 30: Health Pages
 **Goal**: Amit can view his training history, nutrition trends, and sleep/recovery patterns visually in the hub, drawing from the existing Firestore stores built in v3.0–v4.0 and the post-v4.0 increments
@@ -125,7 +135,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
-| 29. Web Push & Transition | 0/? | Not started | - |
+| 29. Web Push & Transition | 0/10 | Planned | - |
 | 30. Health Pages | 0/? | Not started | - |
 
 ---
