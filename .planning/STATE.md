@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: verifying
-stopped_at: Phase 28 UI-SPEC approved
-last_updated: "2026-06-30T14:54:29.798Z"
+status: ready_to_plan
+stopped_at: Phase 28 complete (5/5) — ready to discuss Phase 29
+last_updated: 2026-07-02T12:04:23.157Z
 last_activity: 2026-06-30
 progress:
   total_phases: 5
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 28 (habits-supplements) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-06-30
+Phase: 29
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-02
 
 **Progress bar:** [██--------] 20% (1/5 phases)
 
@@ -73,7 +73,7 @@ Last activity: 2026-06-30
 See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 28 — habits-supplements
+**Current focus:** Phase 29 — web push & transition
 
 ## Architecture (current)
 
