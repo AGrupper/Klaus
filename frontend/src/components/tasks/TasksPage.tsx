@@ -32,7 +32,6 @@ import { ChevronDown } from 'lucide-react'
 import { TaskListSidebar } from './TaskListSidebar'
 import { TaskListView } from './TaskListView'
 import { TaskDetailSheet } from './TaskDetailSheet'
-import { UndoToast } from './UndoToast'
 import { TaskFAB } from './TaskFAB'
 import { QuickAddBar } from './QuickAddBar'
 import { useTaskLists } from '../../hooks/useTaskLists'
@@ -305,9 +304,6 @@ export function TasksPage() {
         open={detailOpen}
         onClose={handleDetailClose}
       />
-
-      {/* Undo toast — global fixed overlay */}
-      <UndoToast />
     </>
   )
 }

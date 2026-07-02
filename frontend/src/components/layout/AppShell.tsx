@@ -20,6 +20,7 @@ import { DockChat } from './DockChat'
 import { OfflineIndicator } from '../shared/OfflineIndicator'
 import { InstallBanner } from '../shared/InstallBanner'
 import { UpdatePrompt } from '../shared/UpdatePrompt'
+import { UndoToast } from '../tasks/UndoToast'
 
 interface AppShellProps {
   children: ReactNode
@@ -67,6 +68,15 @@ export function AppShell({ children }: AppShellProps) {
 
       {/* Phone only bottom tab bar — fixed 64px, shown above safe-area inset */}
       <BottomTabs />
+
+      {/*
+       * Global undo toast — mounted here (not inside any page) so it survives
+       * across routes. Deleting a habit on /habits and completing/deleting a
+       * task on /tasks both drive the same zustand undoStore; the toast must
+       * exist regardless of the active route (it was previously rendered only
+       * inside TasksPage, so habit deletes on /habits produced no toast).
+       */}
+      <UndoToast />
     </div>
   )
 }
