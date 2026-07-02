@@ -3409,8 +3409,18 @@ class HabitStore:
                     if date_key:
                         completions[date_key] = d
             except Exception:
-                logger.warning(
-                    "HabitStore.get_history(%r) completions query failed", habit_id, exc_info=True
+                # WR-05: this must stay non-fatal (get_summary / get_pending_today
+                # run inside the autonomous tick and must never crash it), but a
+                # failure here silently yields streak 0 + an empty grid for EVERY
+                # habit — so log LOUDLY and actionably. The usual cause is a
+                # missing COLLECTION_GROUP index on records.habit_id (see
+                # DEPLOYMENT.md §21). Falling back to an empty completion set.
+                logger.error(
+                    "HabitStore.get_history(%r) completions collection-group query "
+                    "failed — streaks/grid will read as empty until fixed. If this is "
+                    "FAILED_PRECONDITION, create the records.habit_id COLLECTION_GROUP "
+                    "index (DEPLOYMENT.md §21).",
+                    habit_id, exc_info=True,
                 )
                 completions = {}
 
