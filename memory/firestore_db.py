@@ -3463,6 +3463,172 @@ class HabitStore:
             return {"pending_today": 0, "streak_leaders": []}
 
 
+class PushSubscriptionStore:
+    """Web Push subscription registry — multi-device from day one (D-17).
+
+    Collection: ``push_subscriptions``
+    Document ID: ``sha256(endpoint).hexdigest()[:32]`` — the endpoint itself
+    is too long/unsafe to use directly as a Firestore doc id, and hashing it
+    gives an idempotent, deterministic key so re-subscribing the same
+    browser/device endpoint always lands on the same doc (merge=True).
+
+    Read discipline:
+        list_all never raises — returns [] on any Firestore error, each doc
+        passed through _jsonsafe_doc so SERVER_TIMESTAMP fields round-trip
+        through json.dumps.
+
+    Write discipline:
+        upsert / delete / record_success / record_failure re-raise on
+        Firestore failure after logger.error, so `core/push_sender.py`'s
+        fan-out loop knows a write did not land.
+
+    Phase 29 — PUSH-01.
+    """
+
+    _COLLECTION = "push_subscriptions"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    @staticmethod
+    def _doc_id(endpoint: str) -> str:
+        import hashlib
+        return hashlib.sha256(endpoint.encode()).hexdigest()[:32]
+
+    def upsert(self, sub_json: dict, user_agent: str = "") -> None:
+        """Idempotent write keyed on sha256(endpoint). Re-raises on failure.
+
+        Args:
+            sub_json: Browser PushSubscription JSON — must include a truthy
+                ``endpoint`` and a ``keys`` dict ({p256dh, auth}).
+            user_agent: Optional device/browser identifier for diagnostics.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging.
+        """
+        endpoint = sub_json.get("endpoint", "")
+        doc_id = self._doc_id(endpoint)
+        try:
+            self._col.document(doc_id).set(
+                {
+                    "endpoint": endpoint,
+                    "keys": sub_json.get("keys", {}),
+                    "user_agent": user_agent,
+                    "created_at": firestore.SERVER_TIMESTAMP,
+                    "last_validated_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("PushSubscriptionStore.upsert(%r) failed", endpoint, exc_info=True)
+            raise
+
+    def list_all(self) -> list[dict]:
+        """Return every subscription doc, json-safe. Never raises — [] on error."""
+        try:
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in self._col.stream()]
+        except Exception:
+            logger.warning("PushSubscriptionStore.list_all() failed", exc_info=True)
+            return []
+
+    def delete(self, endpoint: str) -> None:
+        """Delete the subscription doc for `endpoint`. Re-raises on failure."""
+        doc_id = self._doc_id(endpoint)
+        try:
+            self._col.document(doc_id).delete()
+        except Exception:
+            logger.error("PushSubscriptionStore.delete(%r) failed", endpoint, exc_info=True)
+            raise
+
+    def record_success(self, endpoint: str) -> None:
+        """Merge-write a successful delivery timestamp and clear failure_count."""
+        from datetime import datetime, timezone
+        doc_id = self._doc_id(endpoint)
+        try:
+            self._col.document(doc_id).set(
+                {
+                    "last_success_at": datetime.now(timezone.utc),
+                    "failure_count": 0,
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("PushSubscriptionStore.record_success(%r) failed", endpoint, exc_info=True)
+            raise
+
+    def record_failure(self, endpoint: str, error: str) -> None:
+        """Merge-write the last error and increment failure_count."""
+        doc_id = self._doc_id(endpoint)
+        try:
+            self._col.document(doc_id).set(
+                {
+                    "last_error": str(error),
+                    "failure_count": firestore.Increment(1),
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("PushSubscriptionStore.record_failure(%r) failed", endpoint, exc_info=True)
+            raise
+
+
+class HubSettingsStore:
+    """Runtime Telegram-mirror flag + push transition state (D-08/D-09/D-14).
+
+    Config doc lives at collection='config', document='hub_settings'. This is
+    a RUNTIME Firestore toggle, not an env var — Klaus (via the
+    `toggle_telegram_mirror` tool) and the /api/settings route both mutate it.
+
+    Default `telegram_mirror_enabled` is True (mirror ON) — Telegram keeps
+    receiving every message until Amit has run the hub with push for at
+    least a week (D-08/D-09).
+
+    No `chat_visible_until` field here: the D-02 in-hub chat-visibility gate
+    is an in-process module variable in core/scheduled_message.py (RESEARCH
+    A5, single Cloud Run instance) — persisting it here would always be
+    stale/misleading across instance restarts.
+
+    Phase 29 — PUSH-03.
+    """
+
+    _COLLECTION = "config"
+    _DOCUMENT = "hub_settings"
+
+    _DEFAULTS: dict = {
+        "telegram_mirror_enabled": True,
+        "push_enabled_at": None,
+    }
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return hub settings, falling back to defaults for missing fields.
+
+        Never raises — returns defaults on any Firestore error.
+        """
+        try:
+            snap = self._doc_ref.get()
+            stored = snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("HubSettingsStore.get() failed — using defaults", exc_info=True)
+            stored = {}
+        return {**self._DEFAULTS, **stored}
+
+    def set(self, patch: dict) -> None:
+        """Merge `patch` into the stored settings document (creates it if absent)."""
+        try:
+            self._doc_ref.set(
+                {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("HubSettingsStore.set() failed", exc_info=True)
+            raise
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
