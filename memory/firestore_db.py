@@ -3573,6 +3573,62 @@ class PushSubscriptionStore:
             raise
 
 
+class HubSettingsStore:
+    """Runtime Telegram-mirror flag + push transition state (D-08/D-09/D-14).
+
+    Config doc lives at collection='config', document='hub_settings'. This is
+    a RUNTIME Firestore toggle, not an env var — Klaus (via the
+    `toggle_telegram_mirror` tool) and the /api/settings route both mutate it.
+
+    Default `telegram_mirror_enabled` is True (mirror ON) — Telegram keeps
+    receiving every message until Amit has run the hub with push for at
+    least a week (D-08/D-09).
+
+    No `chat_visible_until` field here: the D-02 in-hub chat-visibility gate
+    is an in-process module variable in core/scheduled_message.py (RESEARCH
+    A5, single Cloud Run instance) — persisting it here would always be
+    stale/misleading across instance restarts.
+
+    Phase 29 — PUSH-03.
+    """
+
+    _COLLECTION = "config"
+    _DOCUMENT = "hub_settings"
+
+    _DEFAULTS: dict = {
+        "telegram_mirror_enabled": True,
+        "push_enabled_at": None,
+    }
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return hub settings, falling back to defaults for missing fields.
+
+        Never raises — returns defaults on any Firestore error.
+        """
+        try:
+            snap = self._doc_ref.get()
+            stored = snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("HubSettingsStore.get() failed — using defaults", exc_info=True)
+            stored = {}
+        return {**self._DEFAULTS, **stored}
+
+    def set(self, patch: dict) -> None:
+        """Merge `patch` into the stored settings document (creates it if absent)."""
+        try:
+            self._doc_ref.set(
+                {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+        except Exception:
+            logger.error("HubSettingsStore.set() failed", exc_info=True)
+            raise
+
+
 def _smoke_test() -> int:
     """Verify Firestore connectivity. Returns 0 on success, 1 on failure.
 
