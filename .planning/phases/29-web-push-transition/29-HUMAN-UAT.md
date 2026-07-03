@@ -1,0 +1,58 @@
+---
+status: pending
+phase: 29-web-push-transition
+source: [29-CONTEXT.md (D-20, D-21), 29-02-PLAN.md]
+started: null
+updated: 2026-07-03
+note: Two sections with different lifecycles. Section 1 (D-20) gates phase close —
+  all four checks witnessed on the physical iPhone with the Telegram mirror ON.
+  Section 2 (D-21) is post-phase tracking only — the phase does NOT stay open for
+  the mirror week; items are carried here the same way Phase 26 carried its
+  on-device items in 26-HUMAN-UAT.md.
+---
+
+# Phase 29 — Human UAT: Device Verification & Mirror-Week Tracking
+
+## Section 1: D-20 Phase-Close Device Verification
+
+The phase closes only when ALL four checks below are witnessed on the physical
+iPhone (installed home-screen PWA, Telegram mirror ON). All Klaus sends share the
+`send_and_inject` pipe, so the two witnessed push classes (chat reply + proactive)
+prove the pipeline; the mirror week catches stragglers.
+
+| # | Check | Status | Notes |
+|---|-------|--------|-------|
+| 1 | [ ] **Enable-push flow** — from the Settings page or the Today banner, tap enable; iOS permission prompt appears (user gesture); permission granted; a subscription is stored (confirm via `get_push_health` or Firestore `push_subscriptions`) | pending | |
+| 2 | [ ] **Chat-reply push, app closed** — fully close the installed app (swipe away), send Klaus a message from Telegram or wait for a hub-originated turn to complete, and witness the reply arrive as a push notification on the lock screen | pending | |
+| 3 | [ ] **Proactive push, app closed** — with the app fully closed, witness one REAL proactive push arrive: an autonomous tick outreach OR a manually-triggered cron (e.g., morning briefing / nightly review trigger) | pending | |
+| 4 | [ ] **Icon unread badge** — after a closed-app push, the installed home-screen icon shows an unread-count badge; opening the app and viewing the chat clears both the in-app counter and the icon badge | pending | |
+
+### Phase-close summary
+
+total: 4
+passed: 0
+pending: 4
+blocked: 0
+
+## Section 2: D-21 Post-Phase Mirror-Week Tracking
+
+Tracked items only — the phase does NOT stay open for the calendar week (D-21).
+These follow the Phase-26 pattern of carried on-device items: recorded here,
+checked off as the week unfolds, and closed with the final mirror-off decision.
+
+| # | Tracked item | Status | Notes |
+|---|--------------|--------|-------|
+| 1 | [ ] **Mirror flag left ON** — `telegram_mirror_enabled` stays true for the whole observation window; every Klaus send goes to BOTH push and Telegram at full volume (D-08/D-10, no `disable_notification`) | tracking | |
+| 2 | [ ] **Daily double-buzz audit** — each day, confirm every Telegram message had a matching push (a lone Telegram buzz = a missed push; investigate via `get_push_health` + heartbeat push signals) | tracking | |
+| 3 | [ ] **≥1-week observation window** — at least 7 days of real production use with zero unexplained missing pushes before considering the flip (locked decision: Telegram retirement is gradual, not a hard cutover) | tracking | |
+| 4 | [ ] **Mirror-off decision** — after the trusted week, Amit flips the mirror off (Settings toggle or "kill the mirror" via the D-13 brain tool). Telegram stays dormant-but-working (webhook intact; still the photo input channel). Code removal is a separate future cleanup decision (D-11) | tracking | |
+
+### Mirror week log
+
+| Date | Pushes matched Telegram? | Anomalies |
+|------|--------------------------|-----------|
+| | | |
+
+## Gaps
+
+None recorded yet — populate during device UAT and the mirror week.
