@@ -16,33 +16,19 @@ export default defineConfig({
       // owns registration (avoids a double-register with the auto-injected script).
       registerType: 'prompt',
       injectRegister: false,
-      strategies: 'generateSW',
-      workbox: {
-        // Precache all build outputs (hashed JS/CSS/HTML/icons)
+      // injectManifest: the SW is hand-written (src/sw.ts) so it can carry the
+      // push + notificationclick handlers (PUSH-02/04) alongside the same
+      // precache + per-route caching behavior the previous auto-generated
+      // strategy used to produce.
+      // NOTE: per-route caching config in this plugin block is IGNORED under
+      // injectManifest — those routes are registered directly in src/sw.ts.
+      strategies: 'injectManifest',
+      srcDir: 'src',
+      filename: 'sw.ts',
+      injectManifest: {
+        // Precache all build outputs (hashed JS/CSS/HTML/icons) — moved here
+        // from the deleted plugin-level workbox config block (same value).
         globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
-        // index.html: network-first so a new deploy is never blocked by stale cache
-        runtimeCaching: [
-          {
-            urlPattern: ({ request }) => request.destination === 'document',
-            handler: 'NetworkFirst',
-            options: {
-              cacheName: 'html-cache',
-              networkTimeoutSeconds: 5,
-              expiration: { maxEntries: 5, maxAgeSeconds: 60 * 60 * 24 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-          // Hashed assets (JS/CSS bundles) — cache-first, long TTL
-          {
-            urlPattern: /\/assets\/.+\.(js|css)$/,
-            handler: 'CacheFirst',
-            options: {
-              cacheName: 'assets-cache',
-              expiration: { maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 365 },
-              cacheableResponse: { statuses: [0, 200] },
-            },
-          },
-        ],
       },
       manifest: {
         name: 'Klaus',
