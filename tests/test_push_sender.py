@@ -262,6 +262,91 @@ def test_mixed_outcomes_across_multiple_subscriptions():
 
 
 # --------------------------------------------------------------------- #
+# WR-03: store bookkeeping failures never affect delivery accounting    #
+# or abort the fan-out                                                  #
+# --------------------------------------------------------------------- #
+
+class _FlakyStore(_FakeSubscriptionStore):
+    """Store double whose bookkeeping writes raise (Firestore blip)."""
+
+    def __init__(self, subs, *, fail_success=False, fail_failure=False, fail_delete=False):
+        super().__init__(subs)
+        self._fail_success = fail_success
+        self._fail_failure = fail_failure
+        self._fail_delete = fail_delete
+
+    def record_success(self, endpoint):
+        if self._fail_success:
+            raise RuntimeError("Firestore write failed (record_success)")
+        super().record_success(endpoint)
+
+    def record_failure(self, endpoint, error):
+        if self._fail_failure:
+            raise RuntimeError("Firestore write failed (record_failure)")
+        super().record_failure(endpoint, error)
+
+    def delete(self, endpoint):
+        if self._fail_delete:
+            raise RuntimeError("Firestore write failed (delete)")
+        super().delete(endpoint)
+
+
+def test_record_success_failure_still_counts_sent_not_failed():
+    """WR-03(a): a Firestore blip in record_success after a SUCCESSFUL
+    webpush must count the push as sent — never fall through to
+    record_failure / failed (which would poison the failure-streak signal)."""
+    store = _FlakyStore([_sub(1)], fail_success=True)
+    p1, p2, p3 = _patched(store)
+    with p1, p2, p3:
+        result = push_sender.send_push_to_all("hello")
+
+    assert result == {"sent": 1, "failed": 0, "removed": 0}
+    assert store.failures == []
+    assert store.deleted == []
+
+
+def test_delete_failure_does_not_abort_remaining_fanout():
+    """WR-03(b): store.delete raising on a dead (410) subscription must not
+    skip the remaining subscriptions in the fan-out."""
+    resp_410 = MagicMock(status_code=410)
+
+    def _side_effect(**kwargs):
+        endpoint = kwargs["subscription_info"]["endpoint"]
+        if endpoint.endswith("/1"):
+            raise WebPushException("gone", response=resp_410)
+        return None
+
+    store = _FlakyStore([_sub(1), _sub(2), _sub(3)], fail_delete=True)
+    p1, p2, p3 = _patched(store, webpush_mock=MagicMock(side_effect=_side_effect))
+    with p1, p2, p3:
+        result = push_sender.send_push_to_all("hello")
+
+    # Sub 1's delete raised but subs 2 and 3 were still delivered.
+    assert result == {"sent": 2, "failed": 0, "removed": 1}
+    assert store.successes == ["https://push.example/2", "https://push.example/3"]
+
+
+def test_record_failure_failure_does_not_abort_remaining_fanout():
+    """WR-03(b): record_failure raising after a 500 must not skip the
+    remaining subscriptions."""
+    resp_500 = MagicMock(status_code=500)
+
+    def _side_effect(**kwargs):
+        endpoint = kwargs["subscription_info"]["endpoint"]
+        if endpoint.endswith("/1"):
+            raise WebPushException("server error", response=resp_500)
+        return None
+
+    store = _FlakyStore([_sub(1), _sub(2)], fail_failure=True)
+    p1, p2, p3 = _patched(store, webpush_mock=MagicMock(side_effect=_side_effect))
+    with p1, p2, p3:
+        result = push_sender.send_push_to_all("hello")
+
+    assert result == {"sent": 1, "failed": 1, "removed": 0}
+    assert store.successes == ["https://push.example/2"]
+
+
+# --------------------------------------------------------------------- #
 # _get_vapid_private_key: Secret Manager load + cache                   #
 # --------------------------------------------------------------------- #
 

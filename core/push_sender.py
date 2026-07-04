@@ -66,6 +66,26 @@ def _get_vapid_private_key() -> str:
     return _VAPID_PRIVATE_KEY
 
 
+def _reconcile(fn, *args) -> None:
+    """Best-effort subscription-store bookkeeping (WR-03).
+
+    PushSubscriptionStore.record_success/record_failure/delete re-raise on
+    Firestore failure by documented design. Inside the fan-out loop a
+    bookkeeping failure must NEVER (a) reclassify a delivered push as a
+    failure, or (b) abort the remaining subscriptions — so wrap every
+    reconciliation write and log instead of raising.
+    """
+    try:
+        fn(*args)
+    except Exception:
+        logger.warning(
+            "push_sender: subscription bookkeeping %s(%s) failed — delivery result unaffected",
+            getattr(fn, "__name__", str(fn)),
+            args[0] if args else "",
+            exc_info=True,
+        )
+
+
 def _get_subscription_store():
     """Return a PushSubscriptionStore using env-driven project/database config.
 
@@ -112,6 +132,10 @@ def send_push_to_all(text: str, message_class: str = "default") -> dict:
 
     for sub in store.list_all():
         endpoint = sub.get("endpoint", "")
+        # WR-03: the try/except covers ONLY the webpush() delivery attempt.
+        # Store reconciliation happens outside it via _reconcile so a
+        # Firestore blip can neither misrecord a delivered push as a failure
+        # nor abort the remaining fan-out.
         try:
             webpush(
                 subscription_info={"endpoint": endpoint, "keys": sub.get("keys", {})},
@@ -124,20 +148,22 @@ def send_push_to_all(text: str, message_class: str = "default") -> dict:
                 ttl=ttl,
                 timeout=10,  # CLAUDE.md invariant: explicit timeout, always
             )
-            store.record_success(endpoint)
-            results["sent"] += 1
         except WebPushException as ex:
             status = ex.response.status_code if ex.response is not None else None
             if status in (404, 410):
                 # Dead subscription — the browser/OS revoked it. Remove it
                 # so future fan-outs don't keep hitting a dead endpoint.
-                store.delete(endpoint)
+                _reconcile(store.delete, endpoint)
                 results["removed"] += 1
             else:
-                store.record_failure(endpoint, f"{status}: {ex}")
+                _reconcile(store.record_failure, endpoint, f"{status}: {ex}")
                 results["failed"] += 1
+            continue
         except Exception as ex:  # DNS failure, timeout, etc.
-            store.record_failure(endpoint, str(ex))
+            _reconcile(store.record_failure, endpoint, str(ex))
             results["failed"] += 1
+            continue
+        _reconcile(store.record_success, endpoint)
+        results["sent"] += 1
 
     return results
