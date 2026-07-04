@@ -4,8 +4,8 @@ milestone: v5.0
 milestone_name: Klaus Hub
 status: executing
 stopped_at: Phase 29 context gathered
-last_updated: "2026-07-03T15:57:28.784Z"
-last_activity: 2026-07-03 -- Phase 29 planning complete
+last_updated: "2026-07-03T16:01:35.440Z"
+last_activity: 2026-07-03 -- Phase 29 execution started
 progress:
   total_phases: 5
   completed_phases: 3
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 29
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-03 -- Phase 29 planning complete
+Phase: 29 (web-push-transition) — EXECUTING
+Plan: 1 of 10
+Status: Executing Phase 29
+Last activity: 2026-07-03 -- Phase 29 execution started
 
 **Progress bar:** [██--------] 20% (1/5 phases)
 
@@ -73,7 +73,7 @@ Last activity: 2026-07-03 -- Phase 29 planning complete
 See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 29 — web push & transition
+**Current focus:** Phase 29 — web-push-transition
 
 ## Architecture (current)
 

@@ -104,9 +104,9 @@ visualizing training, nutrition, and sleep data from existing stores.
   3. Proactive messages mirror to Telegram behind a flag that is left ON for at least one week before being disabled; the mirror path is validated in production before Telegram retirement is considered
   4. The installed PWA icon shows an unread-count badge via the Badging API (not a favicon library)
 **Plans**: 10 plans
-- [ ] 29-01-PLAN.md — Backend deps (pywebpush) + VAPID secret setup + docs
-- [ ] 29-02-PLAN.md — Frontend workbox devDeps + 29-HUMAN-UAT.md
-- [ ] 29-03-PLAN.md — PushSubscriptionStore + HubSettingsStore (Firestore)
+- [x] 29-01-PLAN.md — Backend deps (pywebpush) + VAPID secret setup + docs
+- [x] 29-02-PLAN.md — Frontend workbox devDeps + 29-HUMAN-UAT.md
+- [x] 29-03-PLAN.md — PushSubscriptionStore + HubSettingsStore (Firestore)
 - [ ] 29-04-PLAN.md — core/push_sender.py fan-out (TTL, 404/410 cleanup, VAPID)
 - [ ] 29-05-PLAN.md — Brain tools (mirror toggle + push health) + heartbeat checker
 - [ ] 29-06-PLAN.md — /api/push/* + /api/settings routes
@@ -135,7 +135,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
-| 29. Web Push & Transition | 0/10 | Planned | - |
+| 29. Web Push & Transition | 3/10 | In Progress|  |
 | 30. Health Pages | 0/? | Not started | - |
 
 ---
