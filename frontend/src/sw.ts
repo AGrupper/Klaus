@@ -21,8 +21,8 @@
  */
 declare let self: ServiceWorkerGlobalScope
 
-import { precacheAndRoute, cleanupOutdatedCaches } from 'workbox-precaching'
-import { registerRoute } from 'workbox-routing'
+import { precacheAndRoute, cleanupOutdatedCaches, createHandlerBoundToURL } from 'workbox-precaching'
+import { registerRoute, setCatchHandler } from 'workbox-routing'
 import { NetworkFirst, CacheFirst } from 'workbox-strategies'
 import { ExpirationPlugin } from 'workbox-expiration'
 
@@ -47,6 +47,32 @@ registerRoute(
     plugins: [new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 60 * 60 * 24 * 365 })],
   }),
 )
+
+// WR-06: generateSW also auto-configured `navigateFallback: 'index.html'`,
+// which the injectManifest migration dropped. Without it, an offline
+// navigation to a route with no `html-cache` entry (never-visited route, or
+// >24h offline after ExpirationPlugin evicts the cached document) fails
+// outright even though index.html sits in the precache — a blank error page
+// on an installed-PWA cold start. Restore it as the router's CATCH handler
+// (not a second NavigationRoute: workbox serves the FIRST matching route, so
+// the NetworkFirst document route above always wins while online — HUB-03's
+// 5s network-first behavior is unchanged — and the catch handler only runs
+// when that strategy rejects, i.e. network AND html-cache both missed).
+let navigationFallback: ReturnType<typeof createHandlerBoundToURL> | null = null
+try {
+  navigationFallback = createHandlerBoundToURL('index.html')
+} catch (err) {
+  // 'index.html' absent from the precache manifest — never the case in a
+  // real build (globPatterns includes html; happens in tests where
+  // __WB_MANIFEST is stubbed empty). Degrade to normal error behavior.
+  console.error('[sw] navigation fallback unavailable', err)
+}
+setCatchHandler((options) => {
+  if (navigationFallback && options.request.destination === 'document') {
+    return navigationFallback(options)
+  }
+  return Promise.resolve(Response.error())
+})
 
 // ── 3. Raw IndexedDB badge counter (PUSH-04) — no `idb` package ──
 const BADGE_DB_NAME = 'klaus-badge'
