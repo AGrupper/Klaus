@@ -107,10 +107,10 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 29-01-PLAN.md — Backend deps (pywebpush) + VAPID secret setup + docs
 - [x] 29-02-PLAN.md — Frontend workbox devDeps + 29-HUMAN-UAT.md
 - [x] 29-03-PLAN.md — PushSubscriptionStore + HubSettingsStore (Firestore)
-- [ ] 29-04-PLAN.md — core/push_sender.py fan-out (TTL, 404/410 cleanup, VAPID)
-- [ ] 29-05-PLAN.md — Brain tools (mirror toggle + push health) + heartbeat checker
-- [ ] 29-06-PLAN.md — /api/push/* + /api/settings routes
-- [ ] 29-07-PLAN.md — generateSW→injectManifest custom service worker (push + badge)
+- [x] 29-04-PLAN.md — core/push_sender.py fan-out (TTL, 404/410 cleanup, VAPID)
+- [x] 29-05-PLAN.md — Brain tools (mirror toggle + push health) + heartbeat checker
+- [x] 29-06-PLAN.md — /api/push/* + /api/settings routes
+- [x] 29-07-PLAN.md — generateSW→injectManifest custom service worker (push + badge)
 - [ ] 29-08-PLAN.md — send_and_inject push/mirror/visibility + all 3 send paths
 - [ ] 29-09-PLAN.md — usePush + useAppBadge hooks
 - [ ] 29-10-PLAN.md — Settings page + enable banner + nav + device UAT
@@ -135,7 +135,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
-| 29. Web Push & Transition | 3/10 | In Progress|  |
+| 29. Web Push & Transition | 7/10 | In Progress|  |
 | 30. Health Pages | 0/? | Not started | - |
 
 ---
