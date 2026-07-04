@@ -261,6 +261,20 @@ def test_manual_trigger_bypasses_dedup(bot):
     mock_send.assert_called_once()
 
 
+def test_briefing_send_uses_briefing_message_class(bot):
+    """WR-02 / D-07 regression: the briefing cron threads message_class=
+    "briefing" into send_and_inject so the push TTL class system is actually
+    exercised by cron callers (was dead config — every cron sent 'default')."""
+    with patch("core.morning_briefing._get_state", return_value={}), \
+         patch("core.morning_briefing._set_state"), \
+         patch("core.morning_briefing._gather_data", return_value={}), \
+         patch("core.morning_briefing._compose_briefing", return_value="Good morning, sir."), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send:
+        from core.morning_briefing import run_morning_briefing
+        asyncio.run(run_morning_briefing(bot, "2026-05-12", dedup=False))
+    assert mock_send.call_args.kwargs.get("message_class") == "briefing"
+
+
 def test_dedup_skips_when_already_sent(bot):
     """run_morning_briefing with dedup=True skips if state is 'sent'."""
     # When dedup blocks, _gather_data and send_and_inject are never reached.

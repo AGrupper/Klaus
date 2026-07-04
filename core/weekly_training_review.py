@@ -482,12 +482,13 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     from telegram.error import TimedOut
 
     from core.scheduled_message import send_and_inject
+    # WR-02 / D-07: reviews carry the "review" push class (24h TTL).
     try:
-        await send_and_inject(bot, message, inject_into_conversation=True)
+        await send_and_inject(bot, message, inject_into_conversation=True, message_class="review")
     except TimedOut:
         logger.warning("weekly_review: Telegram send timed out — retrying once", exc_info=True)
         await asyncio.sleep(2)
-        await send_and_inject(bot, message, inject_into_conversation=True)
+        await send_and_inject(bot, message, inject_into_conversation=True, message_class="review")
 
     # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
     # review to CoachingTopicStore AFTER send succeeds — never before.

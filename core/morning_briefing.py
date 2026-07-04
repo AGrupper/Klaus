@@ -137,7 +137,8 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
     text = _compose_briefing(today_data, today_iso)
 
     from core.scheduled_message import send_and_inject
-    await send_and_inject(bot, text, inject_into_conversation=True)
+    # WR-02 / D-07: briefings carry the "briefing" push class (24h TTL).
+    await send_and_inject(bot, text, inject_into_conversation=True, message_class="briefing")
 
     # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
     # briefing to CoachingTopicStore AFTER send succeeds — never before.

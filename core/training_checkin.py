@@ -285,6 +285,9 @@ def _pending_expiry(hours: int = 20):
 # ------------------------------------------------------------------ #
 
 async def send_and_inject(bot, text, *, inject_into_conversation=False, reply_markup=None):
+    # WR-02 / D-07 note: deliberately left on the "default" push class —
+    # check-in prompts have no mapped class in the D-07 taxonomy (and their
+    # inline keyboards are a Telegram-only interaction anyway, see WR-04).
     from core.scheduled_message import send_and_inject as _sai
     return await _sai(bot, text, inject_into_conversation=inject_into_conversation, reply_markup=reply_markup)
 

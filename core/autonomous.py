@@ -846,6 +846,9 @@ async def _compose_followup(bot, followup: dict, situation: dict, now: datetime)
 
         final_text = polished or followup.get("note", "")
         try:
+            # WR-02 / D-07 note: deliberately "default" class — follow-ups
+            # have no mapped class in the D-07 taxonomy (not time-critical
+            # the way leave_by/habit_nudge are).
             await send_and_inject(bot, final_text, inject_into_conversation=True)
         except Exception:
             logger.error("autonomous: followup send_and_inject failed", exc_info=True)
@@ -1038,6 +1041,11 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
         return decision
 
     # Send (D-18: inject_into_conversation=True).
+    # WR-02 / D-07 note: deliberately left on the "default" push class. A
+    # composed tick message has no unambiguous class — the tick-brain's
+    # topic_key is free-form and one message can mix triggers (habit nudge +
+    # overdue + silence), so mapping to "habit_nudge"/"leave_by" here would
+    # be guesswork. Revisit if triage ever emits an explicit message kind.
     from core.scheduled_message import send_and_inject
     try:
         await send_and_inject(bot, final_text, inject_into_conversation=True)

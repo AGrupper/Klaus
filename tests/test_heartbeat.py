@@ -171,11 +171,17 @@ def test_run_tick_pings_new_critical(monkeypatch):
     async def _noop_drain(bot, now, cfg): pass
     monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
     sent = []
-    async def _send(bot, text, **kw): sent.append(text)
+    sent_kwargs = []
+    async def _send(bot, text, **kw):
+        sent.append(text)
+        sent_kwargs.append(kw)
     monkeypatch.setattr(heartbeat, "send_and_inject", _send)
     noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
     asyncio.run(heartbeat.run_tick(object(), now=noon))
     assert sent == ["composed"]
+    # WR-02 / D-07 regression: heartbeat sends carry the "alert" push class
+    # (a non-default class must flow from at least one cron caller).
+    assert sent_kwargs[0].get("message_class") == "alert"
 
 
 def test_cron_heartbeat_rejects_unauthenticated(monkeypatch):

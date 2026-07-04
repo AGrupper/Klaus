@@ -349,7 +349,8 @@ async def run_nightly(bot: Bot, target_date: str, *, trigger: str, dedup: bool =
     built = await loop.run_in_executor(None, _build_nightly, target_date)
 
     from core.scheduled_message import send_and_inject
-    await send_and_inject(bot, built["text"], inject_into_conversation=True)
+    # WR-02 / D-07: reviews carry the "review" push class (24h TTL).
+    await send_and_inject(bot, built["text"], inject_into_conversation=True, message_class="review")
 
     # Mark sent + persist tomorrow snapshot AFTER the send succeeds (write-after-send).
     _set_state(target_date, {

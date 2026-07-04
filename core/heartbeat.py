@@ -796,7 +796,10 @@ async def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
             doc_ref.delete()
             return
         signals = [Signal(**s) for s in queued]
-        await send_and_inject(bot, _compose_message(signals), inject_into_conversation=True)
+        # WR-02 / D-07: heartbeat/system messages carry the "alert" push class.
+        await send_and_inject(
+            bot, _compose_message(signals), inject_into_conversation=True, message_class="alert",
+        )
         doc_ref.delete()
     except Exception:
         logger.warning("heartbeat: drain_quiet_queue failed", exc_info=True)
@@ -874,18 +877,21 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
         if tick_insight:
             msg = f"{msg}\n\n_Insight: {tick_insight}_"
         if not _in_quiet_hours(config, now):
-            await send_and_inject(bot, msg, inject_into_conversation=True)
+            # WR-02 / D-07: heartbeat/system messages carry the "alert" push class.
+            await send_and_inject(bot, msg, inject_into_conversation=True, message_class="alert")
         else:
             _queue_signals(to_ping)
 
     if SEVERITY_WARNING in tiers and warnings:
-        await send_and_inject(bot, _compose_message(warnings), inject_into_conversation=True)
+        await send_and_inject(
+            bot, _compose_message(warnings), inject_into_conversation=True, message_class="alert",
+        )
 
     if SEVERITY_FYI in tiers and fiys:
         fyi_msg = _compose_message(fiys)
         if tick_insight and not to_ping and not warnings:
             fyi_msg = f"{fyi_msg}\n\n_Insight: {tick_insight}_"
-        await send_and_inject(bot, fyi_msg, inject_into_conversation=True)
+        await send_and_inject(bot, fyi_msg, inject_into_conversation=True, message_class="alert")
 
     _resolve_absent(active_fps)
 

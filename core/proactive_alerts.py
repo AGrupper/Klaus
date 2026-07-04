@@ -954,6 +954,10 @@ async def run_proactive_alerts(bot: Bot, target_date: str) -> None:
     message = _compose_alert(alerts_context)
 
     from core.scheduled_message import send_and_inject
+    # WR-02 / D-07 note: deliberately left on the "default" push class. This
+    # module is dormant (cron retired, folded into the nightly review) and
+    # its evening summary is not a real-time leave-by alert — no unambiguous
+    # D-07 class applies.
     await send_and_inject(bot, message, inject_into_conversation=False)
 
     # Phase 24 — COACH-05 post-send write discipline (T-24-12 mitigation):
