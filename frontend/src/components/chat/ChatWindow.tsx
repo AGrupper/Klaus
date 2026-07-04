@@ -10,6 +10,13 @@
  *     becomes visible, calls markAllSeen() to clear the unread badge (D-10).
  *   - Empty state: "Say hello to Klaus." (Copywriting Contract).
  *   - 2.5s polling while mounted (isVisible=true passed to useChat).
+ *   - Badge wiring (D-18, Phase 29): useAppBadge(unreadCount) reconciles the
+ *     installed icon badge whenever unreadCount changes. Viewing chat (the
+ *     markAllSeen path below) ALSO clears both badges directly — the tab
+ *     badge (via markAllSeen's localStorage write) and the icon badge (via
+ *     an explicit navigator.clearAppBadge() + RESET_BADGE post) — so the
+ *     icon badge clears immediately rather than waiting for the next poll
+ *     tick to re-render with unreadCount 0.
  *
  * Security note (T-26-08-01): All message content rendered via
  * MessageBubble which uses text nodes only, never dangerouslySetInnerHTML.
@@ -17,6 +24,7 @@
 import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { useChat } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
+import { useAppBadge } from '../../hooks/useAppBadge'
 import { MessageBubble } from './MessageBubble'
 import { TypingIndicator } from './TypingIndicator'
 import { ChatInput } from './ChatInput'
@@ -45,9 +53,28 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
   const messages: ChatMessage[] = allMessages.slice(-DISPLAY_LIMIT)
 
   // -------------------------------------------------------------------------
-  // Unread badge (CHAT-04 / D-10/D-11)
+  // Unread badge (CHAT-04 / D-10/D-11) + icon badge reconciliation (D-18)
   // -------------------------------------------------------------------------
-  const { markAllSeen } = useUnread(allMessages.length)
+  const { unreadCount, markAllSeen } = useUnread(allMessages.length)
+
+  // Reconciles the installed PWA icon badge to match unreadCount on every
+  // change (and posts RESET_BADGE so the SW's IDB counter stays honest).
+  useAppBadge(unreadCount)
+
+  // Viewing chat clears BOTH badges together (D-18): markAllSeen() clears
+  // the tab badge (localStorage write, read by useUnread on next render);
+  // clearAppBadge() + the RESET_BADGE post clear the icon badge immediately
+  // rather than waiting for the next poll tick's re-render.
+  const clearBothBadges = useCallback(() => {
+    markAllSeen()
+    try {
+      const nav = navigator as Navigator & { clearAppBadge?: () => Promise<void> }
+      void nav.clearAppBadge?.()
+      navigator.serviceWorker?.controller?.postMessage({ type: 'RESET_BADGE', count: 0 })
+    } catch {
+      // Defensive: badge API failures must never crash the app (D-18).
+    }
+  }, [markAllSeen])
 
   // -------------------------------------------------------------------------
   // Track "near bottom" on scroll
@@ -103,7 +130,7 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          markAllSeen()
+          clearBothBadges()
         }
       },
       {
@@ -114,7 +141,7 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
 
     observer.observe(lastEl)
     return () => observer.disconnect()
-  }, [messages.length, markAllSeen])
+  }, [messages.length, clearBothBadges])
 
   // -------------------------------------------------------------------------
   // Retry: re-send a failed message
