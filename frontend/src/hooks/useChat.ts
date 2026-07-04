@@ -35,7 +35,12 @@ export function useChat(isVisible: boolean = true) {
   // -------------------------------------------------------------------------
   const query = useQuery({
     queryKey: CHAT_QUERY_KEY,
-    queryFn: fetchMessages,
+    // Phase 29 (D-02): thread isVisible into fetchMessages so every poll while
+    // the chat is genuinely on-screen carries chat_visible=1 — this is the
+    // client half of the server-side push-suppression gate. The closure is
+    // fresh per render, and refetchInterval below already gates polling on
+    // isVisible, so chat_visible=1 is only ever sent while truly visible.
+    queryFn: () => fetchMessages(isVisible),
     refetchInterval: isVisible ? 2500 : false,
     // Pause when the browser tab loses focus (TanStack default; explicit here
     // for clarity and test-ability).
