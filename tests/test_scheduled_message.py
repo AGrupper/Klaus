@@ -19,15 +19,17 @@ def env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def reset_module_singletons():
-    """Reset the D-02 visibility gate + lazy-Bot singleton between tests so
-    state from one test never leaks into another.
+    """Reset the D-02 visibility gate + lazy-Bot + lazy-HubSettingsStore
+    singletons between tests so state from one test never leaks into another.
     """
     import core.scheduled_message as sm
     sm._chat_visible_until = 0.0
     sm._bot_instance = None
+    sm._hub_settings_store = None
     yield
     sm._chat_visible_until = 0.0
     sm._bot_instance = None
+    sm._hub_settings_store = None
 
 
 @pytest.fixture(autouse=True)
@@ -241,6 +243,62 @@ def test_lazy_bot_is_reused_across_calls(monkeypatch, mock_send_push):
 
     FakeBotClass.assert_called_once_with(token="1234:fake-token")
     assert fake_bot_instance.send_message.call_count == 2
+
+
+def test_hub_settings_store_built_once_and_reused(bot, mock_hub_settings, mock_send_push):
+    """CR-01: the HubSettingsStore (and its Firestore client) is constructed
+    once per process and reused — not rebuilt on every send."""
+    mock_store, mock_cls = mock_hub_settings
+    from core.scheduled_message import send_and_inject
+
+    asyncio.run(send_and_inject(bot, "first"))
+    asyncio.run(send_and_inject(bot, "second"))
+
+    mock_cls.assert_called_once()
+    assert mock_store.get.call_count == 2
+
+
+def test_mirror_flag_read_runs_off_event_loop(bot, mock_hub_settings, mock_send_push):
+    """CR-01: the blocking Firestore settings read must run in the default
+    executor (worker thread), never on the event-loop thread — same invariant
+    as the weekly-review-500 / 18-minute-reply incidents (CLAUDE.md)."""
+    import threading
+
+    mock_store, _ = mock_hub_settings
+    read_threads: list = []
+
+    def _get():
+        read_threads.append(threading.current_thread())
+        return {"telegram_mirror_enabled": True, "push_enabled_at": None}
+
+    mock_store.get.side_effect = _get
+    from core.scheduled_message import send_and_inject
+    asyncio.run(send_and_inject(bot, "hello"))
+
+    assert read_threads, "settings read never happened"
+    # asyncio.run drives the loop on the main thread; run_in_executor work
+    # must land on a worker thread.
+    assert all(t is not threading.main_thread() for t in read_threads)
+
+
+def test_conversation_inject_runs_off_event_loop(bot, mock_send_push):
+    """CR-01: the blocking conversation append must also run in the executor."""
+    import threading
+
+    inject_threads: list = []
+    mock_store_instance = MagicMock()
+    mock_store_instance.append.side_effect = (
+        lambda *a, **k: inject_threads.append(threading.current_thread())
+    )
+    MockStore = MagicMock(return_value=mock_store_instance)
+    fake_mod = _make_fake_firestore_module(MockStore)
+
+    with patch.dict(sys.modules, {"memory.firestore_conversation": fake_mod}):
+        from core.scheduled_message import send_and_inject
+        asyncio.run(send_and_inject(bot, "Injected", inject_into_conversation=True))
+
+    assert inject_threads, "conversation append never happened"
+    assert all(t is not threading.main_thread() for t in inject_threads)
 
 
 def test_mark_and_is_chat_visible():

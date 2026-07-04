@@ -77,6 +77,34 @@ def _get_bot() -> Bot:
     return _bot_instance
 
 
+# ---------------------------------------------------------------------------
+# Lazy module-level HubSettingsStore accessor (CR-01) — mirrors _bot_instance:
+# constructing a firestore.Client is expensive (credential resolution +
+# channel setup), so build the store once per process instead of once per
+# send. On construction failure nothing is cached, so the next send retries.
+# ---------------------------------------------------------------------------
+
+_hub_settings_store = None
+
+
+def _get_hub_settings_store():
+    """Return a lazily-constructed, process-wide HubSettingsStore."""
+    global _hub_settings_store
+    if _hub_settings_store is None:
+        from memory.firestore_db import HubSettingsStore
+        _hub_settings_store = HubSettingsStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        )
+    return _hub_settings_store
+
+
+def _load_hub_settings() -> dict:
+    """SYNC — blocking gRPC Firestore read. Call ONLY via loop.run_in_executor
+    (CR-01 / CLAUDE.md invariant: never block the event loop)."""
+    return _get_hub_settings_store().get()
+
+
 async def send_and_inject(
     bot: "Bot | None",
     text: str,
@@ -121,12 +149,15 @@ async def send_and_inject(
                    raise and never block the Telegram/inject steps.
     """
     user_id = _telegram_user_id()
+    loop = asyncio.get_running_loop()
 
+    # CR-01: HubSettingsStore.get() is a blocking gRPC Firestore read — running
+    # it inline would block the event loop on EVERY outbound send (the exact
+    # bug class behind the weekly-review-500 and 18-minute-reply incidents;
+    # CLAUDE.md invariant: never block the event loop). Off-load it to a
+    # thread, same as the push fan-out below.
     try:
-        from memory.firestore_db import HubSettingsStore
-        project_id = os.environ["GCP_PROJECT_ID"]
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        settings = HubSettingsStore(project_id=project_id, database=database).get()
+        settings = await loop.run_in_executor(None, _load_hub_settings)
     except Exception:
         logger.warning(
             "scheduled_message: HubSettingsStore.get() failed — defaulting to mirror ON",
@@ -137,7 +168,6 @@ async def send_and_inject(
     if push and not is_chat_visible():
         try:
             from core.push_sender import send_push_to_all
-            loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, send_push_to_all, text, message_class)
         except Exception:
             # D-04: push failures are logged and swallowed, never raised — the
@@ -155,13 +185,18 @@ async def send_and_inject(
     if not inject_into_conversation:
         return msg
 
-    try:
+    # CR-01 (pre-existing Phase-18 instance of the same defect): the
+    # conversation append is also a blocking Firestore write — off-load it too.
+    def _inject() -> None:
         from memory.firestore_conversation import FirestoreConversationStore
         project_id = os.environ["GCP_PROJECT_ID"]
         database = os.getenv("FIRESTORE_DATABASE", "(default)")
         collection = os.getenv("FIRESTORE_COLLECTION_CONVERSATIONS", "conversations")
         store = FirestoreConversationStore(project_id=project_id, database=database, collection=collection)
         store.append(user_id, "assistant", text)
+
+    try:
+        await loop.run_in_executor(None, _inject)
         logger.info("scheduled_message: injected into conversation for user_id=%d", user_id)
     except Exception:
         logger.warning(
