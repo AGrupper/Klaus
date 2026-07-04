@@ -12,6 +12,7 @@
  *   /klaus    → ChatWindow (real content: 26-08)
  *   /habits   → Placeholder — owned by P28
  *   /health   → Placeholder — owned by P30
+ *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
  *
  * Security note: this route guard is a UX gate only. Every /api/* route
  * enforces require_hub_session server-side (26-03). A bypassed guard returns 401.
@@ -28,6 +29,7 @@ import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
+import { SettingsPage as SettingsPageComponent } from './components/settings/SettingsPage'
 
 // ---------------------------------------------------------------------------
 // Placeholder pages for routes owned by later plans
@@ -80,6 +82,10 @@ function HabitsPage() {
 
 function HealthPage() {
   return <ComingSoon label="Health" />
+}
+
+function SettingsPage() {
+  return <SettingsPageComponent />
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +162,7 @@ export default function App() {
         <Route path="/klaus" element={<KlausPage />} />
         <Route path="/habits" element={<HabitsPage />} />
         <Route path="/health" element={<HealthPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         {/* Catch-all: redirect unknown paths to Today */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

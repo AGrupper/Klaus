@@ -18,6 +18,7 @@ import {
   MessageCircle,
   Activity,
   Heart,
+  Settings,
   LogOut,
   ShieldOff,
   X,
@@ -37,6 +38,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Klaus', path: '/klaus', icon: MessageCircle },
   { label: 'Habits', path: '/habits', icon: Activity },
   { label: 'Health', path: '/health', icon: Heart },
+  { label: 'Settings', path: '/settings', icon: Settings },
 ]
 
 export function Sidebar() {
