@@ -32,7 +32,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] **Phase 26: Hub Shell** — React PWA scaffold, Google auth, FastAPI serving, Today timeline, Klaus chat MVP (completed 2026-06-15)
 - [x] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), manual TickTick migration (completed 2026-06-24)
 - [x] **Phase 28: Habits & Supplements** — HabitStore, check-off UI, streaks, Klaus integration, habits on timeline (completed 2026-06-30)
-- [ ] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path
+- [x] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path (completed 2026-07-04)
 - [ ] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations
 
 ## Phase Details
@@ -113,7 +113,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 29-07-PLAN.md — generateSW→injectManifest custom service worker (push + badge)
 - [x] 29-08-PLAN.md — send_and_inject push/mirror/visibility + all 3 send paths
 - [x] 29-09-PLAN.md — usePush + useAppBadge hooks
-- [ ] 29-10-PLAN.md — Settings page + enable banner + nav + device UAT
+- [x] 29-10-PLAN.md — Settings page + enable banner + nav + device UAT
 
 ### Phase 30: Health Pages
 **Goal**: Amit can view his training history, nutrition trends, and sleep/recovery patterns visually in the hub, drawing from the existing Firestore stores built in v3.0–v4.0 and the post-v4.0 increments
@@ -135,7 +135,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
-| 29. Web Push & Transition | 9/10 | In Progress|  |
+| 29. Web Push & Transition | 10/10 | Complete   | 2026-07-04 |
 | 30. Health Pages | 0/? | Not started | - |
 
 ---
