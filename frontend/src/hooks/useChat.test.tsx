@@ -205,6 +205,42 @@ describe('useChat — polling configuration', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Describe: chat-visibility reporting on the existing poll (D-02, Phase 29)
+// ---------------------------------------------------------------------------
+
+describe('useChat — chat_visible reporting (D-02, Phase 29)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchMessages.mockResolvedValue([])
+  })
+
+  it('poll carries chat_visible=1 (fetchMessages(true)) when isVisible=true', async () => {
+    const { wrapper } = makeWrapper()
+
+    renderHook(() => useChat(true), { wrapper })
+
+    await waitFor(() => {
+      expect(mockFetchMessages).toHaveBeenCalled()
+    })
+
+    expect(mockFetchMessages).toHaveBeenCalledWith(true)
+  })
+
+  it('poll does NOT carry chat_visible=1 (fetchMessages(false)) when isVisible=false', async () => {
+    const { wrapper } = makeWrapper()
+
+    renderHook(() => useChat(false), { wrapper })
+
+    await waitFor(() => {
+      expect(mockFetchMessages).toHaveBeenCalled()
+    })
+
+    expect(mockFetchMessages).toHaveBeenCalledWith(false)
+    expect(mockFetchMessages).not.toHaveBeenCalledWith(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Describe: useUnread count math (CHAT-04 / D-10 / D-11)
 // ---------------------------------------------------------------------------
 

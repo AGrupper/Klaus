@@ -35,9 +35,15 @@ interface MessagesResponse {
  * Fetch recent conversation messages from the server.
  * The server returns the full conversation window (up to 100);
  * the caller slices to ~50 for initial display (D-08).
+ *
+ * Phase 29 (D-02): pass `chatVisible=true` while the chat view is genuinely
+ * on-screen so the poll carries `?chat_visible=1` — the server-side push
+ * suppression gate (core.scheduled_message.mark_chat_visible) reads this.
+ * Defaults to false so callers that don't opt in never report visibility.
  */
-export async function fetchMessages(): Promise<ChatMessage[]> {
-  const data = await apiFetch<MessagesResponse>('/api/chat/messages')
+export async function fetchMessages(chatVisible: boolean = false): Promise<ChatMessage[]> {
+  const path = chatVisible ? '/api/chat/messages?chat_visible=1' : '/api/chat/messages'
+  const data = await apiFetch<MessagesResponse>(path)
   return data.messages
 }
 
