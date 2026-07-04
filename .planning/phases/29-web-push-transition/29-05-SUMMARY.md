@@ -108,3 +108,7 @@ None - no external service configuration required. This plan only adds brain-acc
 ---
 *Phase: 29-web-push-transition*
 *Completed: 2026-07-04*
+
+## Self-Check: PASSED
+
+All created/modified files verified present on disk; all 5 commit hashes (ae80b6c, c4f2fee, a3ee0f0, 90d65ee, 1a289ff) verified in git log.
