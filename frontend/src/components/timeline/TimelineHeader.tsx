@@ -146,11 +146,12 @@ function NutritionStrip({ totals }: NutritionStripProps) {
     /*
      * Phone-only strip — surfaced as horizontal scroll row below the header.
      * Hidden on desktop (md:hidden) because GlanceRail handles desktop nutrition.
+     * Layout driven by classes only — inline `display` would override
+     * `md:hidden` (documented responsive-display gotcha, WR-01).
      */
     <div
-      className="md:hidden"
+      className="flex md:hidden"
       style={{
-        display: 'flex',
         overflowX: 'auto',
         gap: '12px',
         paddingTop: '8px',
@@ -255,17 +256,16 @@ export function TimelineHeader({
           {formatDateHeader(today)}
         </h1>
 
-        {/* Phone-only gear → /settings (desktop uses Sidebar's Settings entry) */}
+        {/* Phone-only gear → /settings (desktop uses Sidebar's Settings entry).
+            Layout driven by classes only — inline `display` would override
+            `md:hidden` (documented responsive-display gotcha, WR-01). */}
         <button
           type="button"
-          className="md:hidden"
+          className="flex md:hidden items-center justify-center"
           title="Settings"
           aria-label="Settings"
           onClick={() => navigate('/settings')}
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
             width: '44px',
             height: '44px',
             flexShrink: 0,
