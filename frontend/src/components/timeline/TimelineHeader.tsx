@@ -14,8 +14,15 @@
  * local "SkeletonLine" stub with animate-pulse on a #1F1F1F background so in-flight
  * states are distinguishable from D-06 placeholders. This stub will be replaced when
  * 26-09 ships — documented as a known TODO in SUMMARY.md.
+ *
+ * Phone-only gear button (D-15/D-20 nav placement note — desktop already has a
+ * Settings entry in Sidebar; BottomTabs has no free slot) routes to /settings.
+ * Uses a Tailwind `md:hidden` class, never inline `display` (responsive-display
+ * gotcha — inline display overrides Tailwind's md: classes).
  */
 
+import { useNavigate } from 'react-router-dom'
+import { Settings } from 'lucide-react'
 import { skeleton, textPrimary, textSecondary, border, typography, fontFamily } from '../../tokens'
 import { PlaceholderCard } from './PlaceholderCard'
 import type { GarminStats, Macros } from '../../api/today'
@@ -214,6 +221,8 @@ export function TimelineHeader({
   isLoading = false,
   nutritionTotals,
 }: TimelineHeaderProps) {
+  const navigate = useNavigate()
+
   return (
     <header
       style={{
@@ -223,19 +232,53 @@ export function TimelineHeader({
         fontFamily,
       }}
     >
-      {/* Date heading — Heading (20px/600/1.2) */}
-      <h1
+      {/* Date heading row — Heading (20px/600/1.2) + phone-only settings gear */}
+      <div
         style={{
-          fontSize: typography.heading.fontSize,
-          fontWeight: typography.heading.fontWeight,
-          lineHeight: typography.heading.lineHeight,
-          color: textPrimary,
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: '8px',
           margin: '0 0 12px',
-          fontFamily,
         }}
       >
-        {formatDateHeader(today)}
-      </h1>
+        <h1
+          style={{
+            fontSize: typography.heading.fontSize,
+            fontWeight: typography.heading.fontWeight,
+            lineHeight: typography.heading.lineHeight,
+            color: textPrimary,
+            margin: 0,
+            fontFamily,
+          }}
+        >
+          {formatDateHeader(today)}
+        </h1>
+
+        {/* Phone-only gear → /settings (desktop uses Sidebar's Settings entry) */}
+        <button
+          type="button"
+          className="md:hidden"
+          title="Settings"
+          aria-label="Settings"
+          onClick={() => navigate('/settings')}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '44px',
+            height: '44px',
+            flexShrink: 0,
+            background: 'none',
+            border: 'none',
+            borderRadius: '8px',
+            color: textSecondary,
+            cursor: 'pointer',
+          }}
+        >
+          <Settings size={20} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </div>
 
       {/* Garmin stats section — TIME-02 */}
       {isLoading ? (

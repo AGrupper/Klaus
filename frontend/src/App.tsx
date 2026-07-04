@@ -12,12 +12,18 @@
  *   /klaus    → ChatWindow (real content: 26-08)
  *   /habits   → Placeholder — owned by P28
  *   /health   → Placeholder — owned by P30
+ *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
+ *
+ * SW → router bridge (D-12, Phase 29): a `navigator.serviceWorker` 'message'
+ * listener calls `navigate(event.data.path ?? '/')` on `{type:'NAVIGATE'}` —
+ * a notification tap always opens Today, never chat (sw.ts posts this on
+ * notificationclick).
  *
  * Security note: this route guard is a UX gate only. Every /api/* route
  * enforces require_hub_session server-side (26-03). A bypassed guard returns 401.
  */
 import { useEffect } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { fetchMe } from './api/auth'
 import { useAuthStore } from './store/auth'
@@ -28,6 +34,8 @@ import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
+import { SettingsPage as SettingsPageComponent } from './components/settings/SettingsPage'
+import { PushEnableBanner } from './components/shared/PushEnableBanner'
 
 // ---------------------------------------------------------------------------
 // Placeholder pages for routes owned by later plans
@@ -53,7 +61,13 @@ function ComingSoon({ label }: { label: string }) {
 }
 
 function TodayPage() {
-  return <TimelineDay />
+  return (
+    <>
+      <TimelineDay />
+      {/* First-run push enable banner (D-16) / re-enable notice (D-19) */}
+      <PushEnableBanner />
+    </>
+  )
 }
 
 function TasksPage() {
@@ -80,6 +94,10 @@ function HabitsPage() {
 
 function HealthPage() {
   return <ComingSoon label="Health" />
+}
+
+function SettingsPage() {
+  return <SettingsPageComponent />
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +137,7 @@ function LoadingScreen() {
 export default function App() {
   const setSignedIn = useAuthStore((s) => s.setSignedIn)
   const signOut = useAuthStore((s) => s.signOut)
+  const navigate = useNavigate()
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['auth', 'me'],
@@ -140,6 +159,21 @@ export default function App() {
     }
   }, [isError, signOut])
 
+  // SW → router bridge (D-12): notificationclick posts {type:'NAVIGATE', path}
+  // — a tap always opens Today, never chat. Guarded: serviceWorker may be
+  // undefined (unsupported browser, non-secure context) or absent in jsdom.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
+    const handleMessage = (event: MessageEvent) => {
+      const message = event.data as { type?: string; path?: string } | undefined
+      if (message?.type === 'NAVIGATE') {
+        navigate(message.path ?? '/')
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', handleMessage)
+    return () => navigator.serviceWorker.removeEventListener('message', handleMessage)
+  }, [navigate])
+
   if (isLoading) {
     return <LoadingScreen />
   }
@@ -156,6 +190,7 @@ export default function App() {
         <Route path="/klaus" element={<KlausPage />} />
         <Route path="/habits" element={<HabitsPage />} />
         <Route path="/health" element={<HealthPage />} />
+        <Route path="/settings" element={<SettingsPage />} />
         {/* Catch-all: redirect unknown paths to Today */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -11,9 +11,13 @@
  * useToday() is mocked so the component renders deterministically without a
  * QueryClient or network. NowLine calls scrollIntoView on mount, which jsdom
  * does not implement — it is stubbed below.
+ *
+ * TimelineHeader's phone-only settings gear (29-10 / D-15) calls useNavigate,
+ * so every render is wrapped in a MemoryRouter.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import '@testing-library/jest-dom'
 import type { TodayData } from '../../api/today'
 
@@ -59,6 +63,14 @@ const mockUseToday = vi.mocked(useToday)
 // jsdom does not implement scrollIntoView (called by NowLine on mount).
 window.HTMLElement.prototype.scrollIntoView = vi.fn()
 
+function renderTimelineDay() {
+  return render(
+    <MemoryRouter>
+      <TimelineDay />
+    </MemoryRouter>,
+  )
+}
+
 function setToday(partial: Partial<ReturnType<typeof useToday>>) {
   mockUseToday.mockReturnValue({
     data: undefined,
@@ -95,20 +107,20 @@ describe('TimelineDay', () => {
 
   it('renders a loading state while the initial fetch is in-flight (HUB-03)', () => {
     setToday({ isLoading: true })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(screen.getByLabelText(/Loading today/i)).toBeInTheDocument()
   })
 
   it('renders an alert on error', () => {
     setToday({ isError: true, error: new Error('today fetch failed') })
-    render(<TimelineDay />)
+    renderTimelineDay()
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent('today fetch failed')
   })
 
   it('renders calendar events with the all-day event pinned (TIME-01)', () => {
     setToday({ data: fullData })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(screen.getByText('Morning standup')).toBeInTheDocument()
     expect(screen.getByText('Evening gym')).toBeInTheDocument()
     // All-day event title is rendered (pinned section)
@@ -117,7 +129,7 @@ describe('TimelineDay', () => {
 
   it('renders meals as slot labels with macros, never as eating times (TIME-03)', () => {
     setToday({ data: fullData })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(screen.getByText('Breakfast')).toBeInTheDocument()
     // No eating-time wording is ever derived from slot meals (CLAUDE.md invariant)
     expect(screen.queryByText(/eaten at|eating time/i)).not.toBeInTheDocument()
@@ -125,19 +137,19 @@ describe('TimelineDay', () => {
 
   it('renders the training block context "Week N of 16" (TIME-04)', () => {
     setToday({ data: fullData })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(screen.getByText(/Week 3 of 16/)).toBeInTheDocument()
   })
 
   it('renders the coach note when present', () => {
     setToday({ data: fullData })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(screen.getByText('Easy run today — HRV is solid.')).toBeInTheDocument()
   })
 
   it('renders the D-06 placeholder when the coach note is not yet available', () => {
     setToday({ data: { ...fullData, coach_note: null } })
-    render(<TimelineDay />)
+    renderTimelineDay()
     expect(
       screen.getByText(/Coach note coming after your morning briefing/i),
     ).toBeInTheDocument()
@@ -159,7 +171,7 @@ describe('TimelineDay', () => {
       nutrition_totals: {} as TodayData['nutrition_totals'],
     } as TodayData
     setToday({ data: emptyNewDay })
-    expect(() => render(<TimelineDay />)).not.toThrow()
+    expect(() => renderTimelineDay()).not.toThrow()
     expect(screen.getByText(/Nothing on the calendar today/i)).toBeInTheDocument()
     expect(screen.getByText(/No meals logged yet today/i)).toBeInTheDocument()
   })
