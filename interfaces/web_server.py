@@ -2660,6 +2660,67 @@ async def api_vapid_public_key(
     return JSONResponse(content={"key": os.environ["VAPID_PUBLIC_KEY"]})
 
 
+@app.get("/api/settings")
+async def api_get_settings(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return the current hub settings (PUSH-03).
+
+    GET /api/settings — includes ``telegram_mirror_enabled`` (D-09) and
+    ``push_enabled_at`` (D-14).
+
+    Returns:
+        JSONResponse: The hub settings dict, jsonsafe.
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 / Pitfall 4
+
+    loop = asyncio.get_running_loop()
+    settings = await loop.run_in_executor(None, _get_hub_settings_store().get)
+    return JSONResponse(content=_jsonsafe_doc(settings))
+
+
+@app.patch("/api/settings")
+async def api_patch_settings(
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Toggle the Telegram-mirror flag, effective immediately (PUSH-03, D-09).
+
+    PATCH /api/settings with body ``{"telegram_mirror_enabled": bool}``.
+    Only ``telegram_mirror_enabled`` is ever forwarded to
+    ``HubSettingsStore.set`` (T-29-12) — any other key in the body is
+    ignored. The raw body is read (not a Pydantic-validated dependency) so a
+    non-bool value can be rejected with an explicit 400 rather than FastAPI's
+    generic 422.
+
+    Returns:
+        JSONResponse: The updated hub settings dict, jsonsafe.
+    Raises:
+        HTTPException 400: ``telegram_mirror_enabled`` present but not a bool (T-29-12).
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 / Pitfall 4
+
+    body = await request.json()
+    loop = asyncio.get_running_loop()
+    settings_store = _get_hub_settings_store()
+
+    if "telegram_mirror_enabled" in body:
+        value = body["telegram_mirror_enabled"]
+        if not isinstance(value, bool):
+            raise HTTPException(
+                status_code=400, detail={"error": "telegram_mirror_enabled must be a bool"}
+            )
+        await loop.run_in_executor(
+            None, settings_store.set, {"telegram_mirror_enabled": value}
+        )
+
+    settings = await loop.run_in_executor(None, settings_store.get)
+    return JSONResponse(content=_jsonsafe_doc(settings))
+
+
 # --------------------------------------------------------------------------- #
 # SPA Static Files — MUST be the absolute last statement in this file.        #
 # ANY route registered after app.mount("/", ...) is unreachable because       #
