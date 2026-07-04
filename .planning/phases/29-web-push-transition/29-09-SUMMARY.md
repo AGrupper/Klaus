@@ -110,3 +110,7 @@ None - no external service configuration required. (VAPID key generation and Sec
 ---
 *Phase: 29-web-push-transition*
 *Completed: 2026-07-04*
+
+## Self-Check: PASSED
+
+All 4 created files and all 2 task commits (`11fd4a3`, `7b7db89`) verified present on disk / in git log.
