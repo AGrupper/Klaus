@@ -1619,6 +1619,7 @@ async def api_chat_send(
 
 @app.get("/api/chat/messages")
 async def api_chat_messages(
+    chat_visible: int = 0,
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
     """Return the recent conversation window for polling and fast first paint.
@@ -1632,6 +1633,13 @@ async def api_chat_messages(
     so the client can compute the unread badge (CHAT-04 / D-11):
       badge = messages.length - last_seen_seq
 
+    Phase 29 (D-02): `?chat_visible=1` reports that the hub chat view is
+    genuinely on-screen (the client only ever sends this while its own
+    isVisible flag is true — see frontend/src/hooks/useChat.ts). This marks
+    the server-side visibility window (core.scheduled_message
+    .mark_chat_visible) so send_and_inject suppresses push while Amit is
+    looking at the chat. This route itself is read-only and never pushes.
+
     Returns:
         JSONResponse: {"messages": [{"seq": int, "role": str, "content": str}, ...]}
 
@@ -1639,6 +1647,10 @@ async def api_chat_messages(
         HTTPException 401: No valid session cookie (via require_hub_session).
     """
     from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 + Pitfall 4
+
+    if chat_visible == 1:
+        from core.scheduled_message import mark_chat_visible  # lazy import
+        mark_chat_visible()
 
     loop = asyncio.get_running_loop()
     try:
@@ -1677,8 +1689,15 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     Cloud Run allocates full CPU for its duration — unlike a BackgroundTask,
     which runs after the response on throttled CPU (D-09 / CLAUDE.md invariant).
 
-    Reply is appended to the shared FirestoreConversationStore without a
-    Telegram send — the hub polls /api/chat/messages to receive it.
+    Reply is appended to the shared FirestoreConversationStore by
+    handle_message itself; the hub polls /api/chat/messages to receive it.
+
+    Phase 29 (PUSH-02/03, D-01/D-08): the reply is ALSO pushed + mirrored to
+    Telegram (while the mirror flag is on) via the Plan-1 lazy-Bot
+    send_and_inject path (core.scheduled_message), so a hub reply reaches
+    Amit even when the hub tab isn't open. inject_into_conversation=False —
+    handle_message already appended the reply; re-injecting would double it
+    (CR-03 class bug).
 
     Raises:
         HTTPException 401/403: OIDC verification failed (T-26-05-02).
@@ -1716,7 +1735,23 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     # /api/chat/messages to receive the reply. We do NOT append here (doing so
     # double-wrote the assistant reply, CR-03).
     # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
-    await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
+    reply_text = await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
+
+    # Phase 29 (PUSH-02/03, D-01/D-08): push + mirror this reply too. bot=None
+    # lets send_and_inject lazily build/reuse its own module-level Bot (this
+    # route has no bot instance of its own). inject_into_conversation=False —
+    # handle_message already wrote the reply above (CR-03).
+    try:
+        from core.scheduled_message import send_and_inject  # lazy import
+        await send_and_inject(
+            None, reply_text, message_class="chat_reply", inject_into_conversation=False
+        )
+    except Exception:
+        logger.warning(
+            "internal_process_hub_message: push/mirror delivery failed for user_id=%s",
+            user_id,
+            exc_info=True,
+        )
 
     return JSONResponse(content={"ok": True})
 

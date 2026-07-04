@@ -17,6 +17,7 @@ import os
 from telegram import Update
 
 from core.main import AgentOrchestrator
+from core.push_sender import send_push_to_all
 
 logger = logging.getLogger(__name__)
 
@@ -360,6 +361,24 @@ class MessageRouter:
             )
 
         await update.message.reply_text(orchestrator_response)
+
+        # Phase 29 (PUSH-02, D-01 / Open Question 1): push this reply too — a
+        # deliberate double-buzz. Telegram already sent natively above; the D-02
+        # hub chat-visibility gate does not apply here (the hub chat view is not
+        # the source of a Telegram-turn reply). Push failures are logged and
+        # swallowed (D-04) — never block or fail a Telegram turn that already
+        # succeeded.
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None, send_push_to_all, orchestrator_response, "chat_reply"
+            )
+        except Exception:
+            logger.warning(
+                "router: push fan-out failed for Telegram-turn reply user_id=%d",
+                telegram_user_id,
+                exc_info=True,
+            )
 
 
 # ------------------------------------------------------------------ #
