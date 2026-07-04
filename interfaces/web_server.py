@@ -2555,6 +2555,112 @@ async def api_hard_delete_habit(
 
 
 # --------------------------------------------------------------------------- #
+# Web Push + Hub Settings routes — /api/push/*, /api/settings                 #
+# Plan 29-06, PUSH-01 / PUSH-03                                               #
+#                                                                             #
+# All routes are behind Depends(require_hub_session) (T-29-10). Every         #
+# subscribe input is validated (https endpoint + p256dh/auth keys present,    #
+# T-29-11) before it ever reaches PushSubscriptionStore.upsert. PATCH         #
+# /api/settings accepts ONLY telegram_mirror_enabled — no other keys are      #
+# ever forwarded to HubSettingsStore.set (T-29-12). All sync Firestore calls  #
+# run via loop.run_in_executor (Pitfall 2). Place BEFORE the SPA mount so     #
+# these routes are reachable (Pitfall 1).                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _get_push_store():
+    """Return a PushSubscriptionStore instance using env-driven project/database config."""
+    from memory.firestore_db import PushSubscriptionStore  # lazy import
+
+    return PushSubscriptionStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _get_hub_settings_store():
+    """Return a HubSettingsStore instance using env-driven project/database config."""
+    from memory.firestore_db import HubSettingsStore  # lazy import
+
+    return HubSettingsStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+@app.post("/api/push/subscribe")
+async def api_push_subscribe(
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Validate and upsert a browser Web Push subscription (PUSH-01).
+
+    POST /api/push/subscribe with body ``{subscription: {endpoint, keys:
+    {p256dh, auth}}, user_agent}``.
+
+    Input validation (ASVS V5 / T-29-11): ``endpoint`` must start with
+    ``https://`` and ``keys.p256dh`` / ``keys.auth`` must both be present —
+    the auth gate means only Amit can ever reach this route, but the endpoint
+    is still attacker-shaped input (it's whatever the browser handed back
+    from ``pushManager.subscribe``) so we validate before it touches
+    Firestore.
+
+    D-14: on the FIRST successful upsert (``HubSettingsStore.get()``'s
+    ``push_enabled_at`` is unset/None) this stamps
+    ``push_enabled_at=SERVER_TIMESTAMP`` — the heartbeat's anchor for
+    detecting "push was enabled but zero subscriptions remain". Later
+    subscribes (second device, re-subscribe after key rotation, etc.) leave
+    it untouched.
+
+    Returns:
+        JSONResponse: ``{"ok": True}``
+    Raises:
+        HTTPException 400: endpoint is not https, or keys are missing (T-29-11).
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    body = await request.json()
+    sub = body.get("subscription") or {}
+    endpoint = sub.get("endpoint", "")
+    keys = sub.get("keys") or {}
+    user_agent = body.get("user_agent", "")
+
+    if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+        raise HTTPException(status_code=400, detail={"error": "invalid subscription"})
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _get_push_store().upsert, sub, user_agent)
+
+    # D-14: stamp push_enabled_at exactly once, on the first successful subscribe.
+    settings_store = _get_hub_settings_store()
+    settings = await loop.run_in_executor(None, settings_store.get)
+    if not settings.get("push_enabled_at"):
+        from google.cloud import firestore  # lazy import — mirrors memory/firestore_db.py
+
+        await loop.run_in_executor(
+            None, settings_store.set, {"push_enabled_at": firestore.SERVER_TIMESTAMP}
+        )
+
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/api/push/vapid-public-key")
+async def api_vapid_public_key(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Serve the VAPID application-server public key (PUSH-01).
+
+    GET /api/push/vapid-public-key — the frontend passes this base64url key
+    to ``pushManager.subscribe`` when registering a new subscription.
+
+    Returns:
+        JSONResponse: ``{"key": VAPID_PUBLIC_KEY}``
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    return JSONResponse(content={"key": os.environ["VAPID_PUBLIC_KEY"]})
+
+
+# --------------------------------------------------------------------------- #
 # SPA Static Files — MUST be the absolute last statement in this file.        #
 # ANY route registered after app.mount("/", ...) is unreachable because       #
 # Starlette route matching is first-match and Mount("/") matches everything.  #
