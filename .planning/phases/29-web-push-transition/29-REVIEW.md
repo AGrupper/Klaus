@@ -417,3 +417,17 @@ auth-gated to Amit only, so severity is informational.
 _Reviewed: 2026-07-04T14:17:18Z_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+
+## Fix Log
+
+Fixed 2026-07-04 by gsd-code-fixer (scoped subset: CR-01, WR-01, WR-02, WR-03, WR-06).
+
+| Finding | Status | Commit | Notes |
+|---------|--------|--------|-------|
+| CR-01 | fixed | f171e62 | Settings read + conversation inject moved into `run_in_executor`; lazy module-level `_get_hub_settings_store()` singleton so the Firestore client is built once per process. New tests assert both blocking calls run off the loop thread and the store is reused. |
+| WR-01 | fixed | f9dfa55 | Gear button and NutritionStrip now drive display from classes (`flex md:hidden`); inline `display` removed from both. |
+| WR-02 | fixed | 019308e | Wired: morning_briefing→`briefing`, nightly_review→`review`, weekly_training_review→`review`, heartbeat (all 4 sends)→`alert`. Left on `default` with in-code notes: autonomous compose/follow-up (triage emits no message kind; composed messages can mix triggers — `leave_by`/`habit_nudge` would be guesswork), training_checkin (no mapped class), proactive_alerts (dormant module). Regression tests assert non-default classes flow from heartbeat + briefing crons. |
+| WR-03 | fixed | d1e555a | try/except now covers only `webpush()`; all store reconciliation goes through a logging, never-raising `_reconcile` helper; `record_success` moved after the try so a delivered push always counts as sent. Three new tests cover misrecord + both abort paths. |
+| WR-06 | fixed | 4c5b30f | Precached-`index.html` navigation fallback restored as the workbox router catch handler (a second NavigationRoute would never run — workbox serves the first matching route). Online HUB-03 NetworkFirst 5s behavior unchanged. Guarded creation keeps the empty-manifest test environment working. |
+
+Out of scope (untouched per instruction): WR-04, WR-05, WR-07, IN-01..IN-09.
