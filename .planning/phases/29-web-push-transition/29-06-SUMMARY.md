@@ -101,3 +101,13 @@ None - no external service configuration required. `VAPID_PUBLIC_KEY` was alread
 ---
 *Phase: 29-web-push-transition*
 *Completed: 2026-07-04*
+
+## Self-Check: PASSED
+
+- FOUND: interfaces/web_server.py
+- FOUND: tests/test_push_api.py
+- FOUND: .planning/phases/29-web-push-transition/29-06-SUMMARY.md
+- FOUND commit: f91c7b8 (test)
+- FOUND commit: d625cc4 (feat Task 1)
+- FOUND commit: 1ad25b3 (feat Task 2)
+- FOUND commit: d07155e (docs SUMMARY)
