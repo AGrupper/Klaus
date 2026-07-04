@@ -2555,6 +2555,173 @@ async def api_hard_delete_habit(
 
 
 # --------------------------------------------------------------------------- #
+# Web Push + Hub Settings routes — /api/push/*, /api/settings                 #
+# Plan 29-06, PUSH-01 / PUSH-03                                               #
+#                                                                             #
+# All routes are behind Depends(require_hub_session) (T-29-10). Every         #
+# subscribe input is validated (https endpoint + p256dh/auth keys present,    #
+# T-29-11) before it ever reaches PushSubscriptionStore.upsert. PATCH         #
+# /api/settings accepts ONLY telegram_mirror_enabled — no other keys are      #
+# ever forwarded to HubSettingsStore.set (T-29-12). All sync Firestore calls  #
+# run via loop.run_in_executor (Pitfall 2). Place BEFORE the SPA mount so     #
+# these routes are reachable (Pitfall 1).                                    #
+# --------------------------------------------------------------------------- #
+
+
+def _get_push_store():
+    """Return a PushSubscriptionStore instance using env-driven project/database config."""
+    from memory.firestore_db import PushSubscriptionStore  # lazy import
+
+    return PushSubscriptionStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _get_hub_settings_store():
+    """Return a HubSettingsStore instance using env-driven project/database config."""
+    from memory.firestore_db import HubSettingsStore  # lazy import
+
+    return HubSettingsStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+@app.post("/api/push/subscribe")
+async def api_push_subscribe(
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Validate and upsert a browser Web Push subscription (PUSH-01).
+
+    POST /api/push/subscribe with body ``{subscription: {endpoint, keys:
+    {p256dh, auth}}, user_agent}``.
+
+    Input validation (ASVS V5 / T-29-11): ``endpoint`` must start with
+    ``https://`` and ``keys.p256dh`` / ``keys.auth`` must both be present —
+    the auth gate means only Amit can ever reach this route, but the endpoint
+    is still attacker-shaped input (it's whatever the browser handed back
+    from ``pushManager.subscribe``) so we validate before it touches
+    Firestore.
+
+    D-14: on the FIRST successful upsert (``HubSettingsStore.get()``'s
+    ``push_enabled_at`` is unset/None) this stamps
+    ``push_enabled_at=SERVER_TIMESTAMP`` — the heartbeat's anchor for
+    detecting "push was enabled but zero subscriptions remain". Later
+    subscribes (second device, re-subscribe after key rotation, etc.) leave
+    it untouched.
+
+    Returns:
+        JSONResponse: ``{"ok": True}``
+    Raises:
+        HTTPException 400: endpoint is not https, or keys are missing (T-29-11).
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    body = await request.json()
+    sub = body.get("subscription") or {}
+    endpoint = sub.get("endpoint", "")
+    keys = sub.get("keys") or {}
+    user_agent = body.get("user_agent", "")
+
+    if not endpoint.startswith("https://") or not keys.get("p256dh") or not keys.get("auth"):
+        raise HTTPException(status_code=400, detail={"error": "invalid subscription"})
+
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _get_push_store().upsert, sub, user_agent)
+
+    # D-14: stamp push_enabled_at exactly once, on the first successful subscribe.
+    settings_store = _get_hub_settings_store()
+    settings = await loop.run_in_executor(None, settings_store.get)
+    if not settings.get("push_enabled_at"):
+        from google.cloud import firestore  # lazy import — mirrors memory/firestore_db.py
+
+        await loop.run_in_executor(
+            None, settings_store.set, {"push_enabled_at": firestore.SERVER_TIMESTAMP}
+        )
+
+    return JSONResponse(content={"ok": True})
+
+
+@app.get("/api/push/vapid-public-key")
+async def api_vapid_public_key(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Serve the VAPID application-server public key (PUSH-01).
+
+    GET /api/push/vapid-public-key — the frontend passes this base64url key
+    to ``pushManager.subscribe`` when registering a new subscription.
+
+    Returns:
+        JSONResponse: ``{"key": VAPID_PUBLIC_KEY}``
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    return JSONResponse(content={"key": os.environ["VAPID_PUBLIC_KEY"]})
+
+
+@app.get("/api/settings")
+async def api_get_settings(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return the current hub settings (PUSH-03).
+
+    GET /api/settings — includes ``telegram_mirror_enabled`` (D-09) and
+    ``push_enabled_at`` (D-14).
+
+    Returns:
+        JSONResponse: The hub settings dict, jsonsafe.
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 / Pitfall 4
+
+    loop = asyncio.get_running_loop()
+    settings = await loop.run_in_executor(None, _get_hub_settings_store().get)
+    return JSONResponse(content=_jsonsafe_doc(settings))
+
+
+@app.patch("/api/settings")
+async def api_patch_settings(
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Toggle the Telegram-mirror flag, effective immediately (PUSH-03, D-09).
+
+    PATCH /api/settings with body ``{"telegram_mirror_enabled": bool}``.
+    Only ``telegram_mirror_enabled`` is ever forwarded to
+    ``HubSettingsStore.set`` (T-29-12) — any other key in the body is
+    ignored. The raw body is read (not a Pydantic-validated dependency) so a
+    non-bool value can be rejected with an explicit 400 rather than FastAPI's
+    generic 422.
+
+    Returns:
+        JSONResponse: The updated hub settings dict, jsonsafe.
+    Raises:
+        HTTPException 400: ``telegram_mirror_enabled`` present but not a bool (T-29-12).
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 / Pitfall 4
+
+    body = await request.json()
+    loop = asyncio.get_running_loop()
+    settings_store = _get_hub_settings_store()
+
+    if "telegram_mirror_enabled" in body:
+        value = body["telegram_mirror_enabled"]
+        if not isinstance(value, bool):
+            raise HTTPException(
+                status_code=400, detail={"error": "telegram_mirror_enabled must be a bool"}
+            )
+        await loop.run_in_executor(
+            None, settings_store.set, {"telegram_mirror_enabled": value}
+        )
+
+    settings = await loop.run_in_executor(None, settings_store.get)
+    return JSONResponse(content=_jsonsafe_doc(settings))
+
+
+# --------------------------------------------------------------------------- #
 # SPA Static Files — MUST be the absolute last statement in this file.        #
 # ANY route registered after app.mount("/", ...) is unreachable because       #
 # Starlette route matching is first-match and Mount("/") matches everything.  #
