@@ -42,5 +42,8 @@ itsdangerous>=2.2                  # HMAC-signed session cookies for hub auth (P
 garminconnect>=0.2          # Garmin Connect health data (sleep, HRV, body battery)
 psycopg2-binary>=2.9        # PostgreSQL database adapter
 
+# --- Web Push notifications (Phase 29) ---
+pywebpush>=2.3              # Web Push sends (VAPID-signed); py-vapid arrives transitively
+
 # --- Dev / testing ---
 pytest>=8.0

@@ -1508,3 +1508,60 @@ the two composite indexes from §21.
 
 The standalone `scripts/ticktick_oauth_bootstrap.py` is now dead but left in
 place as historical reference; it imports nothing from the deleted modules.
+
+---
+
+## 27. Web Push VAPID Keys (Phase 29, v5.0)
+
+Web Push notifications from the Klaus Hub PWA are signed with a VAPID keypair.
+The **private key** lives ONLY in Secret Manager secret `klaus-vapid-private-key`
+(lowercase `klaus-` per the GCP casing invariant — uppercase causes silent 404s);
+`core/push_sender.py` reads it via `access_secret_version` on `latest` and caches
+it in-process. The **public key** is a plain env var (`VAPID_PUBLIC_KEY`, base64url)
+served to the frontend by `GET /api/push/vapid-public-key` for
+`pushManager.subscribe`. The private key is never committed, never an env var,
+and never logged.
+
+### One-time key generation and storage (operator, run on your Mac)
+
+```bash
+# 1) Generate the keypair (py-vapid ships the `vapid` CLI; it is already a
+#    transitive dependency of pywebpush in the project venv):
+pip install py-vapid
+vapid --gen                    # writes private_key.pem + public_key.pem in cwd
+
+# 2) Print the base64url public key — this becomes VAPID_PUBLIC_KEY:
+vapid --applicationServerKey
+
+# 3) Store the private key in Secret Manager (lowercase klaus- !):
+gcloud secrets create klaus-vapid-private-key \
+  --data-file=private_key.pem --project=klaus-agent
+
+# 4) Set VAPID_PUBLIC_KEY on the Cloud Run service and in local .env:
+gcloud run services update klaus-agent \
+  --update-env-vars=VAPID_PUBLIC_KEY=<base64url key from step 2> \
+  --region=me-west1 --project=klaus-agent
+
+# 5) Verify the secret is retrievable:
+gcloud secrets versions access latest --secret=klaus-vapid-private-key \
+  --project=klaus-agent
+```
+
+After step 3, delete the local `private_key.pem` / `public_key.pem` files (or
+move them out of the repo tree) — the PEM must never be committed.
+
+The Cloud Run runtime SA already holds `roles/secretmanager.secretAccessor`
+(§5), which covers reading this secret. No new IAM grant is needed — the key is
+read-only at runtime (no version writes, unlike the OAuth token in §6d).
+
+### Rotation procedure
+
+Rotating the VAPID keypair invalidates **every existing push subscription** —
+browsers bind subscriptions to the applicationServerKey. Rotate only if the
+private key is compromised:
+
+1. `vapid --gen` a new pair; `gcloud secrets versions add klaus-vapid-private-key --data-file=private_key.pem --project=klaus-agent`
+2. Update `VAPID_PUBLIC_KEY` on Cloud Run (step 4 above) and local `.env`.
+3. Existing subscriptions will start failing (403/400) — the send path prunes
+   dead subscriptions, and clients re-subscribe on next hub open (D-19
+   re-validation). Expect a push outage per device until each re-opens the hub.
