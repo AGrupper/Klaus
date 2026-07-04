@@ -75,6 +75,9 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "get_run_detail",
     # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
     "fetch_recent_meals",
+    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
+    "toggle_telegram_mirror",
+    "get_push_health",
 })
 
 # ------------------------------------------------------------------ #
@@ -774,6 +777,43 @@ TOOL_SCHEMAS: list[dict] = [
             "Call this directly — do NOT delegate to the worker. "
             "Use when asked about current status, costs, uptime, or health. "
             "Journal field will be blank until Phase 17 (reflection) is deployed."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "toggle_telegram_mirror",
+        "description": (
+            "Flip the Telegram-mirror flag on or off. When ON (the default), every "
+            "hub message is also mirrored to Telegram; turning it OFF hands delivery "
+            "fully to Web Push — this is the conversational D-11 Telegram-retirement "
+            "path, executed by you when Amit asks to 'kill the mirror' after at least "
+            "a week of stable push delivery. "
+            "Call this directly — do NOT delegate to the worker."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "True to keep/turn the Telegram mirror ON, False to turn it OFF.",
+                },
+            },
+            "required": ["enabled"],
+        },
+    },
+    {
+        "name": "get_push_health",
+        "description": (
+            "Return Web Push self-awareness data: how many devices are subscribed, "
+            "each device's user agent / last successful delivery timestamp / failure "
+            "count, whether the Telegram mirror is currently on, and when push was "
+            "first enabled. Use this before deciding whether it is safe to retire the "
+            "Telegram mirror. "
+            "Call this directly — do NOT delegate to the worker."
         ),
         "input_schema": {
             "type": "object",
@@ -1854,6 +1894,75 @@ def _handle_get_self_status() -> str:
 
 
 # ------------------------------------------------------------------ #
+# Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13).       #
+# ------------------------------------------------------------------ #
+
+def _get_hub_settings_store():
+    """Return a HubSettingsStore instance using env-driven project/database config."""
+    from memory.firestore_db import HubSettingsStore
+    return HubSettingsStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _get_push_subscription_store():
+    """Return a PushSubscriptionStore instance using env-driven project/database config."""
+    from memory.firestore_db import PushSubscriptionStore
+    return PushSubscriptionStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _handle_toggle_telegram_mirror(enabled: bool) -> str:
+    """Flip the runtime Telegram-mirror flag (D-11 conversational retirement path).
+
+    Executes Klaus's side of "kill the mirror": a single HubSettingsStore.set
+    call, no code deployment required. Reversible — Amit can ask to turn it
+    back on at any time.
+    """
+    store = _get_hub_settings_store()
+    store.set({"telegram_mirror_enabled": enabled})
+    return json.dumps({"telegram_mirror_enabled": enabled})
+
+
+def _handle_get_push_health() -> str:
+    """Report Web Push subscription health + mirror state (D-13 self-awareness).
+
+    Deliberately omits chat_visible_until — that D-02 visibility gate lives as
+    an in-process variable in core/scheduled_message.py (Plan 08) and would
+    always read back null/stale from Firestore here, misleading Klaus.
+
+    T-29-09 mitigation: only user_agent/last_success_at/failure_count are
+    surfaced per subscription — the p256dh/auth encryption keys and the VAPID
+    private key are never included in the response.
+    """
+    from memory.firestore_db import _jsonsafe_doc
+
+    sub_store = _get_push_subscription_store()
+    settings_store = _get_hub_settings_store()
+
+    subscriptions = sub_store.list_all()
+    devices = [
+        {
+            "user_agent": sub.get("user_agent"),
+            "last_success_at": sub.get("last_success_at"),
+            "failure_count": sub.get("failure_count", 0),
+        }
+        for sub in subscriptions
+    ]
+    settings = _jsonsafe_doc(settings_store.get())
+
+    return json.dumps({
+        "subscription_count": len(devices),
+        "devices": devices,
+        "telegram_mirror_enabled": settings.get("telegram_mirror_enabled"),
+        "push_enabled_at": settings.get("push_enabled_at"),
+    })
+
+
+# ------------------------------------------------------------------ #
 # Phase 18 — self-scheduled follow-ups (AUTO-05, D-12/D-15).         #
 # ------------------------------------------------------------------ #
 
@@ -2643,6 +2752,9 @@ _HANDLERS: dict[str, object] = {
     "get_goal_projection":     lambda args: _handle_get_goal_projection(**args),
     # Phase 28 Plan 03 — native HabitStore tools (HABIT-05)
     "get_habit_adherence":     lambda args: _handle_get_habit_adherence(**args),
+    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
+    "toggle_telegram_mirror":  lambda args: _handle_toggle_telegram_mirror(**args),
+    "get_push_health":         lambda args: _handle_get_push_health(),
 }
 
 

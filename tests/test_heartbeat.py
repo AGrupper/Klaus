@@ -377,3 +377,134 @@ def test_healthkit_sync_present_in_staleness_dict():
     from core.heartbeat import _CRON_MAX_STALENESS_HOURS
     assert "healthkit-sync" in _CRON_MAX_STALENESS_HOURS
 
+
+# ---------------------------------------------------------------------------
+# Phase 29 Plan 05 — _check_push_health (PUSH-03, Pattern 9, D-13/D-14)
+# ---------------------------------------------------------------------------
+
+def _mock_push_stores(monkeypatch, subscriptions, settings):
+    """Patch memory.firestore_db.PushSubscriptionStore/HubSettingsStore so
+    _check_push_health() never reaches real Firestore."""
+    from unittest.mock import MagicMock, patch
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+    mock_sub_store = MagicMock()
+    mock_sub_store.list_all.return_value = subscriptions
+    mock_settings_store = MagicMock()
+    mock_settings_store.get.return_value = settings
+
+    return patch("memory.firestore_db.PushSubscriptionStore", return_value=mock_sub_store), \
+        patch("memory.firestore_db.HubSettingsStore", return_value=mock_settings_store)
+
+
+def test_check_push_health_flags_failure_streak(monkeypatch):
+    """Condition 1: any subscription failure_count >= 3 -> critical signal."""
+    from core import heartbeat
+    subs = [
+        {"endpoint": "https://fcm.example/abc", "user_agent": "iPhone Safari",
+         "failure_count": 3, "last_success_at": None},
+    ]
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": "2026-06-27T00:00:00+00:00"}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, subs, settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    matches = [s for s in signals if s.fingerprint.startswith("push:failure-streak:")]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_CRITICAL
+    assert matches[0].area == "push"
+
+
+def test_check_push_health_no_subscriptions_mirror_on_is_warning(monkeypatch):
+    """Condition 2: push enabled, zero subs, mirror ON -> warning (Telegram covers it)."""
+    from core import heartbeat
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": "2026-06-27T00:00:00+00:00"}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, [], settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    matches = [s for s in signals if s.fingerprint == "push:no-subscription"]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_WARNING
+
+
+def test_check_push_health_no_subscriptions_mirror_off_is_critical(monkeypatch):
+    """Condition 2: push enabled, zero subs, mirror OFF -> critical (no safety net left)."""
+    from core import heartbeat
+    settings = {"telegram_mirror_enabled": False, "push_enabled_at": "2026-06-27T00:00:00+00:00"}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, [], settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    matches = [s for s in signals if s.fingerprint == "push:no-subscription"]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_CRITICAL
+
+
+def test_check_push_health_no_signal_when_push_not_enabled(monkeypatch):
+    """No push_enabled_at yet (pre-rollout) -> no no-subscription signal noise."""
+    from core import heartbeat
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": None}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, [], settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    assert signals == []
+
+
+def test_check_push_health_flags_stale_delivery(monkeypatch):
+    """Condition 3: subs exist but none delivered successfully in 48h -> warning."""
+    from core import heartbeat
+    from datetime import datetime, timezone, timedelta
+    stale_ts = (datetime.now(timezone.utc) - timedelta(hours=72)).isoformat()
+    subs = [
+        {"endpoint": "https://fcm.example/abc", "user_agent": "iPhone Safari",
+         "failure_count": 0, "last_success_at": stale_ts},
+    ]
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": "2026-06-27T00:00:00+00:00"}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, subs, settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    matches = [s for s in signals if s.fingerprint == "push:delivery-stale"]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_WARNING
+
+
+def test_check_push_health_no_stale_signal_within_48h(monkeypatch):
+    """A recent last_success_at within 48h suppresses the delivery-stale signal."""
+    from core import heartbeat
+    from datetime import datetime, timezone, timedelta
+    recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    subs = [
+        {"endpoint": "https://fcm.example/abc", "user_agent": "iPhone Safari",
+         "failure_count": 0, "last_success_at": recent_ts},
+    ]
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": "2026-06-27T00:00:00+00:00"}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, subs, settings)
+    with patch_sub, patch_settings:
+        signals = heartbeat._check_push_health()
+
+    assert not any(s.fingerprint == "push:delivery-stale" for s in signals)
+
+
+def test_check_push_health_registered_in_collect_signals_tuple(monkeypatch):
+    """_check_push_health must run every tick (not weekly-only)."""
+    from core import heartbeat
+    settings = {"telegram_mirror_enabled": True, "push_enabled_at": None}
+    patch_sub, patch_settings = _mock_push_stores(monkeypatch, [], settings)
+    monkeypatch.setattr(heartbeat, "check_cron_health", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_tokens", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_degradation", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_deployment", lambda: [])
+    called = {"push": False}
+
+    def _spy():
+        called["push"] = True
+        return []
+
+    monkeypatch.setattr(heartbeat, "_check_push_health", _spy)
+    with patch_sub, patch_settings:
+        heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
+    assert called["push"] is True
+

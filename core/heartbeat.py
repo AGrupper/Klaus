@@ -223,6 +223,101 @@ def check_tokens() -> list[Signal]:
     return signals
 
 
+_PUSH_FAILURE_STREAK_THRESHOLD = 3
+_PUSH_STALE_HOURS = 48
+
+
+def _parse_push_timestamp(value) -> datetime | None:
+    """Parse a push-store timestamp field into an aware UTC datetime.
+
+    Values read back from PushSubscriptionStore.list_all() are already
+    ISO-8601 strings (via _jsonsafe_doc), but be defensive against a raw
+    datetime slipping through (e.g. in tests).
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _check_push_health() -> list[Signal]:
+    """Web Push delivery self-validation during the mirror week (D-13/D-14).
+
+    Three conditions (RESEARCH Pattern 9):
+      1. Any subscription with failure_count >= 3 -> critical failure-streak signal.
+      2. push_enabled_at set but zero subscriptions registered -> critical when
+         the Telegram mirror is OFF (no safety net left), warning when it's ON
+         (Telegram still covers delivery).
+      3. push_enabled_at set + subscriptions exist, but none delivered
+         successfully in the last 48h -> warning delivery-stale signal.
+    """
+    signals: list[Signal] = []
+
+    from memory.firestore_db import PushSubscriptionStore, HubSettingsStore
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    sub_store = PushSubscriptionStore(project_id=project_id, database=database)
+    settings_store = HubSettingsStore(project_id=project_id, database=database)
+
+    subscriptions = sub_store.list_all()
+    settings = settings_store.get()
+    mirror_enabled = settings.get("telegram_mirror_enabled", True)
+    push_enabled_at = settings.get("push_enabled_at")
+
+    # Condition 1: per-subscription failure streak.
+    for sub in subscriptions:
+        failure_count = sub.get("failure_count", 0) or 0
+        if failure_count >= _PUSH_FAILURE_STREAK_THRESHOLD:
+            import hashlib
+            endpoint = sub.get("endpoint", "")
+            endpoint_hash = hashlib.sha256(endpoint.encode()).hexdigest()[:12]
+            signals.append(Signal(
+                fingerprint=f"push:failure-streak:{endpoint_hash}",
+                severity=SEVERITY_CRITICAL, area="push",
+                title=f"Push delivery failing for {sub.get('user_agent') or 'a device'}",
+                detail=f"failure_count={failure_count}.",
+                remediation="Check pywebpush errors in Cloud Run logs; a 404/410 means "
+                            "the subscription is dead and the device must re-subscribe.",
+            ))
+
+    # Condition 2: push enabled but nothing registered.
+    if push_enabled_at and not subscriptions:
+        severity = SEVERITY_WARNING if mirror_enabled else SEVERITY_CRITICAL
+        signals.append(Signal(
+            fingerprint="push:no-subscription",
+            severity=severity, area="push",
+            title="Push enabled but no subscriptions registered",
+            detail=f"push_enabled_at={push_enabled_at}, subscriptions=0.",
+            remediation="Open the hub on a device and enable notifications from Settings.",
+        ))
+
+    # Condition 3: subscriptions exist but delivery has gone stale.
+    if push_enabled_at and subscriptions:
+        now = datetime.now(timezone.utc)
+        stale_cutoff = now - timedelta(hours=_PUSH_STALE_HOURS)
+        any_recent_success = any(
+            (ts := _parse_push_timestamp(sub.get("last_success_at"))) is not None and ts >= stale_cutoff
+            for sub in subscriptions
+        )
+        if not any_recent_success:
+            signals.append(Signal(
+                fingerprint="push:delivery-stale",
+                severity=SEVERITY_WARNING, area="push",
+                title="No successful push delivery in over 48h",
+                detail=f"{len(subscriptions)} subscription(s) registered; none delivered "
+                       f"successfully since {stale_cutoff.isoformat()}.",
+                remediation="Verify the push send path (core/push_sender.py) is being "
+                            "invoked; check pywebpush errors in Cloud Run logs.",
+            ))
+
+    return signals
+
+
 _FALLBACK_WARN_THRESHOLD = 10
 _CLOUD_RUN_5XX_WARN_THRESHOLD = 5
 
@@ -621,7 +716,8 @@ def _load_config() -> dict:
 def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
     """Run all checkers, then keep only signals whose severity is in `tiers`."""
     raw: list[Signal] = []
-    for checker in (check_cron_health, check_tokens, check_degradation, check_deployment):
+    for checker in (check_cron_health, check_tokens, check_degradation, check_deployment,
+                    _check_push_health):
         try:
             raw.extend(checker())
         except Exception:
