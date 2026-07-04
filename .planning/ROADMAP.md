@@ -111,8 +111,8 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 29-05-PLAN.md — Brain tools (mirror toggle + push health) + heartbeat checker
 - [x] 29-06-PLAN.md — /api/push/* + /api/settings routes
 - [x] 29-07-PLAN.md — generateSW→injectManifest custom service worker (push + badge)
-- [ ] 29-08-PLAN.md — send_and_inject push/mirror/visibility + all 3 send paths
-- [ ] 29-09-PLAN.md — usePush + useAppBadge hooks
+- [x] 29-08-PLAN.md — send_and_inject push/mirror/visibility + all 3 send paths
+- [x] 29-09-PLAN.md — usePush + useAppBadge hooks
 - [ ] 29-10-PLAN.md — Settings page + enable banner + nav + device UAT
 
 ### Phase 30: Health Pages
@@ -135,7 +135,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 26. Hub Shell | 9/9 | Complete    | 2026-06-16 |
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
-| 29. Web Push & Transition | 7/10 | In Progress|  |
+| 29. Web Push & Transition | 9/10 | In Progress|  |
 | 30. Health Pages | 0/? | Not started | - |
 
 ---
