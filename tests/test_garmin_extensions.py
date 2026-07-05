@@ -305,3 +305,65 @@ def test_fetch_garmin_weight_none_on_auth_failure():
     with patch.object(gt, "_authed_garmin_client",
                       side_effect=gt.GarminAuthError("no creds")):
         assert gt.fetch_garmin_weight() is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_run_detail_raw — lapDTOs-primary splits strategy
+# ---------------------------------------------------------------------------
+
+_LAP_DTOS = {"lapDTOs": [
+    {"distance": 400, "duration": 90, "avgHr": 165},
+    {"distance": 400, "duration": 92, "avgHr": 168},
+]}
+_TYPED = {"splits": [
+    {"type": "RWD_RUN", "distance": 700, "duration": 170, "averageHR": 166},
+    {"type": "RWD_WALK", "distance": 100, "duration": 60, "averageHR": 120},
+]}
+
+
+def test_run_detail_raw_prefers_lapdtos_even_when_typed_succeeds():
+    """THE regression: typed splits succeeding must not starve per-lap data.
+
+    Pre-fix, get_activity_typed_splits was called first and its success meant
+    get_activity_splits (the real recorded laps) was never fetched — Klaus only
+    ever saw run/walk time buckets.
+    """
+    fake_api = MagicMock()
+    fake_api.get_activity_splits.return_value = _LAP_DTOS
+    fake_api.get_activity_typed_splits.return_value = _TYPED
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_run_detail_raw(1)
+    assert out["splits"] == _LAP_DTOS
+    assert out["typed_splits"] == _TYPED
+
+
+def test_run_detail_raw_falls_back_to_typed_when_no_lapdtos():
+    """Empty/absent lapDTOs → typed envelope becomes the splits payload."""
+    fake_api = MagicMock()
+    fake_api.get_activity_splits.return_value = {"lapDTOs": []}
+    fake_api.get_activity_typed_splits.return_value = _TYPED
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_run_detail_raw(1)
+    assert out["splits"] == _TYPED
+    assert out["typed_splits"] == {}  # splits already IS the typed envelope
+
+
+def test_run_detail_raw_falls_back_to_typed_when_lapdtos_raise():
+    fake_api = MagicMock()
+    fake_api.get_activity_splits.side_effect = RuntimeError("500")
+    fake_api.get_activity_typed_splits.return_value = _TYPED
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_run_detail_raw(1)
+    assert out["splits"] == _TYPED
+
+
+def test_run_detail_raw_both_splits_fetches_fail_soft():
+    fake_api = MagicMock()
+    fake_api.get_activity_splits.side_effect = RuntimeError("500")
+    fake_api.get_activity_typed_splits.side_effect = RuntimeError("500")
+    fake_api.get_activity_details.return_value = {"metricDescriptors": []}
+    fake_api.get_activity_hr_in_timezones.return_value = []
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_run_detail_raw(1)
+    assert out["splits"] == {}
+    assert out["typed_splits"] == {}

@@ -27,3 +27,18 @@ def test_healthkit_push_script_help_exits_zero():
     assert (
         "HealthKit" in result.stdout or "healthkit" in result.stdout.lower()
     ), f"--help output missing 'HealthKit': {result.stdout[:300]}"
+
+
+def test_resync_run_details_script_help_exits_zero():
+    """Lap-resync CLI is importable AND prints --help text with its flags."""
+    script = _REPO_ROOT / "scripts" / "resync_run_details.py"
+    assert script.exists(), f"missing CLI: {script}"
+    result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, f"non-zero exit: stderr={result.stderr}"
+    for flag in ("--days", "--dry-run", "--only-typed"):
+        assert flag in result.stdout, f"--help output missing '{flag}': {result.stdout[:300]}"

@@ -212,3 +212,69 @@ def test_normalized_doc_under_one_megabyte():
                 "startTimeLocal": "2026-06-08 06:00:00", "distance_m": 42000, "duration_sec": 13000}
     doc = normalize_run_detail(activity, details, splits, [])
     assert len(json.dumps(doc, default=str)) < 1_000_000
+
+
+# ------------------------------------------------------------------ #
+# splits_source marker + typed_segments companion                    #
+# ------------------------------------------------------------------ #
+
+def test_splits_source_laps_for_lapdtos_envelope():
+    activity = {"activity_id": 7, "type": "running",
+                "startTimeLocal": "2026-07-01 06:00:00", "distance_m": 800, "duration_sec": 182}
+    splits = {"lapDTOs": [{"distance": 400, "duration": 90}, {"distance": 400, "duration": 92}]}
+    doc = normalize_run_detail(activity, {}, splits, [])
+    assert doc["splits_source"] == "laps"
+
+
+def test_splits_source_typed_for_typed_envelope():
+    activity, details, splits, hr = _interval_session()
+    doc = normalize_run_detail(activity, details, splits, hr)
+    assert doc["splits_source"] == "typed"
+
+
+def test_splits_source_none_when_no_envelope():
+    activity = {"activity_id": 1, "type": "running",
+                "startTimeLocal": "2026-07-01 06:00:00", "distance_m": 1000, "duration_sec": 300}
+    doc = normalize_run_detail(activity, {}, {}, [])
+    assert doc["splits_source"] is None
+
+
+def test_typed_segments_aggregated_per_type():
+    activity = {"activity_id": 8, "type": "track_running",
+                "startTimeLocal": "2026-07-01 06:00:00", "distance_m": 3000, "duration_sec": 900}
+    splits = {"lapDTOs": [{"distance": 400, "duration": 90}]}
+    typed = {"splits": [
+        {"type": "RWD_RUN", "distance": 1000, "duration": 280},
+        {"type": "RWD_WALK", "distance": 200, "duration": 120},
+        {"type": "RWD_RUN", "distance": 1000, "duration": 290},
+    ]}
+    doc = normalize_run_detail(activity, {}, splits, [], typed_splits=typed)
+    assert doc["typed_segments"] == [
+        {"type": "RWD_RUN", "distance_m": 2000.0, "duration_sec": 570.0},
+        {"type": "RWD_WALK", "distance_m": 200.0, "duration_sec": 120.0},
+    ]
+    # the per-lap rows stay the primary splits
+    assert doc["splits_source"] == "laps" and len(doc["splits"]) == 1
+
+
+def test_typed_segments_silently_omitted_when_absent():
+    activity, details, splits, hr = _interval_session()
+    doc = normalize_run_detail(activity, details, splits, hr)          # 4-arg call
+    assert "typed_segments" not in doc
+    doc2 = normalize_run_detail(activity, details, splits, hr, typed_splits={})
+    assert "typed_segments" not in doc2
+
+
+def test_lapdto_rest_laps_excluded_from_derived():
+    # Structured-workout lapDTOs carry intensityType — rest laps must not count
+    # as active effort.
+    activity = {"activity_id": 11, "type": "track_running",
+                "startTimeLocal": "2026-07-01 06:00:00", "distance_m": 1600, "duration_sec": 400}
+    splits = {"lapDTOs": [
+        {"intensityType": "ACTIVE", "distance": 400, "duration": 88, "avgHr": 168},
+        {"intensityType": "REST", "distance": 100, "duration": 60, "avgHr": 130},
+        {"intensityType": "ACTIVE", "distance": 400, "duration": 90, "avgHr": 172},
+    ]}
+    doc = normalize_run_detail(activity, {}, splits, [])
+    assert len(doc["splits"]) == 3               # raw laps all kept
+    assert doc["derived"]["active_lap_count"] == 2

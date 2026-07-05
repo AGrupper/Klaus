@@ -141,6 +141,7 @@ def run_one_batch() -> dict:
             raw = fetch_run_detail_raw(aid)
             store.upsert(normalize_run_detail(
                 activity, raw["details"], raw["splits"], raw["hr_zones"],
+                typed_splits=raw.get("typed_splits", {}),
             ))
             processed += 1
         except (GarminAuthError, GarminUnavailableError) as exc:

@@ -506,18 +506,27 @@ def _run_local_date(activity: dict) -> str | None:
 
 
 def fetch_run_detail_raw(activity_id) -> dict:
-    """Pull the three per-activity payloads for ONE run. Network-only.
+    """Pull the per-activity payloads for ONE run. Network-only.
 
     Each sub-fetch is independently guarded, so a treadmill run with no running
     dynamics (no foot-pod / no strap) still yields a usable splits + summary doc
     rather than failing the whole activity.
 
+    Splits strategy: ``get_activity_splits`` (lapDTOs — one row per recorded
+    lap, including manual lap-button presses) is PRIMARY. The typed-splits
+    endpoint aggregates by segment type (one run bucket + one walk bucket),
+    which destroys individual laps — it is only the fallback when no lapDTOs
+    exist. When lapDTOs win, the typed envelope is still fetched best-effort
+    into ``typed_splits`` so the run/walk bucket totals aren't lost.
+
     Args:
         activity_id: Garmin activity id.
 
     Returns:
-        ``{"details": dict, "splits": dict|list, "hr_zones": list|dict}`` —
-        any sub-key is ``{}``/``[]`` if that fetch failed.
+        ``{"details": dict, "splits": dict|list, "hr_zones": list|dict,
+        "typed_splits": dict}`` — any sub-key is ``{}``/``[]`` if that fetch
+        failed. ``typed_splits`` is ``{}`` when ``splits`` already IS the
+        typed envelope (fallback path).
 
     Raises:
         GarminAuthError / GarminUnavailableError: only if the client itself
@@ -525,7 +534,7 @@ def fetch_run_detail_raw(activity_id) -> dict:
             swallowed.
     """
     api = _authed_garmin_client()
-    out: dict = {"details": {}, "splits": {}, "hr_zones": []}
+    out: dict = {"details": {}, "splits": {}, "hr_zones": [], "typed_splits": {}}
 
     try:
         # maxchart/maxpoly cap the returned point count at the source so the
@@ -534,14 +543,24 @@ def fetch_run_detail_raw(activity_id) -> dict:
     except Exception:
         logger.warning("run_detail: get_activity_details(%s) failed", activity_id, exc_info=True)
 
+    lap_envelope: dict = {}
     try:
-        out["splits"] = api.get_activity_typed_splits(activity_id) or {}
+        lap_envelope = api.get_activity_splits(activity_id) or {}
     except Exception:
-        logger.warning("run_detail: get_activity_typed_splits(%s) failed", activity_id, exc_info=True)
+        logger.warning("run_detail: get_activity_splits(%s) failed", activity_id, exc_info=True)
+
+    if isinstance(lap_envelope, dict) and lap_envelope.get("lapDTOs"):
+        out["splits"] = lap_envelope
         try:
-            out["splits"] = api.get_activity_splits(activity_id) or {}
+            out["typed_splits"] = api.get_activity_typed_splits(activity_id) or {}
         except Exception:
-            logger.warning("run_detail: get_activity_splits(%s) failed", activity_id, exc_info=True)
+            logger.warning("run_detail: get_activity_typed_splits(%s) failed", activity_id, exc_info=True)
+    else:
+        # No per-lap rows (Garmin occasionally serves laps only via typed splits).
+        try:
+            out["splits"] = api.get_activity_typed_splits(activity_id) or {}
+        except Exception:
+            logger.warning("run_detail: get_activity_typed_splits(%s) failed", activity_id, exc_info=True)
 
     try:
         out["hr_zones"] = api.get_activity_hr_in_timezones(activity_id) or []
@@ -646,6 +665,39 @@ def _extract_splits(splits) -> list[dict]:
             "elev_gain_m": _first(lap, ("elevationGain", "totalElevationGain")),
         })
     return out
+
+
+def _splits_source(splits) -> str | None:
+    """Which endpoint the stored laps came from — audit marker for resync.
+
+    "laps" = per-lap lapDTOs (real recorded laps); "typed" = type-aggregated
+    buckets (pre-fix docs / lapDTO-less activities); None = neither envelope.
+    """
+    if isinstance(splits, dict):
+        if splits.get("lapDTOs"):
+            return "laps"
+        if splits.get("splits"):
+            return "typed"
+    return None
+
+
+def _extract_typed_segments(typed_splits) -> list[dict]:
+    """Reduce a typed-splits envelope to per-type distance/duration totals.
+
+    A compact companion to the per-lap rows: keeps the run-vs-walk bucket view
+    (a handful of rows) without duplicating full lap detail. ``[]`` when the
+    envelope is absent/empty.
+    """
+    agg: dict[str, dict] = {}
+    for row in _extract_splits(typed_splits):
+        t = row.get("type") or "UNKNOWN"
+        seg = agg.setdefault(t, {"type": t, "distance_m": 0.0, "duration_sec": 0.0})
+        seg["distance_m"] += row.get("distance_m") or 0.0
+        seg["duration_sec"] += row.get("duration_sec") or 0.0
+    for seg in agg.values():
+        seg["distance_m"] = round(seg["distance_m"], 1)
+        seg["duration_sec"] = round(seg["duration_sec"], 1)
+    return list(agg.values())
 
 
 def _extract_hr_zones(hr_zones) -> list[dict]:
@@ -762,7 +814,7 @@ def _compute_derived(splits: list[dict], summary: dict) -> dict:
     return derived
 
 
-def normalize_run_detail(activity: dict, details: dict, splits, hr_zones) -> dict:
+def normalize_run_detail(activity: dict, details: dict, splits, hr_zones, typed_splits=None) -> dict:
     """Convert raw Garmin run payloads into the canonical RunDetailStore shape.
 
     Pure function (no I/O) — mirrors ``mcp_tools.hevy_tool.normalize_workout``.
@@ -773,18 +825,24 @@ def normalize_run_detail(activity: dict, details: dict, splits, hr_zones) -> dic
         activity: a summary dict from :func:`fetch_garmin_activities` (gives
             activity_id, type, date, duration_sec, distance_m).
         details:  raw ``get_activity_details`` envelope.
-        splits:   raw ``get_activity_typed_splits`` (or ``get_activity_splits``).
+        splits:   raw ``get_activity_splits`` lapDTOs envelope (preferred) or
+            ``get_activity_typed_splits`` fallback.
         hr_zones: raw ``get_activity_hr_in_timezones``.
+        typed_splits: optional raw typed-splits envelope fetched alongside
+            lapDTOs; reduced to compact per-type ``typed_segments`` totals.
 
     Returns:
         Canonical run-detail doc (see plan). ``has_dynamics`` is False when the
         run carries no cadence/stride telemetry (treadmill / no strap), so the
         prompt can gate dynamics commentary and never fabricate it.
+        ``splits_source`` records which endpoint the laps came from ("laps" /
+        "typed" / None) so stale typed-only docs are identifiable for resync.
     """
     summary = _extract_summary(details)
     lap_rows = _extract_splits(splits)
     zones = _extract_hr_zones(hr_zones)
     derived = _compute_derived(lap_rows, summary)
+    typed_segments = _extract_typed_segments(typed_splits) if typed_splits else []
 
     dist = activity.get("distance_m")
     dur = activity.get("duration_sec")
@@ -799,7 +857,7 @@ def normalize_run_detail(activity: dict, details: dict, splits, hr_zones) -> dic
 
     has_dynamics = bool(summary.get("cadence_spm") or summary.get("stride_length_cm"))
 
-    return {
+    doc = {
         "activity_id": str(activity.get("activity_id")),
         "date": _run_local_date(activity),
         "type": activity.get("type"),
@@ -808,10 +866,14 @@ def normalize_run_detail(activity: dict, details: dict, splits, hr_zones) -> dic
         "avg_pace_sec_per_km": avg_pace,
         "summary": summary,
         "splits": lap_rows,
+        "splits_source": _splits_source(splits),
         "hr_zones": zones,
         "derived": derived,
         "has_dynamics": has_dynamics,
     }
+    if typed_segments:
+        doc["typed_segments"] = typed_segments
+    return doc
 
 
 def compute_acwr(activities: list[dict], today: date | None = None) -> dict:

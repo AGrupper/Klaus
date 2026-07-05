@@ -25,11 +25,11 @@ def store():
 def _patch_common(monkeypatch, store):
     monkeypatch.setattr(
         ri, "normalize_run_detail",
-        lambda activity, d, s, h: {"activity_id": str(activity["activity_id"])},
+        lambda activity, d, s, h, typed_splits=None: {"activity_id": str(activity["activity_id"])},
     )
     monkeypatch.setattr(
         ri, "fetch_run_detail_raw",
-        lambda aid: {"details": {}, "splits": {}, "hr_zones": []},
+        lambda aid: {"details": {}, "splits": {}, "hr_zones": [], "typed_splits": {}},
     )
     monkeypatch.setattr(ri, "_store", lambda: store)
     state_holder = {"state": {}}
