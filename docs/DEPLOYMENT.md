@@ -1537,10 +1537,10 @@ vapid --applicationServerKey
 gcloud secrets create klaus-vapid-private-key \
   --data-file=private_key.pem --project=klaus-agent
 
-# 4) Set VAPID_PUBLIC_KEY on the Cloud Run service and in local .env:
-gcloud run services update klaus-agent \
-  --update-env-vars=VAPID_PUBLIC_KEY=<base64url key from step 2> \
-  --region=me-west1 --project=klaus-agent
+# 4) Set VAPID_PUBLIC_KEY in .github/workflows/deploy.yml (--set-env-vars list)
+#    and in local .env. Do NOT rely on `gcloud run services update` alone:
+#    the CI deploy uses --set-env-vars, which REPLACES the whole env list on
+#    every deploy, silently dropping any var set out-of-band (bit us 2026-07-05).
 
 # 5) Verify the secret is retrievable:
 gcloud secrets versions access latest --secret=klaus-vapid-private-key \
