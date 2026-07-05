@@ -65,15 +65,19 @@ PEM → raw base64url at load (derived applicationServerKey verified equal to th
 VAPID_PUBLIC_KEY). Live manual send post-fix: sent:1 failed:0.
 
 ### GAP-2 — Chat opens at top of history, not latest message
-status: in_progress
-found: 2026-07-05 device UAT (user report). ChatWindow's initial-scroll effect is gated on
-`scrollHeight > clientHeight`, which never fires if the page — not the message container —
-is the scrolling element on the phone layout. Fix in flight (structural scroll-region fix,
-WhatsApp-style open-at-latest).
+status: resolved (code) / retest (device)
+found: 2026-07-05 device UAT (user report). Root cause: AppShell root used
+`minHeight: 100dvh` (not `height`), so the flex chain grew past the viewport and the
+message list never became its own scroll region — `scrollHeight === clientHeight`
+everywhere, and the initial-scroll guard never fired. Fixed 50598d5 + 9771199:
+bounded root height, structural `flex-1 min-h-0 overflow-y-auto` scroll region,
+guard removed. Retest: open chat → lands on newest message.
 
 ### GAP-3 — Full history rendered; user wants recent window + scroll-up pagination
-status: in_progress
-found: 2026-07-05 device UAT (user report). `/api/chat/messages` returns the full history
-every 2.5s poll; client slices last 50. Fix in flight: `limit`/`before` params on the route,
-poll only the tail, prepend older pages on scroll-to-top with scroll anchoring; history
-loads must not create unread badges.
+status: resolved (code) / retest (device)
+found: 2026-07-05 device UAT (user report). Fixed 4e308e3 + d3b3b6a:
+`GET /api/chat/messages` gained `limit` (default 50) + `before=<seq>` cursor +
+`has_more`; polls fetch only the newest 50; scrolling near the top auto-loads the
+older page with scroll-position anchoring; merges de-dup by seq; unread badge now
+keyed on latest seq (history loads can't create unreads). Retest: open chat →
+recent window only; scroll up → "Loading earlier messages…" prepends smoothly.
