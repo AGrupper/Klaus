@@ -114,6 +114,7 @@ _CRON_MAX_STALENESS_HOURS = {
     "healthkit-sync": 48,         # Phase 19.1 — D-18; 48h tolerance for iPhone Shortcut push bridge
     "weekly-training-review": 170,  # Phase 20 — Sunday 10:00; 170h = 7d + 2h slack
     "run-sync": 26,               # Garmin per-run detail pull, 05:15; 26h tolerance
+    "biometric-sync": 26,         # Garmin daily HRV/RHR pull, 05:30; 26h tolerance
 }
 # NOTE: nightly-trigger (iOS Sleep-Focus) is intentionally NOT monitored — it is
 # user-driven and may not fire on a given day; nightly-backstop is the daily guarantee.

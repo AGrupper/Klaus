@@ -863,6 +863,36 @@ async def cron_run_sync(request: Request) -> JSONResponse:
         raise
 
 
+@app.post("/cron/biometric-sync")
+async def cron_biometric_sync(request: Request) -> JSONResponse:
+    """Receive Cloud Scheduler daily tick and run a bounded Garmin biometrics batch.
+
+    Schedule: 30 5 * * *  (Asia/Jerusalem) — staggered after run-sync (05:15)
+    to spread Garmin login load.
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is
+    the Postgres daily_biometrics table (via core.biometric_ingest.run_one_batch),
+    which powers rolling HRV/resting-HR baselines. On the first run this
+    backfills ~90 days over several ticks; thereafter it heals today+yesterday
+    and pulls any missed days. Re-run until the response shows done:true.
+
+    Returns:
+        JSONResponse: batch status dict (ok, mode, processed, remaining, done).
+    """
+    await _verify_cron_request(request)
+    import asyncio as _asyncio
+    import core.biometric_ingest as _biometric
+    try:
+        loop = _asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _biometric.run_one_batch)
+        _log_cron_run("biometric-sync", ok=bool(result.get("ok")), backlog_done=result.get("done"))
+        return JSONResponse(content=result)
+    except Exception:
+        _log_cron_run("biometric-sync", ok=False)
+        raise
+
+
 @app.post("/cron/heartbeat")
 async def cron_heartbeat(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler hourly tick and run one heartbeat health check.

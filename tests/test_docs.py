@@ -31,6 +31,7 @@ class TestDeploymentCompleteness:
         "klaus-ingest-chat-exports",
         "klaus-reflect",
         "klaus-autonomous-tick",
+        "klaus-biometric-sync",
     ]
 
     def test_all_nine_job_ids_present(self):
@@ -54,6 +55,11 @@ class TestDeploymentCompleteness:
         # its own `gcloud scheduler jobs create` command.
         content = _content()
         assert "gcloud scheduler jobs create http klaus-autonomous-tick" in content
+
+    def test_gcloud_create_block_present_for_biometric_sync(self):
+        content = _content()
+        assert "gcloud scheduler jobs create http klaus-biometric-sync" in content
+        assert "/cron/biometric-sync" in content
 
     def test_groq_secret_documented(self):
         content = _content()

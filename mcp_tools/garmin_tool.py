@@ -125,12 +125,16 @@ def _authed_garmin_client():
     return api
 
 
-def fetch_garmin_today() -> dict:
-    """Fetch today's health summary from Garmin Connect.
+def fetch_garmin_daily(date_iso: str) -> dict:
+    """Fetch one day's health summary from Garmin Connect.
+
+    The Garmin daily endpoints all take an arbitrary date, so this powers both
+    the live "today" snapshot and the biometric-history backfill
+    (core/biometric_ingest.py).
 
     Returns:
         {
-            "date":                str   (YYYY-MM-DD),
+            "date":                str   (YYYY-MM-DD, echoes date_iso),
             "sleep_score":         int | None,
             "sleep_hours":         float | None,
             "hrv_status":          str | None  (e.g. "BALANCED", "LOW"),
@@ -138,6 +142,7 @@ def fetch_garmin_today() -> dict:
             "hrv_baseline":        int | None  (7-day average HRV, ms),
             "body_battery_morning": int | None  (0-100),
             "resting_hr":          int | None,
+            "training_readiness":  int | None  (0-100),
         }
 
     Raises:
@@ -146,17 +151,22 @@ def fetch_garmin_today() -> dict:
     """
     api = _authed_garmin_client()
 
-    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-
     try:
-        result: dict = {"date": today}
-        result.update(_fetch_sleep(api, today))
-        result.update(_fetch_hrv(api, today))
-        result.update(_fetch_body_battery(api, today))
-        result.update(_fetch_stats(api, today))
+        result: dict = {"date": date_iso}
+        result.update(_fetch_sleep(api, date_iso))
+        result.update(_fetch_hrv(api, date_iso))
+        result.update(_fetch_body_battery(api, date_iso))
+        result.update(_fetch_stats(api, date_iso))
+        result.update(_fetch_training_readiness(api, date_iso))
         return result
     except Exception as exc:
         raise GarminUnavailableError(f"Garmin data fetch failed: {exc}") from exc
+
+
+def fetch_garmin_today() -> dict:
+    """Fetch today's health summary (see :func:`fetch_garmin_daily`)."""
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    return fetch_garmin_daily(today)
 
 
 # ------------------------------------------------------------------ #
@@ -227,6 +237,25 @@ def _fetch_stats(api, today: str) -> dict:
         resting_hr = None
 
     return {"resting_hr": resting_hr}
+
+
+def _fetch_training_readiness(api, today: str) -> dict:
+    try:
+        data = api.get_training_readiness(today)
+        # Returns a list of readiness entries for the day; take the first score.
+        score = None
+        if isinstance(data, list):
+            for entry in data:
+                if isinstance(entry, dict) and entry.get("score") is not None:
+                    score = entry["score"]
+                    break
+        elif isinstance(data, dict):
+            score = data.get("score")
+    except Exception:
+        logger.warning("Garmin: could not fetch training readiness", exc_info=True)
+        score = None
+
+    return {"training_readiness": score}
 
 
 # ------------------------------------------------------------------ #
@@ -961,19 +990,21 @@ def compute_acwr_from_db() -> dict:
         return {"acute": 0.0, "chronic": None, "ratio": None}
 
 
-def write_today_biometrics_to_postgres(garmin: dict) -> None:
-    """Best-effort UPSERT of today's biometrics into Postgres (GARMIN-05).
+def write_biometrics_to_postgres(garmin: dict) -> None:
+    """Best-effort UPSERT of one day's biometrics into Postgres (GARMIN-05).
 
-    Called from core/morning_briefing.py _gather_data after fetch_garmin_today
-    succeeds. Postgres outage MUST NOT block the briefing — all exceptions
-    logged + swallowed.
+    Date-generic: upserts on the dict's own 'date' key, so it serves both the
+    morning briefing's today-write and the biometric-history backfill
+    (core/biometric_ingest.py). Postgres outage MUST NOT block the caller —
+    all exceptions logged + swallowed.
 
-    Maps fetch_garmin_today's snake_case dict to daily_biometrics columns:
+    Maps fetch_garmin_daily's snake_case dict to daily_biometrics columns:
       date, resting_hr, hrv_baseline, hrv_overnight, sleep_score,
       sleep_duration, body_battery_max, training_readiness, vo2_max
 
     Args:
-        garmin: dict from fetch_garmin_today (must include 'date').
+        garmin: dict from fetch_garmin_daily / fetch_garmin_today
+            (must include 'date').
 
     Returns:
         None always — best-effort write, never raises.
@@ -1027,3 +1058,7 @@ def write_today_biometrics_to_postgres(garmin: dict) -> None:
         )
         return None
     return None
+
+
+# Backwards-compatible alias (pre-rename call sites / tests).
+write_today_biometrics_to_postgres = write_biometrics_to_postgres

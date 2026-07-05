@@ -367,3 +367,54 @@ def test_run_detail_raw_both_splits_fetches_fail_soft():
         out = gt.fetch_run_detail_raw(1)
     assert out["splits"] == {}
     assert out["typed_splits"] == {}
+
+
+# ---------------------------------------------------------------------------
+# fetch_garmin_daily — date-parameterized daily biometrics
+# ---------------------------------------------------------------------------
+
+def _daily_api():
+    fake_api = MagicMock()
+    fake_api.get_sleep_data.return_value = {
+        "dailySleepDTO": {"sleepScores": {"overall": {"value": 82}},
+                          "sleepTimeSeconds": 27000}
+    }
+    fake_api.get_hrv_data.return_value = {
+        "hrvSummary": {"status": "BALANCED", "lastNightAvg": 62, "weeklyAvg": 60}
+    }
+    fake_api.get_body_battery.return_value = [{"charged": 88}]
+    fake_api.get_stats.return_value = {"restingHeartRate": 47}
+    fake_api.get_training_readiness.return_value = [{"score": 71}]
+    return fake_api
+
+
+def test_fetch_garmin_daily_threads_date_to_every_endpoint():
+    fake_api = _daily_api()
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_garmin_daily("2026-06-20")
+    assert out["date"] == "2026-06-20"
+    assert out["hrv_overnight"] == 62 and out["resting_hr"] == 47
+    assert out["training_readiness"] == 71
+    fake_api.get_sleep_data.assert_called_once_with("2026-06-20")
+    fake_api.get_hrv_data.assert_called_once_with("2026-06-20")
+    fake_api.get_body_battery.assert_called_once_with("2026-06-20", "2026-06-20")
+    fake_api.get_stats.assert_called_once_with("2026-06-20")
+    fake_api.get_training_readiness.assert_called_once_with("2026-06-20")
+
+
+def test_fetch_garmin_today_delegates_to_daily():
+    with patch.object(gt, "fetch_garmin_daily", return_value={"date": "x"}) as fgd:
+        out = gt.fetch_garmin_today()
+    fgd.assert_called_once()
+    assert out == {"date": "x"}
+    # the delegated date is today's ISO date
+    arg = fgd.call_args.args[0]
+    assert len(arg) == 10 and arg[4] == "-"
+
+
+def test_fetch_training_readiness_swallows_errors_to_none():
+    fake_api = _daily_api()
+    fake_api.get_training_readiness.side_effect = RuntimeError("404")
+    with patch.object(gt, "_authed_garmin_client", return_value=fake_api):
+        out = gt.fetch_garmin_daily("2026-06-20")
+    assert out["training_readiness"] is None

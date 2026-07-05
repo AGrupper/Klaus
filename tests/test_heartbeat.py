@@ -225,7 +225,7 @@ def test_all_cron_jobs_have_staleness_entry():
     # nightly-backstop is the daily journal/nightly guarantee that replaced reflect.
     expected_subset = {
         "morning-briefing", "ingest-chats", "ingest-chat-exports",
-        "nightly-backstop", "autonomous-tick",
+        "nightly-backstop", "autonomous-tick", "run-sync", "biometric-sync",
     }
     missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not missing, f"Missing staleness entries: {missing}"

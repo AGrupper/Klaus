@@ -1053,7 +1053,7 @@ Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.go
 
 ## 19. Cloud Scheduler — Full Job Inventory
 
-The following 9 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+The following 10 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
 use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
 are in `Asia/Jerusalem`.
 
@@ -1068,6 +1068,7 @@ are in `Asia/Jerusalem`.
 | 9 | klaus-strength-sync          | `0 5 * * *`           | `/cron/strength-sync`             | Hevy           |
 | 10 | klaus-run-sync              | `15 5 * * *`          | `/cron/run-sync`                  | Run-detail     |
 | 11 | klaus-nightly-backstop      | `0 1 * * *`           | `/cron/nightly-backstop`          | Nightly (WS2)  |
+| 12 | klaus-biometric-sync        | `30 5 * * *`          | `/cron/biometric-sync`            | Biometrics     |
 
 Nightly review (WS2): there is intentionally **no fixed-time send job** — the nightly
 review fires organically from the iOS Sleep-Focus automation hitting `/trigger/nightly`
@@ -1196,6 +1197,38 @@ gcloud scheduler jobs create http klaus-run-sync \
 First-run backfill: re-invoke until the response shows `done: true`
 (`gcloud scheduler jobs run klaus-run-sync --location="${REGION}"`), or just let the daily
 ticks drain it (a year of runs drains over a few weeks; recent runs are picked up on day one).
+
+### §19c. klaus-biometric-sync (Garmin daily HRV / resting HR)
+
+Daily Garmin biometrics pull — runs `core/biometric_ingest.py:run_one_batch()`. Diffs the
+look-back window against the Postgres `daily_biometrics` table and fetches only missing
+days (sleep, HRV, body battery, resting HR, training readiness via `fetch_garmin_daily`),
+bounded by `BIOMETRIC_INGEST_MAX_DAYS` (10) and `BIOMETRIC_INGEST_TIME_BUDGET_SEC` (50).
+Today and yesterday are always re-fetched (late-arriving sleep/HRV heal on the next tick);
+days Garmin returns empty go into a `skipped_dates` Firestore ledger so the backfill can
+drain. On first run it backfills `BIOMETRIC_INGEST_BACKFILL_DAYS` (90) over ~9 ticks;
+thereafter it diffs a `BIOMETRIC_INGEST_DELTA_DAYS` (7) window. This table powers the
+rolling HRV/RHR baselines used by `get_training_context`, the weekly review, and
+`core/recovery_metrics.py` — before this job its only writer was the morning briefing
+(today-only, and only when the briefing fired). Pull-only; no orchestrator/LLM/Telegram.
+Same Garmin creds as run-sync. Staggered to 05:30 — after run-sync — to spread Garmin
+login load.
+
+```bash
+gcloud scheduler jobs create http klaus-biometric-sync \
+  --schedule="30 5 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/biometric-sync" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+First-run backfill: re-invoke until the response shows `done: true`
+(`gcloud scheduler jobs run klaus-biometric-sync --location="${REGION}"`), or let the
+daily ticks drain it (~9 days for the 90-day window). Requires `DATABASE_URL` bound.
 
 ---
 
