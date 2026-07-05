@@ -75,6 +75,7 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "get_run_detail",
     # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
     "fetch_recent_meals",
+    "fetch_nutrition_trend",
     # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
     "toggle_telegram_mirror",
     "get_push_health",
@@ -1060,6 +1061,33 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    {
+        "name": "fetch_nutrition_trend",
+        "description": (
+            "Get the user's nutrition TREND over the last N days: a per-day "
+            "series of daily totals (calories, protein_g, carbs_g, fat_g, "
+            "fiber_g, meal_count) plus SERVER-COMPUTED `averages` over the days "
+            "that have logged meals (`days_with_data`). Use this for any "
+            "weekly/multi-day question — average protein, calorie balance, "
+            "consistency of a build phase; use fetch_recent_meals for what was "
+            "eaten today/yesterday. Report the server-computed averages "
+            "VERBATIM — never average the series yourself. `missing_dates` are "
+            "days with NO logged meals — treat them as unlogged, never as "
+            "zero-calorie days. When the profile has targets, `targets` and "
+            "`avg_protein_g_per_kg` are included for comparison. "
+            "Default days=14 (max 60). Brain-direct."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Days back to aggregate. Default 14, max 60.",
+                },
+            },
+            "required": [],
+        },
+    },
     # ============ PHASE 20 Plan 01 — TRAINING LOG (LOG-03/LOG-04) ============
     {
         "name": "log_training",
@@ -1412,6 +1440,7 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         # Nutrition — brain-direct so the brain reads server-computed totals itself
         # (was worker-delegated; the worker summarization hop made totals drift)
         "fetch_recent_meals",
+        "fetch_nutrition_trend",
     }
 ]
 
@@ -2215,9 +2244,13 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
             project_id=os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
             database=os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
         )
-        # A window of `hours` (default 24) can straddle midnight, so union the
-        # calendar dates the window touches. MealStore.get_day never raises.
-        dates = sorted({now.date().isoformat(), cutoff.date().isoformat()})
+        # Enumerate EVERY calendar date the window touches (a >48h window has
+        # dates strictly between cutoff-day and today — the old two-endpoint
+        # union silently skipped them). MealStore.get_day never raises.
+        span = (now.date() - cutoff.date()).days
+        dates = [
+            (cutoff.date() + timedelta(days=i)).isoformat() for i in range(span + 1)
+        ]
         meals: list[dict] = []
         for d in dates:
             meals.extend(ms.get_day(d))
@@ -2262,6 +2295,79 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
                 "them; if timing matters, ask."
             ),
         })
+    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_fetch_nutrition_trend(days: int = 14) -> str:
+    """Brain-direct: per-day nutrition series + server-computed averages.
+
+    The trend companion to _handle_fetch_recent_meals: answers "how has he
+    been eating this week/fortnight" (average protein, calorie balance,
+    logging consistency) with all arithmetic done here in Python. Averages
+    divide by days WITH data; unlogged days are reported as missing_dates,
+    never counted as zero-calorie days.
+    """
+    from zoneinfo import ZoneInfo
+    try:
+        days = max(1, min(int(days), 60))  # clamp — each day is a Firestore read
+    except (TypeError, ValueError):
+        days = 14
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+    try:
+        from memory.firestore_db import MealStore
+        ms = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+            database=os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+        )
+        macro_keys = ("calories", "protein_g", "carbs_g", "fat_g", "fiber_g")
+        series: list[dict] = []
+        missing_dates: list[str] = []
+        for i in range(days - 1, -1, -1):  # oldest → newest
+            d = (today - timedelta(days=i)).isoformat()
+            agg = ms.get_day_aggregate(d)
+            if agg:
+                totals = agg.get("totals", {})
+                series.append({
+                    "date": d,
+                    "meal_count": agg.get("meal_count"),
+                    **{k: totals.get(k) for k in macro_keys},
+                })
+            else:
+                missing_dates.append(d)
+
+        averages: dict = {"days_with_data": len(series)}
+        if series:
+            for k in macro_keys:
+                vals = [day.get(k) or 0 for day in series]
+                averages[k] = round(sum(vals) / len(series), 1)
+
+        out: dict = {
+            "window_days": days,
+            "series": series,
+            "missing_dates": missing_dates,
+            "averages": averages,
+        }
+
+        # Targets comparison — silent-omit when the profile carries none.
+        try:
+            from memory.firestore_db import UserProfileStore
+            profile = UserProfileStore(
+                project_id=os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+                database=os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+            ).load()
+            targets = profile.get("nutrition_targets")
+            if targets:
+                out["targets"] = targets
+            bodyweight = profile.get("bodyweight_kg")
+            if bodyweight and averages.get("protein_g"):
+                out["avg_protein_g_per_kg"] = round(
+                    averages["protein_g"] / float(bodyweight), 2
+                )
+        except Exception:
+            logger.warning("fetch_nutrition_trend: profile read failed", exc_info=True)
+
+        return json.dumps(out)
     except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
         return json.dumps({"error": str(exc)})
 
@@ -2728,6 +2834,7 @@ _HANDLERS: dict[str, object] = {
     "get_acwr":                lambda args: _handle_get_acwr(),
     # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
     "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
+    "fetch_nutrition_trend":   lambda args: _handle_fetch_nutrition_trend(**args),
     "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
     "notion_search":          lambda args: _handle_notion_search(**args),
     "notion_get_page":        lambda args: _handle_notion_get_page(**args),

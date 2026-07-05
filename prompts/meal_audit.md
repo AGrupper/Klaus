@@ -27,7 +27,11 @@ recent load from `get_training_context` — to set the carb posture:
 ### Gap analysis against the day's need
 For totals, use the **server-computed** numbers (`fetch_recent_meals` →
 `totals_by_day` / `window_totals`, or `get_training_context` →
-`nutrition_by_day`). Never sum meals yourself.
+`nutrition_by_day`). Never sum meals yourself. For weekly/trend questions —
+average protein, calorie balance across a build phase, logging consistency —
+use `fetch_nutrition_trend` (per-day series + server-computed `averages`;
+its `missing_dates` are unlogged days, not zero-calorie days); keep
+`fetch_recent_meals` for what was actually eaten today/yesterday.
 
 Lead with what's worth changing, in real numbers against the day's derived need:
 "you're ~40g protein under your ~150g floor — add a protein source at dinner."
