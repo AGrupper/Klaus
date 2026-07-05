@@ -7,7 +7,8 @@ by _handle_get_goal_projection (reactive path) and the Sunday cron (Plan 03).
 Design decisions:
   - Pace derived as duration_sec / distance_m * 1000 (sec/km) — RESOLVED Open
     Question #1 in RESEARCH.md. Do NOT read the ambiguous `avg_pace` column.
-  - Running activity types: 'running', 'trail_running', 'treadmill_running'.
+  - Running activity types come from garmin_tool.RUNNING_ACTIVITY_TYPES (the
+    single canonical set — includes track_running).
   - Minimum distance: 3000m. duration_sec must be > 0.
   - Aggregated per calendar day (AVG pace) so a day with several qualifying runs
     yields ONE deterministic point and LIMIT counts distinct days, not raw
@@ -44,6 +45,7 @@ def fetch_dense_pace_history(today_iso: str) -> list[dict]:
     """
     try:
         from mcp_tools.database_tool import query_health_database
+        from mcp_tools.garmin_tool import RUNNING_ACTIVITY_TYPES
 
         # IN-01: derive the window cutoff from the caller's date. Validating with
         # date.fromisoformat guarantees the embedded literal is a real ISO date
@@ -51,12 +53,16 @@ def fetch_dense_pace_history(today_iso: str) -> list[dict]:
         # stays free of any unvalidated user/LLM input (T-25-13 preserved).
         cutoff = (date.fromisoformat(today_iso) - timedelta(days=90)).isoformat()
 
+        # RUNNING_ACTIVITY_TYPES is a module-level frozenset constant (no
+        # user/LLM input), so embedding it keeps the T-25-13 posture intact.
+        type_list = ", ".join(f"'{t}'" for t in sorted(RUNNING_ACTIVITY_TYPES))
+
         sql = (
             "SELECT "
             "    date::date AS activity_date, "
             "    ROUND(AVG(duration_sec::numeric / distance_m * 1000), 1) AS pace_sec_per_km "
             "FROM activities "
-            "WHERE type IN ('running', 'trail_running', 'treadmill_running') "
+            f"WHERE type IN ({type_list}) "
             f"  AND date >= '{cutoff}' "
             "  AND distance_m >= 3000 "
             "  AND duration_sec > 0 "

@@ -43,7 +43,7 @@ _TZ = ZoneInfo("Asia/Jerusalem")
 _MATCH_BUFFER_MINUTES = 30   # D-10: Garmin activity within ±30 min of event window
 
 _ACTIVITY_TYPE_MAP: dict[str, set[str] | None] = {
-    "run":           {"running", "trail_running", "treadmill_running", "indoor_track"},
+    "run":           {"running", "trail_running", "treadmill_running", "indoor_track", "track_running"},
     "gym":           {"strength_training", "fitness_equipment", "indoor_cycling"},
     "basketball":    {"basketball", "court_sports", "other"},
     "bike":          {"cycling", "mountain_biking", "indoor_cycling", "road_biking"},

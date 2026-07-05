@@ -150,7 +150,7 @@ _PRE_BED_START_HOUR = 21   # 21:00–23:59 fixed window (slot #6)
 
 # AM types recognised as running activities (Garmin type field).
 _GARMIN_AM_TYPES: frozenset[str] = frozenset(
-    {"running", "trail_running", "treadmill_running"}
+    {"running", "trail_running", "treadmill_running", "track_running"}
 )
 # PM types recognised as strength/gym activities (Garmin type field).
 _GARMIN_PM_TYPES: frozenset[str] = frozenset(

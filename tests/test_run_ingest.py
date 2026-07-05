@@ -67,12 +67,17 @@ def test_backfill_processes_unsynced_and_flips_done(store):
 
 
 def test_non_running_activities_filtered(store):
-    acts = _runs(1) + [{"activity_id": 2, "type": "cycling"}] + _runs(3, atype="trail_running")
+    acts = (
+        _runs(1)
+        + [{"activity_id": 2, "type": "cycling"}]
+        + _runs(3, atype="trail_running")
+        + _runs(4, atype="track_running")
+    )
     with patch.object(ri, "fetch_garmin_activities", return_value=acts):
         result = ri.run_one_batch()
-    assert result["processed"] == 2  # cycling excluded
+    assert result["processed"] == 3  # cycling excluded; track_running included
     upserted = {c.args[0]["activity_id"] for c in store.upsert.call_args_list}
-    assert upserted == {"1", "3"}
+    assert upserted == {"1", "3", "4"}
 
 
 def test_batch_bounded_not_done(monkeypatch, store):

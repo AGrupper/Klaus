@@ -69,6 +69,18 @@ def test_returns_shaped_dicts(monkeypatch):
     ]
 
 
+def test_sql_includes_all_canonical_running_types(monkeypatch):
+    """The type filter is derived from RUNNING_ACTIVITY_TYPES — incl. track_running."""
+    from mcp_tools.garmin_tool import RUNNING_ACTIVITY_TYPES
+
+    capture: dict = {}
+    _install_fake_db(monkeypatch, capture, [])
+    ph.fetch_dense_pace_history("2026-08-01")
+    assert "track_running" in RUNNING_ACTIVITY_TYPES
+    for t in RUNNING_ACTIVITY_TYPES:
+        assert f"'{t}'" in capture["sql"]
+
+
 def test_error_string_fails_open(monkeypatch):
     """A non-list (error string) from the DB tool yields [] (fail-open)."""
     capture: dict = {}

@@ -436,9 +436,11 @@ def fetch_garmin_activities(days: int = 7) -> list[dict]:
 # Persistence is RunDetailStore's job; normalize_run_detail is pure.  #
 # ------------------------------------------------------------------ #
 
-# Canonical running activity types (matches core/pace_history.py).
+# Canonical running activity types (core/pace_history.py derives its SQL from
+# this set). track_running is Garmin's typeKey for outdoor track sessions —
+# omitting it silently skipped every track workout from run sync.
 RUNNING_ACTIVITY_TYPES: frozenset[str] = frozenset(
-    {"running", "trail_running", "treadmill_running"}
+    {"running", "trail_running", "treadmill_running", "track_running"}
 )
 
 # Garmin detail-stream metricDescriptor keys → our canonical summary field.
