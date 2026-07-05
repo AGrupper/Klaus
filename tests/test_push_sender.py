@@ -350,11 +350,32 @@ def test_record_failure_failure_does_not_abort_remaining_fanout():
 # _get_vapid_private_key: Secret Manager load + cache                   #
 # --------------------------------------------------------------------- #
 
-def test_get_vapid_private_key_loads_from_secret_manager_and_caches(monkeypatch):
+def _fresh_ec_pem_and_raw():
+    """Generate a P-256 keypair; return (PEM string, expected raw base64url)."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    raw = key.private_numbers().private_value.to_bytes(32, "big")
+    return pem, base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+
+def test_get_vapid_private_key_converts_pem_to_raw_b64url_and_caches(monkeypatch):
+    # Regression (2026-07-05 first live send): the secret holds `vapid --gen`
+    # PEM, but pywebpush parses a string vapid_private_key as base64url raw —
+    # PEM content passed through verbatim fails with "ASN.1 parsing error".
     monkeypatch.setenv("GCP_PROJECT_ID", "klaus-agent")
+    pem, expected_raw = _fresh_ec_pem_and_raw()
 
     mock_response = MagicMock()
-    mock_response.payload.data = b"-----BEGIN PRIVATE KEY-----fake-vapid-key"
+    mock_response.payload.data = pem.encode()
     mock_client = MagicMock()
     mock_client.access_secret_version.return_value = mock_response
     mock_client_cls = MagicMock(return_value=mock_client)
@@ -363,7 +384,8 @@ def test_get_vapid_private_key_loads_from_secret_manager_and_caches(monkeypatch)
         key1 = push_sender._get_vapid_private_key()
         key2 = push_sender._get_vapid_private_key()
 
-    assert key1 == "-----BEGIN PRIVATE KEY-----fake-vapid-key"
+    assert key1 == expected_raw
+    assert "BEGIN" not in key1  # never hand PEM content to pywebpush
     assert key2 == key1
     # Cached: only one Secret Manager round trip across both calls.
     mock_client.access_secret_version.assert_called_once()
@@ -371,3 +393,29 @@ def test_get_vapid_private_key_loads_from_secret_manager_and_caches(monkeypatch)
     assert request["name"] == (
         "projects/klaus-agent/secrets/klaus-vapid-private-key/versions/latest"
     )
+
+
+def test_get_vapid_private_key_passes_raw_b64url_secret_through(monkeypatch):
+    # If the secret is ever rotated to the raw base64url form directly, it
+    # must pass through untouched.
+    monkeypatch.setenv("GCP_PROJECT_ID", "klaus-agent")
+
+    mock_response = MagicMock()
+    mock_response.payload.data = b"already-raw-b64url-key"
+    mock_client = MagicMock()
+    mock_client.access_secret_version.return_value = mock_response
+    mock_client_cls = MagicMock(return_value=mock_client)
+
+    with patch("google.cloud.secretmanager.SecretManagerServiceClient", mock_client_cls):
+        assert push_sender._get_vapid_private_key() == "already-raw-b64url-key"
+
+
+def test_pem_to_raw_b64url_roundtrip():
+    from py_vapid import Vapid
+
+    pem, expected_raw = _fresh_ec_pem_and_raw()
+    raw = push_sender._pem_to_raw_b64url(pem)
+    assert raw == expected_raw
+    # py_vapid must accept the converted form — this is exactly what
+    # pywebpush does internally with a string key.
+    Vapid.from_string(raw)

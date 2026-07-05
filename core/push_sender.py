@@ -51,6 +51,12 @@ def _get_vapid_private_key() -> str:
 
     Mirrors core/auth_google.py::SecretManagerTokenStorage.load's
     access_secret_version call shape.
+
+    The secret holds the PEM produced by `vapid --gen`, but pywebpush's
+    `vapid_private_key` string parameter is parsed as a base64url raw key —
+    it only understands PEM when given a file *path*. Passing PEM content
+    directly fails with "ASN.1 parsing error: invalid length" (bit us on the
+    first live send, 2026-07-05), so convert PEM → raw base64url here.
     """
     global _VAPID_PRIVATE_KEY
     if _VAPID_PRIVATE_KEY is not None:
@@ -62,8 +68,21 @@ def _get_vapid_private_key() -> str:
     client = secretmanager.SecretManagerServiceClient()
     name = f"projects/{project_id}/secrets/{_VAPID_SECRET_NAME}/versions/latest"
     response = client.access_secret_version(request={"name": name})
-    _VAPID_PRIVATE_KEY = response.payload.data.decode("utf-8")
+    secret = response.payload.data.decode("utf-8")
+    _VAPID_PRIVATE_KEY = _pem_to_raw_b64url(secret) if "-----BEGIN" in secret else secret
     return _VAPID_PRIVATE_KEY
+
+
+def _pem_to_raw_b64url(pem: str) -> str:
+    """Convert an EC P-256 private key PEM to the base64url raw form
+    py_vapid's Vapid.from_string expects."""
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+
+    key = serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+    raw = key.private_numbers().private_value.to_bytes(32, "big")
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
 def _reconcile(fn, *args) -> None:
