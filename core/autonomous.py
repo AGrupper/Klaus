@@ -263,7 +263,8 @@ def _gather_native_overdue() -> list:
 def _gather_habit_adherence(now: datetime, project_id: str, database: str) -> list[dict]:
     """Layer-0 gather: today's pending habits/supplements with streak (D-15/D-16).
 
-    Returns list of pending items: [{"habit_id", "name", "type", "slot", "streak", "dose"}, ...]
+    Returns list of pending items (HabitStore doc shape, keyed "id"):
+    [{"id", "name", "type", "slot", "streak", "dose", ...}, ...]
     Filtered by CoachingTopicStore dedup (D-17): items already nudged today are excluded.
     Empty list on any error (sentinel pattern — a HabitStore failure must never break the tick).
 
@@ -277,11 +278,17 @@ def _gather_habit_adherence(now: datetime, project_id: str, database: str) -> li
         today_iso = now.astimezone(ZoneInfo("Asia/Jerusalem")).date().isoformat()
         store = HabitStore(project_id=project_id, database=database)
         pending = store.get_pending_today(today_iso)
-        # D-17: filter out items already nudged today (per-item-per-day dedup)
+        # D-17: filter out items already nudged today (per-item-per-day dedup).
+        # HabitStore docs are keyed "id" — reading "habit_id" here KeyError'd on
+        # every tick since Phase 28 shipped, silently disabling all habit nudges
+        # (found 2026-07-05 in production logs). Keep a habit_id fallback for
+        # any caller-normalized items.
         cts = CoachingTopicStore(project_id=project_id, database=database)
         return [
             h for h in pending
-            if not cts.has_topic(today_iso, f"habit-nudge:{h['habit_id']}:{today_iso}")
+            if not cts.has_topic(
+                today_iso, f"habit-nudge:{h.get('id', h.get('habit_id'))}:{today_iso}"
+            )
         ]
     except Exception:
         logger.warning("autonomous: habit_adherence gather failed", exc_info=True)
