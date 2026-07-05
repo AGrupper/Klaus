@@ -18,7 +18,7 @@ import {
   Heart,
 } from 'lucide-react'
 import { UnreadBadge } from '../shared/UnreadBadge'
-import { useChat } from '../../hooks/useChat'
+import { useChat, latestKnownSeq } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
 
 interface TabItem {
@@ -43,7 +43,11 @@ export function BottomTabs() {
   // owns polling). This keeps badge fresh on other tabs without double-polling.
   const isKlausTabActive = location.pathname.startsWith('/klaus')
   const { messages } = useChat(!isKlausTabActive)
-  const { unreadCount } = useUnread(messages.length)
+  // latestKnownSeq (not messages.length): the tail poll only fetches the
+  // newest page (UAT gap-closure windowing), so the loaded array length no
+  // longer equals the true total conversation size once history exceeds one
+  // page — the server-assigned `seq` on the newest message is the real total.
+  const { unreadCount } = useUnread(latestKnownSeq(messages))
 
   return (
     /*

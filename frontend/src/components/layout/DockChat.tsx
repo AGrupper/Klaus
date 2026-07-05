@@ -13,7 +13,7 @@ import { useState } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { ChatWindow } from '../chat/ChatWindow'
 import { UnreadBadge } from '../shared/UnreadBadge'
-import { useChat } from '../../hooks/useChat'
+import { useChat, latestKnownSeq } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
 
 export function DockChat() {
@@ -22,7 +22,9 @@ export function DockChat() {
   // Poll only when collapsed (badge still needs updating); ChatWindow owns
   // polling when expanded (isVisible=true is the default in useChat).
   const { messages } = useChat(collapsed)
-  const { unreadCount } = useUnread(messages.length)
+  // latestKnownSeq (not messages.length) — see BottomTabs.tsx for why the
+  // tail-only poll page can no longer be treated as the true total count.
+  const { unreadCount } = useUnread(latestKnownSeq(messages))
 
   return (
     /*

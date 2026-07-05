@@ -1,24 +1,75 @@
 /**
- * useChat.ts — Optimistic send (useMutation) + 2.5s polling (useQuery).
+ * useChat.ts — Optimistic send (useMutation) + 2.5s tail polling (useQuery)
+ * + scroll-up pagination (UAT gap-closure, 2026-07).
  *
  * Implements RESEARCH Pattern 5 (CHAT-03):
  *   - useQuery polls /api/chat/messages every 2500ms ONLY when the chat is
  *     visible (isVisible arg). Pauses on tab blur (TanStack default:
- *     refetchIntervalInBackground: false).
+ *     refetchIntervalInBackground: false). The poll now requests only the
+ *     newest TAIL_LIMIT messages (server-side windowing) instead of the
+ *     full conversation history on every tick.
  *   - useMutation does optimistic send: appends a { status:'sending' } message
  *     immediately, rolls back on error, invalidates on settle so the real
  *     server message replaces it.
  *   - isKlausThinking: true while the last message is role 'user' (turn in
  *     flight); false once an assistant message arrives.
+ *   - loadOlder(): fetches one older page (before=<oldest loaded seq>) and
+ *     prepends it to local state, merged + de-duped by `seq` with whatever
+ *     the live tail poll currently holds. hasMoreOlder / isLoadingOlder let
+ *     ChatWindow drive an on-reach-top affordance.
  *
  * Security note (T-26-08-04): "sent" (green) state is shown only AFTER the
  * POST ACKs. onError rolls back + marks status:'error' so the user can retry.
  */
+import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchMessages, postChatMessage } from '../api/chat'
 import type { ChatMessage } from '../api/chat'
 
 export const CHAT_QUERY_KEY = ['chat', 'messages'] as const
+
+// Page size for both the live poll tail and each "load earlier" page.
+const TAIL_LIMIT = 50
+
+/**
+ * Merge an older page and the live tail into one ascending-by-seq list,
+ * de-duplicating by `seq` (falling back to reference identity for
+ * client-only entries such as the in-flight optimistic message, which has
+ * no `seq` yet). `older` is assumed to sort entirely before `tail` — true
+ * here because `older` is always fetched with `before=<tail's oldest seq>`.
+ */
+function mergeMessages(older: ChatMessage[], tail: ChatMessage[]): ChatMessage[] {
+  const seenSeqs = new Set<number>()
+  const merged: ChatMessage[] = []
+  for (const list of [older, tail]) {
+    for (const msg of list) {
+      if (typeof msg.seq === 'number') {
+        if (seenSeqs.has(msg.seq)) continue
+        seenSeqs.add(msg.seq)
+      }
+      merged.push(msg)
+    }
+  }
+  return merged
+}
+
+/**
+ * The highest known absolute seq + 1 (i.e. the true total conversation
+ * length as of the last successful read), derived by scanning from the end
+ * of `messages` for the last entry that carries a server-assigned `seq`.
+ * Falls back to `messages.length` when no message has a `seq` yet (e.g. an
+ * all-optimistic array, or tests that don't set seq) so existing unread-
+ * count math keeps working. Exported for BottomTabs/DockChat/ChatWindow,
+ * which all need this instead of raw `messages.length` now that the tail
+ * poll no longer always starts at seq 0 (UAT gap-closure windowing).
+ */
+export function latestKnownSeq(messages: ChatMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const seq = messages[i].seq
+    if (typeof seq === 'number') return seq + 1
+  }
+  return messages.length
+}
 
 /**
  * Main hook for the chat panel.
@@ -31,7 +82,9 @@ export function useChat(isVisible: boolean = true) {
   const queryClient = useQueryClient()
 
   // -------------------------------------------------------------------------
-  // Polling query — 2.5s cadence while visible (CHAT-03, T-26-08-02)
+  // Polling query — 2.5s cadence while visible (CHAT-03, T-26-08-02).
+  // Requests only the newest TAIL_LIMIT messages (UAT gap-closure: the full
+  // history used to ship over the wire on every 2.5s tick).
   // -------------------------------------------------------------------------
   const query = useQuery({
     queryKey: CHAT_QUERY_KEY,
@@ -40,7 +93,7 @@ export function useChat(isVisible: boolean = true) {
     // client half of the server-side push-suppression gate. The closure is
     // fresh per render, and refetchInterval below already gates polling on
     // isVisible, so chat_visible=1 is only ever sent while truly visible.
-    queryFn: () => fetchMessages(isVisible),
+    queryFn: () => fetchMessages({ chatVisible: isVisible, limit: TAIL_LIMIT }),
     refetchInterval: isVisible ? 2500 : false,
     // Pause when the browser tab loses focus (TanStack default; explicit here
     // for clarity and test-ability).
@@ -50,7 +103,45 @@ export function useChat(isVisible: boolean = true) {
     staleTime: 0,
   })
 
-  const messages: ChatMessage[] = query.data ?? []
+  const tailMessages: ChatMessage[] = query.data?.messages ?? []
+
+  // -------------------------------------------------------------------------
+  // Scroll-up pagination state (UAT gap-closure): older pages loaded via
+  // loadOlder() are held separately from the polled tail and merged for
+  // consumption, so the 2.5s poll can keep replacing just the tail without
+  // clobbering history the user scrolled back to see.
+  // -------------------------------------------------------------------------
+  const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([])
+  const [hasMoreOlder, setHasMoreOlder] = useState(true)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+
+  const messages: ChatMessage[] = useMemo(
+    () => mergeMessages(olderMessages, tailMessages),
+    [olderMessages, tailMessages],
+  )
+
+  /**
+   * Fetch the page immediately older than the oldest currently-loaded
+   * message and prepend it. No-ops while already loading, once the start
+   * of history has been reached, or before any message with a `seq` has
+   * loaded (nothing to anchor the cursor to yet).
+   */
+  const loadOlder = useCallback(async () => {
+    if (isLoadingOlder || !hasMoreOlder) return
+    const oldest = messages[0]
+    if (!oldest || typeof oldest.seq !== 'number') {
+      setHasMoreOlder(false)
+      return
+    }
+    setIsLoadingOlder(true)
+    try {
+      const page = await fetchMessages({ before: oldest.seq, limit: TAIL_LIMIT })
+      setOlderMessages((prev) => mergeMessages(page.messages, prev))
+      setHasMoreOlder(page.hasMore)
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }, [isLoadingOlder, hasMoreOlder, messages])
 
   // -------------------------------------------------------------------------
   // "Klaus is thinking…" indicator condition
@@ -71,8 +162,10 @@ export function useChat(isVisible: boolean = true) {
       //    optimistic entry before the mutation resolves.
       await queryClient.cancelQueries({ queryKey: CHAT_QUERY_KEY })
 
-      // 2. Snapshot the current messages so we can roll back on error.
-      const previous = queryClient.getQueryData<ChatMessage[]>(CHAT_QUERY_KEY)
+      // 2. Snapshot the current tail so we can roll back on error.
+      const previous = queryClient.getQueryData<{ messages: ChatMessage[]; hasMore: boolean }>(
+        CHAT_QUERY_KEY,
+      )
 
       // 3. Append the optimistic message with status 'sending'.
       const optimisticMessage: ChatMessage = {
@@ -81,10 +174,13 @@ export function useChat(isVisible: boolean = true) {
         content,
         status: 'sending',
       }
-      queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEY, (old) => [
-        ...(old ?? []),
-        optimisticMessage,
-      ])
+      queryClient.setQueryData<{ messages: ChatMessage[]; hasMore: boolean }>(
+        CHAT_QUERY_KEY,
+        (old) => ({
+          messages: [...(old?.messages ?? []), optimisticMessage],
+          hasMore: old?.hasMore ?? false,
+        }),
+      )
 
       return { previous, optimisticId: optimisticMessage.id }
     },
@@ -93,7 +189,7 @@ export function useChat(isVisible: boolean = true) {
       // Roll back to the snapshot — the POST failed, so the message never
       // reached the server (T-26-08-04).
       if (context?.previous !== undefined) {
-        queryClient.setQueryData<ChatMessage[]>(CHAT_QUERY_KEY, context.previous)
+        queryClient.setQueryData(CHAT_QUERY_KEY, context.previous)
       }
     },
 
@@ -111,5 +207,8 @@ export function useChat(isVisible: boolean = true) {
     isKlausThinking,
     sendMessage: mutation.mutate,
     isSending: mutation.isPending,
+    loadOlder,
+    hasMoreOlder,
+    isLoadingOlder,
   }
 }
