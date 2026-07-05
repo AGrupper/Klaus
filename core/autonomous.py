@@ -206,6 +206,14 @@ def _is_empty_signals(situation: dict) -> bool:
     # A non-empty list means a scheduled slot has passed without a check-off — salient signal.
     if situation.get("habit_pending"):
         return False
+    # Recovery deviation IS a trigger (unlike training_status/acwr above):
+    # recovery_metrics only emits flags when today genuinely breaks the 7-day
+    # baseline band, so it can't over-fire — and the whole point is warning
+    # BEFORE a hard session, which can't wait for Amit to message first.
+    # Tick-brain is free (hours_since_contact precedent); the outreach log +
+    # a recovery:<date> topic_key handle don't-repeat downstream.
+    if (situation.get("recovery") or {}).get("flags"):
+        return False
     return True
 
 
@@ -431,6 +439,23 @@ def _gather_training_status() -> dict:
         return {}
 
 
+def _gather_recovery() -> dict:
+    """(m) Recovery deviation vs 7-day HRV/RHR baseline (Pattern C sentinel).
+
+    Non-empty (has "flags") only when today genuinely deviates — rare by
+    construction (core/recovery_metrics.py silent-omit), so it is safe as a
+    Layer-0 trigger, unlike raw training_status/acwr context.
+    """
+    try:
+        from datetime import datetime as _dt
+        from core.recovery_metrics import get_recovery_deviation
+        today_iso = _dt.now(_TZ).date().isoformat()
+        return get_recovery_deviation(today_iso) or {}
+    except Exception:
+        logger.warning("autonomous: recovery gather failed", exc_info=True)
+        return {}
+
+
 def _gather_acwr() -> dict:
     """(k) PHASE 19 — ACWR from Postgres activities (live).
 
@@ -447,7 +472,7 @@ def _gather_acwr() -> dict:
 
 
 def gather_situation(now: datetime) -> dict:
-    """Layer 0 — aggregate situation snapshot from 11 sources, fanned out in parallel.
+    """Layer 0 — aggregate situation snapshot from 13 sources, fanned out in parallel.
 
     Each source lives in its own ``_gather_*`` function with its own
     try/except and sentinel fallback, so one failure does NOT mask others —
@@ -499,6 +524,8 @@ def gather_situation(now: datetime) -> dict:
         "acwr": _gather_acwr,
         # Phase 28 Plan 03 (HABIT-05 / D-15/D-16/D-17): pending habit/supplement adherence
         "habit_pending": lambda: _gather_habit_adherence(now, project_id, database),
+        # Recovery deviation vs 7-day baseline — trigger only when flags fire.
+        "recovery": _gather_recovery,
     }
 
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="gather") as pool:
@@ -577,6 +604,8 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         # Phase 28 Plan 03 (HABIT-05 / D-15/D-16): pending habit/supplement adherence
         # with streak context so tick-brain can weight long streaks at risk (D-16).
         "habit_pending": situation.get("habit_pending", []),
+        # Recovery deviation vs 7-day baseline — {} unless flags fired today.
+        "recovery": situation.get("recovery", {}),
     }
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
@@ -748,6 +777,8 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "acwr": situation.get("acwr", {"ratio": None}),
         # Phase 28 Plan 03 (HABIT-05 / D-15/D-16): pending habits/supplements with streak.
         "habit_pending": situation.get("habit_pending", []),
+        # Recovery deviation vs 7-day baseline (parity with triage).
+        "recovery": situation.get("recovery", {}),
     }, indent=2, ensure_ascii=False)
 
     synthetic_content = (

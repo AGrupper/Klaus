@@ -344,6 +344,17 @@ def _gather_data(today_iso: str) -> dict:
         logger.warning("morning_briefing: recovery_concern computation failed", exc_info=True)
         # silent omit — no "all clear" placeholder (D-13 guardrail)
 
+    # Recovery deviation vs 7-day baseline (waking HRV / resting HR). Runs
+    # AFTER the biometrics writeback above so today's row exists to compare.
+    # Silent-omit like recovery_concern — present only on genuine deviation.
+    try:
+        from core.recovery_metrics import get_recovery_deviation
+        rd = get_recovery_deviation(today_iso)
+        if rd:
+            data["recovery_deviation"] = rd
+    except Exception:
+        logger.warning("morning_briefing: recovery_deviation computation failed", exc_info=True)
+
     # Tasks due today + overdue (native TaskStore)
     try:
         from memory.firestore_db import TaskStore

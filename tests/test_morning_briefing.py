@@ -745,3 +745,39 @@ class TestBodyweightGarminSync:
         patch_arg = store.update.call_args.args[0]
         assert "bodyweight_kg" not in patch_arg          # not overwritten
         assert patch_arg["bodyweight_synced_on"] == "2026-06-09"  # attempt stamped
+
+
+def test_gather_data_includes_recovery_deviation_when_flagged():
+    """recovery_deviation surfaces in the gather only when the baseline math flags."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    rd = {"flags": ["hrv_low"], "hrv_overnight": 52.0, "hrv_baseline_7d": 61.0,
+          "hrv_deviation_pct": -14.8, "days_of_data": 7}
+    with _quiet_gather(bs), \
+         patch("core.recovery_metrics.get_recovery_deviation", return_value=rd):
+        data = _gather_data("2026-06-28")
+    assert data["recovery_deviation"] == rd
+
+
+def test_gather_data_omits_recovery_deviation_when_none():
+    """Silent-omit: no deviation → no key (never an 'all clear' placeholder)."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    with _quiet_gather(bs), \
+         patch("core.recovery_metrics.get_recovery_deviation", return_value=None):
+        data = _gather_data("2026-06-28")
+    assert "recovery_deviation" not in data
+
+
+def test_gather_data_recovery_deviation_failure_is_isolated():
+    """A recovery_metrics blow-up must never break the briefing gather."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    with _quiet_gather(bs), \
+         patch("core.recovery_metrics.get_recovery_deviation",
+               side_effect=RuntimeError("pg down")):
+        data = _gather_data("2026-06-28")
+    assert "recovery_deviation" not in data

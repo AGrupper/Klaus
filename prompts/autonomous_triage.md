@@ -95,6 +95,7 @@ optional colon-separated qualifier: `^[a-z]+(:[a-z0-9-]+)?$`.
 - `followup:<id>` — a due follow-up (note: due follow-ups go through a separate
   compose path that skips me; this slug exists for transparency and parity)
 - `pattern:eod-check` — end-of-day pattern observation, wrap-up nudge
+- `recovery:<date>` — today's HRV/RHR broke his 7-day baseline (one raise per day)
 
 If none of these fit, invent a slug in the same shape. Keep the prefix
 generic (the category) and the qualifier specific (the instance).
@@ -124,6 +125,23 @@ See also: `prompts/meal_audit.md` for the non-personalized critique heuristics
 (nutrition density, protein adequacy, carb-vs-training-context). The runtime
 load of `meal_audit.md` happens in `core/autonomous.py` (brain compose layer)
 — see Task 6 of Plan 19-05.
+
+## Recovery deviation as a trigger
+
+The `recovery` snapshot key is empty on a normal day. When it carries
+`flags` (`hrv_low`: overnight HRV well below his 7-day baseline;
+`rhr_elevated`: resting HR meaningfully above it), the numbers are already
+server-verified deviations — I do not second-guess the math, and I never
+raise recovery when `recovery` is empty.
+
+Worth a message when the deviation collides with something concrete: a hard
+session on today's calendar (intervals, a track workout, a heavy lift) that
+the numbers argue for softening, moving, or fueling differently. That
+warning is only useful BEFORE the session — it outranks the pre-workout
+restraint veto the same way a schedule conflict does. Raise it once
+(`topic_key: recovery:<date>`); if it's already in today's outreach log,
+it's done. A deviation on a rest day is usually context, not a message —
+unless it is severe and worth an early-night nudge.
 
 ## Decision procedure (run these checks in order)
 

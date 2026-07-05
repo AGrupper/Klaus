@@ -1482,3 +1482,77 @@ class TestPhase28HabitGather:
         assert hasattr(auto, "_gather_habit_adherence"), (
             "_gather_habit_adherence not found in core.autonomous"
         )
+
+
+class TestRecoveryDeviationSignal:
+    """Recovery-deviation snapshot key: gather sentinel, triage/compose parity,
+    and the Layer-0 gate waking only when flags fired."""
+
+    _RECOVERY = {
+        "flags": ["hrv_low"], "hrv_overnight": 52.0, "hrv_baseline_7d": 61.0,
+        "hrv_deviation_pct": -14.8, "days_of_data": 7,
+    }
+
+    def _situation(self, recovery):
+        return {
+            "calendar": [],
+            "ticktick_overdue": [],
+            "unread_email_count": 0,
+            "due_followups": [],
+            "hours_since_contact": 2.0,
+            "recent_journal_digest": "",
+            "self_state": {},
+            "today_outreach_log": [],
+            "now_context": {},
+            "meals_since_last_tick": [],
+            "training_status": {},
+            "acwr": {"ratio": None},
+            "habit_pending": [],
+            "recovery": recovery,
+        }
+
+    def test_is_empty_signals_false_when_recovery_flags(self):
+        import core.autonomous as auto
+        assert auto._is_empty_signals(self._situation(self._RECOVERY)) is False
+
+    def test_is_empty_signals_true_when_recovery_empty(self):
+        import core.autonomous as auto
+        assert auto._is_empty_signals(self._situation({})) is True
+
+    def test_triage_prompt_includes_recovery(self):
+        import core.autonomous as auto
+        prompt = auto._build_triage_prompt(self._situation(self._RECOVERY), "")
+        assert '"recovery"' in prompt
+        assert "hrv_low" in prompt
+
+    def test_compose_layer2_includes_recovery(self):
+        import core.autonomous as auto
+
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(auto, "_get_orchestrator", return_value=fake_orchestrator):
+            auto._compose_layer2(self._situation(self._RECOVERY), "draft", "reason")
+        assert '"recovery"' in captured.get("content", "")
+        assert "hrv_low" in captured.get("content", "")
+
+    def test_gather_recovery_sentinel_on_failure(self):
+        import core.autonomous as auto
+        with patch(
+            "core.recovery_metrics.get_recovery_deviation",
+            side_effect=RuntimeError("pg down"),
+        ):
+            assert auto._gather_recovery() == {}
+
+    def test_gather_recovery_empty_dict_when_no_deviation(self):
+        import core.autonomous as auto
+        with patch(
+            "core.recovery_metrics.get_recovery_deviation", return_value=None,
+        ):
+            assert auto._gather_recovery() == {}
