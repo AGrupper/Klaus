@@ -11,6 +11,22 @@
  * The active route content is rendered as children (App.tsx passes <Routes>).
  *
  * Breakpoint: Tailwind md (768px). No intermediate breakpoints.
+ *
+ * Bounded-height root (UAT gap-closure, 2026-07):
+ *   The root was previously `minHeight: 100dvh`. A *min*-height lets the
+ *   flex container grow past the viewport to fit its content, which means
+ *   `<main>`'s `overflow-y-auto` never becomes the scrolling element for
+ *   tall content (e.g. a long chat) — the container itself grows instead
+ *   and the document/body scrolls. Downstream, ChatWindow's own message
+ *   list relies on `height: 100%` all the way up this chain to become its
+ *   own bounded scroll region; with an unbounded ancestor that percentage
+ *   chain never resolves, so `scrollHeight` and `clientHeight` stay equal
+ *   and the initial-scroll-to-bottom effect's guard never passes (WhatsApp-
+ *   style "always open at the latest message" silently failed on phone).
+ *   `height: 100dvh` is a definite viewport-relative value (not a
+ *   percentage), so it does not depend on html/body/#root having an
+ *   explicit height — it bounds the root outright, `<main>` becomes a real
+ *   scroll container, and the percentage chain into ChatWindow resolves.
  */
 import type { ReactNode } from 'react'
 import { Sidebar } from './Sidebar'
@@ -34,7 +50,7 @@ export function AppShell({ children }: AppShellProps) {
      */
     <div
       className="flex flex-col md:flex-row"
-      style={{ minHeight: '100dvh', backgroundColor: '#0A0A0A' }}
+      style={{ height: '100dvh', backgroundColor: '#0A0A0A' }}
     >
       {/* Fixed offline indicator — appears at the top of the viewport when offline (HUB-03) */}
       <OfflineIndicator />
