@@ -1,9 +1,9 @@
 ---
-status: pending
+status: partial
 phase: 29-web-push-transition
 source: [29-CONTEXT.md (D-20, D-21), 29-02-PLAN.md]
-started: null
-updated: 2026-07-03
+started: 2026-07-05
+updated: 2026-07-05
 note: Two sections with different lifecycles. Section 1 (D-20) gates phase close —
   all four checks witnessed on the physical iPhone with the Telegram mirror ON.
   Section 2 (D-21) is post-phase tracking only — the phase does NOT stay open for
@@ -22,16 +22,16 @@ prove the pipeline; the mirror week catches stragglers.
 
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
-| 1 | [ ] **Enable-push flow** — from the Settings page or the Today banner, tap enable; iOS permission prompt appears (user gesture); permission granted; a subscription is stored (confirm via `get_push_health` or Firestore `push_subscriptions`) | pending | |
-| 2 | [ ] **Chat-reply push, app closed** — fully close the installed app (swipe away), send Klaus a message from Telegram or wait for a hub-originated turn to complete, and witness the reply arrive as a push notification on the lock screen | pending | |
-| 3 | [ ] **Proactive push, app closed** — with the app fully closed, witness one REAL proactive push arrive: an autonomous tick outreach OR a manually-triggered cron (e.g., morning briefing / nightly review trigger) | pending | |
-| 4 | [ ] **Icon unread badge** — after a closed-app push, the installed home-screen icon shows an unread-count badge; opening the app and viewing the chat clears both the in-app counter and the icon badge | pending | |
+| 1 | [x] **Enable-push flow** — from the Settings page or the Today banner, tap enable; iOS permission prompt appears (user gesture); permission granted; a subscription is stored (confirm via `get_push_health` or Firestore `push_subscriptions`) | passed | 2026-07-05: subscription stored (web.push.apple.com endpoint, doc efd08270…) |
+| 2 | [ ] **Chat-reply push, app closed** — fully close the installed app (swipe away), send Klaus a message from Telegram or wait for a hub-originated turn to complete, and witness the reply arrive as a push notification on the lock screen | retest | 2026-07-05: FAILED — no push, Telegram only. Root cause GAP-1 (VAPID PEM format, `failure_count: 2` on the subscription). Fixed a32c8ca; a manual send after the fix returned sent:1. Re-witness after deploy. |
+| 3 | [ ] **Proactive push, app closed** — with the app fully closed, witness one REAL proactive push arrive: an autonomous tick outreach OR a manually-triggered cron (e.g., morning briefing / nightly review trigger) | retest | 2026-07-05: FAILED — same root cause as check 2 (GAP-1). Re-witness after deploy. |
+| 4 | [ ] **Icon unread badge** — after a closed-app push, the installed home-screen icon shows an unread-count badge; opening the app and viewing the chat clears both the in-app counter and the icon badge | retest | 2026-07-05: FAILED — consequence of GAP-1 (no push delivered → SW badge handler never ran). Re-witness after deploy. |
 
 ### Phase-close summary
 
 total: 4
-passed: 0
-pending: 4
+passed: 1
+pending: 3 (retest after GAP-1 deploy)
 blocked: 0
 
 ## Section 2: D-21 Post-Phase Mirror-Week Tracking
@@ -55,4 +55,25 @@ checked off as the week unfolds, and closed with the final mirror-off decision.
 
 ## Gaps
 
-None recorded yet — populate during device UAT and the mirror week.
+### GAP-1 — Push sends failed: VAPID key format (RESOLVED, pending re-witness)
+status: resolved (code) / retest (device)
+found: 2026-07-05 device UAT — checks 2/3/4 failed; subscription showed `failure_count: 2`,
+`last_error: "Could not deserialize key data … ASN.1 parsing error: invalid length"`.
+Root cause: Secret Manager holds the `vapid --gen` PEM, but pywebpush parses a string
+`vapid_private_key` as base64url RAW (PEM only works as a file path). Fix a32c8ca converts
+PEM → raw base64url at load (derived applicationServerKey verified equal to the deployed
+VAPID_PUBLIC_KEY). Live manual send post-fix: sent:1 failed:0.
+
+### GAP-2 — Chat opens at top of history, not latest message
+status: in_progress
+found: 2026-07-05 device UAT (user report). ChatWindow's initial-scroll effect is gated on
+`scrollHeight > clientHeight`, which never fires if the page — not the message container —
+is the scrolling element on the phone layout. Fix in flight (structural scroll-region fix,
+WhatsApp-style open-at-latest).
+
+### GAP-3 — Full history rendered; user wants recent window + scroll-up pagination
+status: in_progress
+found: 2026-07-05 device UAT (user report). `/api/chat/messages` returns the full history
+every 2.5s poll; client slices last 50. Fix in flight: `limit`/`before` params on the route,
+poll only the tail, prepend older pages on scroll-to-top with scroll anchoring; history
+loads must not create unread badges.
