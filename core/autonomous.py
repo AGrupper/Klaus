@@ -272,7 +272,9 @@ def _gather_habit_adherence(now: datetime, project_id: str, database: str) -> li
     try:
         from zoneinfo import ZoneInfo
         from memory.firestore_db import HabitStore, CoachingTopicStore
-        today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        # Honour the caller's clock (the tick passes one `now` to every gather);
+        # a fresh datetime.now() here silently ignored the parameter.
+        today_iso = now.astimezone(ZoneInfo("Asia/Jerusalem")).date().isoformat()
         store = HabitStore(project_id=project_id, database=database)
         pending = store.get_pending_today(today_iso)
         # D-17: filter out items already nudged today (per-item-per-day dedup)
