@@ -30,7 +30,7 @@ from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Request, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from telegram import Update
 from telegram.ext import Application
@@ -1650,18 +1650,41 @@ async def api_chat_send(
 @app.get("/api/chat/messages")
 async def api_chat_messages(
     chat_visible: int = 0,
+    limit: int = Query(50, ge=1, le=200),
+    before: int | None = Query(None, ge=0),
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
-    """Return the recent conversation window for polling and fast first paint.
+    """Return a page of the conversation for polling / infinite scroll-up.
 
-    CHAT-03 / D-08: returns the full stored window (up to max_messages ~100).
-    The client slices the most recent ~50 for first paint; scroll-up reveals
-    older messages from the already-loaded window (no second server round-trip
-    needed for Phase 26 — the array-in-doc schema keeps the whole window small).
+    UAT gap-closure (2026-07): previously this route returned the ENTIRE
+    stored window (up to max_messages ~100) on every 2.5s poll, and the
+    client sliced the newest 50 client-side. That shipped the whole history
+    over the wire on every poll tick. Now the server does the windowing:
 
-    Each message dict carries a stable `seq` index (position in the window)
-    so the client can compute the unread badge (CHAT-04 / D-11):
-      badge = messages.length - last_seen_seq
+      - No `before`: return the newest `limit` messages (the poll tail).
+      - `before=<seq>`: return the `limit` messages immediately OLDER than
+        that seq (message list "load earlier messages" / scroll-to-top).
+
+    `has_more` in the response tells the client whether an even-older page
+    exists so it can stop trying once the true start of history is reached.
+
+    Storage note: FirestoreConversationStore keeps the whole conversation as
+    ONE array field on a single document (see memory/firestore_conversation
+    .py) — there is no native Firestore query/pagination primitive to push
+    this down to (it isn't a per-message subcollection). So this route still
+    reads the full stored array (bounded at max_messages, currently 100) in
+    one document read and slices in Python; the wire savings for the 2.5s
+    poll come from only ever sending `limit` messages to the client, not
+    from a cheaper backend read. A `before` cursor of `seq` can drift once
+    the stored array is truncated at max_messages (oldest messages evicted,
+    remaining seqs shift) — an inherent limitation of the capped single-doc
+    array schema. That's the same drift the existing unread-badge math
+    already tolerates (see frontend/src/hooks/useUnread.ts).
+
+    Each message dict carries a stable-for-the-current-window `seq` index
+    (absolute position in the full stored array at read time) so the client
+    can compute the unread badge (CHAT-04 / D-11) and page cursors:
+      badge = latest_seq + 1 - last_seen_seq
 
     Phase 29 (D-02): `?chat_visible=1` reports that the hub chat view is
     genuinely on-screen (the client only ever sends this while its own
@@ -1671,7 +1694,8 @@ async def api_chat_messages(
     looking at the chat. This route itself is read-only and never pushes.
 
     Returns:
-        JSONResponse: {"messages": [{"seq": int, "role": str, "content": str}, ...]}
+        JSONResponse: {"messages": [{"seq": int, "role": str, "content": str}, ...],
+                       "has_more": bool}
 
     Raises:
         HTTPException 401: No valid session cookie (via require_hub_session).
@@ -1689,7 +1713,7 @@ async def api_chat_messages(
         logger.error("api_chat_messages: cannot resolve user_id: %s", exc)
         raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
 
-    def _get_messages() -> list[dict]:
+    def _get_messages() -> tuple[list[dict], bool]:
         from memory.firestore_conversation import FirestoreConversationStore  # lazy import
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
@@ -1697,13 +1721,22 @@ async def api_chat_messages(
         # get_full (not get): the hub shows the whole continuous conversation,
         # not just the active session window the agent uses (CR-02).
         msgs = store.get_full(user_id)
-        # Add stable seq index for unread badge computation (CHAT-04 / D-11)
-        return [{"seq": i, **msg} for i, msg in enumerate(msgs)]
+        # Add stable (for this read) seq index for unread badge + pagination.
+        numbered = [{"seq": i, **msg} for i, msg in enumerate(msgs)]
 
-    messages = await loop.run_in_executor(None, _get_messages)
+        if before is not None:
+            older = [m for m in numbered if m["seq"] < before]
+            window = older[-limit:]
+            has_more = len(older) > len(window)
+        else:
+            window = numbered[-limit:]
+            has_more = len(numbered) > len(window)
+        return window, has_more
+
+    messages, has_more = await loop.run_in_executor(None, _get_messages)
 
     # _jsonsafe_doc on the full response (Pitfall 4 / T-26-05-06)
-    payload = _jsonsafe_doc({"messages": messages})
+    payload = _jsonsafe_doc({"messages": messages, "has_more": has_more})
     return JSONResponse(content=payload)
 
 

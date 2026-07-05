@@ -180,11 +180,132 @@ def test_get_messages_returns_window():
                 resp = client.get("/api/chat/messages")
 
     assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
-    messages = resp.json()["messages"]
+    body = resp.json()
+    messages = body["messages"]
     assert messages == [
         {"seq": 0, "role": "user", "content": "hi"},
         {"seq": 1, "role": "assistant", "content": "hello, Amit"},
     ]
+    assert body["has_more"] is False
+
+
+# ------------------------------------------------------------------ #
+# UAT gap-closure: GET /api/chat/messages windowing (limit/before)   #
+# ------------------------------------------------------------------ #
+
+def _make_stub_messages(n: int) -> list[dict]:
+    """n synthetic messages alternating user/assistant, oldest first."""
+    return [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg-{i}"}
+        for i in range(n)
+    ]
+
+
+def test_get_messages_default_limit_returns_newest_50_with_has_more():
+    """With no `before` cursor, the default limit=50 returns only the newest
+    50 of a longer stored window and reports has_more=True (the whole point
+    of server-side windowing — stop shipping full history on every poll).
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = _make_stub_messages(80)
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages")
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    body = resp.json()
+    messages = body["messages"]
+    assert len(messages) == 50
+    # Newest 50 of 80 → seqs 30..79
+    assert messages[0]["seq"] == 30
+    assert messages[-1]["seq"] == 79
+    assert body["has_more"] is True
+
+
+def test_get_messages_before_cursor_returns_older_page():
+    """`before=<seq>&limit=<n>` returns the n messages immediately older than
+    the cursor (the "scroll up → load earlier messages" page).
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = _make_stub_messages(80)
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages", params={"before": 30, "limit": 20})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    body = resp.json()
+    messages = body["messages"]
+    assert len(messages) == 20
+    assert messages[0]["seq"] == 10
+    assert messages[-1]["seq"] == 29
+    assert body["has_more"] is True
+
+
+def test_get_messages_before_cursor_reaches_start_of_history():
+    """When fewer than `limit` older messages remain, has_more is False —
+    the client knows it's reached the true start of the conversation.
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = _make_stub_messages(80)
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages", params={"before": 10, "limit": 50})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    body = resp.json()
+    messages = body["messages"]
+    assert len(messages) == 10
+    assert messages[0]["seq"] == 0
+    assert messages[-1]["seq"] == 9
+    assert body["has_more"] is False
+
+
+def test_get_messages_chat_visible_and_windowing_params_compose():
+    """`chat_visible=1` still marks visibility even when limit/before are
+    also supplied — the two query params are independent (D-02 regression
+    guard for the windowing gap-closure).
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = _make_stub_messages(5)
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch("core.scheduled_message.mark_chat_visible") as mock_mark_visible:
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages", params={"chat_visible": 1, "limit": 10})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    mock_mark_visible.assert_called_once()
 
 
 # ------------------------------------------------------------------ #
