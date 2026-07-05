@@ -1,11 +1,22 @@
 /**
  * ChatWindow.tsx — Full chat experience: message list + typing indicator + input.
  *
- * Behaviors (CHAT-03/04, D-08/10/11):
- *   - Renders the most recent 50 messages from useChat (D-08 window slice).
+ * Behaviors (CHAT-03/04, D-08/10/11, UAT gap-closure 2026-07):
+ *   - Renders the windowed message list from useChat (server-side windowing —
+ *     the client no longer slices a full-history fetch; see useChat.ts).
  *   - Shows TypingIndicator when isKlausThinking (a turn is in flight).
  *   - Auto-scrolls to bottom when a NEW Klaus message arrives ONLY if the user
  *     was already at/near the bottom (does not yank if reading history).
+ *   - Opens at the LATEST message on mount (WhatsApp-style). The message list
+ *     is its own bounded scroll region (`flex-1 min-h-0 overflow-y-auto`) —
+ *     see AppShell.tsx for why the ancestor height chain matters here: on
+ *     phone the ancestor chain previously had no definite height, so this
+ *     container's scrollHeight was always == clientHeight and the
+ *     initial-scroll jump silently never had anywhere to scroll to.
+ *   - On reaching (near) the top, automatically fetches one older page
+ *     (`before=<oldest loaded seq>`) and prepends it, preserving the user's
+ *     visual scroll position (classic prepend-anchoring: adjust scrollTop by
+ *     the height delta the new content added above the fold).
  *   - Attaches IntersectionObserver to the last rendered message; when it
  *     becomes visible, calls markAllSeen() to clear the unread badge (D-10).
  *   - Empty state: "Say hello to Klaus." (Copywriting Contract).
@@ -22,21 +33,22 @@
  * MessageBubble which uses text nodes only, never dangerouslySetInnerHTML.
  */
 import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
-import { useChat } from '../../hooks/useChat'
+import { useChat, latestKnownSeq } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
 import { useAppBadge } from '../../hooks/useAppBadge'
 import { MessageBubble } from './MessageBubble'
 import { TypingIndicator } from './TypingIndicator'
 import { ChatInput } from './ChatInput'
 import { dominant, textSecondary, typography, fontFamily } from '../../tokens'
-import type { ChatMessage } from '../../api/chat'
-
-// Display at most 50 messages on first paint (D-08 window).
-const DISPLAY_LIMIT = 50
 
 // "Near bottom" threshold: if the user is within this many px of the bottom,
 // consider them "at the bottom" and auto-scroll on new Klaus messages.
 const NEAR_BOTTOM_PX = 80
+
+// "Near top" threshold: reaching within this many px of the top triggers an
+// automatic "load earlier messages" fetch (UAT gap-closure — WhatsApp-style
+// infinite scroll-up).
+const NEAR_TOP_PX = 60
 
 interface ChatWindowProps {
   /** True when this ChatWindow is visible (controls polling — T-26-08-02). */
@@ -44,18 +56,27 @@ interface ChatWindowProps {
 }
 
 export function ChatWindow({ isVisible = true }: ChatWindowProps) {
-  const { messages: allMessages, isKlausThinking, sendMessage, isSending } = useChat(isVisible)
+  const {
+    messages,
+    isKlausThinking,
+    sendMessage,
+    isSending,
+    loadOlder,
+    hasMoreOlder,
+    isLoadingOlder,
+  } = useChat(isVisible)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const lastMessageRef = useRef<HTMLDivElement>(null)
   const wasNearBottomRef = useRef(true) // start "at bottom" on mount
 
-  // Slice to the display window (D-08)
-  const messages: ChatMessage[] = allMessages.slice(-DISPLAY_LIMIT)
-
   // -------------------------------------------------------------------------
   // Unread badge (CHAT-04 / D-10/D-11) + icon badge reconciliation (D-18)
+  // latestKnownSeq (not messages.length): the tail poll only ever holds one
+  // page, so once history exceeds that page the loaded array length is no
+  // longer the true conversation size — the newest message's server-
+  // assigned `seq` is (UAT gap-closure windowing, see useChat.ts).
   // -------------------------------------------------------------------------
-  const { unreadCount, markAllSeen } = useUnread(allMessages.length)
+  const { unreadCount, markAllSeen } = useUnread(latestKnownSeq(messages))
 
   // Reconciles the installed PWA icon badge to match unreadCount on every
   // change (and posts RESET_BADGE so the SW's IDB counter stays honest).
@@ -77,17 +98,36 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
   }, [markAllSeen])
 
   // -------------------------------------------------------------------------
-  // Track "near bottom" on scroll
+  // Scroll-up pagination anchor (UAT gap-closure): captured just before an
+  // older page is requested so the anchor-preservation effect below can
+  // adjust scrollTop by exactly the height the prepended content added.
+  // -------------------------------------------------------------------------
+  const pendingAnchorRef = useRef(false)
+  const prevScrollHeightRef = useRef(0)
+
+  // -------------------------------------------------------------------------
+  // Track "near bottom" on scroll + trigger "load earlier" near the top
   // -------------------------------------------------------------------------
   const handleScroll = useCallback(() => {
     const el = scrollContainerRef.current
     if (!el) return
     const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
     wasNearBottomRef.current = distFromBottom <= NEAR_BOTTOM_PX
-  }, [])
+
+    // Only meaningful once the list actually overflows its box — otherwise
+    // scrollTop is always 0 and there is nothing "above" to load.
+    const canScroll = el.scrollHeight > el.clientHeight
+    if (canScroll && el.scrollTop <= NEAR_TOP_PX && hasMoreOlder && !isLoadingOlder) {
+      pendingAnchorRef.current = true
+      prevScrollHeightRef.current = el.scrollHeight
+      void loadOlder()
+    }
+  }, [hasMoreOlder, isLoadingOlder, loadOlder])
 
   // -------------------------------------------------------------------------
-  // Auto-scroll when new messages arrive — only if near bottom
+  // Auto-scroll when new messages arrive — only if near bottom. Does NOT
+  // fire for a scroll-up "load earlier" prepend: wasNearBottomRef is false
+  // whenever the user has scrolled away from the bottom to trigger one.
   // -------------------------------------------------------------------------
   const prevMessageCountRef = useRef(messages.length)
   useEffect(() => {
@@ -103,21 +143,46 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
     }
   }, [messages.length])
 
+  // -------------------------------------------------------------------------
+  // Preserve scroll position across a "load earlier messages" prepend
+  // (UAT gap-closure): after older messages are merged in above the fold,
+  // shift scrollTop by exactly the height the new content added so the
+  // message the user was looking at stays under the viewport.
+  // useLayoutEffect: runs before paint, so there is no visible jump.
+  // -------------------------------------------------------------------------
+  useLayoutEffect(() => {
+    if (!pendingAnchorRef.current) return
+    const el = scrollContainerRef.current
+    if (!el) return
+    const delta = el.scrollHeight - prevScrollHeightRef.current
+    if (delta > 0) {
+      el.scrollTop = el.scrollTop + delta
+    }
+    pendingAnchorRef.current = false
+  }, [messages.length])
+
   // Land at the bottom whenever the chat (re)mounts — including when you
-  // navigate away and back. The old version scrolled on mount BEFORE messages
-  // had loaded (empty container → no-op), leaving you partway up the history.
-  // This retries on each messages change until content is actually present,
-  // then stops so it never yanks you while you read older messages.
-  // useLayoutEffect avoids a visible flash at the top before the jump.
+  // navigate away and back (WhatsApp-style "open at the latest message").
+  //
+  // UAT gap-closure (2026-07): this previously also required
+  // `el.scrollHeight > el.clientHeight` before jumping. On phone that
+  // ancestor height chain was unbounded (see AppShell.tsx), so
+  // scrollHeight and clientHeight were always equal and this guard never
+  // passed — the chat silently opened at the top of history instead of the
+  // latest message. Setting scrollTop = scrollHeight is safe even when
+  // there's nothing to scroll (the browser clamps it), so the guard added
+  // no correctness value and only made the effect fragile to layout timing.
+  // The real fix is the bounded height chain (AppShell); this effect now
+  // just needs "some content exists" to do its job.
   const didInitialScrollRef = useRef(false)
   useLayoutEffect(() => {
     if (didInitialScrollRef.current) return
+    if (messages.length === 0) return
     const el = scrollContainerRef.current
-    if (el && el.scrollHeight > el.clientHeight) {
-      el.scrollTop = el.scrollHeight
-      wasNearBottomRef.current = true
-      didInitialScrollRef.current = true
-    }
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    wasNearBottomRef.current = true
+    didInitialScrollRef.current = true
   }, [messages.length])
 
   // -------------------------------------------------------------------------
@@ -155,21 +220,23 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
   // -------------------------------------------------------------------------
   return (
     <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-        backgroundColor: dominant,
-        overflow: 'hidden',
-      }}
+      className="flex flex-col h-full overflow-hidden"
+      style={{ backgroundColor: dominant }}
     >
-      {/* Message list */}
+      {/*
+       * Message list — the chat's own bounded scroll region.
+       * `flex-1 min-h-0 overflow-y-auto`: flex-1 fills the remaining height
+       * of the column above; min-h-0 overrides the flex default min-height
+       * (auto), which would otherwise let this box grow to fit its content
+       * instead of clipping/scrolling it; overflow-y-auto is what actually
+       * makes THIS element (not the page) the scroller. This trio is the
+       * "structural fix" — see AppShell.tsx for the matching ancestor fix.
+       */}
       <div
         ref={scrollContainerRef}
         onScroll={handleScroll}
+        className="flex-1 min-h-0 overflow-y-auto"
         style={{
-          flex: 1,
-          overflowY: 'auto',
           paddingTop: '16px',
           paddingBottom: '8px',
           // Smooth scrollbar on webkit
@@ -177,6 +244,23 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
           scrollbarColor: '#2A2A2A transparent',
         }}
       >
+        {/* "Load earlier messages" affordance — automatic (WhatsApp-style),
+            this is just the loading feedback while the fetch is in flight. */}
+        {isLoadingOlder && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'center',
+              padding: '8px',
+              color: textSecondary,
+              fontSize: typography.body.fontSize,
+              fontFamily,
+            }}
+          >
+            Loading earlier messages…
+          </div>
+        )}
+
         {/* Empty state — "Say hello to Klaus." (Copywriting Contract) */}
         {messages.length === 0 && !isKlausThinking && (
           <div
@@ -201,7 +285,10 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
         {messages.map((msg, idx) => {
           const isLast = idx === messages.length - 1
           return (
-            <div key={msg.id ?? `${msg.role}-${idx}`} ref={isLast ? lastMessageRef : undefined}>
+            <div
+              key={msg.id ?? (msg.seq !== undefined ? `seq-${msg.seq}` : `${msg.role}-${idx}`)}
+              ref={isLast ? lastMessageRef : undefined}
+            >
               <MessageBubble message={msg} onRetry={handleRetry} />
             </div>
           )
