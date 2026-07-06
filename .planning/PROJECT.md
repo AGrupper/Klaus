@@ -10,6 +10,15 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 
 ## Current State
 
+**Latest:** v5.0 Phase 29 (Web Push & Transition) complete 2026-07-06, rev `klaus-agent-00143-scv`.
+All Klaus sends (Telegram turns, hub replies, proactive crons) fan out as native Web Push to the
+installed iPhone PWA (VAPID + pywebpush, injectManifest custom SW, icon unread badge, D-02
+visibility gate), with the Telegram mirror ON for the D-21 observation week before any retirement
+decision. Device-verified UAT 4/4 after two gap rounds (VAPID PEM→raw format, chat scroll region,
+history pagination). Suite 1720 backend + 122 frontend, zero exclusions (the long-deselected
+Phase 28 habit-dedup test turned out to flag a real production bug — habit nudges now actually fire).
+Next: Phase 30 (Health Pages).
+
 **Shipped:** v4.0 — Specific Training & Nutrition Coaching (2026-06-08, Cloud Run rev
 `klaus-agent-00091-4vz`, image `159cb1e`). Klaus is now a genuinely expert, specific
 hybrid-athlete coach. Across 5 phases (21–25) he: ingests Amit's Hybrid Athlete blueprint
@@ -177,4 +186,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-16 — v5.0 Phase 26 (Hub Shell) complete: 9 plans, verified 17/17, suite 1412 + 51 frontend; 5 on-device/live items deferred to 26-HUMAN-UAT.*
+*Last updated: 2026-07-06 — v5.0 Phase 29 (Web Push & Transition) complete: 10 plans + 2 UAT gap rounds, device-verified 4/4, suite 1720+122 zero exclusions.*
