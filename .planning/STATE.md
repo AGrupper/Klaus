@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
 status: planning
-stopped_at: Phase 30 context gathered
-last_updated: "2026-07-06T11:04:50.209Z"
+stopped_at: Phase 30 UI-SPEC approved
+last_updated: "2026-07-06T11:16:41.614Z"
 last_activity: 2026-07-06
 progress:
   total_phases: 5
@@ -149,9 +149,9 @@ Carried forward from v4.0 close:
 
 ## Session Continuity
 
-Last session: 2026-07-06T11:04:50.206Z
-Stopped at: Phase 30 context gathered
-Resume file: .planning/phases/30-health-pages/30-CONTEXT.md
+Last session: 2026-07-06T11:16:41.610Z
+Stopped at: Phase 30 UI-SPEC approved
+Resume file: .planning/phases/30-health-pages/30-UI-SPEC.md
 
 ## Operator Next Steps
 
