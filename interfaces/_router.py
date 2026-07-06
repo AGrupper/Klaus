@@ -360,18 +360,31 @@ class MessageRouter:
                 "Something went wrong on my end — give it another go in a moment."
             )
 
-        await update.message.reply_text(orchestrator_response)
+        # The brain writes markdown — render it via Telegram HTML, falling back
+        # to markdown-stripped plain text if the entity parse is rejected
+        # (malformed model output must never lose the reply).
+        from core.telegram_format import to_plain_text, to_telegram_html
+        try:
+            await update.message.reply_text(
+                to_telegram_html(orchestrator_response), parse_mode="HTML"
+            )
+        except Exception:
+            logger.warning(
+                "router: HTML reply rejected — falling back to plain text",
+                exc_info=True,
+            )
+            await update.message.reply_text(to_plain_text(orchestrator_response))
 
         # Phase 29 (PUSH-02, D-01 / Open Question 1): push this reply too — a
         # deliberate double-buzz. Telegram already sent natively above; the D-02
         # hub chat-visibility gate does not apply here (the hub chat view is not
         # the source of a Telegram-turn reply). Push failures are logged and
         # swallowed (D-04) — never block or fail a Telegram turn that already
-        # succeeded.
+        # succeeded. Push bodies are OS notifications — markdown stripped.
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(
-                None, send_push_to_all, orchestrator_response, "chat_reply"
+                None, send_push_to_all, to_plain_text(orchestrator_response), "chat_reply"
             )
         except Exception:
             logger.warning(

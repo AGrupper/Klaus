@@ -84,7 +84,7 @@ def test_sends_telegram_message(bot):
     asyncio.run(send_and_inject(bot, "Hello, sir."))
     # Phase 20: reply_markup=None is now passed through (backward-compatible default)
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Hello, sir.", reply_markup=None
+        chat_id=123456, text="Hello, sir.", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -96,7 +96,7 @@ def test_no_conversation_inject_by_default(bot):
     asyncio.run(send_and_inject(bot, "Hello"))
     # Phase 20: reply_markup=None is now forwarded to bot.send_message
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Hello", reply_markup=None
+        chat_id=123456, text="Hello", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -138,7 +138,7 @@ def test_mirror_on_pushes_and_sends_telegram(bot, mock_send_push):
 
     mock_send_push.assert_called_once_with("Both channels", "briefing")
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Both channels", reply_markup=None
+        chat_id=123456, text="Both channels", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -172,7 +172,7 @@ def test_chat_visible_skips_push_but_mirror_still_sends(bot, mock_send_push):
 
     mock_send_push.assert_not_called()
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Visible chat", reply_markup=None
+        chat_id=123456, text="Visible chat", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -194,7 +194,7 @@ def test_push_failure_is_swallowed_not_raised(bot, mock_send_push):
     asyncio.run(send_and_inject(bot, "Still delivered"))
 
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Still delivered", reply_markup=None
+        chat_id=123456, text="Still delivered", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -208,7 +208,7 @@ def test_hub_settings_lookup_failure_defaults_to_mirror_on(bot, mock_hub_setting
     asyncio.run(send_and_inject(bot, "Fallback path"))
 
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Fallback path", reply_markup=None
+        chat_id=123456, text="Fallback path", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -225,7 +225,7 @@ def test_none_bot_uses_lazy_bot_accessor(monkeypatch, mock_send_push):
 
     FakeBotClass.assert_called_once_with(token="1234:fake-token")
     fake_bot_instance.send_message.assert_called_once_with(
-        chat_id=123456, text="Hub reply text", reply_markup=None
+        chat_id=123456, text="Hub reply text", reply_markup=None, parse_mode="HTML"
     )
 
 
@@ -310,3 +310,36 @@ def test_mark_and_is_chat_visible():
 
     mark_chat_visible(seconds=-1)
     assert is_chat_visible() is False
+
+
+# --------------------------------------------------------------------------- #
+# Markdown rendering (2026-07-06) — HTML parse_mode + plain-text fallbacks     #
+# --------------------------------------------------------------------------- #
+
+def test_markdown_is_converted_to_telegram_html(bot, mock_send_push):
+    """**bold** goes out as <b>bold</b> with parse_mode=HTML; the push body and
+    the conversation record keep no HTML (plain / original markdown)."""
+    from core.scheduled_message import send_and_inject
+    asyncio.run(send_and_inject(bot, "hit **150g** today", message_class="briefing"))
+
+    bot.send_message.assert_called_once_with(
+        chat_id=123456, text="hit <b>150g</b> today",
+        reply_markup=None, parse_mode="HTML",
+    )
+    # push body is markdown-stripped, never HTML
+    mock_send_push.assert_called_once_with("hit 150g today", "briefing")
+
+
+def test_html_rejection_falls_back_to_plain_text(bot, mock_send_push):
+    """If Telegram rejects the HTML entity parse, resend markdown-stripped
+    plain text — the message must always land."""
+    from core.scheduled_message import send_and_inject
+
+    bot.send_message.side_effect = [Exception("Bad Request: can't parse entities"), MagicMock()]
+    asyncio.run(send_and_inject(bot, "hit **150g** today"))
+
+    assert bot.send_message.call_count == 2
+    first, second = bot.send_message.call_args_list
+    assert first.kwargs["parse_mode"] == "HTML"
+    assert second.kwargs["text"] == "hit 150g today"
+    assert "parse_mode" not in second.kwargs

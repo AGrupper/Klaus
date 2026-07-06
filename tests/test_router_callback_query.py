@@ -58,7 +58,7 @@ def test_send_and_inject_passes_reply_markup_to_send_message(bot):
     kb = MagicMock(name="InlineKeyboardMarkup")
     result = asyncio.run(send_and_inject(bot, "Pick your RPE", reply_markup=kb))
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Pick your RPE", reply_markup=kb
+        chat_id=123456, text="Pick your RPE", reply_markup=kb, parse_mode="HTML"
     )
 
 
@@ -88,7 +88,7 @@ def test_send_and_inject_no_reply_markup_by_default(bot):
     from core.scheduled_message import send_and_inject
     asyncio.run(send_and_inject(bot, "Hello"))
     bot.send_message.assert_called_once_with(
-        chat_id=123456, text="Hello", reply_markup=None
+        chat_id=123456, text="Hello", reply_markup=None, parse_mode="HTML"
     )
 
 

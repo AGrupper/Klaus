@@ -168,7 +168,11 @@ async def send_and_inject(
     if push and not is_chat_visible():
         try:
             from core.push_sender import send_push_to_all
-            await loop.run_in_executor(None, send_push_to_all, text, message_class)
+            from core.telegram_format import to_plain_text
+            # OS notifications render no markup — strip markdown from the body.
+            await loop.run_in_executor(
+                None, send_push_to_all, to_plain_text(text), message_class
+            )
         except Exception:
             # D-04: push failures are logged and swallowed, never raised — the
             # message is never lost, the Telegram mirror + Firestore
@@ -180,7 +184,25 @@ async def send_and_inject(
         if bot is None:
             bot = _get_bot()
         # D-10: full volume, never disable_notification, while the mirror is on.
-        msg = await bot.send_message(chat_id=user_id, text=text, reply_markup=reply_markup)
+        # The brain writes markdown; Telegram renders it only via parse_mode.
+        # If the HTML entity parse is ever rejected (malformed model output),
+        # fall back to markdown-stripped plain text — the message always lands.
+        from core.telegram_format import to_plain_text, to_telegram_html
+        try:
+            msg = await bot.send_message(
+                chat_id=user_id,
+                text=to_telegram_html(text),
+                reply_markup=reply_markup,
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.warning(
+                "scheduled_message: HTML send rejected — falling back to plain text",
+                exc_info=True,
+            )
+            msg = await bot.send_message(
+                chat_id=user_id, text=to_plain_text(text), reply_markup=reply_markup
+            )
 
     if not inject_into_conversation:
         return msg

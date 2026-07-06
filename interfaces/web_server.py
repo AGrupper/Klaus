@@ -1284,19 +1284,20 @@ _COACH_NOTE_MAX_LEN = 280
 
 
 def _sanitize_coach_note(note: str) -> str:
-    """Strip control/format chars + a leading Markdown header marker and clamp.
+    """Strip control/format chars + inline Markdown markers and clamp.
 
     The coach note is the morning briefing's first line — first-party text, but
-    it can carry a Markdown header (``#``) or stray bidi/format control chars
-    (LRM/RLM) that render oddly. React escapes HTML, so this is hardening, not
-    XSS defense (CR-04).
+    it can carry Markdown (``#`` headers, ``**bold**``) or stray bidi/format
+    control chars (LRM/RLM) that render oddly as a one-line plain-text note.
+    React escapes HTML, so this is hardening, not XSS defense (CR-04).
     """
     import unicodedata
+    from core.telegram_format import to_plain_text
     cleaned = "".join(
         ch for ch in str(note)
         if ch in ("\n", "\t") or not unicodedata.category(ch).startswith("C")
     )
-    return cleaned.lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
+    return to_plain_text(cleaned).lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
 
 
 def _today_coach_note(today_iso: str) -> str | None:

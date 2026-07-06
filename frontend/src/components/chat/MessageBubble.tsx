@@ -1,19 +1,29 @@
 /**
  * MessageBubble.tsx — Single chat message bubble.
  *
- * User messages: right-aligned, accent-tinted background.
- * Klaus messages: left-aligned, secondary surface background.
+ * User messages: right-aligned, accent-tinted background, plain text.
+ * Klaus messages: left-aligned, secondary surface background, rendered as
+ * Markdown (the brain writes **bold**, pipe tables, bullets, code fences —
+ * previously shown as raw asterisks/pipes).
  *
  * User message status icons (CHAT-03):
  *   sending  → animated clock spinner
  *   sent     → green (#22C55E) checkmark
  *   error    → red (#EF4444) "Couldn't send — tap to retry." with retry tap
  *
- * Security note (T-26-08-01): content rendered as text only — never via
- * dangerouslySetInnerHTML. React escapes content by default.
+ * Security note (T-26-08-01): never dangerouslySetInnerHTML. react-markdown
+ * builds React elements from a Markdown AST and ignores embedded raw HTML by
+ * default (no rehype-raw), so model/content HTML stays inert text.
  */
+import type { CSSProperties } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import remarkBreaks from 'remark-breaks'
 import type { ChatMessage } from '../../api/chat'
 import {
+  accent,
+  border,
+  dominant,
   secondary,
   textPrimary,
   textSecondary,
@@ -106,6 +116,136 @@ function StatusIcon({ status }: { status: ChatMessage['status'] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Markdown rendering for Klaus messages
+// ---------------------------------------------------------------------------
+
+const bodyText: CSSProperties = {
+  color: textPrimary,
+  fontSize: typography.body.fontSize,
+  fontWeight: typography.body.fontWeight,
+  lineHeight: typography.body.lineHeight,
+  fontFamily,
+  wordBreak: 'break-word',
+}
+
+const codeFont = 'ui-monospace, SFMono-Regular, Menlo, monospace'
+const cellStyle: CSSProperties = {
+  padding: '4px 8px',
+  border: `1px solid ${border}`,
+  textAlign: 'left',
+  whiteSpace: 'nowrap',
+}
+
+/**
+ * Styled element overrides for react-markdown. Everything inherits the chat
+ * body type scale; tables scroll horizontally inside the bubble instead of
+ * blowing past its 75% max-width.
+ */
+const markdownComponents = {
+  p: (props: React.ComponentProps<'p'>) => (
+    <p {...props} style={{ ...bodyText, margin: '0 0 8px' }} />
+  ),
+  strong: (props: React.ComponentProps<'strong'>) => (
+    <strong {...props} style={{ fontWeight: 600, color: textPrimary }} />
+  ),
+  a: (props: React.ComponentProps<'a'>) => (
+    <a
+      {...props}
+      target="_blank"
+      rel="noopener noreferrer"
+      style={{ color: accent, textDecoration: 'underline' }}
+    />
+  ),
+  ul: (props: React.ComponentProps<'ul'>) => (
+    <ul {...props} style={{ ...bodyText, margin: '0 0 8px', paddingLeft: '20px' }} />
+  ),
+  ol: (props: React.ComponentProps<'ol'>) => (
+    <ol {...props} style={{ ...bodyText, margin: '0 0 8px', paddingLeft: '20px' }} />
+  ),
+  li: (props: React.ComponentProps<'li'>) => (
+    <li {...props} style={{ marginBottom: '2px' }} />
+  ),
+  h1: (props: React.ComponentProps<'h1'>) => (
+    <p {...props} style={{ ...bodyText, fontWeight: 600, margin: '0 0 8px' }} />
+  ),
+  h2: (props: React.ComponentProps<'h2'>) => (
+    <p {...props} style={{ ...bodyText, fontWeight: 600, margin: '0 0 8px' }} />
+  ),
+  h3: (props: React.ComponentProps<'h3'>) => (
+    <p {...props} style={{ ...bodyText, fontWeight: 600, margin: '0 0 8px' }} />
+  ),
+  code: (props: React.ComponentProps<'code'>) => (
+    <code
+      {...props}
+      style={{
+        fontFamily: codeFont,
+        fontSize: '0.9em',
+        backgroundColor: dominant,
+        borderRadius: '4px',
+        padding: '1px 4px',
+      }}
+    />
+  ),
+  pre: (props: React.ComponentProps<'pre'>) => (
+    <pre
+      {...props}
+      style={{
+        fontFamily: codeFont,
+        fontSize: '0.85em',
+        backgroundColor: dominant,
+        border: `1px solid ${border}`,
+        borderRadius: '8px',
+        padding: '8px 10px',
+        overflowX: 'auto',
+        margin: '0 0 8px',
+        color: textPrimary,
+      }}
+    />
+  ),
+  table: (props: React.ComponentProps<'table'>) => (
+    <div style={{ overflowX: 'auto', margin: '0 0 8px' }}>
+      <table
+        {...props}
+        style={{
+          ...bodyText,
+          fontSize: '0.9em',
+          borderCollapse: 'collapse',
+        }}
+      />
+    </div>
+  ),
+  th: (props: React.ComponentProps<'th'>) => (
+    <th {...props} style={{ ...cellStyle, fontWeight: 600, backgroundColor: dominant }} />
+  ),
+  td: (props: React.ComponentProps<'td'>) => <td {...props} style={cellStyle} />,
+  blockquote: (props: React.ComponentProps<'blockquote'>) => (
+    <blockquote
+      {...props}
+      style={{
+        ...bodyText,
+        margin: '0 0 8px',
+        paddingLeft: '10px',
+        borderLeft: `2px solid ${border}`,
+        color: textSecondary,
+      }}
+    />
+  ),
+  hr: () => <hr style={{ border: 'none', borderTop: `1px solid ${border}`, margin: '8px 0' }} />,
+}
+
+function KlausMarkdown({ content }: { content: string }) {
+  return (
+    // Negative margin swallows the last block's 8px bottom margin so the
+    // bubble's own padding stays visually even.
+    <div style={{ marginBottom: '-8px' }}>
+      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
+        {content}
+      </Markdown>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -133,21 +273,27 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
           position: 'relative',
         }}
       >
-        {/* Message text — never dangerouslySetInnerHTML (T-26-08-01) */}
-        <p
-          style={{
-            margin: 0,
-            color: textPrimary,
-            fontSize: typography.body.fontSize,
-            fontWeight: typography.body.fontWeight,
-            lineHeight: typography.body.lineHeight,
-            fontFamily,
-            wordBreak: 'break-word',
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {message.content}
-        </p>
+        {/* Message text — never dangerouslySetInnerHTML (T-26-08-01).
+            Klaus messages render as Markdown (React elements from an AST);
+            user messages stay literal plain text. */}
+        {isUser ? (
+          <p
+            style={{
+              margin: 0,
+              color: textPrimary,
+              fontSize: typography.body.fontSize,
+              fontWeight: typography.body.fontWeight,
+              lineHeight: typography.body.lineHeight,
+              fontFamily,
+              wordBreak: 'break-word',
+              whiteSpace: 'pre-wrap',
+            }}
+          >
+            {message.content}
+          </p>
+        ) : (
+          <KlausMarkdown content={message.content} />
+        )}
 
         {/* Status row for user messages */}
         {isUser && (
