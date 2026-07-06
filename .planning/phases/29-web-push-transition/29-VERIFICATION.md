@@ -1,7 +1,7 @@
 ---
 phase: 29-web-push-transition
 verified: 2026-07-05T00:00:00Z
-status: human_needed
+status: passed
 score: 37/38 must-haves verified (code); 2 items require physical-device / mirror-week human verification (not gaps)
 overrides_applied: 0
 requirements_coverage:

@@ -54,10 +54,10 @@ Requirements for milestone v5.0. Each maps to roadmap phases.
 
 ### Web Push & Transition (PUSH)
 
-- [ ] **PUSH-01**: Amit can enable push notifications from a button (user gesture) in the installed PWA; subscriptions are stored in `PushSubscriptionStore` and re-validated on hub open
-- [ ] **PUSH-02**: Klaus's replies and proactive messages arrive as push notifications when the app is closed (`event.waitUntil` wrapped, verified on a physical iPhone)
-- [ ] **PUSH-03**: Proactive messages mirror to Telegram behind a flag; the mirror runs at least one week before being disabled (Telegram retirement)
-- [ ] **PUSH-04**: The installed app icon shows an unread-count badge via the Badging API
+- [x] **PUSH-01**: Amit can enable push notifications from a button (user gesture) in the installed PWA; subscriptions are stored in `PushSubscriptionStore` and re-validated on hub open
+- [x] **PUSH-02**: Klaus's replies and proactive messages arrive as push notifications when the app is closed (`event.waitUntil` wrapped, verified on a physical iPhone)
+- [x] **PUSH-03**: Proactive messages mirror to Telegram behind a flag; the mirror runs at least one week before being disabled (Telegram retirement)
+- [x] **PUSH-04**: The installed app icon shows an unread-count badge via the Badging API
 
 ### Health Pages (HLTH)
 
@@ -126,10 +126,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HABIT-04 | Phase 28 | Complete |
 | HABIT-05 | Phase 28 | Complete |
 | TIME-06 | Phase 28 | Complete |
-| PUSH-01 | Phase 29 | Pending |
-| PUSH-02 | Phase 29 | Pending |
-| PUSH-03 | Phase 29 | Pending |
-| PUSH-04 | Phase 29 | Pending |
+| PUSH-01 | Phase 29 | Complete |
+| PUSH-02 | Phase 29 | Complete |
+| PUSH-03 | Phase 29 | Complete |
+| PUSH-04 | Phase 29 | Complete |
 | HLTH-01 | Phase 30 | Pending |
 | HLTH-02 | Phase 30 | Pending |
 | HLTH-03 | Phase 30 | Pending |

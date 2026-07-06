@@ -23,16 +23,20 @@ prove the pipeline; the mirror week catches stragglers.
 | # | Check | Status | Notes |
 |---|-------|--------|-------|
 | 1 | [x] **Enable-push flow** — from the Settings page or the Today banner, tap enable; iOS permission prompt appears (user gesture); permission granted; a subscription is stored (confirm via `get_push_health` or Firestore `push_subscriptions`) | passed | 2026-07-05: subscription stored (web.push.apple.com endpoint, doc efd08270…) |
-| 2 | [ ] **Chat-reply push, app closed** — fully close the installed app (swipe away), send Klaus a message from Telegram or wait for a hub-originated turn to complete, and witness the reply arrive as a push notification on the lock screen | retest | 2026-07-05: FAILED — no push, Telegram only. Root cause GAP-1 (VAPID PEM format, `failure_count: 2` on the subscription). Fixed a32c8ca; a manual send after the fix returned sent:1. Re-witness after deploy. |
-| 3 | [ ] **Proactive push, app closed** — with the app fully closed, witness one REAL proactive push arrive: an autonomous tick outreach OR a manually-triggered cron (e.g., morning briefing / nightly review trigger) | retest | 2026-07-05: FAILED — same root cause as check 2 (GAP-1). Re-witness after deploy. |
-| 4 | [ ] **Icon unread badge** — after a closed-app push, the installed home-screen icon shows an unread-count badge; opening the app and viewing the chat clears both the in-app counter and the icon badge | retest | 2026-07-05: FAILED — consequence of GAP-1 (no push delivered → SW badge handler never ran). Re-witness after deploy. |
+| 2 | [x] **Chat-reply push, app closed** — fully close the installed app (swipe away), send Klaus a message from Telegram or wait for a hub-originated turn to complete, and witness the reply arrive as a push notification on the lock screen | passed | 2026-07-05 round 1: FAILED (GAP-1, VAPID PEM format). Fixed a32c8ca. 2026-07-06 round 2 (rev 00143): user verified. |
+| 3 | [x] **Proactive push, app closed** — with the app fully closed, witness one REAL proactive push arrive: an autonomous tick outreach OR a manually-triggered cron (e.g., morning briefing / nightly review trigger) | passed | 2026-07-05 round 1: FAILED (GAP-1). 2026-07-06 round 2: user verified. |
+| 4 | [x] **Icon unread badge** — after a closed-app push, the installed home-screen icon shows an unread-count badge; opening the app and viewing the chat clears both the in-app counter and the icon badge | passed | 2026-07-05 round 1: FAILED (GAP-1 consequence). 2026-07-06 round 2: user verified. |
 
 ### Phase-close summary
 
 total: 4
-passed: 1
-pending: 3 (retest after GAP-1 deploy)
+passed: 4
+pending: 0
 blocked: 0
+
+D-20 COMPLETE — verified on the physical iPhone 2026-07-06 against rev klaus-agent-00143-scv.
+GAP-2 (open-at-latest) and GAP-3 (history windowing) also user-verified in round 2.
+Section 2 (D-21 mirror week) continues as post-phase tracking per the frontmatter note.
 
 ## Section 2: D-21 Post-Phase Mirror-Week Tracking
 
