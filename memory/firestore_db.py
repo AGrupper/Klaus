@@ -2402,6 +2402,39 @@ class BenchmarkStore:
             )
             return []
 
+    def get_range(self, start_date: str, end_date: str) -> list[dict]:
+        """Return benchmarks across ALL 5 facets with date in [start_date, end_date].
+
+        Sorted newest-first (client-side, matching this class's existing
+        get_facet_history/get_block_benchmarks style — FieldFilter + Python sort,
+        NOT the module-level `_where` helper used by RunDetailStore/StrengthSessionStore).
+
+        Args:
+            start_date: ISO YYYY-MM-DD, inclusive lower bound.
+            end_date:   ISO YYYY-MM-DD, inclusive upper bound.
+
+        Returns:
+            List of benchmark dicts (via _jsonsafe_doc), sorted date desc.
+            Empty list on any error — never raises.
+        """
+        try:
+            from google.cloud.firestore_v1.base_query import FieldFilter
+            snaps = list(
+                self._col
+                .where(filter=FieldFilter("date", ">=", start_date))
+                .where(filter=FieldFilter("date", "<=", end_date))
+                .stream()
+            )
+            results = [_jsonsafe_doc(snap.to_dict() or {}) for snap in snaps]
+            results.sort(key=lambda d: d.get("date", ""), reverse=True)
+            return results
+        except Exception:
+            logger.warning(
+                "BenchmarkStore.get_range(%r, %r) failed",
+                start_date, end_date, exc_info=True,
+            )
+            return []
+
 
 # ---------------------------------------------------------------------------
 # Recurrence engine (Phase 27 — TASK-02 / D-05 / D-06)
