@@ -316,3 +316,69 @@ def test_log_benchmark_rejects_bad_date_format():
             unit="kg",
             block_id=_BLOCK_ID,
         )
+
+
+# ------------------------------------------------------------------ #
+# get_range (Phase 30 — HLTH-01/03)                                   #
+# ------------------------------------------------------------------ #
+
+def _chained_query_mock(col_mock: MagicMock) -> MagicMock:
+    """Return the terminal query mock at the end of a two-.where() chain."""
+    return col_mock.where.return_value.where.return_value
+
+
+def test_benchmark_get_range_in_range_newest_first():
+    """get_range returns in-range docs sorted newest-first."""
+    s = _store()
+    snaps = [
+        _make_benchmark_snap("2026-06-10", "bench_press_1rm", 90.0),
+        _make_benchmark_snap("2026-06-20", "squat_1rm", 118.0),
+    ]
+    _chained_query_mock(s._col).stream.return_value = snaps
+
+    result = s.get_range("2026-06-01", "2026-06-30")
+
+    assert len(result) == 2
+    assert result[0]["date"] == "2026-06-20"
+    assert result[1]["date"] == "2026-06-10"
+
+
+def test_benchmark_get_range_excludes_out_of_range():
+    """get_range only returns docs that Firestore's FieldFilter chain yields —
+    out-of-range docs are simulated as simply absent from the mocked stream."""
+    s = _store()
+    snaps = [_make_benchmark_snap("2026-06-15", "pull_ups", 22.0)]
+    _chained_query_mock(s._col).stream.return_value = snaps
+
+    result = s.get_range("2026-06-01", "2026-06-30")
+
+    assert len(result) == 1
+    assert result[0]["date"] == "2026-06-15"
+
+
+def test_benchmark_get_range_interleaves_all_facets():
+    """get_range returns benchmarks across all 5 facets in one call, not one facet."""
+    s = _store()
+    snaps = [
+        _make_benchmark_snap("2026-06-01", "bench_press_1rm", 90.0),
+        _make_benchmark_snap("2026-06-02", "squat_1rm", 118.0),
+        _make_benchmark_snap("2026-06-03", "push_ups", 40.0),
+        _make_benchmark_snap("2026-06-04", "pull_ups", 20.0),
+        _make_benchmark_snap("2026-06-05", "threshold_pace", 4.2),
+    ]
+    _chained_query_mock(s._col).stream.return_value = snaps
+
+    result = s.get_range("2026-06-01", "2026-06-30")
+
+    facets_seen = {r["facet"] for r in result}
+    assert facets_seen == set(_VALID_FACETS)
+
+
+def test_benchmark_get_range_never_raises():
+    """get_range returns [] on a mocked Firestore exception — never raises."""
+    s = _store()
+    s._col.where.side_effect = RuntimeError("firestore down")
+
+    result = s.get_range("2026-06-01", "2026-06-30")
+
+    assert result == []
