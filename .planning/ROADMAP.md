@@ -124,9 +124,9 @@ visualizing training, nutrition, and sleep data from existing stores.
   2. A nutrition detail page shows macro trends and fueling-slot adherence over time from `MealStore` — distinguishes calories/protein/carbs/fat/fiber with a slot-view
   3. A sleep & recovery page shows HRV trend, sleep score, and body battery readings from Garmin data with visible patterns over days and weeks
 **Plans**: 8 plans (5 waves)
-- [ ] 30-01-PLAN.md — Backend data layer: BenchmarkStore.get_range + core/health_reads.py::fetch_biometric_range (HLTH-01, HLTH-03)
+- [x] 30-01-PLAN.md — Backend data layer: BenchmarkStore.get_range + core/health_reads.py::fetch_biometric_range (HLTH-01, HLTH-03)
 - [ ] 30-02-PLAN.md — 3 /api/health/* routes (training/nutrition/sleep) behind require_hub_session + Wave 0 API tests (HLTH-01/02/03)
-- [ ] 30-03-PLAN.md — Hand-rolled SVG chart toolkit: LineChart/BarChart/ChartTooltip/ChartCard/ChartEmptyState + D-08 gap tests (HLTH-01/02/03)
+- [x] 30-03-PLAN.md — Hand-rolled SVG chart toolkit: LineChart/BarChart/ChartTooltip/ChartCard/ChartEmptyState + D-08 gap tests (HLTH-01/02/03)
 - [ ] 30-04-PLAN.md — Frontend data layer: api/health.ts + useHealth hooks + SubTabs (persisted) + RangeToggle (HLTH-01/02/03)
 - [ ] 30-05-PLAN.md — Training History page: mixed color-coded log + block dividers + trend charts + drill-down sheets (HLTH-01)
 - [ ] 30-06-PLAN.md — Nutrition Detail page: macro chip/trend + slot-adherence grid + day drilldown (slot-label invariant) (HLTH-02)
@@ -144,7 +144,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
 | 29. Web Push & Transition | 10/10 | Complete    | 2026-07-06 |
-| 30. Health Pages | 0/8 | Planned     | - |
+| 30. Health Pages | 2/8 | In Progress|  |
 
 ---
 
