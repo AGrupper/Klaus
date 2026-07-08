@@ -1510,6 +1510,244 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
 
 
 # --------------------------------------------------------------------------- #
+# /api/health/* — read-only Health pages aggregators (Phase 30, HLTH-01..03). #
+# Behind require_hub_session (HUB-01). All sync tool calls run via            #
+# run_in_executor + asyncio.gather (Pitfall 2/3). Every Firestore/Postgres    #
+# value passes through _jsonsafe_doc before JSONResponse (Pitfall 4).         #
+#                                                                              #
+# Range param is an ALLOWLIST, never int()-parsed from client input (Security #
+# Domain V5 / T-30-02-01) — {7d,30d,90d,1y} maps to a fixed day count.        #
+#                                                                              #
+# MUST be registered BEFORE the SPA mount (Pitfall 1).                        #
+# --------------------------------------------------------------------------- #
+
+_VALID_RANGES: dict[str, int] = {"7d": 7, "30d": 30, "90d": 90, "1y": 365}
+_WEEKLY_BUCKET_THRESHOLD_DAYS = 90  # D-07: >90d ranges bucket to weekly points
+
+
+def _resolve_range(range_param: str) -> int:
+    """Map a client range string to a day count. Defaults to 30 on any invalid input.
+
+    Allowlist `.get()` only — never `int()`-parse an arbitrary client-supplied
+    value into date arithmetic (T-30-02-01).
+    """
+    return _VALID_RANGES.get(range_param, 30)
+
+
+def _range_bounds(range_param: str) -> tuple[str, str]:
+    """Resolve a range param to inclusive (start_iso, end_iso), Asia/Jerusalem 'today'."""
+    days = _resolve_range(range_param)
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+    start = today - timedelta(days=days - 1)
+    return start.isoformat(), today.isoformat()
+
+
+def _weekly_bucket_points(points: list[dict], agg: str = "avg") -> list[dict]:
+    """Bucket ``{"x": date_iso, "y": number|None}`` points into weekly points.
+
+    Keyed on ``date.fromisoformat(x).isocalendar()`` (year, week) per D-07 — call
+    only when the resolved day count exceeds _WEEKLY_BUCKET_THRESHOLD_DAYS. Points
+    with ``y=None`` never contribute to a bucket's aggregate (D-08 — a gap must
+    never masquerade as a zero); a week with zero non-null contributions is
+    omitted entirely (stays a gap, not a zero). agg="sum" sums the week's values
+    instead of averaging (used for strength weekly volume).
+    """
+    from datetime import date as _date
+
+    buckets: dict[tuple[int, int], list[float]] = {}
+    week_label: dict[tuple[int, int], str] = {}
+    for p in points:
+        y = p.get("y")
+        if y is None:
+            continue
+        try:
+            d = _date.fromisoformat(p["x"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        key = d.isocalendar()[:2]
+        buckets.setdefault(key, []).append(float(y))
+        if key not in week_label or p["x"] < week_label[key]:
+            week_label[key] = p["x"]
+
+    out = []
+    for key in sorted(buckets.keys()):
+        vals = buckets[key]
+        y_val = sum(vals) if agg == "sum" else sum(vals) / len(vals)
+        out.append({"x": week_label[key], "y": round(y_val, 1)})
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# GET /api/health/training (HLTH-01) — mixed strength+run+benchmark log,      #
+# block dividers, two trend series.                                          #
+# --------------------------------------------------------------------------- #
+
+
+def _health_training_strength(start: str, end: str) -> list[dict]:
+    """Strength sessions in [start, end], newest-first. Never raises — [] on error."""
+    try:
+        from memory.firestore_db import StrengthSessionStore  # lazy import
+        store = StrengthSessionStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        return store.get_range(start, end)
+    except Exception:
+        logger.warning("_health_training_strength(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_training_runs(start: str, end: str) -> list[dict]:
+    """Runs in [start, end], newest-first. Never raises — [] on error."""
+    try:
+        from memory.firestore_db import RunDetailStore  # lazy import
+        store = RunDetailStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        return store.get_range(start, end)
+    except Exception:
+        logger.warning("_health_training_runs(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_training_benchmarks(start: str, end: str) -> list[dict]:
+    """Benchmarks in [start, end], each augmented with `previous_value`.
+
+    previous_value is the prior same-facet result (via get_facet_history), i.e.
+    the newest entry strictly older than this one's date — None when no prior
+    exists. Never raises — [] on error.
+    """
+    try:
+        from memory.firestore_db import BenchmarkStore  # lazy import
+        store = BenchmarkStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        benchmarks = store.get_range(start, end)
+        result = []
+        for b in benchmarks:
+            facet = b.get("facet")
+            prev_value = None
+            if facet:
+                # get_facet_history is newest-first; the first entry strictly
+                # older than this benchmark's date is the "previous" result.
+                history = store.get_facet_history(facet, n=1000)
+                this_date = b.get("date", "")
+                for h in history:
+                    if h.get("date", "") < this_date:
+                        prev_value = h.get("value")
+                        break
+            result.append({**b, "previous_value": prev_value})
+        return result
+    except Exception:
+        logger.warning(
+            "_health_training_benchmarks(%r, %r) failed", start, end, exc_info=True
+        )
+        return []
+
+
+def _health_training_blocks() -> list[dict]:
+    """All training blocks, sorted start_date ascending, each carrying a
+    sequential 1-based block_number (BlockStore stores no number field) and its
+    `label` (NOT `block_name`, which does not exist). Never raises — [] on error.
+    """
+    try:
+        from memory.firestore_db import BlockStore  # lazy import
+        store = BlockStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        blocks = store.get_all()
+        blocks_sorted = sorted(blocks, key=lambda b: b.get("start_date", ""))
+        return [
+            {**b, "block_number": i + 1, "label": b.get("label")}
+            for i, b in enumerate(blocks_sorted)
+        ]
+    except Exception:
+        logger.warning("_health_training_blocks() failed", exc_info=True)
+        return []
+
+
+@app.get("/api/health/training")
+async def api_health_training(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Mixed strength+run+benchmark training log + block dividers + trends.
+
+    HLTH-01: one endpoint composing StrengthSessionStore/RunDetailStore/
+    BenchmarkStore/BlockStore into a reverse-chronological interleaved log
+    tagged by `modality`, plus two {x,y} trend series (strength_volume,
+    run_trend) — daily for range<=90d, weekly-bucketed for >90d (D-07).
+
+    Returns:
+        JSONResponse: {"range", "entries", "blocks", "strength_volume", "run_trend"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    strength, runs, benchmarks, blocks = await asyncio.gather(
+        loop.run_in_executor(None, _health_training_strength, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_runs, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_benchmarks, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_blocks),
+    )
+
+    entries = (
+        [{**s, "modality": "strength"} for s in strength]
+        + [{**r, "modality": "run"} for r in runs]
+        + [{**b, "modality": "benchmark"} for b in benchmarks]
+    )
+    entries.sort(key=lambda e: e.get("date", ""), reverse=True)
+
+    # Trend 1: strength volume — total_volume_kg summed per date.
+    strength_daily: dict[str, float] = {}
+    for s in strength:
+        d = s.get("date")
+        if not d:
+            continue
+        strength_daily[d] = strength_daily.get(d, 0.0) + (s.get("total_volume_kg") or 0.0)
+    strength_points = [
+        {"x": d, "y": round(v, 1)} for d, v in sorted(strength_daily.items())
+    ]
+
+    # Trend 2: run pace — avg_pace_sec_per_km averaged per date (lower = faster).
+    run_daily: dict[str, list[float]] = {}
+    for r in runs:
+        d = r.get("date")
+        pace = r.get("avg_pace_sec_per_km")
+        if not d or pace is None:
+            continue
+        run_daily.setdefault(d, []).append(pace)
+    run_points = [
+        {"x": d, "y": round(sum(vals) / len(vals), 1)}
+        for d, vals in sorted(run_daily.items())
+    ]
+
+    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+        strength_volume = _weekly_bucket_points(strength_points, agg="sum")
+        run_trend = _weekly_bucket_points(run_points, agg="avg")
+    else:
+        strength_volume = strength_points
+        run_trend = run_points
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "entries": entries,
+        "blocks": blocks,
+        "strength_volume": strength_volume,
+        "run_trend": run_trend,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
 # Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
 #                                                                             #
 # POST /api/chat — append user message to shared Firestore conversation and   #
