@@ -37,8 +37,6 @@ function setSleepRecovery(partial: Partial<ReturnType<typeof useSleepRecovery>>)
   } as unknown as ReturnType<typeof useSleepRecovery>)
 }
 
-const emptySeries = { x: 'unused', y: null } // placeholder shape reference only
-
 function emptyRangeData(pipelineActive: boolean): SleepRecoveryData {
   return {
     range: '30d',
@@ -57,13 +55,13 @@ function emptyRangeData(pipelineActive: boolean): SleepRecoveryData {
 describe('SleepRecoveryPage — pipeline-not-live guard (D-06-style, D-19)', () => {
   beforeEach(() => {
     mockUseSleepRecovery.mockReset()
-    void emptySeries
   })
 
   it('renders a loading state while the initial fetch is in-flight', () => {
     setSleepRecovery({ isLoading: true })
     render(<SleepRecoveryPage />)
-    expect(screen.getByRole('status')).toBeInTheDocument()
+    // One shimmer skeleton per stat row/chart card — at least one present.
+    expect(screen.getAllByRole('status').length).toBeGreaterThan(0)
   })
 
   it('renders the error copy on fetch failure', () => {
@@ -88,8 +86,9 @@ describe('SleepRecoveryPage — pipeline-not-live guard (D-06-style, D-19)', () 
       screen.queryByText('No body battery data for this range.'),
     ).not.toBeInTheDocument()
     // Chart headings themselves must not render either — no empty-axes charts.
-    expect(screen.queryByText('HRV')).not.toBeInTheDocument()
-    expect(screen.queryByText('Body Battery')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'HRV' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Sleep' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Body Battery' })).not.toBeInTheDocument()
   })
 
   it('pipeline_active=true with an empty range: renders the charts with their per-chart empty states (distinct from the pipeline-not-live placeholder)', () => {
@@ -102,9 +101,9 @@ describe('SleepRecoveryPage — pipeline-not-live guard (D-06-style, D-19)', () 
     expect(screen.getByText('No sleep data for this range.')).toBeInTheDocument()
     expect(screen.getByText('No body battery data for this range.')).toBeInTheDocument()
     // Chart card headings render (the charts exist, just empty)
-    expect(screen.getByText('HRV')).toBeInTheDocument()
-    expect(screen.getByText('Sleep')).toBeInTheDocument()
-    expect(screen.getByText('Body Battery')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'HRV' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sleep' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Body Battery' })).toBeInTheDocument()
   })
 
   it('renders header stats + all three charts wired when pipeline_active=true with real data', () => {
@@ -129,9 +128,13 @@ describe('SleepRecoveryPage — pipeline-not-live guard (D-06-style, D-19)', () 
     }
     setSleepRecovery({ data: fullData })
     render(<SleepRecoveryPage />)
+    // HeaderStatRow HRV value — phone + desktop strips both exist in the DOM
+    // (visibility is class-driven), so getAllByText.
     expect(screen.getAllByText('65 ms').length).toBeGreaterThan(0)
-    expect(screen.getByText('HRV')).toBeInTheDocument()
-    expect(screen.getByText('Sleep')).toBeInTheDocument()
-    expect(screen.getByText('Body Battery')).toBeInTheDocument()
+    // Role-based heading queries so the HeaderStatRow's "HRV" stat LABEL
+    // never collides with the chart card's h3 heading.
+    expect(screen.getByRole('heading', { name: 'HRV' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Sleep' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Body Battery' })).toBeInTheDocument()
   })
 })
