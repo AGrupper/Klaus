@@ -123,3 +123,8 @@ None — no external service configuration required.
 ---
 *Phase: 30-health-pages*
 *Completed: 2026-07-08*
+
+## Self-Check: PASSED
+
+All 7 created files verified present on disk (5 components + 2 test files) plus this SUMMARY.md.
+All 4 referenced commit hashes (`e46e4be`, `6519d8b`, `c82dd32`, `277b87f`) verified present in `git log --oneline --all`.
