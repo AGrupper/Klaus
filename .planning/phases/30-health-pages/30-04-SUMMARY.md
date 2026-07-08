@@ -107,3 +107,12 @@ None.
 ---
 *Phase: 30-health-pages*
 *Completed: 2026-07-08*
+
+## Self-Check: PASSED
+
+All 5 created files verified present on disk (`frontend/src/api/health.ts`,
+`frontend/src/hooks/useHealth.ts`, `frontend/src/components/health/SubTabs.tsx`,
+`frontend/src/components/health/RangeToggle.tsx`,
+`frontend/src/components/health/SubTabs.test.tsx`); all 4 commit hashes
+(`b1efd23`, `46498b0`, `77bd529`, `1969cd3`) verified present in
+`git log --oneline --all`.
