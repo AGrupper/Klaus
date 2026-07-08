@@ -1748,6 +1748,232 @@ async def api_health_training(
 
 
 # --------------------------------------------------------------------------- #
+# GET /api/health/nutrition (HLTH-02) — macro trend series, slot-adherence    #
+# grid, targets. The day-series math is EXTRACTED from                       #
+# core.tools._handle_fetch_nutrition_trend (_compute_nutrition_averages /     #
+# _nutrition_targets_and_protein_ratio) — shared, not reimplemented, so the   #
+# chat tool and this route can never drift (RESEARCH.md Anti-Patterns).      #
+# --------------------------------------------------------------------------- #
+
+_NUTRITION_MACRO_KEYS = ("calories", "protein_g", "carbs_g", "fat_g", "fiber_g")
+
+_SLOT_LABELS_HEALTH: dict[str, str] = _SLOT_LABELS  # alias — same canonical mapping as _today_meals
+
+# Single per-day read pass cache (Pitfall 1 — MealStore has no range-read method;
+# a 1y nutrition request would otherwise be ~365 sequential Firestore reads on
+# every request). Reuses the exact TTL-dict shape as _routes_cache (T-30-02-03).
+_nutrition_daily_cache: dict = {}
+
+
+def _slot_label_for_meal(meal: dict) -> str:
+    """Derive the canonical fueling-slot LABEL from a meal's timestamp.
+
+    Mirrors _today_meals' inline slot-label derivation. Per CLAUDE.md §6: the
+    HH:MM portion is a canonical slot identifier, NOT an eating time — only the
+    LABEL (e.g. "Breakfast") may ever appear on the wire, never the HH:MM itself.
+    """
+    ts = meal.get("timestamp", "")
+    try:
+        time_part = ts[11:16] if len(ts) >= 16 else ts[:5]
+    except (IndexError, TypeError):
+        time_part = ""
+    return _SLOT_LABELS_HEALTH.get(time_part, "Meal")
+
+
+def _health_nutrition_daily(start: str, end: str) -> dict:
+    """Single per-day Firestore pass feeding BOTH the macro series and the
+    slot-adherence matrix (RESEARCH.md Pitfall 1 — never two independent
+    ~365-read loops over the same range). TTL-cached per (start, end) so a
+    repeated 1y request is served from cache (T-30-02-03 / mandatory for >90d).
+
+    Returns {"day_records": [...], "missing_dates": [...], "slot_records": [...]}.
+    day_records only contains dates WITH logged meals (D-08 — an unlogged day is
+    a gap, never a zero-fill). Never raises — degrades to all-empty on error.
+    """
+    import time as _time
+    from datetime import date as _date, timedelta as _td
+
+    cache_key = (start, end)
+    now_epoch = _time.time()
+    cached = _nutrition_daily_cache.get(cache_key)
+    if cached is not None:
+        cache_ts, cached_result = cached
+        if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
+            return cached_result
+
+    try:
+        from memory.firestore_db import MealStore  # lazy import
+        store = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        start_d = _date.fromisoformat(start)
+        end_d = _date.fromisoformat(end)
+        dates = []
+        d = start_d
+        while d <= end_d:
+            dates.append(d.isoformat())
+            d += _td(days=1)
+
+        day_records: list[dict] = []
+        missing_dates: list[str] = []
+        slot_records: list[dict] = []
+        for d_iso in dates:
+            meals = store.get_day(d_iso)
+            if not meals:
+                missing_dates.append(d_iso)  # D-08 — a gap, never a zero-fill
+                continue
+            totals = {
+                k: sum(m.get(k) or 0 for m in meals) for k in _NUTRITION_MACRO_KEYS
+            }
+            day_records.append({"date": d_iso, "meal_count": len(meals), **totals})
+            seen_slots: set[str] = set()
+            for m in meals:
+                label = _slot_label_for_meal(m)
+                if label and label not in seen_slots:
+                    seen_slots.add(label)
+                    slot_records.append({"date": d_iso, "slot_label": label})
+
+        result = {
+            "day_records": day_records,
+            "missing_dates": missing_dates,
+            "slot_records": slot_records,
+        }
+    except Exception:
+        logger.warning("_health_nutrition_daily(%r, %r) failed", start, end, exc_info=True)
+        result = {"day_records": [], "missing_dates": [], "slot_records": []}
+
+    _nutrition_daily_cache[cache_key] = (now_epoch, result)
+    return result
+
+
+def _health_nutrition_profile() -> dict:
+    """UserProfileStore.load() — nutrition_targets + bodyweight_kg. {} on error."""
+    try:
+        from memory.firestore_db import UserProfileStore  # lazy import
+        return UserProfileStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).load()
+    except Exception:
+        logger.warning("_health_nutrition_profile() failed", exc_info=True)
+        return {}
+
+
+def _resolve_calories_target(targets: dict) -> tuple[float | None, bool]:
+    """Return (calories_target, derived_bool).
+
+    Reads a stored `calories` key if present; else derives
+    protein_g*4 + carbs_g*4 + fat_g*9 from whatever macro-gram target keys exist
+    and tags the result as derived (RESEARCH.md Open Question A4 — the live
+    `nutrition_targets` profile has NO literal `calories` key). Returns
+    (None, False) when neither a stored key nor any macro-gram key exists —
+    never silently omits the target line when derivation is possible.
+    """
+    if not targets:
+        return None, False
+    if targets.get("calories") is not None:
+        return targets["calories"], False
+    protein_g = targets.get("protein_g")
+    carbs_g = targets.get("carbs_g")
+    fat_g = targets.get("fat_g")
+    if protein_g is None and carbs_g is None and fat_g is None:
+        return None, False
+    calories = (protein_g or 0) * 4 + (carbs_g or 0) * 4 + (fat_g or 0) * 9
+    return round(calories, 0), True
+
+
+def _health_nutrition_slots(daily: dict) -> dict:
+    """Shape slot_records (from _health_nutrition_daily's single pass) into the
+    D-13 per-slot-per-day hit matrix. Issues NO additional Firestore reads.
+
+    Cells are keyed on slot LABEL only — never a derived clock time (CLAUDE.md §6).
+    """
+    slot_records = daily["slot_records"]
+    labels = sorted({r["slot_label"] for r in slot_records})
+    dates = sorted({r["date"] for r in slot_records})
+    hit_set = {(r["date"], r["slot_label"]) for r in slot_records}
+    grid = [
+        {
+            "slot_label": label,
+            "cells": [{"date": d, "hit": (d, label) in hit_set} for d in dates],
+        }
+        for label in labels
+    ]
+    return {"slot_labels": labels, "dates": dates, "grid": grid}
+
+
+@app.get("/api/health/nutrition")
+async def api_health_nutrition(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Per-day (or weekly >90d) macro series + slot-adherence grid + targets.
+
+    HLTH-02: macro series/averages/targets/protein-g-per-kg math is shared with
+    core.tools._handle_fetch_nutrition_trend (never reimplemented — RESEARCH.md
+    Anti-Patterns). Unlogged days are gaps in `missing_dates`, never zero-filled
+    (D-08). Slot adherence is keyed on slot LABEL only — no clock time on the
+    wire (CLAUDE.md §6). The per-day Firestore pass is shared between the macro
+    series and the slot grid and TTL-cached for >90d ranges (Pitfall 1).
+
+    Returns:
+        JSONResponse: {"range", "series", "missing_dates", "averages", "targets",
+                       "avg_protein_g_per_kg", "slot_adherence"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+    from core.tools import (  # lazy import — Shared Pattern 5
+        _compute_nutrition_averages,
+        _nutrition_targets_and_protein_ratio,
+    )
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    daily, profile = await asyncio.gather(
+        loop.run_in_executor(None, _health_nutrition_daily, start_iso, end_iso),
+        loop.run_in_executor(None, _health_nutrition_profile),
+    )
+
+    day_records = daily["day_records"]
+    points_by_key: dict[str, list[dict]] = {}
+    for key in _NUTRITION_MACRO_KEYS:
+        pts = [
+            {"x": r["date"], "y": r.get(key)}
+            for r in sorted(day_records, key=lambda r: r["date"])
+        ]
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+            pts = _weekly_bucket_points(pts, agg="avg")
+        points_by_key[key] = pts
+
+    averages = _compute_nutrition_averages(day_records, _NUTRITION_MACRO_KEYS)
+    extra = _nutrition_targets_and_protein_ratio(profile, averages)
+    targets = dict(extra.get("targets") or {})
+
+    calories_target, derived = _resolve_calories_target(targets)
+    if calories_target is not None:
+        targets["calories"] = calories_target
+        if derived:
+            targets["calories_target_derived"] = True
+
+    slot_adherence = _health_nutrition_slots(daily)
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "series": points_by_key,
+        "missing_dates": daily["missing_dates"],
+        "averages": averages,
+        "targets": targets,
+        "avg_protein_g_per_kg": extra.get("avg_protein_g_per_kg"),
+        "slot_adherence": slot_adherence,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
 # Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
 #                                                                             #
 # POST /api/chat — append user message to shared Firestore conversation and   #

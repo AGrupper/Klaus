@@ -2299,6 +2299,47 @@ def _handle_fetch_recent_meals(hours: int = 24) -> str:
         return json.dumps({"error": str(exc)})
 
 
+_NUTRITION_MACRO_KEYS = ("calories", "protein_g", "carbs_g", "fat_g", "fiber_g")
+
+
+def _compute_nutrition_averages(day_records: list[dict], macro_keys=_NUTRITION_MACRO_KEYS) -> dict:
+    """Average each macro key across day_records that HAVE data.
+
+    Shared by _handle_fetch_nutrition_trend (chat tool) and
+    interfaces.web_server's GET /api/health/nutrition route (Phase 30 HLTH-02) so
+    the two paths compute identical numbers — extracted specifically so the
+    "server computes, client renders" invariant cannot drift into two slightly
+    different reimplementations (RESEARCH.md Anti-Patterns / the 2026-06-09
+    drifting-numbers lesson).
+
+    Days with no logged meals are simply absent from `day_records` (the
+    caller's missing_dates contract) — never averaged in as zero.
+    """
+    averages: dict = {"days_with_data": len(day_records)}
+    if day_records:
+        for k in macro_keys:
+            vals = [d.get(k) or 0 for d in day_records]
+            averages[k] = round(sum(vals) / len(vals), 1)
+    return averages
+
+
+def _nutrition_targets_and_protein_ratio(profile: dict, averages: dict) -> dict:
+    """Silent-omit `targets` + `avg_protein_g_per_kg` (mirrors D-15).
+
+    Shared by _handle_fetch_nutrition_trend and the /api/health/nutrition route
+    — see _compute_nutrition_averages docstring for why this is extracted.
+    Returns {} when the profile carries no nutrition_targets / bodyweight_kg.
+    """
+    out: dict = {}
+    targets = profile.get("nutrition_targets")
+    if targets:
+        out["targets"] = targets
+    bodyweight = profile.get("bodyweight_kg")
+    if bodyweight and averages.get("protein_g"):
+        out["avg_protein_g_per_kg"] = round(averages["protein_g"] / float(bodyweight), 2)
+    return out
+
+
 def _handle_fetch_nutrition_trend(days: int = 14) -> str:
     """Brain-direct: per-day nutrition series + server-computed averages.
 
@@ -2336,11 +2377,7 @@ def _handle_fetch_nutrition_trend(days: int = 14) -> str:
             else:
                 missing_dates.append(d)
 
-        averages: dict = {"days_with_data": len(series)}
-        if series:
-            for k in macro_keys:
-                vals = [day.get(k) or 0 for day in series]
-                averages[k] = round(sum(vals) / len(series), 1)
+        averages = _compute_nutrition_averages(series, macro_keys)
 
         out: dict = {
             "window_days": days,
@@ -2356,14 +2393,7 @@ def _handle_fetch_nutrition_trend(days: int = 14) -> str:
                 project_id=os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
                 database=os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
             ).load()
-            targets = profile.get("nutrition_targets")
-            if targets:
-                out["targets"] = targets
-            bodyweight = profile.get("bodyweight_kg")
-            if bodyweight and averages.get("protein_g"):
-                out["avg_protein_g_per_kg"] = round(
-                    averages["protein_g"] / float(bodyweight), 2
-                )
+            out.update(_nutrition_targets_and_protein_ratio(profile, averages))
         except Exception:
             logger.warning("fetch_nutrition_trend: profile read failed", exc_info=True)
 
