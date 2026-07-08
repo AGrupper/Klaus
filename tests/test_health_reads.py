@@ -49,7 +49,7 @@ def test_range_reader_missing_dsn_returns_empty():
 # range_reader — success path                                         #
 # ------------------------------------------------------------------ #
 
-def test_range_reader_success_maps_full_column_set(monkeypatch):
+def test_range_reader_success_maps_full_column_set(monkeypatch, isolated_modules):
     """A successful fetch maps rows to the full 8-key dict."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://fake")
     psy = _install_psycopg2_mock()
@@ -92,7 +92,7 @@ def test_range_reader_success_maps_full_column_set(monkeypatch):
 # range_reader — connection failure                                   #
 # ------------------------------------------------------------------ #
 
-def test_range_reader_connection_failure_returns_empty(monkeypatch):
+def test_range_reader_connection_failure_returns_empty(monkeypatch, isolated_modules):
     """psycopg2.connect raising -> [] (never raises)."""
     monkeypatch.setenv("DATABASE_URL", "postgresql://fake")
     psy = _install_psycopg2_mock()
@@ -103,7 +103,7 @@ def test_range_reader_connection_failure_returns_empty(monkeypatch):
     assert result == []
 
 
-def test_range_reader_query_failure_returns_empty(monkeypatch):
+def test_range_reader_query_failure_returns_empty(monkeypatch, isolated_modules):
     """A cursor.execute exception -> [] (never raises)."""
     monkeypatch.setenv("PG_CONNECTION_STRING", "postgresql://fallback")
     psy = _install_psycopg2_mock()
