@@ -529,7 +529,12 @@ maintained stores from the last 4-6 weeks of development.
 
 **If this table is empty:** N/A — see above, 4 assumptions logged.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three resolved during planning — each is self-mitigated in Phase 30 plans, no blocker remains:
+> - Q1 (calories-key): 30-02 Task 2 reads a stored calories target if present, else derives it (protein_g*4 + carbs_g*4 + fat_g*9) and tags `calories_target_derived`. [VERIFIED during planning: `nutrition_targets` has protein_g_per_kg/protein_g_floor/fiber_g_floor, NO literal `calories` key — derivation path is the one used.]
+> - Q2 (biometric-sync liveness): 30-02 Task 3 exposes `pipeline_active` and 30-07 Task 2 renders the "isn't syncing yet" placeholder; confirmed as a pre-UAT operator step in 30-08 Task 3.
+> - Q3 (hrv_baseline sparsity): 30-02 Task 3 falls back to a rolling median of hrv_overnight (reusing recovery_metrics' fallback) with a dedicated `-k baseline_fallback` test.
 
 1. **Does `nutrition_targets` in `UserProfileStore` include a `calories` key, or only macro grams?**
    - What we know: the schema docstring in `memory/firestore_db.py` (~line 183)
