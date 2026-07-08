@@ -2,8 +2,8 @@
 phase: 30
 slug: health-pages
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-06
 ---
 
@@ -54,12 +54,12 @@ created: 2026-07-06
 
 ## Wave 0 Requirements
 
-- [ ] `tests/test_health_training_api.py` — HLTH-01 stubs (mirror `tests/test_api_today.py` `_stub_web_server_imports` pattern)
-- [ ] `tests/test_health_nutrition_api.py` — HLTH-02 stubs
-- [ ] `tests/test_health_sleep_api.py` — HLTH-03 stubs (needs a Postgres-mock fixture; reuse existing psycopg2-mocking convention from garmin/database tool tests)
-- [ ] `BenchmarkStore.get_range` unit tests — add to the file that already tests `BenchmarkStore` (locate via `grep -rn "BenchmarkStore" tests/`)
-- [ ] `frontend/src/components/charts/LineChart.test.tsx` + `BarChart.test.tsx` — gap-rendering (D-08) is highest-value
-- [ ] `frontend/src/components/health/**/*.test.tsx` — one smoke test per new page component minimum (follow `ContributionGrid.test.tsx` convention)
+- [x] `tests/test_health_training_api.py` — HLTH-01 (embedded in 30-02 Task 1, `_stub_web_server_imports` pattern)
+- [x] `tests/test_health_nutrition_api.py` — HLTH-02 (embedded in 30-02 Task 2)
+- [x] `tests/test_health_sleep_api.py` — HLTH-03 (embedded in 30-02 Task 3; includes range_reader + baseline_fallback + pipeline_active tests)
+- [x] `BenchmarkStore.get_range` unit tests — embedded in 30-01 Task 1 (tests/test_benchmark_store.py)
+- [x] `frontend/src/components/charts/LineChart.test.tsx` + `BarChart.test.tsx` — gap (D-08) + tooltip + nodata, embedded in 30-03 Task 1
+- [x] `frontend/src/components/health/**/*.test.tsx` — embedded per page: SubTabs (30-04), TrainingLog (30-05), SlotAdherenceGrid (30-06), SleepRecoveryPage (30-07), HealthPage (30-08)
 
 ---
 
@@ -74,11 +74,11 @@ created: 2026-07-06
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (embedded TDD-style in producing tasks)
+- [x] No watch-mode flags (all `pytest -x` / `npx vitest run`, none `--watch`)
+- [x] Feedback latency < 30s (per-file quick runs ~5–15s)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** self-validated (all sign-off items satisfied)
