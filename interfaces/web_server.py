@@ -1510,6 +1510,616 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
 
 
 # --------------------------------------------------------------------------- #
+# /api/health/* — read-only Health pages aggregators (Phase 30, HLTH-01..03). #
+# Behind require_hub_session (HUB-01). All sync tool calls run via            #
+# run_in_executor + asyncio.gather (Pitfall 2/3). Every Firestore/Postgres    #
+# value passes through _jsonsafe_doc before JSONResponse (Pitfall 4).         #
+#                                                                              #
+# Range param is an ALLOWLIST, never int()-parsed from client input (Security #
+# Domain V5 / T-30-02-01) — {7d,30d,90d,1y} maps to a fixed day count.        #
+#                                                                              #
+# MUST be registered BEFORE the SPA mount (Pitfall 1).                        #
+# --------------------------------------------------------------------------- #
+
+_VALID_RANGES: dict[str, int] = {"7d": 7, "30d": 30, "90d": 90, "1y": 365}
+_WEEKLY_BUCKET_THRESHOLD_DAYS = 90  # D-07: >90d ranges bucket to weekly points
+
+
+def _resolve_range(range_param: str) -> int:
+    """Map a client range string to a day count. Defaults to 30 on any invalid input.
+
+    Allowlist `.get()` only — never `int()`-parse an arbitrary client-supplied
+    value into date arithmetic (T-30-02-01).
+    """
+    return _VALID_RANGES.get(range_param, 30)
+
+
+def _range_bounds(range_param: str) -> tuple[str, str]:
+    """Resolve a range param to inclusive (start_iso, end_iso), Asia/Jerusalem 'today'."""
+    days = _resolve_range(range_param)
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+    start = today - timedelta(days=days - 1)
+    return start.isoformat(), today.isoformat()
+
+
+def _weekly_bucket_points(points: list[dict], agg: str = "avg") -> list[dict]:
+    """Bucket ``{"x": date_iso, "y": number|None}`` points into weekly points.
+
+    Keyed on ``date.fromisoformat(x).isocalendar()`` (year, week) per D-07 — call
+    only when the resolved day count exceeds _WEEKLY_BUCKET_THRESHOLD_DAYS. Points
+    with ``y=None`` never contribute to a bucket's aggregate (D-08 — a gap must
+    never masquerade as a zero); a week with zero non-null contributions is
+    omitted entirely (stays a gap, not a zero). agg="sum" sums the week's values
+    instead of averaging (used for strength weekly volume).
+    """
+    from datetime import date as _date
+
+    buckets: dict[tuple[int, int], list[float]] = {}
+    week_label: dict[tuple[int, int], str] = {}
+    for p in points:
+        y = p.get("y")
+        if y is None:
+            continue
+        try:
+            d = _date.fromisoformat(p["x"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        key = d.isocalendar()[:2]
+        buckets.setdefault(key, []).append(float(y))
+        if key not in week_label or p["x"] < week_label[key]:
+            week_label[key] = p["x"]
+
+    out = []
+    for key in sorted(buckets.keys()):
+        vals = buckets[key]
+        y_val = sum(vals) if agg == "sum" else sum(vals) / len(vals)
+        out.append({"x": week_label[key], "y": round(y_val, 1)})
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# GET /api/health/training (HLTH-01) — mixed strength+run+benchmark log,      #
+# block dividers, two trend series.                                          #
+# --------------------------------------------------------------------------- #
+
+
+def _health_training_strength(start: str, end: str) -> list[dict]:
+    """Strength sessions in [start, end], newest-first. Never raises — [] on error."""
+    try:
+        from memory.firestore_db import StrengthSessionStore  # lazy import
+        store = StrengthSessionStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        return store.get_range(start, end)
+    except Exception:
+        logger.warning("_health_training_strength(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_training_runs(start: str, end: str) -> list[dict]:
+    """Runs in [start, end], newest-first. Never raises — [] on error."""
+    try:
+        from memory.firestore_db import RunDetailStore  # lazy import
+        store = RunDetailStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        return store.get_range(start, end)
+    except Exception:
+        logger.warning("_health_training_runs(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_training_benchmarks(start: str, end: str) -> list[dict]:
+    """Benchmarks in [start, end], each augmented with `previous_value`.
+
+    previous_value is the prior same-facet result (via get_facet_history), i.e.
+    the newest entry strictly older than this one's date — None when no prior
+    exists. Never raises — [] on error.
+    """
+    try:
+        from memory.firestore_db import BenchmarkStore  # lazy import
+        store = BenchmarkStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        benchmarks = store.get_range(start, end)
+        result = []
+        for b in benchmarks:
+            facet = b.get("facet")
+            prev_value = None
+            if facet:
+                # get_facet_history is newest-first; the first entry strictly
+                # older than this benchmark's date is the "previous" result.
+                history = store.get_facet_history(facet, n=1000)
+                this_date = b.get("date", "")
+                for h in history:
+                    if h.get("date", "") < this_date:
+                        prev_value = h.get("value")
+                        break
+            result.append({**b, "previous_value": prev_value})
+        return result
+    except Exception:
+        logger.warning(
+            "_health_training_benchmarks(%r, %r) failed", start, end, exc_info=True
+        )
+        return []
+
+
+def _health_training_blocks() -> list[dict]:
+    """All training blocks, sorted start_date ascending, each carrying a
+    sequential 1-based block_number (BlockStore stores no number field) and its
+    `label` (NOT `block_name`, which does not exist). Never raises — [] on error.
+    """
+    try:
+        from memory.firestore_db import BlockStore  # lazy import
+        store = BlockStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        blocks = store.get_all()
+        blocks_sorted = sorted(blocks, key=lambda b: b.get("start_date", ""))
+        return [
+            {**b, "block_number": i + 1, "label": b.get("label")}
+            for i, b in enumerate(blocks_sorted)
+        ]
+    except Exception:
+        logger.warning("_health_training_blocks() failed", exc_info=True)
+        return []
+
+
+@app.get("/api/health/training")
+async def api_health_training(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Mixed strength+run+benchmark training log + block dividers + trends.
+
+    HLTH-01: one endpoint composing StrengthSessionStore/RunDetailStore/
+    BenchmarkStore/BlockStore into a reverse-chronological interleaved log
+    tagged by `modality`, plus two {x,y} trend series (strength_volume,
+    run_trend) — daily for range<=90d, weekly-bucketed for >90d (D-07).
+
+    Returns:
+        JSONResponse: {"range", "entries", "blocks", "strength_volume", "run_trend"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    strength, runs, benchmarks, blocks = await asyncio.gather(
+        loop.run_in_executor(None, _health_training_strength, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_runs, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_benchmarks, start_iso, end_iso),
+        loop.run_in_executor(None, _health_training_blocks),
+    )
+
+    entries = (
+        [{**s, "modality": "strength"} for s in strength]
+        + [{**r, "modality": "run"} for r in runs]
+        + [{**b, "modality": "benchmark"} for b in benchmarks]
+    )
+    entries.sort(key=lambda e: e.get("date", ""), reverse=True)
+
+    # Trend 1: strength volume — total_volume_kg summed per date.
+    strength_daily: dict[str, float] = {}
+    for s in strength:
+        d = s.get("date")
+        if not d:
+            continue
+        strength_daily[d] = strength_daily.get(d, 0.0) + (s.get("total_volume_kg") or 0.0)
+    strength_points = [
+        {"x": d, "y": round(v, 1)} for d, v in sorted(strength_daily.items())
+    ]
+
+    # Trend 2: run pace — avg_pace_sec_per_km averaged per date (lower = faster).
+    run_daily: dict[str, list[float]] = {}
+    for r in runs:
+        d = r.get("date")
+        pace = r.get("avg_pace_sec_per_km")
+        if not d or pace is None:
+            continue
+        run_daily.setdefault(d, []).append(pace)
+    run_points = [
+        {"x": d, "y": round(sum(vals) / len(vals), 1)}
+        for d, vals in sorted(run_daily.items())
+    ]
+
+    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+        strength_volume = _weekly_bucket_points(strength_points, agg="sum")
+        run_trend = _weekly_bucket_points(run_points, agg="avg")
+    else:
+        strength_volume = strength_points
+        run_trend = run_points
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "entries": entries,
+        "blocks": blocks,
+        "strength_volume": strength_volume,
+        "run_trend": run_trend,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
+# GET /api/health/nutrition (HLTH-02) — macro trend series, slot-adherence    #
+# grid, targets. The day-series math is EXTRACTED from                       #
+# core.tools._handle_fetch_nutrition_trend (_compute_nutrition_averages /     #
+# _nutrition_targets_and_protein_ratio) — shared, not reimplemented, so the   #
+# chat tool and this route can never drift (RESEARCH.md Anti-Patterns).      #
+# --------------------------------------------------------------------------- #
+
+_NUTRITION_MACRO_KEYS = ("calories", "protein_g", "carbs_g", "fat_g", "fiber_g")
+
+_SLOT_LABELS_HEALTH: dict[str, str] = _SLOT_LABELS  # alias — same canonical mapping as _today_meals
+
+# Single per-day read pass cache (Pitfall 1 — MealStore has no range-read method;
+# a 1y nutrition request would otherwise be ~365 sequential Firestore reads on
+# every request). Reuses the exact TTL-dict shape as _routes_cache (T-30-02-03).
+_nutrition_daily_cache: dict = {}
+
+
+def _slot_label_for_meal(meal: dict) -> str:
+    """Derive the canonical fueling-slot LABEL from a meal's timestamp.
+
+    Mirrors _today_meals' inline slot-label derivation. Per CLAUDE.md §6: the
+    HH:MM portion is a canonical slot identifier, NOT an eating time — only the
+    LABEL (e.g. "Breakfast") may ever appear on the wire, never the HH:MM itself.
+    """
+    ts = meal.get("timestamp", "")
+    try:
+        time_part = ts[11:16] if len(ts) >= 16 else ts[:5]
+    except (IndexError, TypeError):
+        time_part = ""
+    return _SLOT_LABELS_HEALTH.get(time_part, "Meal")
+
+
+def _health_nutrition_daily(start: str, end: str) -> dict:
+    """Single per-day Firestore pass feeding BOTH the macro series and the
+    slot-adherence matrix (RESEARCH.md Pitfall 1 — never two independent
+    ~365-read loops over the same range). TTL-cached per (start, end) so a
+    repeated 1y request is served from cache (T-30-02-03 / mandatory for >90d).
+
+    Returns {"day_records": [...], "missing_dates": [...], "slot_records": [...]}.
+    day_records only contains dates WITH logged meals (D-08 — an unlogged day is
+    a gap, never a zero-fill). Never raises — degrades to all-empty on error.
+    """
+    import time as _time
+    from datetime import date as _date, timedelta as _td
+
+    cache_key = (start, end)
+    now_epoch = _time.time()
+    cached = _nutrition_daily_cache.get(cache_key)
+    if cached is not None:
+        cache_ts, cached_result = cached
+        if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
+            return cached_result
+
+    try:
+        from memory.firestore_db import MealStore  # lazy import
+        store = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        start_d = _date.fromisoformat(start)
+        end_d = _date.fromisoformat(end)
+        dates = []
+        d = start_d
+        while d <= end_d:
+            dates.append(d.isoformat())
+            d += _td(days=1)
+
+        day_records: list[dict] = []
+        missing_dates: list[str] = []
+        slot_records: list[dict] = []
+        for d_iso in dates:
+            meals = store.get_day(d_iso)
+            if not meals:
+                missing_dates.append(d_iso)  # D-08 — a gap, never a zero-fill
+                continue
+            totals = {
+                k: sum(m.get(k) or 0 for m in meals) for k in _NUTRITION_MACRO_KEYS
+            }
+            day_records.append({"date": d_iso, "meal_count": len(meals), **totals})
+            seen_slots: set[str] = set()
+            for m in meals:
+                label = _slot_label_for_meal(m)
+                if label and label not in seen_slots:
+                    seen_slots.add(label)
+                    slot_records.append({"date": d_iso, "slot_label": label})
+
+        result = {
+            "day_records": day_records,
+            "missing_dates": missing_dates,
+            "slot_records": slot_records,
+        }
+    except Exception:
+        logger.warning("_health_nutrition_daily(%r, %r) failed", start, end, exc_info=True)
+        result = {"day_records": [], "missing_dates": [], "slot_records": []}
+
+    _nutrition_daily_cache[cache_key] = (now_epoch, result)
+    return result
+
+
+def _health_nutrition_profile() -> dict:
+    """UserProfileStore.load() — nutrition_targets + bodyweight_kg. {} on error."""
+    try:
+        from memory.firestore_db import UserProfileStore  # lazy import
+        return UserProfileStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).load()
+    except Exception:
+        logger.warning("_health_nutrition_profile() failed", exc_info=True)
+        return {}
+
+
+def _resolve_calories_target(targets: dict) -> tuple[float | None, bool]:
+    """Return (calories_target, derived_bool).
+
+    Reads a stored `calories` key if present; else derives
+    protein_g*4 + carbs_g*4 + fat_g*9 from whatever macro-gram target keys exist
+    and tags the result as derived (RESEARCH.md Open Question A4 — the live
+    `nutrition_targets` profile has NO literal `calories` key). Returns
+    (None, False) when neither a stored key nor any macro-gram key exists —
+    never silently omits the target line when derivation is possible.
+    """
+    if not targets:
+        return None, False
+    if targets.get("calories") is not None:
+        return targets["calories"], False
+    protein_g = targets.get("protein_g")
+    carbs_g = targets.get("carbs_g")
+    fat_g = targets.get("fat_g")
+    if protein_g is None and carbs_g is None and fat_g is None:
+        return None, False
+    calories = (protein_g or 0) * 4 + (carbs_g or 0) * 4 + (fat_g or 0) * 9
+    return round(calories, 0), True
+
+
+def _health_nutrition_slots(daily: dict) -> dict:
+    """Shape slot_records (from _health_nutrition_daily's single pass) into the
+    D-13 per-slot-per-day hit matrix. Issues NO additional Firestore reads.
+
+    Cells are keyed on slot LABEL only — never a derived clock time (CLAUDE.md §6).
+    """
+    slot_records = daily["slot_records"]
+    labels = sorted({r["slot_label"] for r in slot_records})
+    dates = sorted({r["date"] for r in slot_records})
+    hit_set = {(r["date"], r["slot_label"]) for r in slot_records}
+    grid = [
+        {
+            "slot_label": label,
+            "cells": [{"date": d, "hit": (d, label) in hit_set} for d in dates],
+        }
+        for label in labels
+    ]
+    return {"slot_labels": labels, "dates": dates, "grid": grid}
+
+
+@app.get("/api/health/nutrition")
+async def api_health_nutrition(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Per-day (or weekly >90d) macro series + slot-adherence grid + targets.
+
+    HLTH-02: macro series/averages/targets/protein-g-per-kg math is shared with
+    core.tools._handle_fetch_nutrition_trend (never reimplemented — RESEARCH.md
+    Anti-Patterns). Unlogged days are gaps in `missing_dates`, never zero-filled
+    (D-08). Slot adherence is keyed on slot LABEL only — no clock time on the
+    wire (CLAUDE.md §6). The per-day Firestore pass is shared between the macro
+    series and the slot grid and TTL-cached for >90d ranges (Pitfall 1).
+
+    Returns:
+        JSONResponse: {"range", "series", "missing_dates", "averages", "targets",
+                       "avg_protein_g_per_kg", "slot_adherence"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+    from core.tools import (  # lazy import — Shared Pattern 5
+        _compute_nutrition_averages,
+        _nutrition_targets_and_protein_ratio,
+    )
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    daily, profile = await asyncio.gather(
+        loop.run_in_executor(None, _health_nutrition_daily, start_iso, end_iso),
+        loop.run_in_executor(None, _health_nutrition_profile),
+    )
+
+    day_records = daily["day_records"]
+    points_by_key: dict[str, list[dict]] = {}
+    for key in _NUTRITION_MACRO_KEYS:
+        pts = [
+            {"x": r["date"], "y": r.get(key)}
+            for r in sorted(day_records, key=lambda r: r["date"])
+        ]
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+            pts = _weekly_bucket_points(pts, agg="avg")
+        points_by_key[key] = pts
+
+    averages = _compute_nutrition_averages(day_records, _NUTRITION_MACRO_KEYS)
+    extra = _nutrition_targets_and_protein_ratio(profile, averages)
+    targets = dict(extra.get("targets") or {})
+
+    calories_target, derived = _resolve_calories_target(targets)
+    if calories_target is not None:
+        targets["calories"] = calories_target
+        if derived:
+            targets["calories_target_derived"] = True
+
+    slot_adherence = _health_nutrition_slots(daily)
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "series": points_by_key,
+        "missing_dates": daily["missing_dates"],
+        "averages": averages,
+        "targets": targets,
+        "avg_protein_g_per_kg": extra.get("avg_protein_g_per_kg"),
+        "slot_adherence": slot_adherence,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
+# GET /api/health/sleep (HLTH-03) — HRV/sleep/body-battery trend series +     #
+# header stat row + pipeline_active guard. Postgres read is ALWAYS wrapped    #
+# in run_in_executor (Pitfall 3 — the 2026-06-24 weekly-review-500 incident   #
+# class: a synchronous psycopg2 call inside async def starves the event loop).#
+# --------------------------------------------------------------------------- #
+
+
+def _health_sleep_data(start: str, end: str) -> list[dict]:
+    """daily_biometrics rows in [start, end], oldest-first. Never raises — [] on error.
+
+    Thin wrapper over core.health_reads.fetch_biometric_range (itself never
+    raises) so this module keeps the same lazy-import + try/except discipline
+    as every other _health_* helper in this file.
+    """
+    try:
+        from core.health_reads import fetch_biometric_range  # lazy import
+        return fetch_biometric_range(start, end)
+    except Exception:
+        logger.warning("_health_sleep_data(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_sleep_pipeline_active() -> bool:
+    """True iff daily_biometrics has EVER had a row — distinct from "no rows in
+    this specific range" (RESEARCH.md Pitfall 4 / D-19). Reuses
+    fetch_biometric_range with a maximally wide bound rather than adding a new
+    Postgres reader. Never raises — False on error.
+    """
+    try:
+        from core.health_reads import fetch_biometric_range  # lazy import
+        return bool(fetch_biometric_range("1970-01-01", "2099-12-31"))
+    except Exception:
+        logger.warning("_health_sleep_pipeline_active() failed", exc_info=True)
+        return False
+
+
+def _hrv_baseline_with_fallback(rows: list[dict]) -> dict[str, float | None]:
+    """Per-date HRV baseline: prefer the stored `hrv_baseline` column (Garmin's
+    own rolling weekly average); when that column is sparse (fewer than half of
+    the given rows have a value), fall back to a rolling median of
+    `hrv_overnight` over the prior <=7 days — mirrors
+    core.recovery_metrics.compute_recovery_deviation's own fallback
+    (`median(prior_hrv)`), reused rather than reinvented (RESEARCH.md Pitfall 5).
+
+    Args:
+        rows: daily_biometrics rows, sorted ascending by date (fetch_biometric_range's
+              contract).
+
+    Returns:
+        {date: baseline_value_or_None} — one entry per row.
+    """
+    from statistics import median
+
+    if not rows:
+        return {}
+
+    non_null = sum(1 for r in rows if r.get("hrv_baseline") is not None)
+    sparse = non_null < (len(rows) / 2)
+
+    out: dict[str, float | None] = {}
+    if not sparse:
+        for r in rows:
+            out[r["date"]] = r.get("hrv_baseline")
+        return out
+
+    for i, r in enumerate(rows):
+        prior = [
+            rr["hrv_overnight"]
+            for rr in rows[max(0, i - 7):i]
+            if rr.get("hrv_overnight") is not None
+        ]
+        out[r["date"]] = round(median(prior), 1) if prior else None
+    return out
+
+
+@app.get("/api/health/sleep")
+async def api_health_sleep(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """HRV/sleep/body-battery trend series + header stat row + pipeline_active.
+
+    HLTH-03: reads Postgres daily_biometrics via run_in_executor (Pitfall 3 —
+    never call psycopg2 synchronously inside async def). Missing days are
+    gaps (null), never zero (D-08 — watch-not-worn != HRV of 0). `pipeline_active`
+    is true iff the table has EVER had a row, distinct from "no rows in this
+    specific range" (D-19 pipeline-not-live guard). range=1y (>90d) returns
+    weekly-bucketed series (D-07). hrv_baseline falls back to a rolling median
+    of hrv_overnight when the stored column is sparse (Pitfall 5).
+
+    Returns:
+        JSONResponse: {"range", "series", "header_stats", "pipeline_active"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    rows, pipeline_active = await asyncio.gather(
+        loop.run_in_executor(None, _health_sleep_data, start_iso, end_iso),
+        loop.run_in_executor(None, _health_sleep_pipeline_active),
+    )
+
+    rows_sorted = sorted(rows, key=lambda r: r.get("date", ""))
+    baseline_by_date = _hrv_baseline_with_fallback(rows_sorted)
+
+    metric_keys = ["hrv_overnight", "sleep_score", "sleep_duration", "body_battery_max"]
+    series: dict[str, list[dict]] = {}
+    for key in metric_keys:
+        pts = [{"x": r["date"], "y": r.get(key)} for r in rows_sorted]
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+            pts = _weekly_bucket_points(pts, agg="avg")
+        series[key] = pts
+
+    baseline_points = [
+        {"x": r["date"], "y": baseline_by_date.get(r["date"])} for r in rows_sorted
+    ]
+    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+        baseline_points = _weekly_bucket_points(baseline_points, agg="avg")
+    series["hrv_baseline"] = baseline_points
+
+    header_stats = None
+    if rows_sorted:
+        latest = rows_sorted[-1]
+        header_stats = {
+            "date": latest.get("date"),
+            "hrv_overnight": latest.get("hrv_overnight"),
+            "sleep_score": latest.get("sleep_score"),
+            "body_battery_max": latest.get("body_battery_max"),
+            "resting_hr": latest.get("resting_hr"),
+            "training_readiness": latest.get("training_readiness"),
+        }
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "series": series,
+        "header_stats": header_stats,
+        "pipeline_active": pipeline_active,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
 # Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
 #                                                                             #
 # POST /api/chat — append user message to shared Firestore conversation and   #
