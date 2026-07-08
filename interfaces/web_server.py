@@ -1974,6 +1974,152 @@ async def api_health_nutrition(
 
 
 # --------------------------------------------------------------------------- #
+# GET /api/health/sleep (HLTH-03) — HRV/sleep/body-battery trend series +     #
+# header stat row + pipeline_active guard. Postgres read is ALWAYS wrapped    #
+# in run_in_executor (Pitfall 3 — the 2026-06-24 weekly-review-500 incident   #
+# class: a synchronous psycopg2 call inside async def starves the event loop).#
+# --------------------------------------------------------------------------- #
+
+
+def _health_sleep_data(start: str, end: str) -> list[dict]:
+    """daily_biometrics rows in [start, end], oldest-first. Never raises — [] on error.
+
+    Thin wrapper over core.health_reads.fetch_biometric_range (itself never
+    raises) so this module keeps the same lazy-import + try/except discipline
+    as every other _health_* helper in this file.
+    """
+    try:
+        from core.health_reads import fetch_biometric_range  # lazy import
+        return fetch_biometric_range(start, end)
+    except Exception:
+        logger.warning("_health_sleep_data(%r, %r) failed", start, end, exc_info=True)
+        return []
+
+
+def _health_sleep_pipeline_active() -> bool:
+    """True iff daily_biometrics has EVER had a row — distinct from "no rows in
+    this specific range" (RESEARCH.md Pitfall 4 / D-19). Reuses
+    fetch_biometric_range with a maximally wide bound rather than adding a new
+    Postgres reader. Never raises — False on error.
+    """
+    try:
+        from core.health_reads import fetch_biometric_range  # lazy import
+        return bool(fetch_biometric_range("1970-01-01", "2099-12-31"))
+    except Exception:
+        logger.warning("_health_sleep_pipeline_active() failed", exc_info=True)
+        return False
+
+
+def _hrv_baseline_with_fallback(rows: list[dict]) -> dict[str, float | None]:
+    """Per-date HRV baseline: prefer the stored `hrv_baseline` column (Garmin's
+    own rolling weekly average); when that column is sparse (fewer than half of
+    the given rows have a value), fall back to a rolling median of
+    `hrv_overnight` over the prior <=7 days — mirrors
+    core.recovery_metrics.compute_recovery_deviation's own fallback
+    (`median(prior_hrv)`), reused rather than reinvented (RESEARCH.md Pitfall 5).
+
+    Args:
+        rows: daily_biometrics rows, sorted ascending by date (fetch_biometric_range's
+              contract).
+
+    Returns:
+        {date: baseline_value_or_None} — one entry per row.
+    """
+    from statistics import median
+
+    if not rows:
+        return {}
+
+    non_null = sum(1 for r in rows if r.get("hrv_baseline") is not None)
+    sparse = non_null < (len(rows) / 2)
+
+    out: dict[str, float | None] = {}
+    if not sparse:
+        for r in rows:
+            out[r["date"]] = r.get("hrv_baseline")
+        return out
+
+    for i, r in enumerate(rows):
+        prior = [
+            rr["hrv_overnight"]
+            for rr in rows[max(0, i - 7):i]
+            if rr.get("hrv_overnight") is not None
+        ]
+        out[r["date"]] = round(median(prior), 1) if prior else None
+    return out
+
+
+@app.get("/api/health/sleep")
+async def api_health_sleep(
+    range: str = "30d",
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """HRV/sleep/body-battery trend series + header stat row + pipeline_active.
+
+    HLTH-03: reads Postgres daily_biometrics via run_in_executor (Pitfall 3 —
+    never call psycopg2 synchronously inside async def). Missing days are
+    gaps (null), never zero (D-08 — watch-not-worn != HRV of 0). `pipeline_active`
+    is true iff the table has EVER had a row, distinct from "no rows in this
+    specific range" (D-19 pipeline-not-live guard). range=1y (>90d) returns
+    weekly-bucketed series (D-07). hrv_baseline falls back to a rolling median
+    of hrv_overnight when the stored column is sparse (Pitfall 5).
+
+    Returns:
+        JSONResponse: {"range", "series", "header_stats", "pipeline_active"}
+    Raises:
+        HTTPException 401: No valid session cookie (via require_hub_session).
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5
+
+    loop = asyncio.get_running_loop()
+    start_iso, end_iso = _range_bounds(range)
+    days = _resolve_range(range)
+
+    rows, pipeline_active = await asyncio.gather(
+        loop.run_in_executor(None, _health_sleep_data, start_iso, end_iso),
+        loop.run_in_executor(None, _health_sleep_pipeline_active),
+    )
+
+    rows_sorted = sorted(rows, key=lambda r: r.get("date", ""))
+    baseline_by_date = _hrv_baseline_with_fallback(rows_sorted)
+
+    metric_keys = ["hrv_overnight", "sleep_score", "sleep_duration", "body_battery_max"]
+    series: dict[str, list[dict]] = {}
+    for key in metric_keys:
+        pts = [{"x": r["date"], "y": r.get(key)} for r in rows_sorted]
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+            pts = _weekly_bucket_points(pts, agg="avg")
+        series[key] = pts
+
+    baseline_points = [
+        {"x": r["date"], "y": baseline_by_date.get(r["date"])} for r in rows_sorted
+    ]
+    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
+        baseline_points = _weekly_bucket_points(baseline_points, agg="avg")
+    series["hrv_baseline"] = baseline_points
+
+    header_stats = None
+    if rows_sorted:
+        latest = rows_sorted[-1]
+        header_stats = {
+            "date": latest.get("date"),
+            "hrv_overnight": latest.get("hrv_overnight"),
+            "sleep_score": latest.get("sleep_score"),
+            "body_battery_max": latest.get("body_battery_max"),
+            "resting_hr": latest.get("resting_hr"),
+            "training_readiness": latest.get("training_readiness"),
+        }
+
+    payload = _jsonsafe_doc({
+        "range": range,
+        "series": series,
+        "header_stats": header_stats,
+        "pipeline_active": pipeline_active,
+    })
+    return JSONResponse(content=payload)
+
+
+# --------------------------------------------------------------------------- #
 # Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
 #                                                                             #
 # POST /api/chat — append user message to shared Firestore conversation and   #
