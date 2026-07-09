@@ -11,7 +11,7 @@
  *   /tasks    → TasksPage (real content: 27-05)
  *   /klaus    → ChatWindow (real content: 26-08)
  *   /habits   → Placeholder — owned by P28
- *   /health   → Placeholder — owned by P30
+ *   /health   → HealthPage (Training / Nutrition / Sleep sub-tabs)
  *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
  *
  * SW → router bridge (D-12, Phase 29): a `navigator.serviceWorker` 'message'
@@ -31,35 +31,12 @@ import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
 import { TimelineDay } from './components/timeline/TimelineDay'
 import { ChatWindow } from './components/chat/ChatWindow'
-import { dominant, textSecondary, typography } from './tokens'
+import { dominant } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
 import { HealthPage as HealthPageComponent } from './components/health/HealthPage'
 import { SettingsPage as SettingsPageComponent } from './components/settings/SettingsPage'
 import { PushEnableBanner } from './components/shared/PushEnableBanner'
-
-// ---------------------------------------------------------------------------
-// Placeholder pages for routes owned by later plans
-// ---------------------------------------------------------------------------
-
-function ComingSoon({ label }: { label: string }) {
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        color: textSecondary,
-        fontSize: typography.body.fontSize,
-        fontWeight: typography.body.fontWeight,
-        fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-      }}
-    >
-      {label} — Coming soon
-    </div>
-  )
-}
 
 function TodayPage() {
   return (
