@@ -125,7 +125,8 @@ def test_training_reverse_chronological_interleave():
 
 
 def test_training_weekly_bucket_selectable():
-    """range=1y trend series are weekly-bucketed; range=30d stays daily (D-07)."""
+    """Mileage buckets weekly beyond the 7d view: range=7d stays daily (one point
+    per date), range=30d+ is weekly-bucketed (fewer points, same total km)."""
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
@@ -147,15 +148,15 @@ def test_training_weekly_bucket_selectable():
             ws._health_training_blocks = lambda: []
 
             client = TestClient(ws.app, raise_server_exceptions=True)
+            resp_7d = client.get("/api/health/training?range=7d")
             resp_30d = client.get("/api/health/training?range=30d")
-            resp_1y = client.get("/api/health/training?range=1y")
 
-        daily_points = resp_30d.json()["run_mileage"]
-        weekly_points = resp_1y.json()["run_mileage"]
+        daily_points = resp_7d.json()["run_mileage"]
+        weekly_points = resp_30d.json()["run_mileage"]
 
-        assert len(daily_points) == 20, "range=30d must stay daily (one point per date)"
+        assert len(daily_points) == 20, "range=7d must stay daily (one point per date)"
         assert len(weekly_points) < len(daily_points), (
-            "range=1y must weekly-bucket (fewer points than daily)"
+            "range=30d+ must weekly-bucket (fewer points than daily)"
         )
         # Each day is 5000 m = 5 km; weekly-bucketed mileage is the sum of its
         # constituent days (20 days × 5 km = 100 km total, either way).

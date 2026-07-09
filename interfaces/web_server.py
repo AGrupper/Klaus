@@ -1523,6 +1523,7 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
 
 _VALID_RANGES: dict[str, int] = {"7d": 7, "30d": 30, "90d": 90, "1y": 365}
 _WEEKLY_BUCKET_THRESHOLD_DAYS = 90  # D-07: >90d ranges bucket to weekly points
+_MILEAGE_WEEKLY_THRESHOLD_DAYS = 7  # mileage buckets to weekly beyond the 7d view
 
 
 def _resolve_range(range_param: str) -> int:
@@ -1550,7 +1551,7 @@ def _weekly_bucket_points(points: list[dict], agg: str = "avg") -> list[dict]:
     with ``y=None`` never contribute to a bucket's aggregate (D-08 — a gap must
     never masquerade as a zero); a week with zero non-null contributions is
     omitted entirely (stays a gap, not a zero). agg="sum" sums the week's values
-    instead of averaging (used for strength weekly volume).
+    instead of averaging (used for weekly mileage).
     """
     from datetime import date as _date
 
@@ -1734,12 +1735,19 @@ async def api_health_training(
         for d, vals in sorted(run_daily.items())
     ]
 
-    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
-        run_mileage = _weekly_bucket_points(mileage_points, agg="sum")
-        run_trend = _weekly_bucket_points(run_points, agg="avg")
-    else:
-        run_mileage = mileage_points
-        run_trend = run_points
+    # Mileage buckets to weekly beyond the 7-day view — a weekly progression is
+    # the useful read at 30d/90d/1y, while 7d stays daily. Pace keeps the
+    # standard >90d weekly threshold (D-07).
+    run_mileage = (
+        _weekly_bucket_points(mileage_points, agg="sum")
+        if days > _MILEAGE_WEEKLY_THRESHOLD_DAYS
+        else mileage_points
+    )
+    run_trend = (
+        _weekly_bucket_points(run_points, agg="avg")
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS
+        else run_points
+    )
 
     payload = _jsonsafe_doc({
         "range": range,
