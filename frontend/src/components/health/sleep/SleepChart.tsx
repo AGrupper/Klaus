@@ -16,6 +16,7 @@ import { ChartCard } from '../../charts/ChartCard'
 import { ChartEmptyState } from '../../charts/ChartEmptyState'
 import { LineChart } from '../../charts/LineChart'
 import { BarChart } from '../../charts/BarChart'
+import { textSecondary, typography, fontFamily } from '../../../tokens'
 import type { TrendPoint } from '../../../api/health'
 
 const SLEEP_SCORE_COLOR = '#38BDF8'
@@ -28,11 +29,46 @@ interface SleepChartProps {
   height: number
 }
 
+/**
+ * Legend identifying the two overlaid series — the bars and line are otherwise
+ * ambiguous ("what does each point mean?"). Mirrors HRVChart's LegendRow.
+ */
+function LegendRow() {
+  const itemStyle = { display: 'flex', alignItems: 'center', gap: '6px' } as const
+  const labelStyle = {
+    fontSize: typography.label.fontSize,
+    fontWeight: typography.label.fontWeight,
+    lineHeight: typography.label.lineHeight,
+    color: textSecondary,
+    fontFamily,
+  } as const
+
+  return (
+    <div style={{ display: 'flex', gap: '16px', marginBottom: '8px' }}>
+      <div style={itemStyle}>
+        <span
+          style={{ width: '12px', height: '2px', backgroundColor: SLEEP_SCORE_COLOR }}
+          aria-hidden="true"
+        />
+        <span style={labelStyle}>Sleep score</span>
+      </div>
+      <div style={itemStyle}>
+        <span
+          style={{ width: '12px', height: '10px', backgroundColor: SLEEP_DURATION_COLOR }}
+          aria-hidden="true"
+        />
+        <span style={labelStyle}>Duration (h)</span>
+      </div>
+    </div>
+  )
+}
+
 export function SleepChart({ score, duration, height }: SleepChartProps) {
   const isEmpty = score.every((p) => p.y === null) && duration.every((p) => p.y === null)
 
   return (
     <ChartCard title="Sleep">
+      <LegendRow />
       {isEmpty ? (
         <ChartEmptyState text="No sleep data for this range." height={height} />
       ) : (
