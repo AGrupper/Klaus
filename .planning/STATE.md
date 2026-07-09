@@ -2,28 +2,26 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: Klaus Hub
-status: milestone_complete
-stopped_at: Milestone complete (Phase 30 was final phase)
-last_updated: 2026-07-09T15:14:01.589Z
-last_activity: 2026-07-08 -- Phase 30 execution started
+status: Awaiting next milestone
+stopped_at: Phase 30 UI-SPEC approved
+last_updated: "2026-07-09T19:39:54.815Z"
+last_activity: 2026-07-09 — Milestone v5.0 completed and archived
 progress:
   total_phases: 5
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 39
   completed_plans: 39
-  percent: 80
+  percent: 100
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Phase: 30
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-07-09
-
-**Progress bar:** [██--------] 20% (1/5 phases)
+Phase: Milestone v5.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-09 — Milestone v5.0 completed and archived
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -124,7 +122,15 @@ None.
 
 ## Deferred Items
 
-Carried forward from v4.0 close:
+Acknowledged and deferred at the v5.0 milestone close on 2026-07-09:
+
+| Category | Item | Status |
+|----------|------|--------|
+| uat-verification | v5.0 P29 physical-device push (iPhone PWA push delivery on a real device) | acknowledged |
+| uat-verification | v5.0 P29 Telegram-mirror parallel week before disabling the mirror (PUSH-03, by design) | acknowledged |
+| ux-polish | v5.0 P26 cosmetic UX polish (chat scroll, leave-by chip live-check, icon art, error-boundary) — tracked in `26-HUMAN-UAT.md` | deferred |
+
+Carried forward from v4.0 close (still open):
 
 | Category | Item | Status | Resolves when |
 |----------|------|--------|---------------|
@@ -133,7 +139,7 @@ Carried forward from v4.0 close:
 | verification-gap | v2.0 SC-1/SC-2/SC-4 live-staging | acknowledged | operator triggers staging crons |
 | code-quality | 18-REVIEW.md M-2..M-4 + L-1..L-5 | open (housekeeping) | next housekeeping sprint |
 | docs-drift | `docs/TECHNICAL_PLAN.md` stops before v2.0 | open (low priority) | next docs sweep |
-| nyquist-partial | P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false` | acknowledged | retroactive via `/gsd-validate-phase` if desired |
+| nyquist-partial | v4.0 P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false` (v5.0 P27/28/29 validated at close) | acknowledged | retroactive via `/gsd-validate-phase` if desired |
 | design-note | WR-01: cron `plan_start_date` hardcode (D-03) | accepted | n/a |
 | design-note | WR-02: `fueling_timeline` not gathered into crons (D-11) | accepted | n/a |
 
@@ -155,5 +161,4 @@ Resume file: .planning/phases/30-health-pages/30-UI-SPEC.md
 
 ## Operator Next Steps
 
-- Run `/gsd:plan-phase 26` to begin Phase 26 planning (Hub Shell)
-- Deploy the pending Groq tick-brain fix + tuned triage prompt (no Cloud Run env changes needed)
+- Start the next milestone with /gsd-new-milestone

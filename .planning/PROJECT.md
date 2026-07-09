@@ -2,7 +2,7 @@
 
 ## What This Is
 
-Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, task management, proactive alerts, daily workflows, and — as of v4.0 — acts as a genuinely expert hybrid-athlete coach (training-block periodization, end-of-block benchmarks, dated-goal projection, and nutrition/supplement accountability grounded in Amit's living blueprint + real Garmin/nutrition data). It uses a dual-model architecture (`gemini-3.5-flash` as the brain, `deepseek-v4-flash` as the worker, `claude-haiku-4-5` inline fallback, free `qwen3-32b` tick-brain) with Telegram as the primary interface, integrated with Gmail, Google Calendar, TickTick, Notion, Garmin, Postgres, and a vector memory store (Pinecone). No local Mac dependency — fully Cloud Run native.
+Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, native task and habit management, proactive alerts, daily workflows, and — as of v4.0 — acts as a genuinely expert hybrid-athlete coach (training-block periodization, end-of-block benchmarks, dated-goal projection, and nutrition/supplement accountability grounded in Amit's living blueprint + real Garmin/nutrition data). As of **v5.0** his primary interface is the **Klaus Hub** — a React + TypeScript PWA served from the same `klaus-agent` Cloud Run container — with a Today-timeline home screen (phone + desktop), a chat that shares one conversation with Telegram, native tasks and habits (TickTick retired), health visualizations, and Web Push; Telegram is mirrored during the transition. He uses a dual-model architecture (`gemini-3.5-flash` as the brain, `deepseek-v4-flash` as the worker, `claude-haiku-4-5` inline fallback, free `qwen3-32b` tick-brain), integrated with Gmail, Google Calendar, Notion, Garmin, Postgres, and a vector memory store (Pinecone). No local Mac dependency — fully Cloud Run native.
 
 ## Core Value
 
@@ -10,73 +10,42 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 
 ## Current State
 
-**Latest:** v5.0 Phase 30 (Health Pages) complete 2026-07-09, rev `klaus-agent-00150-zsq`.
-The hub's `/health` route now carries three trend sub-pages behind persisted SubTabs: Training
-history (mixed strength/run/benchmark log + block dividers + Weekly Mileage & Run Pace charts +
-drill-down sheets, HLTH-01), Nutrition detail (5-macro chip/trend + fueling-slot adherence grid +
-day drilldown, slot-label-never-a-clock-time invariant, HLTH-02), and Sleep & recovery
-(HRV/sleep/body-battery trends from Postgres daily_biometrics + pipeline-not-live guard, HLTH-03).
-All three read existing stores via session-authed `/api/health/*` routes (Postgres reads
-run_in_executor-wrapped), rendered with a hand-rolled inline-SVG chart toolkit (no chart lib,
-D-08 gap-honest). Device-verified UAT approved after several gap rounds (Sleep 500 Decimal-JSON,
-tooltip units/clamp, pace m:ss/km + Y-inversion, mileage-over-volume, mileage daily@7d/weekly@30d+,
-sleep legend); code review closed CR-01 (D-08 gap-bridging in the nutrition series) + WR-01/WR-05,
-with three 1y-range chart-alignment warnings deferred. Suite 1775 backend + 160 frontend.
-**Phase 30 is the last phase of v5.0 (Klaus Hub) — the milestone is ready to close.**
+**Shipped:** v5.0 — Klaus Hub (2026-07-09, rev `klaus-agent-00150-zsq`). Klaus's primary
+interface is now a same-origin React/TypeScript/Vite PWA served by FastAPI from the
+`klaus-agent` Cloud Run container. Across 5 phases (26–30): a Google-authed **Hub Shell** with a
+Today timeline and a shared-conversation chat on a Cloud Tasks full-CPU path (Phase 26); native
+**Tasks** in `TaskStore` fully replacing TickTick, with recurrence, NL quick-add, and a Klaus
+tool swap (Phase 27); **Habits & supplements** in `HabitStore` with DST-safe streaks,
+contribution-grid history, and autonomous adherence nudges (Phase 28); **Web Push** (VAPID) to
+the installed iPhone PWA behind a chat-visibility gate, with a runtime Telegram-mirror toggle
+(default ON for the transition week) and an IndexedDB unread badge (Phase 29); and **Health
+pages** — training / nutrition / sleep-recovery trend visualizations on a zero-dependency
+inline-SVG chart toolkit reading existing Firestore + Postgres stores (Phase 30). 36/36
+requirements satisfied · milestone audit `passed` (cross-phase integration 5/5 seams) · suite
+1775 backend + 160 frontend. Two deferred items remain, both non-code: physical-device /
+mirror-week push verification, and Phase 26 cosmetic UX polish (see § Requirements → Deferred).
 
-Previous: v5.0 Phase 29 (Web Push & Transition) complete 2026-07-06, rev `klaus-agent-00143-scv` —
-native Web Push to the installed iPhone PWA, Telegram mirror ON for the D-21 observation week.
-
-**Shipped:** v4.0 — Specific Training & Nutrition Coaching (2026-06-08, Cloud Run rev
-`klaus-agent-00091-4vz`, image `159cb1e`). Klaus is now a genuinely expert, specific
-hybrid-athlete coach. Across 5 phases (21–25) he: ingests Amit's Hybrid Athlete blueprint
-into `UserProfileStore` as a structured **living guide** (editable via `update_plan`);
-carries curated expert coaching knowledge (`docs/COACHING_GUIDE.md` slim core on every brain
-call + `read_coaching_guide` deep sections); **released the D-13 no-fabrication guard** under
-a recency-windowed Tier A/B data-presence contract (names real numbers, specific
-session/load/rationale, structural critique); tracks **training blocks + benchmarks**
-(`BlockStore` date-range resolution + `BenchmarkStore` 5-facet closed set, end-of-block
-benchmark state machine behind an HRV/ACWR gate); folds **strict, nutrition-accountable**
-coaching into all crons (cross-cron dedup via `CoachingTopicStore`, macro/fueling-slot/
-supplement accountability, derived session quality); and **projects** strength/pace trends to
-the dated Oct/Nov deadlines (deterministic `core/projection.py` + `get_goal_projection` tool +
-dense Garmin pace history, surfaced in the Sunday weekly review as on-track / N-weeks-behind).
-20/20 requirements satisfied · suite 1058 passing · audit `integration_ok` · Phase 25 secured
-16/16 threats + all 10 code-review findings fixed pre-deploy.
+**Next milestone:** not yet defined — start with `/gsd:new-milestone`.
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02) · v4.0 Specific Training & Nutrition Coaching
-(2026-06-08). See `.planning/MILESTONES.md`.
+(2026-06-08) · v5.0 Klaus Hub (2026-07-09). See `.planning/MILESTONES.md`.
 
-**v5.0 Klaus Hub — in progress:** Phase 26 (Hub Shell) complete 2026-06-16 — a Vite/React/Tailwind
-PWA served from `klaus-agent` (multi-stage Dockerfile + last-mounted `SPAStaticFiles`, no existing
-route shadowed), Google-allowlisted itsdangerous-signed session auth (`require_hub_session` on every
-`/api/*`), the read-only `/api/today` timeline aggregator, a shared-conversation hub chat (Cloud
-Tasks full-CPU path → one Klaus across hub + Telegram), a responsive shell, and PWA polish (iOS
-install banner, offline indicator, skeletons). Suite 1412 passing · frontend 51 vitest · verified
-17/17 must-haves (5 on-device/live items tracked in `26-HUMAN-UAT.md`, pending deploy). Next: Phase 27 Tasks.
+<details>
+<summary>v4.0 — Specific Training & Nutrition Coaching (shipped 2026-06-08, rev klaus-agent-00091-4vz)</summary>
 
-## Current Milestone: v5.0 Klaus Hub
+Klaus became a genuinely expert, specific hybrid-athlete coach. Across 5 phases (21–25) he:
+ingests Amit's Hybrid Athlete blueprint into `UserProfileStore` as a structured **living guide**
+(editable via `update_plan`); carries curated expert coaching knowledge (`docs/COACHING_GUIDE.md`
+slim core on every brain call + `read_coaching_guide` deep sections); **released the D-13
+no-fabrication guard** under a recency-windowed Tier A/B data-presence contract; tracks
+**training blocks + benchmarks** (`BlockStore` + `BenchmarkStore`, end-of-block benchmark state
+machine behind an HRV/ACWR gate); folds **strict, nutrition-accountable** coaching into all crons
+(cross-cron dedup via `CoachingTopicStore`); and **projects** strength/pace trends to the dated
+Oct/Nov deadlines (deterministic `core/projection.py`, surfaced in the Sunday weekly review).
+20/20 requirements · suite 1058 passing · audit `integration_ok`.
 
-**Goal:** A web PWA (served from the klaus-agent Cloud Run service) that becomes Klaus's
-primary interface — replacing Telegram for chat, TickTick for tasks, and the habit app —
-with a Today timeline as the home screen on phone and desktop.
-
-**Target features:**
-- Hub shell: React + TypeScript PWA served by FastAPI, Google Sign-In (Amit only), Today
-  timeline composing calendar + meals + habits + training plan + Garmin stats + weather
-- Full Klaus chat sharing the Telegram Firestore conversation (same Cloud Tasks full-CPU
-  path); polling while open, Web Push when closed
-- Native tasks: `TaskStore` + Klaus tool swap (TickTick → native) + one-time TickTick import
-- Habits + supplements: `HabitStore` with dose field, daily check-offs, streaks,
-  autonomous-tick adherence awareness
-- Web Push (VAPID) with Telegram mirror flag — hybrid transition, eventually retire Telegram
-- Health pages: training history, nutrition detail, sleep trends
-
-**Design spec:** `docs/superpowers/specs/2026-06-13-klaus-hub-design.md` (approved
-2026-06-13; layout locked via visual mockups — desktop: sidebar + timeline + glance rail +
-docked collapsible chat; phone: bottom tabs with Klaus center tab). Nutrition stays
-display-only (Lifesum → HealthKit pipeline unchanged). Music/PC-control widgets deferred.
+</details>
 
 ## Requirements
 
@@ -117,16 +86,22 @@ display-only (Lifesum → HealthKit pipeline unchanged). Music/PC-control widget
 - ✓ Block + benchmark tracking: `BlockStore` (date-range resolution, auto inter-block transition) + `BenchmarkStore` (5-facet closed set), 4-block 16-week seed, 6 brain-direct tools, "Week N of 16" framing in morning briefing + weekly review, end-of-block benchmark trigger in the 21:30 cron behind an HRV/ACWR validity gate (window-open/deferred/stale) — verified 4/4 2026-06-06 — v4.0 (Phase 23) — BLOCK-01/02/03
 - ✓ Strict coaching integration + nutrition accountability: `CoachingTopicStore` cross-cron dedup (one topic/day across morning briefing + 21:30 + weekly review), macro adherence + 6-slot fueling + supplement accountability in the 21:30 check-in, strict skip-pushback + recovery-conflict framing ("your call, Sir"), integrated morning briefing block, and session-quality captured at log time — verified 6/6 + live 2026-06-07 — v4.0 (Phase 24) — COACH-03/04/05, NUTR-01/02/03, PROG-01/03/04
 - ✓ Progress projection toward dated goals: deterministic pure-function `core/projection.py` (stdlib least-squares trend → on-track / N-weeks-behind, `today_iso`-only, never raises, direction-normalized `behind_by`), reactive `get_goal_projection` brain tool (D-04 dense Garmin pace history vs sparse `BenchmarkStore`), and a Sunday weekly-review projection block with the Phase-24 fence lifted — Tier A target vs Tier B measured trend always distinguished — verified 3/3 2026-06-08, all 10 code-review findings fixed pre-deploy — v4.0 (Phase 25) — PROG-02
+- ✓ **Klaus Hub shell** — same-origin React/TS/Vite PWA served by FastAPI from `klaus-agent` (multi-stage Dockerfile + mount-last `SPAStaticFiles`), Google Sign-In → itsdangerous session cookie on every `/api/*`, responsive Today timeline (`/api/today` aggregator), and a shared-conversation chat on the Cloud Tasks full-CPU path — v5.0 (Phase 26) — HUB-01..05, CHAT-01..04, TIME-01..05/07/08
+- ✓ **Native tasks** — `TaskStore`/`TaskListStore` with 5 recurrence cadences, NL quick-add, soft-complete + undo; Klaus native task tools + autonomous overdue gather; TickTick fully retired — v5.0 (Phase 27) — TASK-01..07
+- ✓ **Habits & supplements** — `HabitStore` one-tap check-offs, DST-safe streaks, contribution-grid history, autonomous-tick adherence nudges, habits on the Today timeline — v5.0 (Phase 28) — HABIT-01..05, TIME-06
+- ✓ **Web Push & transition** — VAPID push to the installed iPhone PWA behind a chat-visibility gate, injectManifest service worker + IndexedDB unread badge, `PushSubscriptionStore`, runtime Telegram-mirror toggle (default ON) — v5.0 (Phase 29) — PUSH-01..04
+- ✓ **Health pages** — training / nutrition / sleep-recovery visualizations on a zero-dependency inline-SVG chart toolkit, reading existing Firestore + Postgres stores via session-authed `/api/health/*` — v5.0 (Phase 30) — HLTH-01..03
 
 ### Active
 
-v5.0 Klaus Hub — requirements being defined (see REQUIREMENTS.md once written).
+_None — v5.0 (Klaus Hub) shipped. Next milestone not yet defined; start with `/gsd:new-milestone`._
 
 **Deferred (carried forward):**
 - Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
 - Recurring "daily review" skill (check-in persistence); `MealAuditStore` (persisted nutrition critique)
-- Nyquist formal validation artifacts for v4.0 phases (P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false`) — test suites robust; close retroactively via `/gsd-validate-phase` if desired
-- One live re-observation of the coaching double-send fix (data-heavy query → single message); accepted design notes WR-01 (cron `plan_start_date` hardcode, D-03) and WR-02 (`fueling_timeline` not gathered into crons, D-11)
+- Nyquist formal validation artifacts for v4.0 phases (P21 missing VALIDATION.md; P23/P25 drafts `nyquist_compliant: false`) — test suites robust; close retroactively via `/gsd-validate-phase` if desired *(v5.0 phases 27/28/29 were validated at close 2026-07-09)*
+- Accepted v4.0 design notes WR-01 (cron `plan_start_date` hardcode, D-03) and WR-02 (`fueling_timeline` not gathered into crons, D-11)
+- **v5.0:** physical-device / mirror-week push verification (iPhone PWA push delivery + one-week Telegram-mirror parallel run before disabling the mirror — PUSH-03, by design); Phase 26 cosmetic UX polish (chat scroll, leave-by chip live-check, icon art, error-boundary hardening — tracked in `26-HUMAN-UAT.md`)
 
 ### Out of Scope
 
@@ -138,6 +113,7 @@ v5.0 Klaus Hub — requirements being defined (see REQUIREMENTS.md once written)
 ## Context
 
 - **Stack:** Python 3.11 (prod Dockerfile) / 3.13 (local venv), Cloud Run, Firestore, Pinecone, Postgres, FastAPI, Telegram Bot API
+- **Hub (v5.0):** React + TypeScript + Vite PWA (Tailwind) served by FastAPI from the same `klaus-agent` container (multi-stage Dockerfile); new Firestore stores `TaskStore`, `TaskListStore`, `HabitStore`, `PushSubscriptionStore`, `HubSettingsStore`; `/api/*` routes behind Google session auth (`require_hub_session`); Web Push (VAPID); zero-dependency inline-SVG chart toolkit
 - **Brain model:** `gemini-3.5-flash` (Gemini AI Studio)
 - **Worker model:** `deepseek-v4-flash` (OpenAI-compat, DeepSeek API)
 - **Fallback:** `claude-haiku-4-5` (Anthropic, inline on brain failure)
@@ -175,6 +151,11 @@ v5.0 Klaus Hub — requirements being defined (see REQUIREMENTS.md once written)
 | Cross-cron dedup via `CoachingTopicStore` (write-after-send) | One topic/day across all crons; topic written only after `send_and_inject` succeeds (D-10) | ✓ Good — v4.0 (Phase 24) |
 | Projection is a deterministic pure function (`core/projection.py`), brain never computes | LSQ trend from real history only; brain frames, never invents the number — protects the projection trust surface | ✓ Good — v4.0 (Phase 25) |
 | Blueprint is a critiqueable guide, not gospel (COACH-07); Amit adopts via `update_plan` | Klaus recommends structural changes, never silently rewrites the plan | ✓ Good — v4.0 |
+| Hub is a same-origin PWA served by FastAPI (no separate frontend host, no CORS) | One deploy, one origin, shared session cookie; SPA mounted last so no existing route is shadowed | ✓ Good — v5.0 (Phase 26) |
+| Hub chat shares the Telegram Firestore conversation on the Cloud Tasks full-CPU path | One Klaus across surfaces; avoids the background-task CPU-throttle reply stall | ✓ Good — v5.0 (Phase 26) |
+| Native `TaskStore`/`HabitStore` replace TickTick + the separate habit app | Own the data model; enables recurrence, streaks, and autonomous adherence Klaus reads directly | ✓ Good — v5.0 (Phases 27–28) |
+| Web Push with a runtime Telegram-mirror toggle (default ON ≥ 1 week) | Gradual transition, not a hard cutover — validate push in production before retiring Telegram | ✓ Good — v5.0 (Phase 29) |
+| Zero-dependency hand-rolled inline-SVG charts (no chart lib) | Full control, no bundle bloat, D-08 gap-honest; matches the ContributionGrid precedent | ✓ Good — v5.0 (Phase 30) |
 
 ## Evolution
 
@@ -194,4 +175,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-09 — v5.0 Phase 30 (Health Pages) complete: 8 plans across 5 waves + multiple UAT gap rounds + code review (CR-01/WR-01/WR-05 fixed), device-verified, suite 1775+160, rev klaus-agent-00150-zsq. Phase 30 is the final v5.0 phase — milestone ready to close.*
+*Last updated: 2026-07-09 — v5.0 Klaus Hub milestone closed (Phases 26–30, 39 plans, 36/36 requirements, audit passed, suite 1775+160). Archived to `.planning/milestones/v5.0-*`; ROADMAP collapsed; REQUIREMENTS.md retired. Next: `/gsd:new-milestone`.*

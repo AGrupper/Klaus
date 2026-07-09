@@ -1,5 +1,23 @@
 # Milestones — Klaus
 
+## v5.0 Klaus Hub (Shipped: 2026-07-09)
+
+**Phases completed:** 5 phases, 39 plans, 75 tasks
+**Requirements:** 36/36 satisfied · **Audit:** passed (`milestones/v5.0-MILESTONE-AUDIT.md`)
+**Delivered:** a same-origin React/TypeScript/Vite PWA — the Klaus Hub — served by FastAPI from the existing Cloud Run container, giving Amit a phone/desktop home screen with a Today timeline, native tasks & habits, health visualizations, and Web Push, all sharing one conversation with Telegram.
+
+**Key accomplishments:**
+
+- **Hub Shell (P26):** Greenfield Vite + React + Tailwind v4 PWA served same-origin by FastAPI via a mount-last `SPAStaticFiles` catch-all + multi-stage Dockerfile (no CORS, one deploy); Google Sign-In → session cookie gating every `/api/*` route; a Today timeline (calendar, now-line, Garmin/weather header, slot-label meals, training context, glance-rail nutrition) and a hub↔Telegram shared conversation running the agent turn on a dedicated Cloud Tasks full-CPU chat path.
+- **Native Tasks (P27):** `TaskStore`/`TaskListStore` fully replacing TickTick — CRUD, five recurrence cadences, NL quick-add (chrono-node, Asia/Jerusalem), soft-complete + 4s undo toast, native Klaus task tools + autonomous overdue gather; TickTick tools/auth deleted and retirement documented.
+- **Habits & Supplements (P28):** `HabitStore` with one-tap check-offs, DST-safe streaks, contribution-grid history, adherence-aware autonomous-tick nudges, and habits on the Today timeline (TIME-06).
+- **Web Push & Transition (P29):** VAPID Web Push fan-out across all three send paths behind a server-side chat-visibility gate, a hand-written `injectManifest` service worker with an IndexedDB unread badge, a multi-device `PushSubscriptionStore`, and a runtime Telegram-mirror toggle (default ON for a gradual, non-cutover transition).
+- **Health Pages (P30):** Training / nutrition / sleep-recovery visualizations reading the existing Firestore + Postgres stores, built on zero-dependency hand-rolled inline-SVG chart primitives, with per-set / per-lap / measured-vs-previous drill-downs.
+
+**Known deferred items at close:** 3 (see STATE.md Deferred Items) — all physical-device / elapsed-time human verifications (iPhone PWA push delivery, one-week Telegram-mirror parallel run) plus deferred cosmetic UX polish in Phase 26. No functional gaps.
+
+---
+
 ## v4.0 Specific Training & Nutrition Coaching (Shipped: 2026-06-08)
 
 **Phases completed:** 5 phases (21–25), 20 plans, 20 requirements
