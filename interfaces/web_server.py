@@ -1543,15 +1543,44 @@ def _range_bounds(range_param: str) -> tuple[str, str]:
     return start.isoformat(), today.isoformat()
 
 
-def _weekly_bucket_points(points: list[dict], agg: str = "avg") -> list[dict]:
+def _week_axis_for_dates(date_isos: list[str]) -> list[tuple[tuple[int, int], str]]:
+    """Ordered ``[((iso_year, iso_week), representative_label), ...]`` for a set of
+    ISO dates — a shared weekly x-axis so series meant to be overlaid/index-aligned
+    (HRV overnight+baseline, sleep score+duration) bucket onto the SAME weeks,
+    with ``y=None`` filling any week a given series happens to lack (WR-04). Label
+    = earliest date in each week, matching ``_weekly_bucket_points``.
+    """
+    from datetime import date as _date
+
+    label: dict[tuple[int, int], str] = {}
+    for x in date_isos:
+        try:
+            key = _date.fromisoformat(x).isocalendar()[:2]
+        except (ValueError, TypeError):
+            continue
+        if key not in label or x < label[key]:
+            label[key] = x
+    return [(k, label[k]) for k in sorted(label.keys())]
+
+
+def _weekly_bucket_points(
+    points: list[dict],
+    agg: str = "avg",
+    week_axis: list[tuple[tuple[int, int], str]] | None = None,
+) -> list[dict]:
     """Bucket ``{"x": date_iso, "y": number|None}`` points into weekly points.
 
     Keyed on ``date.fromisoformat(x).isocalendar()`` (year, week) per D-07 — call
     only when the resolved day count exceeds _WEEKLY_BUCKET_THRESHOLD_DAYS. Points
     with ``y=None`` never contribute to a bucket's aggregate (D-08 — a gap must
-    never masquerade as a zero); a week with zero non-null contributions is
-    omitted entirely (stays a gap, not a zero). agg="sum" sums the week's values
-    instead of averaging (used for weekly mileage).
+    never masquerade as a zero). agg="sum" sums the week's values instead of
+    averaging (used for weekly mileage).
+
+    Without ``week_axis`` a week with zero non-null contributions is omitted
+    entirely (stays a gap). With ``week_axis`` (a fixed ordered week list from
+    ``_week_axis_for_dates``) the output has exactly one point per axis week — the
+    aggregate, or ``y=None`` for an empty week — so multiple series bucketed
+    against the SAME axis stay index-aligned when overlaid (WR-04).
     """
     from datetime import date as _date
 
@@ -1570,11 +1599,18 @@ def _weekly_bucket_points(points: list[dict], agg: str = "avg") -> list[dict]:
         if key not in week_label or p["x"] < week_label[key]:
             week_label[key] = p["x"]
 
+    def _agg(vals: list[float]) -> float:
+        return round(sum(vals) if agg == "sum" else sum(vals) / len(vals), 1)
+
+    if week_axis is not None:
+        return [
+            {"x": lbl, "y": _agg(buckets[key]) if buckets.get(key) else None}
+            for key, lbl in week_axis
+        ]
+
     out = []
     for key in sorted(buckets.keys()):
-        vals = buckets[key]
-        y_val = sum(vals) if agg == "sum" else sum(vals) / len(vals)
-        out.append({"x": week_label[key], "y": round(y_val, 1)})
+        out.append({"x": week_label[key], "y": _agg(buckets[key])})
     return out
 
 
@@ -2104,19 +2140,29 @@ async def api_health_sleep(
     rows_sorted = sorted(rows, key=lambda r: r.get("date", ""))
     baseline_by_date = _hrv_baseline_with_fallback(rows_sorted)
 
+    # WR-04: bucket every sleep series onto ONE shared week axis so the overlaid
+    # pairs (HRV overnight+baseline, sleep score+duration) stay index-aligned —
+    # an empty week in one series becomes a null point, never a dropped index
+    # that would slide the dashed baseline off the overnight line.
+    week_axis = (
+        _week_axis_for_dates([r["date"] for r in rows_sorted])
+        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS
+        else None
+    )
+
     metric_keys = ["hrv_overnight", "sleep_score", "sleep_duration", "body_battery_max"]
     series: dict[str, list[dict]] = {}
     for key in metric_keys:
         pts = [{"x": r["date"], "y": r.get(key)} for r in rows_sorted]
-        if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
-            pts = _weekly_bucket_points(pts, agg="avg")
+        if week_axis is not None:
+            pts = _weekly_bucket_points(pts, agg="avg", week_axis=week_axis)
         series[key] = pts
 
     baseline_points = [
         {"x": r["date"], "y": baseline_by_date.get(r["date"])} for r in rows_sorted
     ]
-    if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
-        baseline_points = _weekly_bucket_points(baseline_points, agg="avg")
+    if week_axis is not None:
+        baseline_points = _weekly_bucket_points(baseline_points, agg="avg", week_axis=week_axis)
     series["hrv_baseline"] = baseline_points
 
     header_stats = None

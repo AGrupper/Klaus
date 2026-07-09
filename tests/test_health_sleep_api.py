@@ -202,6 +202,45 @@ def test_sleep_weekly_bucket_selectable():
         assert len(weekly_points) < len(daily_points)
 
 
+def test_sleep_weekly_series_share_one_aligned_axis():
+    """WR-04: at range=1y every sleep series (incl. hrv_overnight + hrv_baseline)
+    buckets onto the SAME week axis — identical length + identical x labels —
+    even when a metric is missing for a whole week (null-filled, not dropped), so
+    overlaid lines/bars never slide out of alignment."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        # 3 ISO weeks; the MIDDLE week has sleep_score/duration but NO
+        # hrv_overnight — pre-fix this dropped that week from the HRV series only.
+        rows = []
+        for d in range(1, 22):  # 2026-06-01 .. 06-21 spans 3 iso weeks
+            wk_missing_hrv = 8 <= d <= 14
+            rows.append({
+                "date": f"2026-06-{d:02d}", "resting_hr": 50,
+                "hrv_baseline": None if wk_missing_hrv else 60.0,
+                "hrv_overnight": None if wk_missing_hrv else 58.0,
+                "sleep_score": 80, "sleep_duration": 7.3,
+                "body_battery_max": 70, "training_readiness": 8,
+            })
+        with patch.dict(os.environ, _ENV):
+            ws._health_sleep_data = lambda start, end: rows
+            ws._health_sleep_pipeline_active = lambda: True
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            data = client.get("/api/health/sleep?range=1y").json()["series"]
+
+        # All series share one axis: same length and same ordered x labels.
+        x_axes = {key: [p["x"] for p in pts] for key, pts in data.items()}
+        reference = x_axes["sleep_score"]
+        for key, xs in x_axes.items():
+            assert xs == reference, f"series '{key}' x-axis diverged from the shared week axis"
+        # The HRV-missing middle week is present as a null point, not dropped.
+        hrv = data["hrv_overnight"]
+        assert len(hrv) == len(data["sleep_score"])
+        assert any(p["y"] is None for p in hrv)
+
+
 def test_sleep_unauthenticated_returns_401():
     """GET /api/health/sleep without a valid hub session -> 401."""
     stubs = _stub_web_server_imports()

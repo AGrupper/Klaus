@@ -83,6 +83,7 @@ export function SleepChart({ score, duration, height }: SleepChartProps) {
             <LineChart
               series={[{ label: 'Sleep score', color: SLEEP_SCORE_COLOR, points: score }]}
               height={height}
+              banded
             />
           </div>
         </div>

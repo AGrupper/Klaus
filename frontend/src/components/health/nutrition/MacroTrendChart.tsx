@@ -39,7 +39,12 @@ interface MacroTrendChartProps {
   target?: number
   /** Protein-only: average protein per kg bodyweight, appended to the summary row. */
   avgProteinGPerKg?: number
-  onDaySelect: (date: string) => void
+  /**
+   * Tap-a-point → open that day's drilldown. Omitted when the series is
+   * weekly-bucketed (range=1y), where a point is a week not a day, so a
+   * day-drilldown would show wrong/empty data (WR-03).
+   */
+  onDaySelect?: (date: string) => void
   /** 160 phone / 220 desktop per 30-UI-SPEC Spacing § Chart height. */
   height?: number
 }
@@ -58,6 +63,7 @@ export function MacroTrendChart({
   const label = MACRO_LABELS[metric]
 
   function handleChartClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!onDaySelect) return
     const rect = e.currentTarget.getBoundingClientRect()
     if (!rect.width || points.length === 0) return
     const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width))

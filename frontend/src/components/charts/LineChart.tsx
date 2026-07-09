@@ -63,12 +63,18 @@ export interface LineChartProps {
    * rising line means "getting faster."
    */
   invertY?: boolean
+  /**
+   * Position points at slot CENTERS (matching BarChart's x-formula) instead of
+   * edge-to-edge. Set when this line is overlaid on a BarChart (SleepChart) so
+   * the line sits centered over its bars rather than drifting off them (WR-02).
+   */
+  banded?: boolean
 }
 
 const VIEW_WIDTH = 600
 const PADDING = 8
 
-export function LineChart({ series, referenceLine, height, formatValue, invertY }: LineChartProps) {
+export function LineChart({ series, referenceLine, height, formatValue, invertY, banded }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState<{
     index: number
@@ -96,6 +102,12 @@ export function LineChart({ series, referenceLine, height, formatValue, invertY 
   }, [series, referenceLine])
 
   const xForIndex = (i: number) => {
+    // Banded mode mirrors BarChart exactly (slot width = usable/n, point at the
+    // slot center) so an overlaid line aligns with its bars (WR-02).
+    if (banded) {
+      const slotWidth = pointCount > 0 ? (VIEW_WIDTH - PADDING * 2) / pointCount : VIEW_WIDTH
+      return PADDING + slotWidth * i + slotWidth / 2
+    }
     if (pointCount <= 1) return VIEW_WIDTH / 2
     return PADDING + (i / (pointCount - 1)) * (VIEW_WIDTH - PADDING * 2)
   }

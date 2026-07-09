@@ -87,6 +87,12 @@ export function NutritionDetailPage() {
   const [openDate, setOpenDate] = useState<string | null>(null)
   const { data, isLoading, isError } = useNutritionDetail(range)
 
+  // At 1y the backend weekly-buckets the macro series (>90d, D-07), so a chart
+  // point is a WEEK, not a day — disable the chart-tap day-drilldown there so
+  // it never opens a mislabeled/empty day sheet (WR-03). The slot-adherence
+  // grid stays daily, so its cell drilldown remains available at every range.
+  const chartDrilldownEnabled = range !== '1y'
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <RangeToggle value={range} onChange={setRange} />
@@ -116,7 +122,7 @@ export function NutritionDetailPage() {
             avg={data.averages[metric]}
             target={targetFor(metric, data.targets)}
             avgProteinGPerKg={metric === 'protein_g' ? data.avg_protein_g_per_kg : undefined}
-            onDaySelect={setOpenDate}
+            onDaySelect={chartDrilldownEnabled ? setOpenDate : undefined}
           />
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>

@@ -114,6 +114,27 @@ describe('LineChart', () => {
     expect(cyFirst).toBeLessThan(cyLast)
   })
 
+  it('banded: point x-positions match BarChart slot centers (SleepChart overlay align)', () => {
+    // WR-02: a banded line overlaid on a BarChart must sit centered over its
+    // bars. Both use viewBox width 600, padding 8, slotWidth=(600-16)/n, center
+    // at PADDING + slotWidth*i + slotWidth/2.
+    const pts = [
+      { x: 'd1', y: 1 },
+      { x: 'd2', y: 2 },
+      { x: 'd3', y: 3 },
+    ]
+    const { container } = render(
+      <LineChart series={[{ label: 'S', color: '#38BDF8', points: pts }]} height={160} banded />
+    )
+    const circles = container.querySelectorAll('svg circle[data-point-index]')
+    const slotWidth = (600 - 16) / 3
+    const expectedCx = (i: number) => 8 + slotWidth * i + slotWidth / 2
+    circles.forEach((c) => {
+      const i = Number(c.getAttribute('data-point-index'))
+      expect(Number(c.getAttribute('cx'))).toBeCloseTo(expectedCx(i), 3)
+    })
+  })
+
   it('formatValue: the tooltip renders the caller-formatted value, not the raw number', () => {
     // Regression for the raw-unitless-value UAT finding: pace seconds must be
     // formatted (e.g. m:ss/km), never dumped as a bare number.
