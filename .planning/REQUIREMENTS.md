@@ -61,9 +61,9 @@ Requirements for milestone v5.0. Each maps to roadmap phases.
 
 ### Health Pages (HLTH)
 
-- [ ] **HLTH-01**: A training history page visualizes Hevy strength sessions, Garmin run details, and benchmark results from existing stores
-- [ ] **HLTH-02**: A nutrition detail page shows macro trends and fueling-slot adherence over time
-- [ ] **HLTH-03**: A sleep & recovery page shows HRV, sleep score, and body battery trends
+- [x] **HLTH-01**: A training history page visualizes Hevy strength sessions, Garmin run details, and benchmark results from existing stores
+- [x] **HLTH-02**: A nutrition detail page shows macro trends and fueling-slot adherence over time
+- [x] **HLTH-03**: A sleep & recovery page shows HRV, sleep score, and body battery trends
 
 ## v2 Requirements
 
@@ -130,9 +130,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PUSH-02 | Phase 29 | Complete |
 | PUSH-03 | Phase 29 | Complete |
 | PUSH-04 | Phase 29 | Complete |
-| HLTH-01 | Phase 30 | Pending |
-| HLTH-02 | Phase 30 | Pending |
-| HLTH-03 | Phase 30 | Pending |
+| HLTH-01 | Phase 30 | Complete |
+| HLTH-02 | Phase 30 | Complete |
+| HLTH-03 | Phase 30 | Complete |
 
 **Coverage:**
 - v1 requirements: 36 total
