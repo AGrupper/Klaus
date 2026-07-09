@@ -18,14 +18,26 @@ export interface BarChartProps {
   color: string
   /** 160 phone / 220 desktop per 30-UI-SPEC Spacing § Chart height. */
   height: number
+  /**
+   * Formats a bar's y value for the tooltip (e.g. volume → "6106 kg").
+   * Defaults to a bare number-to-string — callers pass unit-aware functions
+   * so the tooltip never shows a raw, unitless value.
+   */
+  formatValue?: (y: number) => string
 }
 
 const VIEW_WIDTH = 600
 const PADDING = 8
 
-export function BarChart({ points, color, height }: BarChartProps) {
+export function BarChart({ points, color, height, formatValue }: BarChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [active, setActive] = useState<{ index: number; left: number; top: number } | null>(null)
+  const [active, setActive] = useState<{
+    index: number
+    left: number
+    top: number
+    width: number
+  } | null>(null)
+  const fmt = formatValue ?? ((y: number) => String(y))
 
   const nonNullValues = points.filter((p) => p.y !== null).map((p) => p.y as number)
   const maxY = nonNullValues.length ? Math.max(...nonNullValues, 0) : 1
@@ -61,7 +73,7 @@ export function BarChart({ points, color, height }: BarChartProps) {
     const barH = point.y !== null ? heightForValue(point.y) : 0
     const barTop = height - PADDING - barH
     const top = (barTop / height) * rect.height
-    setActive({ index: nearest, left, top })
+    setActive({ index: nearest, left, top, width: rect.width })
   }
 
   const activePoint = active ? points[active.index] : null
@@ -105,9 +117,10 @@ export function BarChart({ points, color, height }: BarChartProps) {
       {active && activePoint && (
         <ChartTooltip
           label={activePoint.x}
-          value={activePoint.y === null ? null : String(activePoint.y)}
+          value={activePoint.y === null ? null : fmt(activePoint.y)}
           left={active.left}
           top={active.top}
+          containerWidth={active.width}
         />
       )}
     </div>

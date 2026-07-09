@@ -51,14 +51,26 @@ export interface LineChartProps {
   referenceLine?: ReferenceLine
   /** 160 phone / 220 desktop per 30-UI-SPEC Spacing § Chart height. */
   height: number
+  /**
+   * Formats a point's y value for the tooltip (e.g. pace seconds → "5:59/km").
+   * Defaults to a bare number-to-string — callers pass unit/format-aware
+   * functions so the tooltip never shows a raw, unitless value.
+   */
+  formatValue?: (y: number) => string
 }
 
 const VIEW_WIDTH = 600
 const PADDING = 8
 
-export function LineChart({ series, referenceLine, height }: LineChartProps) {
+export function LineChart({ series, referenceLine, height, formatValue }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [active, setActive] = useState<{ index: number; left: number; top: number } | null>(null)
+  const [active, setActive] = useState<{
+    index: number
+    left: number
+    top: number
+    width: number
+  } | null>(null)
+  const fmt = formatValue ?? ((y: number) => String(y))
 
   const pointCount = series[0]?.points.length ?? 0
 
@@ -129,7 +141,7 @@ export function LineChart({ series, referenceLine, height }: LineChartProps) {
     const left = (xForIndex(nearest) / VIEW_WIDTH) * rect.width
     const top =
       point && point.y !== null ? (yForValue(point.y) / height) * rect.height : rect.height / 2
-    setActive({ index: nearest, left, top })
+    setActive({ index: nearest, left, top, width: rect.width })
   }
 
   const activePoint = active ? series[0]?.points[active.index] : null
@@ -192,9 +204,10 @@ export function LineChart({ series, referenceLine, height }: LineChartProps) {
       {active && activePoint && (
         <ChartTooltip
           label={activePoint.x}
-          value={activePoint.y === null ? null : String(activePoint.y)}
+          value={activePoint.y === null ? null : fmt(activePoint.y)}
           left={active.left}
           top={active.top}
+          containerWidth={active.width}
         />
       )}
     </div>

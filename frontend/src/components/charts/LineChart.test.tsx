@@ -94,4 +94,21 @@ describe('LineChart', () => {
     expect(screen.getByText('d3')).toBeInTheDocument()
     expect(screen.getByText('No data')).toBeInTheDocument()
   })
+
+  it('formatValue: the tooltip renders the caller-formatted value, not the raw number', () => {
+    // Regression for the raw-unitless-value UAT finding: pace seconds must be
+    // formatted (e.g. m:ss/km), never dumped as a bare number.
+    const { container } = render(
+      <LineChart
+        series={[{ label: 'Pace', color: '#38BDF8', points: [{ x: 'd1', y: 359 }] }]}
+        height={160}
+        formatValue={(y) => `${Math.floor(y / 60)}:${String(y % 60).padStart(2, '0')}/km`}
+      />
+    )
+    const el = container.querySelector('[data-testid="line-chart"]') as HTMLElement
+    mockRect(el)
+    fireEvent.mouseMove(el, { clientX: 8 })
+    expect(screen.getByText('5:59/km')).toBeInTheDocument()
+    expect(screen.queryByText('359')).not.toBeInTheDocument()
+  })
 })

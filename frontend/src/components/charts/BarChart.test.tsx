@@ -60,4 +60,22 @@ describe('BarChart', () => {
     expect(screen.getByText('d3')).toBeInTheDocument()
     expect(screen.getByText('No data')).toBeInTheDocument()
   })
+
+  it('formatValue: the tooltip renders the caller-formatted value with its unit', () => {
+    // Regression for the raw-unitless-value UAT finding: weekly volume must
+    // carry its "kg" unit, never a bare number.
+    const { container } = render(
+      <BarChart
+        points={[{ x: 'd1', y: 6106 }]}
+        color="#FB923C"
+        height={160}
+        formatValue={(y) => `${Math.round(y).toLocaleString()} kg`}
+      />
+    )
+    const el = container.querySelector('[data-testid="bar-chart"]') as HTMLElement
+    mockRect(el)
+    fireEvent.mouseMove(el, { clientX: 300 })
+    expect(screen.getByText('6,106 kg')).toBeInTheDocument()
+    expect(screen.queryByText('6106')).not.toBeInTheDocument()
+  })
 })

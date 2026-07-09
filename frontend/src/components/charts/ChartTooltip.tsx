@@ -11,6 +11,7 @@
  * — reading "No data" in textSecondary instead of a value line — so gaps
  * are discoverable rather than silently invisible.
  */
+import { useLayoutEffect, useRef, useState } from 'react'
 import {
   secondary,
   border,
@@ -20,6 +21,9 @@ import {
   fontFamily,
 } from '../../tokens'
 
+/** Keep the bubble this many px clear of the container's left/right edges. */
+const EDGE_MARGIN = 4
+
 export interface ChartTooltipProps {
   /** x label (date/name) shown as the tooltip's top row. */
   label: string
@@ -28,15 +32,42 @@ export interface ChartTooltipProps {
   /** Pixel position within the chart's positioning container. */
   left: number
   top: number
+  /**
+   * Width of the chart's positioning container. When provided, the bubble is
+   * clamped horizontally so a point near an edge doesn't clip off the side
+   * (the `translate(-50%)` centering would otherwise overflow). Omitted →
+   * no clamp (back-compat).
+   */
+  containerWidth?: number
 }
 
-export function ChartTooltip({ label, value, left, top }: ChartTooltipProps) {
+export function ChartTooltip({ label, value, left, top, containerWidth }: ChartTooltipProps) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [clampedLeft, setClampedLeft] = useState(left)
+
+  // The bubble is centered on `left` via translate(-50%), so it spans
+  // [left - w/2, left + w/2]. Clamp `left` so that span stays inside the
+  // container. Measured post-layout because the width depends on the label/
+  // value text length.
+  useLayoutEffect(() => {
+    if (!containerWidth || !ref.current) {
+      setClampedLeft(left)
+      return
+    }
+    const half = ref.current.offsetWidth / 2
+    const min = half + EDGE_MARGIN
+    const max = containerWidth - half - EDGE_MARGIN
+    // If the bubble is wider than the container, just center it.
+    setClampedLeft(max < min ? containerWidth / 2 : Math.min(Math.max(left, min), max))
+  }, [left, containerWidth, value, label])
+
   return (
     <div
+      ref={ref}
       role="tooltip"
       style={{
         position: 'absolute',
-        left,
+        left: clampedLeft,
         top,
         transform: 'translate(-50%, calc(-100% - 10px))',
         backgroundColor: secondary,
