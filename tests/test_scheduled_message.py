@@ -163,6 +163,43 @@ def test_mirror_off_skips_telegram_but_still_pushes(bot, mock_hub_settings, mock
     assert result is None
 
 
+def test_mirror_off_still_sends_interactive_keyboard_message(bot, mock_hub_settings, mock_send_push):
+    """WR-04: a message carrying reply_markup (inline keyboard) MUST still go to
+    Telegram even with the mirror off — Web Push can't render buttons, so the
+    training check-in flow would otherwise dead-end with message_id=None."""
+    mock_store, _ = mock_hub_settings
+    mock_store.get.return_value = {"telegram_mirror_enabled": False}
+    kb = MagicMock(name="InlineKeyboardMarkup")
+
+    from core.scheduled_message import send_and_inject
+    result = asyncio.run(send_and_inject(bot, "Rate that run, sir.", reply_markup=kb))
+
+    # Telegram send is forced despite the mirror being off, and a real Message
+    # is returned so the caller can capture message_id for PendingPromptStore.
+    bot.send_message.assert_called_once()
+    assert bot.send_message.call_args.kwargs["reply_markup"] is kb
+    assert result is bot.send_message.return_value
+
+
+def test_mirror_off_total_push_failure_raises(bot, mock_hub_settings, mock_send_push):
+    """WR-05: mirror off + push reaches 0 devices + no Telegram + chat not
+    visible = the message reached nothing. Must raise so the caller's D-10
+    no-log/retry path engages instead of recording a phantom 'sent'."""
+    mock_store, _ = mock_hub_settings
+    mock_store.get.return_value = {"telegram_mirror_enabled": False}
+    mock_send_push.return_value = {"sent": 0, "failed": 3, "removed": 0}
+
+    from core.scheduled_message import send_and_inject
+    with pytest.raises(RuntimeError, match="delivery failed"):
+        asyncio.run(send_and_inject(bot, "Nudge nobody got", inject_into_conversation=True))
+
+    bot.send_message.assert_not_called()  # no phantom Telegram send
+    # The raise happens BEFORE inject — no phantom assistant turn is written.
+    # (No FirestoreConversationStore fake is installed; if inject ran it would
+    # raise ImportError instead of our RuntimeError, so the match above proves
+    # the early raise.)
+
+
 def test_chat_visible_skips_push_but_mirror_still_sends(bot, mock_send_push):
     """is_chat_visible() True -> push is skipped; Telegram mirror still sends (D-02)."""
     from core.scheduled_message import mark_chat_visible, send_and_inject

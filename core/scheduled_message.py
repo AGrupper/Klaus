@@ -141,12 +141,16 @@ async def send_and_inject(
 
     Returns:
         The sent ``telegram.Message``, or None if the Telegram mirror was
-        skipped (telegram_mirror_enabled is False).
+        skipped (telegram_mirror_enabled is False AND reply_markup is None —
+        interactive messages always force a Telegram send, WR-04).
 
     Raises:
         Exception: Re-raises Telegram send failures (callers should handle retry).
                    Push failures are logged and swallowed (D-04) — they never
-                   raise and never block the Telegram/inject steps.
+                   raise on their own. BUT (WR-05) when the mirror is off and a
+                   message reaches no device at all (no Telegram send, chat not
+                   visible, push reached 0 devices), a RuntimeError is raised so
+                   the caller's D-10 no-log/retry path engages.
     """
     user_id = _telegram_user_id()
     loop = asyncio.get_running_loop()
@@ -165,12 +169,16 @@ async def send_and_inject(
         )
         settings = {"telegram_mirror_enabled": True}
 
-    if push and not is_chat_visible():
+    chat_visible = is_chat_visible()
+    push_result: dict | None = None
+    if push and not chat_visible:
         try:
             from core.push_sender import send_push_to_all
             from core.telegram_format import to_plain_text
             # OS notifications render no markup — strip markdown from the body.
-            await loop.run_in_executor(
+            # WR-05: capture the {sent, failed, removed} fan-out result so a
+            # total delivery failure can be surfaced when the mirror is off.
+            push_result = await loop.run_in_executor(
                 None, send_push_to_all, to_plain_text(text), message_class
             )
         except Exception:
@@ -179,8 +187,14 @@ async def send_and_inject(
             # conversation remain the record.
             logger.warning("scheduled_message: push fan-out failed", exc_info=True)
 
+    mirror_enabled = settings.get("telegram_mirror_enabled", True)
     msg = None
-    if settings.get("telegram_mirror_enabled", True):
+    # WR-04: interactive messages (inline keyboards — RPE/skip-reason/watch-off
+    # prompts) have NO Web Push equivalent (a push is text-only + tap→Today).
+    # Force the Telegram send whenever reply_markup is present, even with the
+    # mirror off, or the training check-in flow silently dead-ends (message_id
+    # comes back None and the PendingPromptStore session stalls).
+    if mirror_enabled or reply_markup is not None:
         if bot is None:
             bot = _get_bot()
         # D-10: full volume, never disable_notification, while the mirror is on.
@@ -202,6 +216,22 @@ async def send_and_inject(
             )
             msg = await bot.send_message(
                 chat_id=user_id, text=to_plain_text(text), reply_markup=reply_markup
+            )
+
+    # WR-05: with the mirror off, Telegram no longer backstops delivery. If the
+    # message reached NO device — Telegram didn't send (msg is None), the chat
+    # wasn't visibly open, and the push fan-out reached 0 devices (or was
+    # disabled/errored) — surface it as a failure so callers' D-10 no-log/retry
+    # paths engage instead of recording a phantom "sent" (CLAUDE.md invariant:
+    # OutreachLogStore.append is gated on send_and_inject success). Raised
+    # BEFORE the conversation inject so a failed delivery leaves no phantom
+    # assistant turn to be re-sent next tick.
+    if not mirror_enabled and msg is None and not chat_visible:
+        push_reached = bool(push_result and push_result.get("sent", 0) > 0)
+        if not push_reached:
+            raise RuntimeError(
+                "send_and_inject: delivery failed — Telegram mirror is off and "
+                f"Web Push reached 0 devices (push_result={push_result})"
             )
 
     if not inject_into_conversation:
