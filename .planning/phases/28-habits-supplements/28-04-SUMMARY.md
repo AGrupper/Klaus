@@ -32,6 +32,7 @@ decisions:
   - "CELL_COLORS exported from ContributionGrid.tsx so HabitDetailView legend reuses same fills without re-declaring"
   - "HabitsPage wires HabitDetailView at Task 3 level (single file touched once rather than placeholder→real in two commits) since Task 2 files were never committed by prior session"
   - "Kebab Edit→HabitCreateEditSheet directly; body tap→HabitDetailView (which has its own Edit footer); both paths are distinct to reduce tap confusion"
+requirements-completed: [HABIT-01, HABIT-02, HABIT-04]
 metrics:
   duration: "~35 minutes (continuation session)"
   completed: "2026-06-30"

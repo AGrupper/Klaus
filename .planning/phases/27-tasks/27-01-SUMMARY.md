@@ -27,6 +27,7 @@ decisions:
   - "Inbox is implicit (list_id='inbox') — no Firestore document for Inbox in TaskListStore"
   - "complete() sets status=completing + creates next-instance; undo_complete() reverts + deletes next-instance"
   - "Composite index creation gated as user_setup operator step (auto-mode blocked production gcloud writes)"
+requirements-completed: [TASK-01, TASK-02]
 metrics:
   duration: "~30 minutes"
   completed: "2026-06-18"

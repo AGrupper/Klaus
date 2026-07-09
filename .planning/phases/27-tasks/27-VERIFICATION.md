@@ -1,7 +1,8 @@
 ---
 phase: 27-tasks
 verified: 2026-06-24T14:00:00Z
-status: human_needed
+status: verified
+status_note: "7/7 must-haves code-verified; the human_verification items below were completed in 27-HUMAN-UAT.md (status: passed, confirmed live 2026-06-24 — 'complete button works, task goes away'). Status advanced from human_needed → verified at v5.0 milestone close 2026-07-09."
 score: 7/7 must-haves verified
 overrides_applied: 0
 human_verification:

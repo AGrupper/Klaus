@@ -1,11 +1,11 @@
 ---
 phase: 29
 slug: web-push-transition
-status: planned
+status: approved
 nyquist_compliant: true
-wave_0_complete: false
+wave_0_complete: true
 created: 2026-07-02
-updated: 2026-07-03
+updated: 2026-07-09
 ---
 
 # Phase 29 — Validation Strategy

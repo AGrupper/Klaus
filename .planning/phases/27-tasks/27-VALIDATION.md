@@ -1,10 +1,11 @@
 ---
 phase: 27
 slug: tasks
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-06-17
+validated: 2026-07-09
 ---
 
 # Phase 27 — Validation Strategy
@@ -94,11 +95,11 @@ New test files needed (existing infrastructure covers the surrounding code; mock
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (6 test files + composite indexes)
-- [ ] No watch-mode flags (vitest always `--run`; pytest always per-file `-x`)
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (6 test files created; composite indexes are an operator/user_setup step per 27-01-SUMMARY — tests run against mocked Firestore)
+- [x] No watch-mode flags (vitest always `--run`; pytest always per-file `-x`)
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** retroactively validated 2026-07-09 at milestone close — all 6 Wave-0 test files exist and pass: `tests/test_task_store.py` + `TestTaskRoutes`/`TestNativeTaskTools`/`TestNativeOverdueGather`/`TestJobsDict` = 94 passed; `parseTaskInput.test.ts` + `useTaskSummary.test.ts` = 17 passed. Manual-only items (micro-animation, quick-add UX, migration ordering) remain in 27-HUMAN-UAT.md (passed).

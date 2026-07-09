@@ -34,6 +34,7 @@ key_files:
     - tests/test_autonomous.py
     - tests/test_tools.py
     - tests/test_proactive_alerts.py
+requirements-completed: [HABIT-05]
 metrics:
   duration: "~45 minutes"
   completed: "2026-06-30"

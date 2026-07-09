@@ -32,6 +32,7 @@ decisions:
   - "Auto-sort only (D-18) — Sort (Due date/Priority) + Group (On/Off); no drag-reorder code"
   - "No delete confirmation modal (D-14) — delete routes through the same UndoToast flow as completion"
   - "Recurring-edit gated by a 2-choice sheet ('This occurrence only' / 'This and following') forwarding scope per D-07"
+requirements-completed: [TASK-01, TASK-04]
 metrics:
   duration: "~12 minutes executor + orchestrator-completed tail"
   completed: "2026-06-19"

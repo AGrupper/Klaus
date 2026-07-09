@@ -31,6 +31,7 @@ decisions:
   - "undoStore holds single activeItem (no array) — last-action-wins per UI-SPEC"
   - "useTaskSummary.test.ts kept as .ts using createElement instead of JSX to avoid .tsx rename"
   - "Tests run from worktree's own frontend/ with separate node_modules install (worktree isolation)"
+requirements-completed: [TASK-03]
 metrics:
   duration: "~20 minutes"
   completed: "2026-06-18"

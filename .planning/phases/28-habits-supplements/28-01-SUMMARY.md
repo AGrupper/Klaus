@@ -22,6 +22,7 @@ decisions:
   - "H-28-IV invariant: all date fields are plain strings; only updated_at uses SERVER_TIMESTAMP"
   - "_FakeRecordsCol.stream() sets doc.id = hid (dict key) not data['id'] — completion records key by habit_id not 'id'"
   - "DST test fixture: date(2026,6,29) used instead of date(2026,6,30) for Monday — June 30 is Tuesday (weekday=1)"
+requirements-completed: [HABIT-01, HABIT-02, HABIT-03, HABIT-04]
 metrics:
   duration: "~35 minutes"
   completed: "2026-06-30"

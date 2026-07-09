@@ -22,6 +22,7 @@ decisions:
   - "_handle_task_list filters overdue via store.get_overdue(), date via Python list-comp, priority via Python list-comp — keeps handler simple"
   - "_gather_native_overdue returns [{title, due}] TickTick-compatible shape — zero changes to 9 downstream ticktick_overdue references (D-17)"
   - "add_task schema + _handle_add_task + _HANDLERS['add_task'] fully removed — no dead _ticktick_add_task reference remains (Pitfall 5)"
+requirements-completed: [TASK-05]
 metrics:
   duration: "~5 minutes"
   completed: "2026-06-18"

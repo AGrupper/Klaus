@@ -20,6 +20,7 @@ decisions:
   - "effective_from stripped from PATCH patch dict before calling store.update — store always uses today as revision date; gate validates client-provided value only"
   - "get_history called per habit in GET /api/habits for streak enrichment — O(N) Firestore calls, acceptable at personal scale of 10-20 items"
   - "/api/habits/summary declared before /api/habits/{habit_id} to avoid FastAPI route shadowing"
+requirements-completed: [HABIT-01, HABIT-02, TIME-06]
 metrics:
   duration: "~25 minutes"
   completed: "2026-06-30"

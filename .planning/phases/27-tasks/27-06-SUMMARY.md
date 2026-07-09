@@ -28,6 +28,7 @@ decisions:
   - "DueTasksBand uses useTaskSummary() as the zero-count guard (shared key with GlanceRail → one fetch) plus useTasks(undefined) for actual task rows filtered client-side"
   - "TimelineDay.test.tsx extended with vi.mock for useTaskSummary + useTasks to avoid QueryClientProvider requirement (Rule 1 auto-fix)"
   - "GlanceRail aside now uses flexDirection:column + gap:12px to stack Nutrition + Tasks cards"
+requirements-completed: [TASK-03, TASK-07]
 metrics:
   duration: "~6 minutes"
   completed: "2026-06-19"

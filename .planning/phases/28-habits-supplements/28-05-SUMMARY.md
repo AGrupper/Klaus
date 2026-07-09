@@ -31,6 +31,7 @@ decisions:
   - "DoseEditSheet mounted at HabitsBand level with doseHabit/doseOpen state; supplements always open the sheet on tap (consistent with HabitRow in HabitsPage)"
   - "Streak value in GlanceRail uses typography.label.fontSize (13px) + fontWeight 600 — not the Tasks-card 14px literal which violates the token scale"
   - "useHabits mock added to TimelineDay.test.tsx (Rule 1 auto-fix) to match existing DueTasksBand mock pattern and restore 8/8 pass baseline"
+requirements-completed: [HABIT-02, TIME-06]
 metrics:
   duration: "~20 minutes"
   completed: "2026-06-30"

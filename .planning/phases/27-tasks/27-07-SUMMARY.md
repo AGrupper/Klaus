@@ -34,6 +34,7 @@ decisions:
   - "ticktick_overdue situation key preserved unchanged (D-17) — 9 call-sites in core/autonomous.py"
   - "TaskStore.get_today_and_overdue() is the drop-in for the retired ticktick_tool.get_today_tasks()"
   - "Operator actions (cancel subscription, remove 4 secrets) deferred to AFTER deploy (Open Question 2)"
+requirements-completed: [TASK-05, TASK-06]
 metrics:
   completed: "2026-06-24"
   tasks_completed: 2

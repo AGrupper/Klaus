@@ -20,6 +20,7 @@ decisions:
   - "store.list called with keyword arg via lambda wrapper so the mock assertion is unambiguous"
   - "hard-delete gate: GET task first, reject 409 if status != 'completing'; task not found also rejects (None check)"
   - "tasks in a deleted list retain their list_id — reassign-to-inbox sweep deferred to a future plan"
+requirements-completed: [TASK-01]
 metrics:
   duration: "~20 minutes"
   completed: "2026-06-18"

@@ -10,7 +10,7 @@
  *   /         → Today timeline (real content: 26-07)
  *   /tasks    → TasksPage (real content: 27-05)
  *   /klaus    → ChatWindow (real content: 26-08)
- *   /habits   → Placeholder — owned by P28
+ *   /habits   → HabitsPage (real content: 28-04)
  *   /health   → HealthPage (Training / Nutrition / Sleep sub-tabs)
  *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
  *
