@@ -78,8 +78,10 @@ _DAILY_FIXTURE = {
 # ------------------------------------------------------------------ #
 
 
-def test_nutrition_missing_dates_never_zero_filled():
-    """An unlogged day appears in missing_dates and NEVER in day-series as 0."""
+def test_nutrition_missing_dates_render_as_null_gaps_never_zero():
+    """An unlogged day appears in the series as an explicit {y: null} gap the
+    LineChart splits on (D-08 / CR-01) — present but null, NEVER absent (which
+    would bridge the line) and NEVER a fabricated y=0."""
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
@@ -98,14 +100,17 @@ def test_nutrition_missing_dates_never_zero_filled():
         assert response.status_code == 200, response.text
         data = response.json()
         assert data["missing_dates"] == ["2026-07-02"]
-        # The calories series must have exactly the 2 logged days, none for the gap.
-        calorie_dates = {p["x"] for p in data["series"]["calories"]}
-        assert calorie_dates == {"2026-07-01", "2026-07-03"}
-        assert "2026-07-02" not in calorie_dates
-        # No point anywhere carries a fabricated y=0 for the missing date.
+        # The gap day is PRESENT in the series (so the client renders a break,
+        # not a bridge) but carries y=null, and the logged days keep real values.
+        cal_by_date = {p["x"]: p["y"] for p in data["series"]["calories"]}
+        assert set(cal_by_date) == {"2026-07-01", "2026-07-02", "2026-07-03"}
+        assert cal_by_date["2026-07-02"] is None  # gap = null, never 0 or absent
+        assert cal_by_date["2026-07-01"] == 2200
+        # No series ever fabricates a y=0 for the missing date.
         for series in data["series"].values():
             for p in series:
-                assert p["x"] != "2026-07-02"
+                if p["x"] == "2026-07-02":
+                    assert p["y"] is None
 
 
 def test_nutrition_targets_present_incl_derived_calories():

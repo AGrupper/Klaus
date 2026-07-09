@@ -37,8 +37,11 @@ const tdStyle: React.CSSProperties = {
 
 function formatPace(secPerKm: unknown): string {
   if (typeof secPerKm !== 'number') return '—'
-  const min = Math.floor(secPerKm / 60)
-  const sec = Math.round(secPerKm % 60)
+  // Round to whole seconds FIRST, then split — rounding the remainder
+  // independently can yield an invalid "5:60/km" (WR-05).
+  const total = Math.round(secPerKm)
+  const min = Math.floor(total / 60)
+  const sec = total % 60
   return `${min}:${String(sec).padStart(2, '0')}/km`
 }
 

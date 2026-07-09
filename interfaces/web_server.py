@@ -1853,7 +1853,9 @@ def _health_nutrition_daily(start: str, end: str) -> dict:
         }
     except Exception:
         logger.warning("_health_nutrition_daily(%r, %r) failed", start, end, exc_info=True)
-        result = {"day_records": [], "missing_dates": [], "slot_records": []}
+        # Do NOT cache the degraded result — a transient Firestore error would
+        # otherwise poison the nutrition page for the full TTL window (WR-01).
+        return {"day_records": [], "missing_dates": [], "slot_records": []}
 
     _nutrition_daily_cache[cache_key] = (now_epoch, result)
     return result
@@ -1951,11 +1953,18 @@ async def api_health_nutrition(
     )
 
     day_records = daily["day_records"]
+    missing_dates = daily.get("missing_dates", [])
+    # Build each series over the FULL date range so an unlogged day is an
+    # explicit {y: null} gap the LineChart splits on (D-08) — NOT an absent
+    # point the line would bridge across. `missing_dates` alone is insufficient:
+    # nothing on the client reconstructs the gaps from it (CR-01).
+    record_by_date = {r["date"]: r for r in day_records}
+    all_dates = sorted(record_by_date.keys() | set(missing_dates))
     points_by_key: dict[str, list[dict]] = {}
     for key in _NUTRITION_MACRO_KEYS:
         pts = [
-            {"x": r["date"], "y": r.get(key)}
-            for r in sorted(day_records, key=lambda r: r["date"])
+            {"x": d, "y": record_by_date[d].get(key) if d in record_by_date else None}
+            for d in all_dates
         ]
         if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
             pts = _weekly_bucket_points(pts, agg="avg")
