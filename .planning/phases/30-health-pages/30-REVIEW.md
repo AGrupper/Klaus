@@ -257,3 +257,14 @@ _Depth: standard_
   index-shift) manifest only at range=1y under weekly bucketing. None affect the
   primary 7d/30d views; fixing them touches the shared chart toolkit and is
   carried as a minor polish follow-up rather than a close-out blocker.
+
+## Update (2026-07-09, follow-up session) — deferred warnings now RESOLVED
+
+The three deferred warnings were subsequently fixed (commit 6363d68), so no code
+review items remain open for Phase 30:
+- **WR-02** — FIXED: LineChart `banded` x-mode aligns the SleepChart score line
+  with its duration bars (+regression test).
+- **WR-03** — FIXED: chart-tap day-drilldown disabled at range=1y (weekly
+  buckets); the daily slot-adherence grid keeps its drilldown.
+- **WR-04** — FIXED: all sleep series bucket onto one shared week axis
+  (`_week_axis_for_dates`), keeping overlaid pairs index-aligned (+regression test).

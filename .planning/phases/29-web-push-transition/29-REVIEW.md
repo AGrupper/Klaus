@@ -431,3 +431,15 @@ Fixed 2026-07-04 by gsd-code-fixer (scoped subset: CR-01, WR-01, WR-02, WR-03, W
 | WR-06 | fixed | 4c5b30f | Precached-`index.html` navigation fallback restored as the workbox router catch handler (a second NavigationRoute would never run — workbox serves the first matching route). Online HUB-03 NetworkFirst 5s behavior unchanged. Guarded creation keeps the empty-manifest test environment working. |
 
 Out of scope (untouched per instruction): WR-04, WR-05, WR-07, IN-01..IN-09.
+
+## Update (2026-07-09) — WR-04 / WR-05 RESOLVED (mirror-off prerequisites)
+
+Both mirror-retirement blockers are fixed (commit 52eb56c), clearing the path to
+turn the Telegram mirror off safely:
+- **WR-04** — FIXED: `send_and_inject` forces the Telegram send whenever
+  `reply_markup` is present, so inline-keyboard/training-check-in prompts survive
+  mirror-off instead of dead-ending with `message_id=None`.
+- **WR-05** — FIXED: the push fan-out result is captured; a total delivery
+  failure with the mirror off (no Telegram, chat not visible, push sent 0) now
+  raises before the conversation inject, engaging the caller's D-10 no-log/retry
+  path instead of recording a phantom "sent".
