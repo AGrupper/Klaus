@@ -239,3 +239,21 @@ function formatPace(secPerKm: unknown): string {
 _Reviewed: 2026-07-09_
 _Reviewer: Claude (gsd-code-reviewer)_
 _Depth: standard_
+
+---
+
+## Orchestrator resolution (2026-07-09, phase close-out)
+
+- **CR-01 (BLOCKER)** — FIXED (commit 09786c6): nutrition macro series now span
+  the full date range with `y: null` for unlogged days, so LineChart splits the
+  gap (D-08). Regression test updated to assert null-not-absent-not-zero.
+- **WR-01** — FIXED (09786c6): `_health_nutrition_daily` no longer caches the
+  degraded result on the exception path.
+- **WR-05** — FIXED (09786c6): `RunDrilldownSheet.formatPace` rounds total
+  seconds before splitting (no more "m:60/km").
+- **WR-02 / WR-03 / WR-04** — DEFERRED (documented follow-ups). WR-02 is a
+  sub-pixel x-offset from overlaying two independent chart primitives on the
+  Sleep card; WR-03 (nutrition day-drilldown labeling) and WR-04 (HRV baseline
+  index-shift) manifest only at range=1y under weekly bucketing. None affect the
+  primary 7d/30d views; fixing them touches the shared chart toolkit and is
+  carried as a minor polish follow-up rather than a close-out blocker.
