@@ -13,8 +13,10 @@ convention.
 """
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -86,6 +88,41 @@ def test_range_reader_success_maps_full_column_set(monkeypatch, isolated_modules
     sql, params = args
     assert "%s" in sql
     assert params == ("2026-06-01", "2026-06-30")
+
+
+# ------------------------------------------------------------------ #
+# range_reader — Decimal coercion (JSON-serializability regression)   #
+# ------------------------------------------------------------------ #
+
+def test_range_reader_coerces_decimal_to_float(monkeypatch, isolated_modules):
+    """Postgres NUMERIC columns come back as Decimal; fetch_biometric_range must
+    coerce them to float so JSONResponse can serialize the /api/health/sleep
+    payload. Regression for the 500 "Object of type Decimal is not JSON
+    serializable" once real daily_biometrics rows existed.
+    """
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fake")
+    psy = _install_psycopg2_mock()
+
+    conn = MagicMock()
+    cur = MagicMock()
+    conn.cursor.return_value.__enter__.return_value = cur
+    # NUMERIC columns (hrv_baseline, hrv_overnight, sleep_duration) as Decimal;
+    # INTEGER columns stay native int.
+    cur.fetchall.return_value = [
+        (date(2026, 6, 15), 52, Decimal("61.0"), Decimal("58.5"), 78, Decimal("7.2"), 68, 8),
+    ]
+    psy.connect.return_value = conn
+
+    result = fetch_biometric_range("2026-06-01", "2026-06-30")
+
+    row = result[0]
+    assert row["hrv_baseline"] == 61.0 and isinstance(row["hrv_baseline"], float)
+    assert row["hrv_overnight"] == 58.5 and isinstance(row["hrv_overnight"], float)
+    assert row["sleep_duration"] == 7.2 and isinstance(row["sleep_duration"], float)
+    # Native ints pass through untouched (not widened to float).
+    assert row["resting_hr"] == 52 and isinstance(row["resting_hr"], int)
+    # The whole row is now JSON-serializable (would have raised before the fix).
+    json.dumps(result)
 
 
 # ------------------------------------------------------------------ #

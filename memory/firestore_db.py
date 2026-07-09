@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+from decimal import Decimal
 
 from dotenv import load_dotenv
 from google.cloud import firestore
@@ -904,6 +905,12 @@ def _jsonsafe_value(v):
         return {k: _jsonsafe_value(x) for k, x in v.items()}
     if isinstance(v, (list, tuple)):
         return [_jsonsafe_value(x) for x in v]
+    # psycopg2 returns Postgres NUMERIC/DECIMAL columns as Decimal, which
+    # json.dumps cannot serialize (the /api/health/sleep 500). Coerce to float
+    # here too, so any Postgres-backed payload that routes through this helper
+    # is safe even if a reader forgets to coerce at the source.
+    if isinstance(v, Decimal):
+        return float(v)
     iso = getattr(v, "isoformat", None)
     if callable(iso):
         try:

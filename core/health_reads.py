@@ -20,8 +20,22 @@ from __future__ import annotations
 
 import logging
 import os
+from decimal import Decimal
 
 logger = logging.getLogger(__name__)
+
+
+def _jsonable_num(v):
+    """Coerce a psycopg2 numeric cell into a JSON-serializable value.
+
+    Postgres ``NUMERIC``/``DECIMAL`` columns come back as ``decimal.Decimal``,
+    which ``json.dumps`` (and therefore ``JSONResponse``) cannot serialize —
+    the ``/api/health/sleep`` route 500'd with "Object of type Decimal is not
+    JSON serializable" once real ``daily_biometrics`` rows existed. Convert
+    ``Decimal`` → ``float``; pass ``int``/``float``/``None`` through untouched
+    (psycopg2 already returns native ``int`` for ``INTEGER`` columns).
+    """
+    return float(v) if isinstance(v, Decimal) else v
 
 
 def fetch_biometric_range(start_date: str, end_date: str) -> list[dict]:
@@ -65,13 +79,13 @@ def fetch_biometric_range(start_date: str, end_date: str) -> list[dict]:
         return [
             {
                 "date": r[0].isoformat() if hasattr(r[0], "isoformat") else str(r[0]),
-                "resting_hr": r[1],
-                "hrv_baseline": r[2],
-                "hrv_overnight": r[3],
-                "sleep_score": r[4],
-                "sleep_duration": r[5],
-                "body_battery_max": r[6],
-                "training_readiness": r[7],
+                "resting_hr": _jsonable_num(r[1]),
+                "hrv_baseline": _jsonable_num(r[2]),
+                "hrv_overnight": _jsonable_num(r[3]),
+                "sleep_score": _jsonable_num(r[4]),
+                "sleep_duration": _jsonable_num(r[5]),
+                "body_battery_max": _jsonable_num(r[6]),
+                "training_readiness": _jsonable_num(r[7]),
             }
             for r in rows
         ]

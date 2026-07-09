@@ -94,6 +94,39 @@ def test_sleep_returns_series_header_stats_pipeline_active_true():
         assert data["header_stats"]["training_readiness"] == 9
 
 
+def test_sleep_serializes_decimal_rows_without_500():
+    """Decimal-valued rows (psycopg2 NUMERIC columns) must serialize to 200, not
+    500. Regression for "Object of type Decimal is not JSON serializable" — the
+    payload routes through _jsonsafe_doc, which now coerces Decimal → float even
+    if a reader leaks one.
+    """
+    from decimal import Decimal  # noqa: PLC0415
+
+    decimal_rows = [
+        {"date": "2026-07-01", "resting_hr": 52, "hrv_baseline": Decimal("60.0"),
+         "hrv_overnight": Decimal("58.5"), "sleep_score": 78,
+         "sleep_duration": Decimal("7.2"), "body_battery_max": 68,
+         "training_readiness": 8},
+    ]
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws._health_sleep_data = lambda start, end: decimal_rows
+            ws._health_sleep_pipeline_active = lambda: True
+
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            response = client.get("/api/health/sleep?range=30d")
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["header_stats"]["hrv_overnight"] == 58.5
+        # Decimal coerced to a JSON number (float), not a string.
+        assert isinstance(data["header_stats"]["hrv_overnight"], float)
+
+
 def test_sleep_empty_table_pipeline_active_false():
     """Table entirely empty -> pipeline_active False + empty series/header_stats.
 
