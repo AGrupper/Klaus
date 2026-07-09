@@ -34,6 +34,7 @@ import { ChatWindow } from './components/chat/ChatWindow'
 import { dominant, textSecondary, typography } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
+import { HealthPage as HealthPageComponent } from './components/health/HealthPage'
 import { SettingsPage as SettingsPageComponent } from './components/settings/SettingsPage'
 import { PushEnableBanner } from './components/shared/PushEnableBanner'
 
@@ -93,7 +94,7 @@ function HabitsPage() {
 }
 
 function HealthPage() {
-  return <ComingSoon label="Health" />
+  return <HealthPageComponent />
 }
 
 function SettingsPage() {
