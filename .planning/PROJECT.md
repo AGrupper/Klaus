@@ -10,14 +10,22 @@ Klaus should act as a genuinely intelligent, proactive companion that surfaces t
 
 ## Current State
 
-**Latest:** v5.0 Phase 29 (Web Push & Transition) complete 2026-07-06, rev `klaus-agent-00143-scv`.
-All Klaus sends (Telegram turns, hub replies, proactive crons) fan out as native Web Push to the
-installed iPhone PWA (VAPID + pywebpush, injectManifest custom SW, icon unread badge, D-02
-visibility gate), with the Telegram mirror ON for the D-21 observation week before any retirement
-decision. Device-verified UAT 4/4 after two gap rounds (VAPID PEM→raw format, chat scroll region,
-history pagination). Suite 1720 backend + 122 frontend, zero exclusions (the long-deselected
-Phase 28 habit-dedup test turned out to flag a real production bug — habit nudges now actually fire).
-Next: Phase 30 (Health Pages).
+**Latest:** v5.0 Phase 30 (Health Pages) complete 2026-07-09, rev `klaus-agent-00150-zsq`.
+The hub's `/health` route now carries three trend sub-pages behind persisted SubTabs: Training
+history (mixed strength/run/benchmark log + block dividers + Weekly Mileage & Run Pace charts +
+drill-down sheets, HLTH-01), Nutrition detail (5-macro chip/trend + fueling-slot adherence grid +
+day drilldown, slot-label-never-a-clock-time invariant, HLTH-02), and Sleep & recovery
+(HRV/sleep/body-battery trends from Postgres daily_biometrics + pipeline-not-live guard, HLTH-03).
+All three read existing stores via session-authed `/api/health/*` routes (Postgres reads
+run_in_executor-wrapped), rendered with a hand-rolled inline-SVG chart toolkit (no chart lib,
+D-08 gap-honest). Device-verified UAT approved after several gap rounds (Sleep 500 Decimal-JSON,
+tooltip units/clamp, pace m:ss/km + Y-inversion, mileage-over-volume, mileage daily@7d/weekly@30d+,
+sleep legend); code review closed CR-01 (D-08 gap-bridging in the nutrition series) + WR-01/WR-05,
+with three 1y-range chart-alignment warnings deferred. Suite 1775 backend + 160 frontend.
+**Phase 30 is the last phase of v5.0 (Klaus Hub) — the milestone is ready to close.**
+
+Previous: v5.0 Phase 29 (Web Push & Transition) complete 2026-07-06, rev `klaus-agent-00143-scv` —
+native Web Push to the installed iPhone PWA, Telegram mirror ON for the D-21 observation week.
 
 **Shipped:** v4.0 — Specific Training & Nutrition Coaching (2026-06-08, Cloud Run rev
 `klaus-agent-00091-4vz`, image `159cb1e`). Klaus is now a genuinely expert, specific
@@ -186,4 +194,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-06 — v5.0 Phase 29 (Web Push & Transition) complete: 10 plans + 2 UAT gap rounds, device-verified 4/4, suite 1720+122 zero exclusions.*
+*Last updated: 2026-07-09 — v5.0 Phase 30 (Health Pages) complete: 8 plans across 5 waves + multiple UAT gap rounds + code review (CR-01/WR-01/WR-05 fixed), device-verified, suite 1775+160, rev klaus-agent-00150-zsq. Phase 30 is the final v5.0 phase — milestone ready to close.*
