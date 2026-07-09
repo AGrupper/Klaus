@@ -33,7 +33,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] **Phase 27: Tasks** — Native TaskStore, hub task pages, Klaus tool swap (TickTick → native), manual TickTick migration (completed 2026-06-24)
 - [x] **Phase 28: Habits & Supplements** — HabitStore, check-off UI, streaks, Klaus integration, habits on timeline (completed 2026-06-30)
 - [x] **Phase 29: Web Push & Transition** — VAPID push, Telegram mirror flag, unread badge, Telegram retirement path (completed 2026-07-04)
-- [ ] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations
+- [x] **Phase 30: Health Pages** — Training history, nutrition detail, sleep & recovery trend visualizations (completed 2026-07-09)
 
 ## Phase Details
 
@@ -131,7 +131,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 30-05-PLAN.md — Training History page: mixed color-coded log + block dividers + trend charts + drill-down sheets (HLTH-01)
 - [x] 30-06-PLAN.md — Nutrition Detail page: macro chip/trend + slot-adherence grid + day drilldown (slot-label invariant) (HLTH-02)
 - [x] 30-07-PLAN.md — Sleep & Recovery page: header stats + HRV/sleep/body-battery charts + pipeline-not-live guard (HLTH-03)
-- [ ] 30-08-PLAN.md — Wire HealthPage root + App.tsx swap + full-suite gate + device UAT (HLTH-01/02/03)
+- [x] 30-08-PLAN.md — Wire HealthPage root + App.tsx swap + full-suite gate + device UAT (HLTH-01/02/03)
 **UI hint**: yes
 
 ---
@@ -144,7 +144,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
 | 29. Web Push & Transition | 10/10 | Complete    | 2026-07-06 |
-| 30. Health Pages | 7/8 | In Progress|  |
+| 30. Health Pages | 8/8 | Complete   | 2026-07-09 |
 
 ---
 
