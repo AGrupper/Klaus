@@ -70,7 +70,7 @@ export function TrainingHistoryPage() {
         <LoadingSkeletons />
       ) : (
         <>
-          <TrainingTrendCharts strengthVolume={data.strength_volume} runTrend={data.run_trend} />
+          <TrainingTrendCharts runMileage={data.run_mileage} runTrend={data.run_trend} />
           {/* 24px gap between the trend-chart row and the log list (lg token) */}
           <div style={{ marginTop: '8px' }}>
             <TrainingLog entries={data.entries} blocks={data.blocks} onSelect={setSelectedEntry} />

@@ -20,13 +20,13 @@ import { BarChart } from '../../charts/BarChart'
 import { ChartEmptyState } from '../../charts/ChartEmptyState'
 import type { TrendPoint } from '../../../api/health'
 
-const STRENGTH_COLOR = '#FB923C'
+const MILEAGE_COLOR = '#FB923C'
 const RUN_COLOR = '#38BDF8'
 const CHART_HEIGHT = 160
 
-/** Strength volume (total_volume_kg) → "6,106 kg". */
-function formatVolumeKg(v: number): string {
-  return `${Math.round(v).toLocaleString()} kg`
+/** Run mileage (km summed per week) → "12.4 km". */
+function formatMileageKm(km: number): string {
+  return `${km.toLocaleString(undefined, { maximumFractionDigits: 1 })} km`
 }
 
 /**
@@ -42,27 +42,29 @@ function formatPaceSecPerKm(sec: number): string {
 }
 
 interface TrainingTrendChartsProps {
-  strengthVolume: TrendPoint[]
+  runMileage: TrendPoint[]
   runTrend: TrendPoint[]
 }
 
-export function TrainingTrendCharts({ strengthVolume, runTrend }: TrainingTrendChartsProps) {
+export function TrainingTrendCharts({ runMileage, runTrend }: TrainingTrendChartsProps) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-      <ChartCard title="Weekly Volume">
-        {strengthVolume.length === 0 ? (
+      <ChartCard title="Weekly Mileage">
+        {runMileage.length === 0 ? (
           <ChartEmptyState text="No data for this range." height={CHART_HEIGHT} />
         ) : (
           <BarChart
-            points={strengthVolume}
-            color={STRENGTH_COLOR}
+            points={runMileage}
+            color={MILEAGE_COLOR}
             height={CHART_HEIGHT}
-            formatValue={formatVolumeKg}
+            formatValue={formatMileageKm}
           />
         )}
       </ChartCard>
       {/* Title reflects what's actually plotted — the API's run trend is pace
-          (sec/km) only; per-run distance lives in the log entries below. */}
+          (sec/km) only; per-run distance lives in the log entries below.
+          invertY: faster pace = lower sec/km, which reads more naturally as
+          HIGHER on the chart (a rising line = getting faster). */}
       <ChartCard title="Run Pace">
         {runTrend.length === 0 ? (
           <ChartEmptyState text="No data for this range." height={CHART_HEIGHT} />
@@ -71,6 +73,7 @@ export function TrainingTrendCharts({ strengthVolume, runTrend }: TrainingTrendC
             series={[{ label: 'Pace', color: RUN_COLOR, points: runTrend }]}
             height={CHART_HEIGHT}
             formatValue={formatPaceSecPerKm}
+            invertY
           />
         )}
       </ChartCard>

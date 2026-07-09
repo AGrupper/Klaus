@@ -95,6 +95,25 @@ describe('LineChart', () => {
     expect(screen.getByText('No data')).toBeInTheDocument()
   })
 
+  it('invertY: a lower value plots HIGHER (pace orientation — faster on top)', () => {
+    // With invertY, the smallest y value must render nearer the top (smaller
+    // cy) than the largest — the opposite of the default orientation. Locks the
+    // pace-chart UAT fix (faster pace = fewer sec/km = higher on the chart).
+    const ascending = [
+      { x: 'd1', y: 10 }, // smallest
+      { x: 'd2', y: 20 },
+      { x: 'd3', y: 30 }, // largest
+    ]
+    const { container } = render(
+      <LineChart series={[{ label: 'Pace', color: '#38BDF8', points: ascending }]} height={160} invertY />
+    )
+    const circles = container.querySelectorAll('svg circle[data-point-index]')
+    const cyFirst = Number(circles[0].getAttribute('cy')) // y=10 (smallest)
+    const cyLast = Number(circles[2].getAttribute('cy')) // y=30 (largest)
+    // Smaller cy = higher on screen. Inverted: the smallest value sits highest.
+    expect(cyFirst).toBeLessThan(cyLast)
+  })
+
   it('formatValue: the tooltip renders the caller-formatted value, not the raw number', () => {
     // Regression for the raw-unitless-value UAT finding: pace seconds must be
     // formatted (e.g. m:ss/km), never dumped as a bare number.

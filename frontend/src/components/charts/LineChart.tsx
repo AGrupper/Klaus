@@ -57,12 +57,18 @@ export interface LineChartProps {
    * functions so the tooltip never shows a raw, unitless value.
    */
   formatValue?: (y: number) => string
+  /**
+   * Invert the Y axis so a LOWER value plots HIGHER. Used for pace charts:
+   * a faster pace (fewer sec/km) reads more naturally near the top, so a
+   * rising line means "getting faster."
+   */
+  invertY?: boolean
 }
 
 const VIEW_WIDTH = 600
 const PADDING = 8
 
-export function LineChart({ series, referenceLine, height, formatValue }: LineChartProps) {
+export function LineChart({ series, referenceLine, height, formatValue, invertY }: LineChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState<{
     index: number
@@ -95,7 +101,10 @@ export function LineChart({ series, referenceLine, height, formatValue }: LineCh
   }
   const yForValue = (v: number) => {
     const span = maxY - minY || 1
-    return PADDING + (1 - (v - minY) / span) * (height - PADDING * 2)
+    const frac = (v - minY) / span
+    // Default: higher value → higher on screen (smaller y). invertY flips it
+    // so a lower value plots higher (pace charts — lower sec/km reads as up).
+    return PADDING + (invertY ? frac : 1 - frac) * (height - PADDING * 2)
   }
 
   /**

@@ -128,8 +128,8 @@ export interface TrainingHistoryData {
   /** Reverse-chronological (newest first), interleaved strength/run/benchmark (D-09). */
   entries: TrainingLogEntryData[]
   blocks: TrainingBlock[]
-  /** Weekly-volume trend (kg, summed per date/week). Gaps are null (D-08). */
-  strength_volume: TrendPoint[]
+  /** Weekly-mileage trend (km, run distance summed per date/week). Gaps are null (D-08). */
+  run_mileage: TrendPoint[]
   /** Run pace trend (sec/km, lower = faster; averaged per date/week). Gaps are null (D-08). */
   run_trend: TrendPoint[]
 }

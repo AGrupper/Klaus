@@ -1678,11 +1678,11 @@ async def api_health_training(
 
     HLTH-01: one endpoint composing StrengthSessionStore/RunDetailStore/
     BenchmarkStore/BlockStore into a reverse-chronological interleaved log
-    tagged by `modality`, plus two {x,y} trend series (strength_volume,
+    tagged by `modality`, plus two {x,y} trend series (run_mileage,
     run_trend) — daily for range<=90d, weekly-bucketed for >90d (D-07).
 
     Returns:
-        JSONResponse: {"range", "entries", "blocks", "strength_volume", "run_trend"}
+        JSONResponse: {"range", "entries", "blocks", "run_mileage", "run_trend"}
     Raises:
         HTTPException 401: No valid session cookie (via require_hub_session).
     """
@@ -1706,15 +1706,19 @@ async def api_health_training(
     )
     entries.sort(key=lambda e: e.get("date", ""), reverse=True)
 
-    # Trend 1: strength volume — total_volume_kg summed per date.
-    strength_daily: dict[str, float] = {}
-    for s in strength:
-        d = s.get("date")
-        if not d:
+    # Trend 1: run mileage — distance_m summed per date, surfaced in km. Running
+    # mileage progression is the volume signal that matters here (strength
+    # tonnage was dropped as low-signal per UAT); strength sessions still appear
+    # in the interleaved log below.
+    mileage_daily: dict[str, float] = {}
+    for r in runs:
+        d = r.get("date")
+        dist_m = r.get("distance_m")
+        if not d or dist_m is None:
             continue
-        strength_daily[d] = strength_daily.get(d, 0.0) + (s.get("total_volume_kg") or 0.0)
-    strength_points = [
-        {"x": d, "y": round(v, 1)} for d, v in sorted(strength_daily.items())
+        mileage_daily[d] = mileage_daily.get(d, 0.0) + dist_m
+    mileage_points = [
+        {"x": d, "y": round(m / 1000.0, 2)} for d, m in sorted(mileage_daily.items())
     ]
 
     # Trend 2: run pace — avg_pace_sec_per_km averaged per date (lower = faster).
@@ -1731,17 +1735,17 @@ async def api_health_training(
     ]
 
     if days > _WEEKLY_BUCKET_THRESHOLD_DAYS:
-        strength_volume = _weekly_bucket_points(strength_points, agg="sum")
+        run_mileage = _weekly_bucket_points(mileage_points, agg="sum")
         run_trend = _weekly_bucket_points(run_points, agg="avg")
     else:
-        strength_volume = strength_points
+        run_mileage = mileage_points
         run_trend = run_points
 
     payload = _jsonsafe_doc({
         "range": range,
         "entries": entries,
         "blocks": blocks,
-        "strength_volume": strength_volume,
+        "run_mileage": run_mileage,
         "run_trend": run_trend,
     })
     return JSONResponse(content=payload)

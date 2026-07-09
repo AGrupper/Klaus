@@ -88,7 +88,7 @@ def test_training_returns_expected_keys():
 
         assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
         data = response.json()
-        for key in ["range", "entries", "blocks", "strength_volume", "run_trend"]:
+        for key in ["range", "entries", "blocks", "run_mileage", "run_trend"]:
             assert key in data, f"Missing key '{key}' in /api/health/training response"
         assert len(data["entries"]) == 3
         assert len(data["blocks"]) == 1
@@ -132,15 +132,17 @@ def test_training_weekly_bucket_selectable():
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            # 20 daily strength sessions spanning ~3 weeks — a real analog of a
-            # 1y range would span many more weeks, but the bucketing mechanism
-            # only depends on the resolved day count, not the payload size.
-            strength_data = [
-                {"date": f"2026-06-{d:02d}", "workout_id": f"w{d}", "total_volume_kg": 500.0}
+            # 20 daily runs spanning ~3 weeks — a real analog of a 1y range would
+            # span many more weeks, but the bucketing mechanism only depends on
+            # the resolved day count, not the payload size. run_mileage sums
+            # distance_m per date and surfaces km.
+            run_data = [
+                {"date": f"2026-06-{d:02d}", "activity_id": f"a{d}",
+                 "avg_pace_sec_per_km": 300, "distance_m": 5000.0}
                 for d in range(1, 21)
             ]
-            ws._health_training_strength = lambda start, end: strength_data
-            ws._health_training_runs = lambda start, end: []
+            ws._health_training_strength = lambda start, end: []
+            ws._health_training_runs = lambda start, end: run_data
             ws._health_training_benchmarks = lambda start, end: []
             ws._health_training_blocks = lambda: []
 
@@ -148,17 +150,19 @@ def test_training_weekly_bucket_selectable():
             resp_30d = client.get("/api/health/training?range=30d")
             resp_1y = client.get("/api/health/training?range=1y")
 
-        daily_points = resp_30d.json()["strength_volume"]
-        weekly_points = resp_1y.json()["strength_volume"]
+        daily_points = resp_30d.json()["run_mileage"]
+        weekly_points = resp_1y.json()["run_mileage"]
 
         assert len(daily_points) == 20, "range=30d must stay daily (one point per date)"
         assert len(weekly_points) < len(daily_points), (
             "range=1y must weekly-bucket (fewer points than daily)"
         )
-        # Weekly-bucketed volume is the sum of its constituent days.
+        # Each day is 5000 m = 5 km; weekly-bucketed mileage is the sum of its
+        # constituent days (20 days × 5 km = 100 km total, either way).
         assert sum(p["y"] for p in weekly_points) == pytest.approx(
             sum(p["y"] for p in daily_points)
         )
+        assert sum(p["y"] for p in daily_points) == pytest.approx(100.0)
 
 
 def test_training_unauthenticated_returns_401():
