@@ -128,9 +128,9 @@ visualizing training, nutrition, and sleep data from existing stores.
 - [x] 30-02-PLAN.md — 3 /api/health/* routes (training/nutrition/sleep) behind require_hub_session + Wave 0 API tests (HLTH-01/02/03)
 - [x] 30-03-PLAN.md — Hand-rolled SVG chart toolkit: LineChart/BarChart/ChartTooltip/ChartCard/ChartEmptyState + D-08 gap tests (HLTH-01/02/03)
 - [x] 30-04-PLAN.md — Frontend data layer: api/health.ts + useHealth hooks + SubTabs (persisted) + RangeToggle (HLTH-01/02/03)
-- [ ] 30-05-PLAN.md — Training History page: mixed color-coded log + block dividers + trend charts + drill-down sheets (HLTH-01)
-- [ ] 30-06-PLAN.md — Nutrition Detail page: macro chip/trend + slot-adherence grid + day drilldown (slot-label invariant) (HLTH-02)
-- [ ] 30-07-PLAN.md — Sleep & Recovery page: header stats + HRV/sleep/body-battery charts + pipeline-not-live guard (HLTH-03)
+- [x] 30-05-PLAN.md — Training History page: mixed color-coded log + block dividers + trend charts + drill-down sheets (HLTH-01)
+- [x] 30-06-PLAN.md — Nutrition Detail page: macro chip/trend + slot-adherence grid + day drilldown (slot-label invariant) (HLTH-02)
+- [x] 30-07-PLAN.md — Sleep & Recovery page: header stats + HRV/sleep/body-battery charts + pipeline-not-live guard (HLTH-03)
 - [ ] 30-08-PLAN.md — Wire HealthPage root + App.tsx swap + full-suite gate + device UAT (HLTH-01/02/03)
 **UI hint**: yes
 
@@ -144,7 +144,7 @@ visualizing training, nutrition, and sleep data from existing stores.
 | 27. Tasks | 7/7 | Complete    | 2026-06-24 |
 | 28. Habits & Supplements | 5/5 | Complete    | 2026-07-02 |
 | 29. Web Push & Transition | 10/10 | Complete    | 2026-07-06 |
-| 30. Health Pages | 4/8 | In Progress|  |
+| 30. Health Pages | 7/8 | In Progress|  |
 
 ---
 
