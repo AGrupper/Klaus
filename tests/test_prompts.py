@@ -250,6 +250,21 @@ def test_no_phase25_fence():
 # ---------------------------------------------------------------------------
 
 
+def test_autonomous_md_followup_cancel_action():
+    """Evidence-first follow-ups — autonomous.md must offer the cancel action
+    and teach the training_evidence check before workout check-ins."""
+    content = _read(AUTONOMOUS_PATH)
+    assert '{"action": "cancel"}' in content
+    assert "training_evidence" in content
+
+
+def test_smart_agent_followups_defer_to_auto_tracking():
+    """schedule_followup guidance — workout completion is auto-tracked, so the
+    brain must not schedule 'how was the workout?' check-backs."""
+    content = _read(SMART_AGENT_PATH)
+    assert "auto-tracked" in content
+
+
 def test_triage_mentions_training_evidence():
     """Evidence-first workouts — autonomous_triage.md must teach the tick-brain
     that training_evidence is ground truth (context, not a trigger)."""

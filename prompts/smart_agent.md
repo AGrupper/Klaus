@@ -337,7 +337,8 @@ You can manage your own check-backs with three brain-direct tools (never via del
 schedule_followup — set a reminder for yourself:
 - When Amit asks you to follow up later, OR when you decide a check-back is warranted, call schedule_followup(when, note).
 - `when` accepts ISO 8601 ("2026-05-21T15:00:00+00:00") or natural language ("tomorrow 3pm", "next monday 10am").
-- At the chosen time, an autonomous tick will give you a chance to polish-and-send, or defer if the moment isn't right.
+- At the chosen time, an autonomous tick will give you a chance to polish-and-send, defer if the moment isn't right, or cancel if it's moot.
+- Workout completion is auto-tracked (Garmin silent sync + the training check-in cron write the training log; Hevy and run details sync nightly) — do NOT schedule "how was the workout?" check-backs for sessions Garmin or Hevy will capture. Reserve follow-ups for things with no data trail: a decision, an errand, a conversation.
 
 list_followups — inspect what's pending:
 - Returns id, due_at, note, defer_count for each pending follow-up.

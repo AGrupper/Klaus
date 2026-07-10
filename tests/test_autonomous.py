@@ -1710,3 +1710,99 @@ class TestTrainingEvidence:
         block = autonomous._format_now_block(sit)
         assert f"now: {sit['now_context']['now_local']}" in block
         assert autonomous._build_triage_prompt(sit, "").count(block) == 1
+
+
+# ---------------------------------------------------------------------------
+# Follow-up cancel action — evidence-first escape hatch
+# ---------------------------------------------------------------------------
+
+
+class TestFollowupCancel:
+    """Layer 2 may drop a moot follow-up (e.g. a workout that demonstrably
+    didn't happen) instead of sending a false check-in or deferring forever."""
+
+    def test_parse_followup_action_cancel(self):
+        text = 'not needed, no run logged\n```json {"action": "cancel"}```'
+        action, polished = autonomous._parse_followup_action(text)
+        assert action == "cancel"
+        assert polished == "not needed, no run logged"
+
+    def test_parse_followup_action_unknown_defaults_to_send(self):
+        text = 'body\n```json {"action": "explode"}```'
+        action, _ = autonomous._parse_followup_action(text)
+        assert action == "send"
+
+    def test_cancel_calls_store_cancel_and_does_not_send(self, mock_bot, fixed_now):
+        fu = {
+            "id": "fu-cancel",
+            "due_at": (fixed_now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(),
+            "note": "ask how the run went",
+            "defer_count": 0,
+        }
+        sit = _live_situation(fixed_now, due_followups=[fu])
+        fs_instance = MagicMock()
+        ols_instance = MagicMock()
+
+        with patch.object(autonomous, "_compose_followup_layer2",
+                          return_value='```json {"action": "cancel"}```'), \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+             patch("memory.firestore_db.FollowupStore", return_value=fs_instance), \
+             patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance):
+            outcome = asyncio.run(
+                autonomous._compose_followup(mock_bot, fu, sit, fixed_now)
+            )
+
+        assert outcome == "cancelled"
+        fs_instance.cancel.assert_called_once_with("fu-cancel")
+        send.assert_not_called()
+        fs_instance.mark_done.assert_not_called()
+        fs_instance.defer.assert_not_called()
+        # D-10 symmetry — nothing sent, nothing logged.
+        ols_instance.append.assert_not_called()
+
+    def test_cancel_not_overridden_by_force_fire(self, mock_bot, fixed_now):
+        """Force-fire (D-14) exists to stop eternal DEFERRAL — a reasoned
+        cancel at defer_count >= 3 must still cancel, not send."""
+        fu = {
+            "id": "fu-cancel-3",
+            "due_at": (fixed_now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(),
+            "note": "ask how the run went",
+            "defer_count": 3,
+        }
+        sit = _live_situation(fixed_now, due_followups=[fu])
+        fs_instance = MagicMock()
+
+        with patch.object(autonomous, "_compose_followup_layer2",
+                          return_value='```json {"action": "cancel"}```'), \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+             patch("memory.firestore_db.FollowupStore", return_value=fs_instance):
+            outcome = asyncio.run(
+                autonomous._compose_followup(mock_bot, fu, sit, fixed_now)
+            )
+
+        assert outcome == "cancelled"
+        fs_instance.cancel.assert_called_once_with("fu-cancel-3")
+        send.assert_not_called()
+
+    def test_cancel_store_failure_returns_failed(self, mock_bot, fixed_now):
+        """Firestore error during cancel → 'failed' (mirrors the defer branch)."""
+        fu = {
+            "id": "fu-cancel-err",
+            "due_at": (fixed_now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(),
+            "note": "n",
+            "defer_count": 0,
+        }
+        sit = _live_situation(fixed_now, due_followups=[fu])
+        fs_instance = MagicMock()
+        fs_instance.cancel.side_effect = RuntimeError("firestore down")
+
+        with patch.object(autonomous, "_compose_followup_layer2",
+                          return_value='```json {"action": "cancel"}```'), \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+             patch("memory.firestore_db.FollowupStore", return_value=fs_instance):
+            outcome = asyncio.run(
+                autonomous._compose_followup(mock_bot, fu, sit, fixed_now)
+            )
+
+        assert outcome == "failed"
+        send.assert_not_called()

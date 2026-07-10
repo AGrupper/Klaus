@@ -22,7 +22,10 @@ circuit the rest of the tick — Layer 1 triage still runs afterwards so an
 overdue task or long-silence escalation can fire on the same tick. A tick with
 a due follow-up can therefore emit two outreach messages (the follow-up plus
 a triage-judged proactive nudge). Both go through ``OutreachLogStore`` so D-06
-dedup still applies across the day.
+dedup still applies across the day. Layer 2 has three actions — send, defer
+(force-fired to send at defer_count >= 3, D-14), and cancel (evidence-first:
+the follow-up's subject is moot or demonstrably didn't happen — e.g. a planned
+workout with no ``training_evidence``; not overridden by force-fire).
 
 Repeat-suppression (D-06/D-09): per-day ``outreach_log/{date}`` doc; informative
 to the triage prompt, never blocking.
@@ -796,9 +799,9 @@ def _infer_trigger_type(situation: dict) -> str:
 def _parse_followup_action(text: str) -> tuple[str, str]:
     """Parse the trailing JSON action from a Layer-2 follow-up response.
 
-    Looks for a fenced ``json {"action": "send"|"defer"}`` block. Returns
-    ``(action, polished_text)``. ``polished_text`` is the message body BEFORE
-    the JSON block.
+    Looks for a fenced ``json {"action": "send"|"defer"|"cancel"}`` block.
+    Returns ``(action, polished_text)``. ``polished_text`` is the message
+    body BEFORE the JSON block.
 
     WARNING 5 fix:
       - No JSON block found    -> ``("send", text.strip())``
@@ -806,7 +809,9 @@ def _parse_followup_action(text: str) -> tuple[str, str]:
         so the malformed JSON internals don't leak to the user.
 
     Default to ``"send"`` rather than eternally deferring (D-17 spirit +
-    Pitfall 6).
+    Pitfall 6). ``"cancel"`` is the evidence-first escape hatch: the brain may
+    drop a follow-up whose subject demonstrably didn't happen (e.g. a planned
+    workout with no Garmin/Hevy evidence) instead of asking a false question.
     """
     import re as _re
     if not text:
@@ -817,7 +822,7 @@ def _parse_followup_action(text: str) -> tuple[str, str]:
     try:
         obj = json.loads(m.group(1))
         action = str(obj.get("action", "send")).lower()
-        if action not in ("send", "defer"):
+        if action not in ("send", "defer", "cancel"):
             action = "send"
     except (json.JSONDecodeError, ValueError):
         # WARNING 5 — strip the malformed JSON from the polished text.
@@ -942,15 +947,21 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
 async def _compose_followup(bot, followup: dict, situation: dict, now: datetime) -> str:
     """D-13 — dedicated Layer-2 path for a due follow-up.
 
-    - Layer 2 returns JSON ``{"action": "send"}`` or ``{"action": "defer"}``.
+    - Layer 2 returns JSON ``{"action": "send"|"defer"|"cancel"}``.
     - D-14 force-fire: if ``defer_count >= _DEFER_FORCE_FIRE_THRESHOLD``
-      override defer -> send.
+      override defer -> send. Cancel is NOT overridden — force-fire exists to
+      stop eternal *deferral*; cancel is a terminal, evidence-justified
+      decision (the follow-up's subject is moot or demonstrably didn't
+      happen).
     - On send: ``send_and_inject(..., inject_into_conversation=True)`` +
       ``FollowupStore.mark_done`` + ``OutreachLogStore.append`` (success-only,
       D-10).
     - On defer: ``FollowupStore.defer(fid, original_due + 1h)``.
+    - On cancel: ``FollowupStore.cancel(fid)`` — no send, no outreach-log
+      entry (D-10 symmetry: nothing was delivered).
 
-    Returns ``"sent"`` | ``"deferred"`` | ``"force_fired"`` | ``"failed"``.
+    Returns ``"sent"`` | ``"deferred"`` | ``"force_fired"`` | ``"cancelled"``
+    | ``"failed"``.
 
     BLOCKER 3 — detects ``_run_smart_loop``'s sentinel-return string and
     treats it as Layer-2 failure (falls through to defer / mark failed).
@@ -974,6 +985,22 @@ async def _compose_followup(bot, followup: dict, situation: dict, now: datetime)
         text = ""
 
     action, polished = _parse_followup_action(text)
+
+    # Cancel — terminal, evidence-justified; checked BEFORE force-fire (which
+    # exists to stop eternal deferral, not to overrule a reasoned drop).
+    if action == "cancel":
+        from memory.firestore_db import FollowupStore
+        try:
+            fs = FollowupStore(
+                project_id=os.environ.get("GCP_PROJECT_ID", ""),
+                database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+            )
+            fs.cancel(fid)
+            logger.info("autonomous: follow-up %s cancelled by Layer 2", fid)
+            return "cancelled"
+        except Exception:
+            logger.warning("autonomous: followup cancel failed", exc_info=True)
+            return "failed"
 
     # D-14 force-fire — defer_count >= threshold overrides "defer".
     force_fired = False
