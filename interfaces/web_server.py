@@ -729,6 +729,78 @@ async def cron_healthkit_sync(request: Request) -> JSONResponse:
     return JSONResponse(content={"upserted": result["upserted_count"]})
 
 
+@app.post("/cron/healthkit-reconcile")
+async def cron_healthkit_reconcile(request: Request) -> JSONResponse:
+    """Nightly full-previous-day reconcile from the 02:00 iPhone automation.
+
+    Lifesum data reaches the server ONLY via phone push, and intraday syncs
+    sometimes miss meals — so a 02:00 iOS automation pushes the full last-26h
+    HealthKit window and this route treats it as AUTHORITATIVE for one
+    calendar date: upsert incoming, delete stale healthkit-source docs in
+    that date bucket (MealStore.replace_day, empty-payload guarded).
+    Midnight-spanning meals outside the target date get plain upserts.
+
+    Target date: optional ``?date=YYYY-MM-DD`` query param; default is
+    yesterday in Asia/Jerusalem (at 02:00 the previous calendar day).
+
+    Upsert-only like /cron/healthkit-sync — no orchestrator, no Telegram,
+    no LLM; judgment is deferred to the next autonomous tick / morning
+    briefing. Phone-triggered (no Cloud Scheduler job); heartbeat staleness
+    ("healthkit-reconcile": 30h) is the missed-night safety net.
+
+    Returns:
+        JSONResponse: the reconcile_payload result dict on HTTP 200 —
+        ``{"date", "received", "kept_for_date", "upserted", "deleted",
+        "upserted_other_days", "errored"}``.
+
+    Raises:
+        HTTPException 401/403/500: from _verify_healthkit_request.
+        HTTPException 422: bad ``date`` param or Pydantic ValidationError.
+    """
+    await _verify_healthkit_request(request)
+    # WHY: lazy import — same convention as every other /cron/* route.
+    import mcp_tools.healthkit_tool as _hk  # noqa: PLC0415
+    from memory.firestore_db import MealStore  # noqa: PLC0415
+    from pydantic import ValidationError  # noqa: PLC0415
+
+    date_param = request.query_params.get("date")
+    if date_param:
+        try:
+            datetime.strptime(date_param, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "date must be YYYY-MM-DD", "got": date_param},
+            )
+        target_date = date_param
+    else:
+        target_date = (
+            datetime.now(ZoneInfo("Asia/Jerusalem")).date() - timedelta(days=1)
+        ).isoformat()
+
+    try:
+        payload_json = await request.json()
+        store = MealStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        try:
+            result = _hk.reconcile_payload(payload_json, store, target_date=target_date)
+        except ValidationError as ve:
+            _log_cron_run("healthkit-reconcile", ok=False)
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "Payload validation failed", "errors": ve.errors()},
+            )
+        _log_cron_run("healthkit-reconcile", ok=True)
+    except HTTPException:
+        raise
+    except Exception:
+        _log_cron_run("healthkit-reconcile", ok=False)
+        raise
+    return JSONResponse(content=result)
+
+
 @app.post("/cron/morning-briefing-tick")
 async def cron_morning_briefing_tick(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler 10-min tick and run the Garmin-sync detection logic.
