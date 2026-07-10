@@ -259,6 +259,109 @@ def test_get_day_aggregate_biggest_gap():
     assert agg["biggest_gap_minutes"] == 300.0  # 5 hours
 
 
+# ------------------------------------------------------------------ #
+# replace_day (nightly full-day reconcile)                            #
+# ------------------------------------------------------------------ #
+
+def _existing_snap(doc_id: str, doc: dict) -> MagicMock:
+    """A fake Firestore snapshot with .id / .to_dict() / .reference.delete()."""
+    snap = MagicMock()
+    snap.id = doc_id
+    snap.to_dict.return_value = doc
+    return snap
+
+
+def _meal(ts: str = "2026-07-09T12:00:00+03:00", kcal: int = 500) -> dict:
+    return {"timestamp": ts, "calories": kcal, "source": "healthkit"}
+
+
+def test_replace_day_deletes_stale_healthkit_docs():
+    """Docs with source=healthkit + id healthkit:* absent from the incoming
+    set are deleted; incoming ids are upserted and kept."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    kept = _existing_snap("healthkit:aaa", {"source": "healthkit"})
+    stale = _existing_snap("healthkit:bbb", {"source": "healthkit"})
+    sub.stream.return_value = [kept, stale]
+    result = s.replace_day("2026-07-09", {"healthkit:aaa": _meal()})
+    stale.reference.delete.assert_called_once()
+    kept.reference.delete.assert_not_called()
+    assert result["upserted"] == 1
+    assert result["deleted"] == 1
+    # The incoming meal was written with merge=True (same upsert semantics).
+    args, kwargs = sub.document.return_value.set.call_args
+    assert kwargs.get("merge") is True
+
+
+def test_replace_day_preserves_non_healthkit_sources():
+    """Docs from other sources are NEVER deleted, even when absent from the
+    incoming set — replace-day authority covers healthkit docs only."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    googlefit = _existing_snap("googlefit:x", {"source": "googlefit"})
+    # Belt-and-braces: source says healthkit but the id prefix doesn't — keep.
+    odd = _existing_snap("manual:1", {"source": "healthkit"})
+    sub.stream.return_value = [googlefit, odd]
+    result = s.replace_day("2026-07-09", {"healthkit:aaa": _meal()})
+    googlefit.reference.delete.assert_not_called()
+    odd.reference.delete.assert_not_called()
+    assert result["deleted"] == 0
+
+
+def test_replace_day_empty_payload_is_noop():
+    """An empty incoming set must never wipe the day — no reads, no deletes."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    result = s.replace_day("2026-07-09", {})
+    assert result == {"noop": True, "upserted": 0, "deleted": 0}
+    sub.stream.assert_not_called()
+
+
+def test_replace_day_idempotent_rerun_deletes_nothing():
+    """A second identical call finds only incoming ids on disk → 0 deletes."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    existing = _existing_snap("healthkit:aaa", {"source": "healthkit"})
+    sub.stream.return_value = [existing]
+    result = s.replace_day("2026-07-09", {"healthkit:aaa": _meal()})
+    assert result["deleted"] == 0
+    existing.reference.delete.assert_not_called()
+
+
+def test_replace_day_per_doc_error_isolation():
+    """One failing delete never aborts the batch — the other stale doc still
+    goes, the failure is counted, and nothing raises."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    bad = _existing_snap("healthkit:bad", {"source": "healthkit"})
+    bad.reference.delete.side_effect = RuntimeError("boom")
+    good = _existing_snap("healthkit:good", {"source": "healthkit"})
+    sub.stream.return_value = [bad, good]
+    result = s.replace_day("2026-07-09", {"healthkit:aaa": _meal()})
+    good.reference.delete.assert_called_once()
+    assert result["deleted"] == 1
+    assert result["errored"] == 1
+
+
+def test_replace_day_upsert_error_isolation():
+    """One failing upsert is counted as errored; the rest still land."""
+    s = _store()
+    sub = s._col.document.return_value.collection.return_value
+    sub.stream.return_value = []
+    good_doc, bad_doc = MagicMock(), MagicMock()
+    bad_doc.set.side_effect = RuntimeError("boom")
+    sub.document.side_effect = (
+        lambda sid: bad_doc if sid == "healthkit:bad" else good_doc
+    )
+    result = s.replace_day("2026-07-09", {
+        "healthkit:bad": _meal(kcal=100),
+        "healthkit:ok": _meal(kcal=200),
+    })
+    assert result["upserted"] == 1
+    assert result["errored"] == 1
+    good_doc.set.assert_called_once()
+
+
 def test_get_day_strips_non_serializable_updated_at():
     """Phase 19.3 live-UAT fix: get_day drops the Firestore updated_at stamp so
     downstream json.dumps (fetch_recent_meals tool, autonomous triage) never

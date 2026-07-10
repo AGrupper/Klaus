@@ -882,6 +882,74 @@ class MealStore:
             "meals":               meals,  # ordered — prompt may render breakdown
         }
 
+    def replace_day(self, date_str: str, meals: dict[str, dict]) -> dict:
+        """Make ``meals`` the authoritative HealthKit set for one calendar day.
+
+        Nightly full-day reconcile (02:00 iOS automation): upsert every
+        incoming meal, then delete stale HealthKit docs in the date bucket —
+        docs where ``source == "healthkit"`` AND the doc id starts with
+        ``healthkit:`` AND the id is not in the incoming set. Docs from any
+        other source are never touched, and nothing outside ``date_str``'s
+        bucket is ever read or deleted.
+
+        Empty guard: an empty ``meals`` deletes NOTHING — a missing or empty
+        phone push must never wipe a day.
+
+        Per-doc try/except (like ``ingest_payload``): one bad doc never
+        aborts the batch. Idempotent — a second identical call finds only
+        incoming ids on disk and deletes nothing.
+
+        Args:
+            date_str: ``YYYY-MM-DD`` (Asia/Jerusalem calendar date).
+            meals:    ``{source_id: canonical_meal}`` for the whole day.
+
+        Returns:
+            ``{"noop": True, "upserted": 0, "deleted": 0}`` on empty input;
+            else ``{"upserted": int, "deleted": int, "errored": int}``.
+        """
+        if not meals:
+            return {"noop": True, "upserted": 0, "deleted": 0}
+
+        upserted = deleted = errored = 0
+        for source_id, meal in meals.items():
+            try:
+                self.upsert(source_id, meal)
+                upserted += 1
+            except Exception:
+                errored += 1  # upsert already logged the failure
+
+        try:
+            snaps = list(
+                self._col.document(date_str).collection("timestamps").stream()
+            )
+        except Exception:
+            logger.error(
+                "MealStore.replace_day(%r): listing existing docs failed — "
+                "skipping stale-doc cleanup", date_str, exc_info=True,
+            )
+            return {"upserted": upserted, "deleted": 0, "errored": errored + 1}
+
+        for snap in snaps:
+            doc = snap.to_dict() or {}
+            is_stale_healthkit = (
+                doc.get("source") == "healthkit"
+                and snap.id.startswith("healthkit:")
+                and snap.id not in meals
+            )
+            if not is_stale_healthkit:
+                continue
+            try:
+                snap.reference.delete()
+                deleted += 1
+            except Exception:
+                errored += 1
+                logger.error(
+                    "MealStore.replace_day(%r): delete of stale doc %r failed",
+                    date_str, snap.id, exc_info=True,
+                )
+
+        return {"upserted": upserted, "deleted": deleted, "errored": errored}
+
 
 def _jsonsafe_doc(d: dict) -> dict:
     """Return a copy of a Firestore doc dict with non-JSON-serialisable values
