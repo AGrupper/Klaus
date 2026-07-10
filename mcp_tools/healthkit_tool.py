@@ -361,6 +361,41 @@ def _normalize_healthkit_sample(meal: dict) -> dict:
 # Ingest glue                                                        #
 # ------------------------------------------------------------------ #
 
+def _payload_to_meals(payload_dict: dict) -> tuple[list[tuple[str, dict]], int]:
+    """Validate + aggregate + normalize a raw POST body into canonical meals.
+
+    Shared front half of :func:`ingest_payload` and :func:`reconcile_payload`:
+    HealthKitPayload parse → :func:`_aggregate_quantity_samples` →
+    :func:`_normalize_healthkit_sample` per meal. Per-meal try/except means
+    one malformed meal never drops the rest of the batch (Pattern C).
+
+    Returns:
+        ``(pairs, errored)`` — ``pairs`` is ``[(source_id, canonical_meal)]``
+        for every meal that normalized cleanly; ``errored`` counts the ones
+        that did not (they are logged + skipped).
+
+    Raises:
+        pydantic.ValidationError: When the top-level payload does not match
+            HealthKitPayload (the webhook routes translate this into 422).
+    """
+    payload = HealthKitPayload.model_validate(payload_dict)
+    meals = _aggregate_quantity_samples(payload.samples)
+    pairs: list[tuple[str, dict]] = []
+    errored = 0
+    for meal in meals:
+        try:
+            normalized = _normalize_healthkit_sample(meal)
+            pairs.append((normalized["source_id"], normalized))
+        except Exception:
+            logger.warning(
+                "healthkit _payload_to_meals: meal at %s (food=%r) failed; continuing",
+                meal.get("start_date"), meal.get("food_item"),
+                exc_info=True,
+            )
+            errored += 1
+    return pairs, errored
+
+
 def ingest_payload(payload_dict: dict, store) -> dict:
     """Validate payload, aggregate flat samples, normalize each meal, upsert.
 
@@ -378,24 +413,80 @@ def ingest_payload(payload_dict: dict, store) -> dict:
         pydantic.ValidationError: When the top-level payload does not match
             HealthKitPayload (the webhook route translates this into 422).
     """
-    payload = HealthKitPayload.model_validate(payload_dict)
-    meals = _aggregate_quantity_samples(payload.samples)
+    pairs, errored = _payload_to_meals(payload_dict)
     upserted = 0
-    errored = 0
-    for meal in meals:
+    for source_id, meal in pairs:
         try:
-            normalized = _normalize_healthkit_sample(meal)
-            store.upsert(source_id=normalized["source_id"], meal=normalized)
+            store.upsert(source_id=source_id, meal=meal)
             upserted += 1
         except Exception:
             logger.warning(
-                "healthkit ingest_payload: meal at %s (food=%r) failed; continuing",
-                meal.get("start_date"), meal.get("food_item"),
-                exc_info=True,
+                "healthkit ingest_payload: upsert of %r failed; continuing",
+                source_id, exc_info=True,
             )
             errored += 1
     logger.info(
-        "healthkit_sync.upserted count=%d errored=%d samples_in=%d meals_out=%d",
-        upserted, errored, len(payload.samples), len(meals),
+        "healthkit_sync.upserted count=%d errored=%d",
+        upserted, errored,
     )
     return {"upserted_count": upserted, "errored_count": errored}
+
+
+def reconcile_payload(payload_dict: dict, store, target_date: str) -> dict:
+    """Nightly full-day reconcile: the payload is authoritative for one date.
+
+    Meals whose calendar date (``timestamp[:10]``, Asia/Jerusalem — the
+    validators guarantee tz-aware timestamps) equals ``target_date`` go
+    through :meth:`MealStore.replace_day` — upsert incoming + delete stale
+    HealthKit docs in that one bucket. Meals on any OTHER date (the 26h
+    shortcut window at 02:00 also catches today 00:00–02:00) get plain
+    upserts; nothing outside the target date is ever deleted.
+
+    Args:
+        payload_dict: Raw JSON dict from the /cron/healthkit-reconcile POST body.
+        store: A MealStore instance (``replace_day`` + ``upsert``).
+        target_date: ``YYYY-MM-DD`` the payload is authoritative for.
+
+    Returns:
+        ``{"date", "received", "kept_for_date", "upserted", "deleted",
+        "upserted_other_days", "errored"}`` — ``received`` counts aggregated
+        meals (groups), not raw samples.
+
+    Raises:
+        pydantic.ValidationError: propagated from :func:`_payload_to_meals`.
+    """
+    pairs, errored = _payload_to_meals(payload_dict)
+
+    target_meals: dict[str, dict] = {}
+    other_pairs: list[tuple[str, dict]] = []
+    for source_id, meal in pairs:
+        if meal["timestamp"][:10] == target_date:
+            target_meals[source_id] = meal
+        else:
+            other_pairs.append((source_id, meal))
+
+    replaced = store.replace_day(target_date, target_meals)
+
+    upserted_other = 0
+    for source_id, meal in other_pairs:
+        try:
+            store.upsert(source_id=source_id, meal=meal)
+            upserted_other += 1
+        except Exception:
+            logger.warning(
+                "healthkit reconcile_payload: other-day upsert of %r failed; continuing",
+                source_id, exc_info=True,
+            )
+            errored += 1
+
+    result = {
+        "date": target_date,
+        "received": len(pairs),
+        "kept_for_date": len(target_meals),
+        "upserted": replaced.get("upserted", 0),
+        "deleted": replaced.get("deleted", 0),
+        "upserted_other_days": upserted_other,
+        "errored": errored + replaced.get("errored", 0),
+    }
+    logger.info("healthkit_reconcile %s", result)
+    return result
