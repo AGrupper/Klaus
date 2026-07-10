@@ -13,7 +13,7 @@ if Amit asks 'why?' or a precise protocol isn't covered by the core.
 
 ---
 
-Today's date: {today_date}
+Today's date: {today_date} — current time: {current_time} (Asia/Jerusalem)
 
 ---
 

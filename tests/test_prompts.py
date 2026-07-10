@@ -25,6 +25,7 @@ TRIAGE_PATH = os.path.join(REPO_ROOT, "prompts", "autonomous_triage.md")
 AUTONOMOUS_PATH = os.path.join(REPO_ROOT, "prompts", "autonomous.md")
 SMART_AGENT_PATH = os.path.join(REPO_ROOT, "prompts", "smart_agent.md")
 MEAL_AUDIT_PATH = os.path.join(REPO_ROOT, "prompts", "meal_audit.md")
+WORKER_AGENT_PATH = os.path.join(REPO_ROOT, "prompts", "worker_agent.md")
 
 
 def _read(path: str) -> str:
@@ -240,4 +241,35 @@ def test_no_phase25_fence():
     assert "Week" in content, (
         "prompts/weekly_training_review.md lost 'Week' framing — "
         "'Week N of 16' block-relative language must be preserved (Pitfall 5)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Time awareness — {current_time} must be declared by every brain prompt that
+# is rendered per-turn (smart chat, worker, autonomous compose).
+# ---------------------------------------------------------------------------
+
+
+def test_current_time_placeholder_present_in_brain_prompts():
+    """{current_time} is substituted by render_smart_system (and the chat
+    worker render in handle_message) — each per-turn prompt must declare it,
+    otherwise the brain stays clock-blind."""
+    for path in (SMART_AGENT_PATH, WORKER_AGENT_PATH, AUTONOMOUS_PATH):
+        content = _read(path)
+        assert "{current_time}" in content, (
+            f"{os.path.basename(path)} must contain the {{current_time}} "
+            "placeholder — the brain needs the wall clock to relate calendar "
+            "events to now"
+        )
+
+
+def test_smart_agent_current_time_at_tail():
+    """Prompt-caching guard: {current_time} changes every minute, so it must
+    sit in the trailing ~15%% of smart_agent.md — placing it early would
+    invalidate the Gemini implicit-cache prefix for the whole prompt body."""
+    content = _read(SMART_AGENT_PATH)
+    pos = content.index("{current_time}")
+    assert pos > len(content) * 0.85, (
+        "{current_time} must stay near the END of smart_agent.md to preserve "
+        "the stable cache prefix"
     )

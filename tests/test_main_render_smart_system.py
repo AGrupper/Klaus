@@ -171,15 +171,25 @@ def test_render_today_date_substituted():
     assert "{today_date}" not in out
 
 
+def test_render_current_time_substituted():
+    """{current_time} is replaced with the result of _current_time_israel()."""
+    orch = _make_orchestrator()
+    with patch("core.main._current_time_israel", return_value="14:20"):
+        out = orch.render_smart_system("Now: {current_time}")
+    assert "14:20" in out
+    assert "{current_time}" not in out
+
+
 def test_render_no_unresolved_placeholders():
-    """After rendering, none of the 4 placeholder tokens remain in the output."""
+    """After rendering, none of the placeholder tokens remain in the output."""
     orch = _make_orchestrator()
     template = (
-        "{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n"
+        "{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n{current_time}\n"
         "{self_md}\n{today_date}"  # repeated tokens still replaced
     )
     out = orch.render_smart_system(template)
-    for token in ("{self_md}", "{self_state}", "{journal_digest}", "{today_date}"):
+    for token in ("{self_md}", "{self_state}", "{journal_digest}", "{today_date}",
+                  "{current_time}"):
         assert token not in out, f"placeholder {token} survived render"
 
 
@@ -524,9 +534,11 @@ def test_render_no_unresolved_placeholders_includes_coaching_guide():
     orch = _make_orchestrator()
     template = (
         "{coaching_guide}\n{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n"
+        "{current_time}\n"
     )
     out = orch.render_smart_system(template)
-    for token in ("{coaching_guide}", "{self_md}", "{self_state}", "{journal_digest}", "{today_date}"):
+    for token in ("{coaching_guide}", "{self_md}", "{self_state}", "{journal_digest}",
+                  "{today_date}", "{current_time}"):
         assert token not in out, f"placeholder {token} survived render"
 
 

@@ -258,7 +258,8 @@ class AgentOrchestrator:
     def render_smart_system(self, template: str) -> str:
         """Render a smart_system template by substituting all standard placeholders.
 
-        Resolves: ``{self_md}``, ``{self_state}``, ``{journal_digest}``, ``{today_date}``.
+        Resolves: ``{self_md}``, ``{self_state}``, ``{journal_digest}``,
+        ``{today_date}``, ``{current_time}``.
         Empty stores (None) substitute empty strings — NOT literal placeholders.
 
         Used by:
@@ -441,6 +442,7 @@ class AgentOrchestrator:
             .replace("{journal_digest}", journal_digest)                 # Phase 17 — smart-only (D-15)
             .replace("{training_profile}", training_profile_snippet)     # PHASE 19 — PROMPT-01
             .replace("{today_date}", today_label)                        # dynamic — always last
+            .replace("{current_time}", _current_time_israel())           # dynamic — per-minute; templates place it at the tail to preserve the cache prefix
         )
 
     def handle_message(
@@ -475,7 +477,11 @@ class AgentOrchestrator:
         # a double-append on those paths). Mirrors the cron append pattern.
         if self._meal_audit_content:
             smart_system = smart_system + "\n\n" + self._meal_audit_content
-        worker_system = self._worker_prompt_template.replace("{today_date}", _today_israel())
+        worker_system = (
+            self._worker_prompt_template
+            .replace("{today_date}", _today_israel())
+            .replace("{current_time}", _current_time_israel())
+        )
 
         # Persist the incoming message and get the full history for this session.
         self.conversation_manager.append(user_id, "user", user_message)
@@ -975,3 +981,11 @@ def _today_israel() -> str:
     """
     now = datetime.now(tz=ISRAEL_TZ)
     return f"{now.strftime('%A')}, {now.strftime('%B')} {now.day}, {now.year}"
+
+
+def _current_time_israel() -> str:
+    """Return the current wall-clock time in Israel as 'HH:MM'.
+
+    Example: '14:20'
+    """
+    return datetime.now(tz=ISRAEL_TZ).strftime("%H:%M")
