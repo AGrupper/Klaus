@@ -264,11 +264,11 @@ def test_gather_situation_isolation(fixed_now):
 
         out = autonomous.gather_situation(fixed_now)
 
-    # All 8 keys present + now_context + empty.
+    # All 8 keys present + now_context + empty (+ training_evidence).
     for k in (
         "calendar", "ticktick_overdue", "unread_email_count", "due_followups",
         "hours_since_contact", "recent_journal_digest", "self_state",
-        "today_outreach_log", "now_context", "empty",
+        "today_outreach_log", "now_context", "empty", "training_evidence",
     ):
         assert k in out, f"key {k} missing"
     # Calendar fallback to []; the rest still gathered.
@@ -308,7 +308,7 @@ def test_gather_situation_parallel_fanout_completes_all_keys(fixed_now):
         "calendar", "ticktick_overdue", "unread_email_count", "due_followups",
         "hours_since_contact", "recent_journal_digest", "self_state",
         "today_outreach_log", "meals_since_last_tick", "training_status",
-        "acwr", "now_context", "empty",
+        "acwr", "now_context", "empty", "training_evidence",
     ):
         assert k in out, f"key {k} missing"
     assert out["meals_since_last_tick"] == []          # sentinel, not poison
@@ -1556,3 +1556,143 @@ class TestRecoveryDeviationSignal:
             "core.recovery_metrics.get_recovery_deviation", return_value=None,
         ):
             assert auto._gather_recovery() == {}
+
+
+# ---------------------------------------------------------------------------
+# Training evidence — today's completed-training ground truth in the snapshot
+# (evidence-first workout follow-ups; context, never a trigger)
+# ---------------------------------------------------------------------------
+
+
+class TestTrainingEvidence:
+    """_gather_training_evidence + snapshot parity across triage and both
+    Layer-2 composes, so no proactive path can ask about a workout without
+    seeing whether it actually happened."""
+
+    _EVIDENCE = {
+        "training_log_today": [
+            {"slot": "AM", "type": "run", "planned": True, "completed": True,
+             "skipped_reason": None, "source": "garmin"},
+        ],
+        "strength_today": [],
+        "runs_today": [
+            {"type": "running", "distance_m": 8000, "duration_sec": 2400,
+             "avg_pace_sec_per_km": 300.0},
+        ],
+    }
+
+    def test_gather_compacts_store_docs(self, fixed_now, monkeypatch):
+        """Full store docs (per-set / per-lap detail) are reduced to the
+        compact prompt-safe shape — heavy fields must never leak."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        tls = MagicMock()
+        tls.get_by_date.return_value = [{
+            "doc_id": "2026-07-10_AM", "date": "2026-07-10", "slot": "AM",
+            "type": "run", "planned": True, "completed": True,
+            "skipped_reason": None, "rpe": 6, "feel": "good",
+            "source": "garmin", "garmin_activity_id": "123",
+        }]
+        sss = MagicMock()
+        sss.get_range.return_value = [{
+            "workout_id": "w1", "title": "Upper Body", "date": "2026-07-10",
+            "start_time": "2026-07-10T18:00:00+03:00", "duration_min": 62,
+            "exercises": [{"name": "Bench", "sets": [{"kg": 80, "reps": 5}] * 4}],
+            "total_volume_kg": 5400.0,
+        }]
+        rds = MagicMock()
+        rds.get_range.return_value = [{
+            "activity_id": "a1", "date": "2026-07-10", "type": "running",
+            "distance_m": 8000, "duration_sec": 2400,
+            "avg_pace_sec_per_km": 300.0,
+            "splits": [{"lap": 1}] * 8, "hr_zones": [1, 2, 3],
+        }]
+        with patch("memory.firestore_db.TrainingLogStore", return_value=tls), \
+             patch("memory.firestore_db.StrengthSessionStore", return_value=sss), \
+             patch("memory.firestore_db.RunDetailStore", return_value=rds):
+            out = autonomous._gather_training_evidence(fixed_now, "test-project", "(default)")
+
+        assert out["training_log_today"] == [{
+            "slot": "AM", "type": "run", "planned": True, "completed": True,
+            "skipped_reason": None, "source": "garmin",
+        }]
+        assert out["strength_today"] == [{
+            "title": "Upper Body", "start_time": "2026-07-10T18:00:00+03:00",
+            "duration_min": 62, "exercise_count": 1, "total_volume_kg": 5400.0,
+        }]
+        assert out["runs_today"] == [{
+            "type": "running", "distance_m": 8000, "duration_sec": 2400,
+            "avg_pace_sec_per_km": 300.0,
+        }]
+        # Heavy per-set / per-lap fields must not survive compaction.
+        blob = json.dumps(out)
+        for heavy in ("exercises", "splits", "hr_zones", "sets"):
+            assert heavy not in blob, f"heavy field {heavy} leaked into evidence"
+
+    def test_gather_failure_returns_empty_dict(self, fixed_now):
+        """Sentinel pattern — a store blowing up must never break the tick."""
+        with patch("memory.firestore_db.TrainingLogStore",
+                   side_effect=RuntimeError("firestore down")):
+            out = autonomous._gather_training_evidence(fixed_now, "p", "(default)")
+        assert out == {}
+
+    def test_training_evidence_alone_keeps_signals_empty(self):
+        """Context, not a trigger — evidence must never wake tick-brain
+        (parity with training_status/acwr)."""
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "training_evidence": self._EVIDENCE,
+            "now_context": {},
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+    def test_triage_prompt_includes_training_evidence(self):
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "unread_email_count": 0,
+            "due_followups": [], "hours_since_contact": 2.0,
+            "recent_journal_digest": "", "self_state": {},
+            "today_outreach_log": [], "now_context": {},
+            "training_evidence": self._EVIDENCE,
+        }
+        prompt = autonomous._build_triage_prompt(situation, "")
+        assert "training_evidence" in prompt
+        assert "runs_today" in prompt
+
+    def _capture_compose(self, fn, *args):
+        """Run a compose helper with a fake orchestrator; return the synthetic
+        user-message content passed to _run_smart_loop."""
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(autonomous, "_get_orchestrator",
+                          return_value=fake_orchestrator):
+            fn(*args)
+        return captured.get("content", "")
+
+    def test_compose_layer2_snapshot_includes_training_evidence(self, fixed_now):
+        sit = _live_situation(fixed_now, training_evidence=self._EVIDENCE)
+        content = self._capture_compose(
+            autonomous._compose_layer2, sit, "draft", "reason",
+        )
+        assert '"training_evidence"' in content
+        assert "runs_today" in content
+
+    def test_compose_followup_layer2_includes_training_evidence(self, fixed_now):
+        """The smoking gun — the follow-up compose snapshot must carry the
+        evidence, otherwise the brain asks about workouts that never happened."""
+        fu = {"id": "fu1", "due_at": "2026-07-10T10:00:00+00:00",
+              "note": "ask how the run went", "defer_count": 0}
+        sit = _live_situation(fixed_now, training_evidence=self._EVIDENCE)
+        content = self._capture_compose(
+            autonomous._compose_followup_layer2, fu, sit,
+        )
+        assert '"training_evidence"' in content
+        assert "runs_today" in content

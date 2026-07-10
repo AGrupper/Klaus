@@ -250,6 +250,14 @@ def test_no_phase25_fence():
 # ---------------------------------------------------------------------------
 
 
+def test_triage_mentions_training_evidence():
+    """Evidence-first workouts — autonomous_triage.md must teach the tick-brain
+    that training_evidence is ground truth (context, not a trigger)."""
+    content = _read(TRIAGE_PATH)
+    assert "training_evidence" in content
+    assert "not a trigger" in content.lower()
+
+
 def test_current_time_placeholder_present_in_brain_prompts():
     """{current_time} is substituted by render_smart_system (and the chat
     worker render in handle_message) — each per-turn prompt must declare it,

@@ -143,6 +143,23 @@ restraint veto the same way a schedule conflict does. Raise it once
 it's done. A deviation on a rest day is usually context, not a message —
 unless it is severe and worth an early-night nudge.
 
+## Training evidence (context, not a trigger)
+
+The `training_evidence` snapshot key is today's ground truth of what was
+ACTUALLY done: `training_log_today` (planned/completed/skipped rows),
+`strength_today` (Hevy sessions), `runs_today` (Garmin runs). Never assume
+a planned calendar session happened — or didn't — without checking it.
+
+- Empty lists ARE evidence: if a planned session's end time is behind the
+  current time and nothing appears here, it most likely didn't happen.
+  A "how did it go?" message would ring false — say nothing, or name the
+  honest observation (no activity logged for the planned run).
+- A populated entry means the session is already captured automatically —
+  completion questions are redundant; only speak if the data itself raises
+  something worth saying.
+- Like `training_status`/`acwr`, this is CONTEXT for judging other signals,
+  never a reason to speak on its own.
+
 ## Decision procedure (run these checks in order)
 
 Step 1 — vetoes. A topic that trips ANY of these is dead for this tick,

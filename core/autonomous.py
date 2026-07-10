@@ -471,8 +471,86 @@ def _gather_acwr() -> dict:
         return {"ratio": None}
 
 
+def _gather_training_evidence(now: datetime, project_id: str, database: str) -> dict:
+    """(n) Today's training ground truth — what was ACTUALLY done (Pattern C sentinel).
+
+    Reads three date-indexed stores for today and returns a compact summary so
+    the triage and compose layers can check evidence before assuming a planned
+    session happened (or asking "how was the workout?" about one that didn't):
+
+      - ``training_log_today``: TrainingLogStore rows (planned/completed/skipped)
+      - ``strength_today``:     Hevy sessions (StrengthSessionStore)
+      - ``runs_today``:         Garmin runs (RunDetailStore)
+
+    Empty lists ARE evidence — nothing was logged. Compaction matters: the
+    strength/run stores hold full per-set / per-lap detail that must never be
+    dumped into a prompt. CONTEXT only, never a trigger (same rule as
+    training_status/acwr — see _is_empty_signals).
+
+    Returns ``{}`` on any error so a store failure never breaks the tick.
+    """
+    try:
+        from memory.firestore_db import (
+            RunDetailStore,
+            StrengthSessionStore,
+            TrainingLogStore,
+        )
+        today_iso = now.astimezone(_TZ).date().isoformat()
+
+        log_rows = TrainingLogStore(
+            project_id=project_id, database=database
+        ).get_by_date(today_iso)
+        training_log_today = [
+            {
+                "slot": r.get("slot"),
+                "type": r.get("type"),
+                "planned": r.get("planned"),
+                "completed": r.get("completed"),
+                "skipped_reason": r.get("skipped_reason"),
+                "source": r.get("source"),
+            }
+            for r in log_rows
+        ]
+
+        strength_rows = StrengthSessionStore(
+            project_id=project_id, database=database
+        ).get_range(today_iso, today_iso)
+        strength_today = [
+            {
+                "title": w.get("title"),
+                "start_time": w.get("start_time"),
+                "duration_min": w.get("duration_min"),
+                "exercise_count": len(w.get("exercises") or []),
+                "total_volume_kg": w.get("total_volume_kg"),
+            }
+            for w in strength_rows
+        ]
+
+        run_rows = RunDetailStore(
+            project_id=project_id, database=database
+        ).get_range(today_iso, today_iso)
+        runs_today = [
+            {
+                "type": r.get("type"),
+                "distance_m": r.get("distance_m"),
+                "duration_sec": r.get("duration_sec"),
+                "avg_pace_sec_per_km": r.get("avg_pace_sec_per_km"),
+            }
+            for r in run_rows
+        ]
+
+        return {
+            "training_log_today": training_log_today,
+            "strength_today": strength_today,
+            "runs_today": runs_today,
+        }
+    except Exception:
+        logger.warning("autonomous: training_evidence gather failed", exc_info=True)
+        return {}
+
+
 def gather_situation(now: datetime) -> dict:
-    """Layer 0 — aggregate situation snapshot from 13 sources, fanned out in parallel.
+    """Layer 0 — aggregate situation snapshot from 14 sources, fanned out in parallel.
 
     Each source lives in its own ``_gather_*`` function with its own
     try/except and sentinel fallback, so one failure does NOT mask others —
@@ -526,6 +604,11 @@ def gather_situation(now: datetime) -> dict:
         "habit_pending": lambda: _gather_habit_adherence(now, project_id, database),
         # Recovery deviation vs 7-day baseline — trigger only when flags fire.
         "recovery": _gather_recovery,
+        # Today's completed-training ground truth (Garmin runs + Hevy sessions
+        # + training log) — CONTEXT only, not a trigger (see _is_empty_signals).
+        "training_evidence": lambda: _gather_training_evidence(
+            now, project_id, database
+        ),
     }
 
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="gather") as pool:
@@ -606,6 +689,9 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         "habit_pending": situation.get("habit_pending", []),
         # Recovery deviation vs 7-day baseline — {} unless flags fired today.
         "recovery": situation.get("recovery", {}),
+        # Today's completed-training ground truth — never assume a planned
+        # calendar session happened (or didn't) without checking this.
+        "training_evidence": situation.get("training_evidence", {}),
     }
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
@@ -779,6 +865,8 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "habit_pending": situation.get("habit_pending", []),
         # Recovery deviation vs 7-day baseline (parity with triage).
         "recovery": situation.get("recovery", {}),
+        # Today's completed-training ground truth (parity with triage).
+        "training_evidence": situation.get("training_evidence", {}),
     }, indent=2, ensure_ascii=False)
 
     synthetic_content = (
@@ -816,6 +904,9 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
     snap = json.dumps({
         "calendar": situation.get("calendar", []),
         "ticktick_overdue": situation.get("ticktick_overdue", []),
+        # Today's completed-training ground truth — a "how was the workout?"
+        # follow-up must check this before assuming the session happened.
+        "training_evidence": situation.get("training_evidence", {}),
     }, indent=2, ensure_ascii=False)
     synthetic = (
         f"Due follow-up:\n"
