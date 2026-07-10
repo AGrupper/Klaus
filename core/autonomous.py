@@ -663,6 +663,23 @@ def _synthesize_topic_key(trigger_hint: str, situation: dict) -> str:
     return f"{trigger}:tick-{tick_idx}"
 
 
+def _format_now_block(situation: dict) -> str:
+    """Render the ``now_context`` time block shared by triage AND both
+    Layer-2 composes.
+
+    The layer that writes the outgoing message needs the same clock the
+    triage layer judged with — otherwise it composes date-aware but
+    time-blind (can't tell whether a planned session is behind or ahead).
+    One helper, three call sites, no drift.
+    """
+    nc = situation.get("now_context") or {}
+    return (
+        f"now: {nc.get('now_local', '')}\n"
+        f"tick {nc.get('tick_index', 0)} of {nc.get('tick_total', _TICK_TOTAL_PER_DAY)}\n"
+        f"last tick at: {nc.get('last_tick_at', '')}"
+    )
+
+
 def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     """Build the user-message content for the triage call.
 
@@ -704,12 +721,7 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     )
 
     journal = situation.get("recent_journal_digest") or "(no recent journal entries)"
-    nc = situation.get("now_context") or {}
-    now_context_block = (
-        f"now: {nc.get('now_local', '')}\n"
-        f"tick {nc.get('tick_index', 0)} of {nc.get('tick_total', _TICK_TOTAL_PER_DAY)}\n"
-        f"last tick at: {nc.get('last_tick_at', '')}"
-    )
+    now_context_block = _format_now_block(situation)
     outreach_today = situation.get("today_outreach_log") or []
     outreach_block = ", ".join(outreach_today) if outreach_today else "(none yet)"
 
@@ -845,9 +857,9 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         smart_system_template = smart_system_template + "\n\n" + meal_audit
     smart_system = orchestrator.render_smart_system(smart_system_template)
     worker_system_template = _load_prompt("prompts/worker_agent.md")
-    # worker_system only needs {today_date} resolved; reuse the same render
-    # path so a future addition of new placeholders to worker_agent.md does
-    # not silently bypass them.
+    # worker_system needs {today_date} + {current_time} resolved; reuse the
+    # same render path so a future addition of new placeholders to
+    # worker_agent.md does not silently bypass them.
     worker_system = orchestrator.render_smart_system(worker_system_template)
 
     snap_summary = json.dumps({
@@ -871,6 +883,7 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
 
     synthetic_content = (
         f"Situation snapshot:\n{snap_summary}\n\n"
+        f"Time context:\n{_format_now_block(situation)}\n\n"
         f"Triage layer's draft:\n{draft}\n\n"
         f"Triage reasoning:\n{triage_reason}\n"
     )
@@ -914,7 +927,8 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
         f"due_at: {followup.get('due_at', '')}\n"
         f"note: {followup.get('note', '')}\n"
         f"defer_count: {followup.get('defer_count', 0)}\n\n"
-        f"Current situation:\n{snap}\n"
+        f"Current situation:\n{snap}\n\n"
+        f"Time context:\n{_format_now_block(situation)}\n"
     )
     messages = [{"role": "user", "content": synthetic}]
     return orchestrator._run_smart_loop(messages, smart_system, worker_system)

@@ -1684,6 +1684,9 @@ class TestTrainingEvidence:
         )
         assert '"training_evidence"' in content
         assert "runs_today" in content
+        # The compose layer must also carry the clock (was triage-only).
+        assert "Time context:" in content
+        assert (sit["now_context"]["now_local"] or "") in content
 
     def test_compose_followup_layer2_includes_training_evidence(self, fixed_now):
         """The smoking gun — the follow-up compose snapshot must carry the
@@ -1696,3 +1699,14 @@ class TestTrainingEvidence:
         )
         assert '"training_evidence"' in content
         assert "runs_today" in content
+        # The follow-up compose must also carry the clock (was triage-only).
+        assert "Time context:" in content
+        assert (sit["now_context"]["now_local"] or "") in content
+
+    def test_format_now_block_shared_by_triage_and_composes(self, fixed_now):
+        """One helper, three call sites — the triage prompt must render the
+        exact same time block the composes get (no drift)."""
+        sit = _live_situation(fixed_now)
+        block = autonomous._format_now_block(sit)
+        assert f"now: {sit['now_context']['now_local']}" in block
+        assert autonomous._build_triage_prompt(sit, "").count(block) == 1
