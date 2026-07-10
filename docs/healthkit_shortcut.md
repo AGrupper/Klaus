@@ -132,6 +132,51 @@ the same Firestore doc because MealStore.upsert is keyed on `source_id`
 `healthkit:{start_date_iso}:{food_item}:{calories_int}`). No duplicates, no quota burn
 from re-pushing.
 
+## 4b. Build: 02:00 full-day reconcile automation
+
+iOS Shortcuts → Automation → Personal Automation → "+" → Time of Day → 02:00 → Daily → Next.
+
+Toggle **Run Without Asking** on. Toggle **Notify When Run** OFF.
+
+**Identical action chain to the 23:55 catch-up (§4)** — five `Find Health
+Samples` actions (one per macro: Energy / Protein / Carbohydrates / Fat
+Total / Fiber), same flat `{"samples": [...]}` wire format, same
+`Authorization: Bearer <token>` header — with two differences:
+
+1. Date filter on every `Find Health Samples`: **"Started in the last
+   26 hours"** (not 24 — the 2h overlap guarantees the full previous
+   calendar day is covered even if the automation fires late).
+2. POST to **`/cron/healthkit-reconcile`** (not `/cron/healthkit-sync`).
+
+Why a separate endpoint: the reconcile route treats the payload as
+**authoritative for yesterday** (Asia/Jerusalem). It upserts everything
+incoming and deletes any stale HealthKit-sourced Firestore doc in
+yesterday's date bucket that the payload no longer contains — fixing both
+*missing* meals (an intraday push that never fired) and *stale/duplicate*
+meals (an entry edited or deleted in Lifesum after it synced). The morning
+briefing's meal audit then always reads a complete, corrected previous day.
+
+Safety properties (server-side, nothing to configure in the Shortcut):
+
+- An **empty payload deletes nothing** — a failed/empty query can never
+  wipe a day.
+- Only docs with `source == "healthkit"` are ever deleted; Google-Fit or
+  other-source rows are untouched.
+- Meals in the 26h window that fall **outside yesterday** (e.g. today
+  00:00–02:00) get plain idempotent upserts — deletes never happen outside
+  the target date.
+- Optional `?date=YYYY-MM-DD` query param overrides the target date for
+  manual backfills (operator use only; the automation should not set it).
+
+Once this automation is live, the 23:55 24h catch-up (§4) becomes
+**optional** — the 2h close-trigger (§3) plus the 02:00 reconcile cover
+everything it did. Recommended: keep the 2h close-trigger (it feeds the
+autonomous tick's same-day meal awareness) and retire the 23:55 one.
+
+Heartbeat: a missed night surfaces via
+`_CRON_MAX_STALENESS_HOURS["healthkit-reconcile"] = 30` in
+`core/heartbeat.py` — the next morning's hourly heartbeat flags it.
+
 ## 5. iCloud Shortcut share link
 
 Once both automations are built and tested on the iPhone, export the

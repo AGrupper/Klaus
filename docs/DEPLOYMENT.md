@@ -1327,7 +1327,16 @@ in `core/heartbeat.py`) still monitors these via `_log_cron_run`.
 | Endpoint | Driver | Auth | Phase |
 |----------|--------|------|-------|
 | `/cron/healthkit-sync` | iPhone Shortcut (Personal Automation) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | 19.1 |
+| `/cron/healthkit-reconcile` | iPhone Shortcut (02:00 Personal Automation, last-26h window) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | Nutrition reconcile |
 | `/trigger/nightly` | iPhone Personal Automation ("When Sleep Focus turns On") | shared-secret bearer (`NIGHTLY_TRIGGER_TOKEN`) | Nightly (WS2) |
+
+**`/cron/healthkit-reconcile` is phone-triggered — there is NO Cloud Scheduler
+job for it.** The 02:00 automation pushes the full previous day and the server
+treats it as authoritative for that calendar date (replace-day semantics on
+healthkit-source docs only; empty payloads never delete). Build guide:
+`docs/healthkit_shortcut.md` §4b. Heartbeat staleness threshold is 30h
+(`_CRON_MAX_STALENESS_HOURS["healthkit-reconcile"]`) so a single missed night
+is flagged by the next morning's heartbeat.
 
 **iOS setup for `/trigger/nightly`:** Shortcuts → Automation → new Personal Automation →
 "When [Sleep Focus] turns On" → Run a Shortcut that does a `Get Contents of URL`:
