@@ -213,6 +213,19 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
     except Exception:
         logger.warning("nightly_review: recovery concern computation failed", exc_info=True)
 
+    # Supplement & habit protocol — the winddown is the natural moment for
+    # night-anchored items. Context for the compose prompt, silent-omit on empty.
+    try:
+        from memory.firestore_db import ProtocolStore
+        items = ProtocolStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).active_items()
+        if items:
+            data["protocol"] = items
+    except Exception:
+        logger.warning("nightly_review: protocol fetch failed", exc_info=True)
+
     return data
 
 

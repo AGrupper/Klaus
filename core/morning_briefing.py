@@ -384,6 +384,20 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: meals aggregate failed", exc_info=True)
 
+    # Supplement & habit protocol — morning-anchored items get woven into the
+    # briefing as coaching context, not a checklist. Silent-omit on empty
+    # (Pitfall 4): no active items → no key → the prompt drops the section.
+    try:
+        from memory.firestore_db import ProtocolStore
+        items = ProtocolStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).active_items()
+        if items:
+            data["protocol"] = items
+    except Exception:
+        logger.warning("morning_briefing: protocol fetch failed", exc_info=True)
+
     # Performance-fueling anchors + bodyweight for the forward-looking "Fuel plan
     # for today". The briefing is a single tool-less LLM call, so the fueling-coach
     # guidance (meal_audit.md, appended in _compose_briefing) cannot call

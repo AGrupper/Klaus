@@ -781,3 +781,66 @@ def test_gather_data_recovery_deviation_failure_is_isolated():
                side_effect=RuntimeError("pg down")):
         data = _gather_data("2026-06-28")
     assert "recovery_deviation" not in data
+
+
+# ---------------------------------------------------------------------------
+# Supplement & habit protocol in the briefing gather (silent-omit)
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolInBriefing:
+    def _stub_other_sources(self):
+        from unittest.mock import patch
+        return [
+            patch("mcp_tools.weather_tool.fetch_weather", return_value=None),
+            patch("core.tools._get_calendar_tool"),
+            patch("core.tools._get_gmail_tool"),
+            patch("memory.firestore_db.TaskStore", **{"return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}}),
+            patch("memory.firestore_db.MealStore", **{"return_value.get_day_aggregate.return_value": {}}),
+            patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None),
+        ]
+
+    def _gather(self, items):
+        from unittest.mock import MagicMock, patch
+        import core.morning_briefing as mb
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            mock_ps = MagicMock()
+            mock_ps.active_items.return_value = items
+            with patch("memory.firestore_db.ProtocolStore", return_value=mock_ps):
+                return mb._gather_data("2026-07-15")
+        finally:
+            for s in stubs:
+                s.stop()
+
+    def test_protocol_key_set_when_active_items(self):
+        items = [{"name": "Morning sunlight", "kind": "habit",
+                  "anchor": "morning", "active": True}]
+        data = self._gather(items)
+        assert data.get("protocol") == items
+
+    def test_protocol_key_absent_when_empty(self):
+        data = self._gather([])
+        assert "protocol" not in data
+
+    def test_protocol_failure_does_not_block_briefing(self):
+        from unittest.mock import patch
+        import core.morning_briefing as mb
+        stubs = self._stub_other_sources()
+        for s in stubs:
+            s.start()
+        try:
+            with patch("memory.firestore_db.ProtocolStore",
+                       side_effect=RuntimeError("firestore down")):
+                data = mb._gather_data("2026-07-15")
+        finally:
+            for s in stubs:
+                s.stop()
+        assert "protocol" not in data
+        assert isinstance(data, dict)
+
+    def test_briefing_prompt_carries_protocol_guidance(self):
+        text = open("prompts/morning_briefing.md", encoding="utf-8").read()
+        assert "protocol" in text.lower()

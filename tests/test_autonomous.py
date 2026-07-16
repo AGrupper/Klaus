@@ -1806,3 +1806,103 @@ class TestFollowupCancel:
 
         assert outcome == "failed"
         send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# TestProtocolThreading — supplement & habit protocol as autonomous context
+# ---------------------------------------------------------------------------
+
+
+class TestProtocolThreading:
+    """The supplement/habit protocol (ProtocolStore.active_items) is threaded
+    into the layer-0 gather and both LLM layers as CONTEXT — Klaus judges
+    anchor moments himself; it is never a trigger."""
+
+    _ITEMS = [
+        {"name": "Creatine", "kind": "supplement", "anchor": "post_lunch",
+         "notes": "5g with food", "active": True},
+    ]
+
+    def test_gather_protocol_returns_active_items(self):
+        mock_store = MagicMock()
+        mock_store.active_items.return_value = list(self._ITEMS)
+        with patch("memory.firestore_db.ProtocolStore", return_value=mock_store):
+            out = autonomous._gather_protocol("test-project", "(default)")
+        assert out == self._ITEMS
+
+    def test_gather_protocol_failure_returns_empty(self):
+        with patch("memory.firestore_db.ProtocolStore",
+                   side_effect=RuntimeError("firestore down")):
+            out = autonomous._gather_protocol("test-project", "(default)")
+        assert out == []
+
+    def test_protocol_key_present_in_jobs_dict(self):
+        """gather_situation's fan-out must include the protocol source."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        assert '"protocol"' in src
+        assert "_gather_protocol" in src
+
+    def test_protocol_alone_keeps_signals_empty(self):
+        """Protocol is CONTEXT, never a trigger (same boundary as
+        training_status/acwr) — an empty day stays empty."""
+        situation = {
+            "ticktick_overdue": [],
+            "due_followups": [],
+            "calendar": [],
+            "meals_since_last_tick": [],
+            "protocol": list(self._ITEMS),
+            "now_context": {},
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+    def test_triage_prompt_includes_protocol_when_set(self):
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "unread_email_count": 0,
+            "due_followups": [], "hours_since_contact": 2.0,
+            "recent_journal_digest": "", "self_state": {},
+            "today_outreach_log": [], "now_context": {},
+            "meals_since_last_tick": [],
+            "protocol": list(self._ITEMS),
+        }
+        prompt = autonomous._build_triage_prompt(situation, "")
+        assert "Creatine" in prompt
+        assert '"protocol"' in prompt
+
+    def test_triage_prompt_omits_protocol_when_empty(self):
+        """Silent-omit: an untaught protocol adds no snapshot key (the prompt
+        text tells the model what an absent protocol means)."""
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "unread_email_count": 0,
+            "due_followups": [], "hours_since_contact": 2.0,
+            "recent_journal_digest": "", "self_state": {},
+            "today_outreach_log": [], "now_context": {},
+            "meals_since_last_tick": [],
+            "protocol": [],
+        }
+        prompt = autonomous._build_triage_prompt(situation, "")
+        assert '"protocol"' not in prompt
+
+    def test_compose_layer2_snapshot_includes_protocol(self, fixed_now):
+        """Parity: the brain's compose layer sees the same protocol context
+        the tick-brain judged with."""
+        sit = _live_situation(fixed_now)
+        sit["protocol"] = list(self._ITEMS)
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        fake_orchestrator._run_smart_loop.return_value = "ok"
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            autonomous._compose_layer2(sit, "draft", "reason")
+        messages = fake_orchestrator._run_smart_loop.call_args.args[0]
+        assert "Creatine" in messages[0]["content"]
+
+    def test_triage_prompt_file_carries_protocol_guidance(self):
+        """autonomous_triage.md must teach anchor-moment judgment + the
+        empty-protocol bootstrap (ask once, persist via tool)."""
+        text = open("prompts/autonomous_triage.md", encoding="utf-8").read()
+        assert "protocol" in text.lower()
+        assert "anchor" in text.lower()
+
+    def test_compose_prompt_file_carries_protocol_guidance(self):
+        text = open("prompts/autonomous.md", encoding="utf-8").read()
+        assert "protocol" in text.lower()
+        assert "update_supplement_protocol" in text
