@@ -1235,7 +1235,7 @@ daily ticks drain it (~9 days for the 90-day window). Requires `DATABASE_URL` bo
 ## 20. TICK_BRAIN_API_KEY (Groq) Secret
 
 The tick-brain layer (Phase 14, used by both heartbeat reasoning and Phase 18's
-autonomous tick) calls Groq's free Qwen3-32B endpoint. Access is gated by a Groq
+autonomous tick) calls Groq's free GPT-OSS-120B endpoint. Access is gated by a Groq
 API key stored in GCP Secret Manager.
 
 ### Secret location

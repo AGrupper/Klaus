@@ -1,5 +1,10 @@
 # Tick-Brain Eval Harness
 
+> **Current production model: `openai/gpt-oss-120b`** (since 2026-07-16 — Groq
+> decommissioned `qwen/qwen3-32b` on 2026-07-17). The run-history sections
+> below that reference qwen are historical records of that era; re-baseline
+> new runs against gpt-oss-120b.
+
 ## Purpose
 
 Score the tick-brain judgment layer (Layer 1 of the autonomous engine) against
@@ -164,6 +169,27 @@ would double-send on every followup tick in production. Prompt tuning for
 qwen must prioritise the followup-silence rule and quiet-day restraint;
 tuning for Gemini must prioritise task-age urgency. The two models need
 different corrections — tune against whichever one production will run.
+
+### 2026-07-16 — 25 fixtures, model migration (`openai/gpt-oss-120b`, temp 0.6, max_tokens 2048)
+
+**What was measured:** the qwen→gpt-oss-120b migration (Groq decommissioned
+qwen/qwen3-32b on 2026-07-17), zero prompt changes — pre-deploy gate for the
+Phase 0 swap.
+
+| Precision | Recall | F1 | Errored |
+|-----------|--------|----|---------|
+| 1.00 (7/7) | 0.64 (7/11) | 0.78 | 0/25 |
+
+Reading: gpt-oss-120b is **more conservative** than qwen's post-tuning
+baseline (P 0.83–0.89 / R 0.73–0.91 / F1 0.80–0.87) — perfect precision,
+zero followup-silence violations, zero parse failures (`<think>` stripping
+not needed; clean JSON), but it under-fires on weekend-overdue nudges
+(0012/0013) and the low-protein-morning case (0009). Preferable failure
+direction while over-nagging is the active complaint; recall tuning folds
+into the v6.0 triage-prompt rework. Ops notes: back-to-back eval calls hit
+the 8K-TPM limit twice (clean Gemini fallback; production's 20-min spacing
+is unaffected), and the free tier now caps **200K tokens/day** (was 500K on
+qwen) — watch for late-day `tick_fallback` spikes.
 
 ### 2026-06-12 — 25 fixtures, post-tuning (`qwen/qwen3-32b`, temp 0.6, max_tokens 2048)
 

@@ -145,7 +145,7 @@ class TestTickBrainConstructor(unittest.TestCase):
                 brain = tb2.TickBrain()
                 primary_call = _calls[0]
                 self.assertEqual(primary_call["backend"], "openai")
-                self.assertEqual(primary_call["model"], "qwen/qwen3-32b")
+                self.assertEqual(primary_call["model"], "openai/gpt-oss-120b")
                 self.assertEqual(primary_call["base_url"], "https://api.groq.com/openai/v1")
                 self.assertEqual(brain._max_tokens, 2048)
 

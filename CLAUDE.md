@@ -37,7 +37,7 @@ Before writing any code, read and adhere to these:
 | Brain (smart agent) | `gemini-3.5-flash` | Gemini AI Studio | Orchestration, judgment, every conversation turn |
 | Worker (hands) | `deepseek-v4-flash` | OpenAI-compat (DeepSeek API) | Tool execution, structured JSON, data gathering — $0.11/$0.22 per 1M tokens |
 | Brain fallback | `claude-haiku-4-5` | Anthropic | Inline fallback on LLMError — diversity hedge |
-| Tick-brain | `qwen/qwen3-32b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare `qwen3-32b` 404s |
+| Tick-brain | `openai/gpt-oss-120b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare model names 404. qwen/qwen3-32b decommissioned by Groq 2026-07-17. Free tier: 8K TPM/request, 200K tokens/day |
 | Tick-brain fallback | `gemini-3.5-flash` | Gemini AI Studio | Used if Groq fails |
 | Embeddings | `gemini-embedding-2` | Gemini AI Studio (**NOT Vertex**) | 768-dim, Pinecone cosine |
 
@@ -66,7 +66,7 @@ Klaus/
 │   ├── auth_google.py      # Google OAuth persistent token mgmt
 │   ├── llm_client.py       # Backend-agnostic LLM wrapper (Anthropic / Gemini / OpenAI-compat)
 │   ├── tools.py            # All tool schemas + lazy-singleton accessors + _HANDLERS dispatch
-│   ├── tick_brain.py       # Groq Qwen3 + Gemini fallback (think + system_override + topic_key)
+│   ├── tick_brain.py       # Groq GPT-OSS-120B + Gemini fallback (think + system_override + topic_key)
 │   ├── pricing.py          # MODEL_PRICING dict + compute_cost(model, in, out)
 │   ├── heartbeat.py        # Hourly cron: stale-cron detection, SELF.md SHA, tick-brain reasoning
 │   ├── proactive_alerts.py # 21:30 nightly: weather/overload/travel-time alerts

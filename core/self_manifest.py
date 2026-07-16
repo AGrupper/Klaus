@@ -318,7 +318,7 @@ def _render_manifest(root: Path, sha: str) -> str:
     worker_backend = os.getenv("WORKER_AGENT_BACKEND", "openai")
     fallback_model = os.getenv("SMART_AGENT_FALLBACK_MODEL", "claude-haiku-4-5")
     fallback_backend = os.getenv("SMART_AGENT_FALLBACK_BACKEND", "anthropic")
-    tick_model = os.getenv("TICK_BRAIN_MODEL", "qwen/qwen3-32b")
+    tick_model = os.getenv("TICK_BRAIN_MODEL", "openai/gpt-oss-120b")
 
     def _backend_label(name: str) -> str:
         return {

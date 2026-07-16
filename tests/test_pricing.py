@@ -25,9 +25,10 @@ def test_haiku_versioned_alias():
 
 
 def test_free_model_zero():
-    # qwen3-32b is a free/open-weight model — absent from MODEL_PRICING → 0.0.
-    # Both the namespaced Groq id (production since 2026-06-11) and the legacy
-    # bare name must stay free.
+    # Tick-brain models ride Groq's free tier — absent from MODEL_PRICING → 0.0.
+    # gpt-oss-120b is production since 2026-07-16 (qwen3-32b decommissioned by
+    # Groq 2026-07-17); the legacy ids must stay free for historical LLMUsage rows.
+    assert compute_cost("openai/gpt-oss-120b", 1000, 500) == 0.0
     assert compute_cost("qwen/qwen3-32b", 1000, 500) == 0.0
     assert compute_cost("qwen3-32b", 1000, 500) == 0.0
 

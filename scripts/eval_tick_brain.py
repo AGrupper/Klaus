@@ -13,7 +13,7 @@ Usage
 -----
     python scripts/eval_tick_brain.py
     python scripts/eval_tick_brain.py --fixtures evals/tick_brain/fixtures/
-    python scripts/eval_tick_brain.py --model qwen3-32b
+    python scripts/eval_tick_brain.py --model openai/gpt-oss-120b
 
 Output
 ------

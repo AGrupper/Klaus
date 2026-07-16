@@ -137,7 +137,7 @@ each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table
 | Smart Agent (brain) | gemini | gemini-3.5-flash | SMART_AGENT_BACKEND / MODEL / API_KEY | Orchestration, judgment, crafting responses |
 | Worker Agent (hands) | openai (DeepSeek-compat) | deepseek-v4-flash | WORKER_AGENT_BACKEND / MODEL / API_KEY / BASE_URL | Tool execution, data gathering, structured JSON; base_url=https://api.deepseek.com/v1 |
 | Smart Agent fallback | anthropic | claude-haiku-4-5 | SMART_AGENT_FALLBACK_BACKEND / MODEL / API_KEY | Activated inline on LLMError from brain |
-| Tick-brain | openai (Groq-compat) | qwen/qwen3-32b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error. Groq ids are namespaced — bare "qwen3-32b" 404s |
+| Tick-brain | openai (Groq-compat) | openai/gpt-oss-120b (default) | TICK_BRAIN_BACKEND / MODEL / API_KEY / BASE_URL | Free Groq tier; falls back to Smart Agent on error. Groq ids are namespaced — bare model names 404. qwen/qwen3-32b decommissioned 2026-07-17 |
 | Embeddings | gemini | gemini-embedding-2 | (uses SMART_AGENT_API_KEY) | AI Studio only — NOT Vertex AI; decoupled from worker key |
 
 ### Model Selection Rationale
@@ -145,7 +145,7 @@ each purpose. Phase 15 (self-knowledge) and Phase 16 (SELF.md) ingest this table
 - **Gemini 3.5 Flash** as brain: frontier reasoning at low cost, native tool-use, Google ecosystem
 - **DeepSeek V4 Flash** as worker: $0.11/$0.22 per 1M tokens — 3× cheaper than Gemini Flash, excellent structured JSON, OpenAI-compatible API
 - **Claude Haiku** as fallback: diversity hedge — different provider means different failure modes
-- **Groq/Qwen3-32B** for tick-brain: free tier, 0.5s latency, does not train on data, OpenAI-compatible
+- **Groq/GPT-OSS-120B** for tick-brain: free tier, low latency, does not train on data, OpenAI-compatible (replaced Qwen3-32B when Groq decommissioned it on 2026-07-17)
 - **gemini-embedding-2** for embeddings: available via AI Studio (NOT Vertex AI — embedding model is AI Studio only)
 
 ### Cost Model
@@ -211,7 +211,7 @@ Already covered above (§4 Execution Phases line 36 + § LLM Strategy table).
 Highlights:
 - `core/pricing.py` — `MODEL_PRICING` dict + `compute_cost(model, in_tokens, out_tokens)`. Free models return 0.0.
 - `memory/firestore_db.py::LLMUsageStore` — records every call to `llm_usage/{YYYY-MM-DD}` with model, purpose, in/out tokens, cost.
-- `core/tick_brain.py` — Groq Qwen3-32B primary + Gemini fallback. Used by heartbeat + Phase 18 autonomous engine.
+- `core/tick_brain.py` — Groq GPT-OSS-120B primary + Gemini fallback. Used by heartbeat + Phase 18 autonomous engine.
 - `core/llm_client.py` — all 3 backends surface token usage; `purpose` param threaded through; `_OpenAIBackend` accepts a per-instance `base_url` (so Groq can be targeted without mutating the env).
 
 ## Phase 15 (v2.0) — Codebase Self-Knowledge ✓
@@ -264,7 +264,7 @@ gather_situation()        Layer 0   8 sources, no LLM             $0.00
         ↓
 empty-signals gate (D-11) Layer 0   if nothing happening → EXIT   $0.00
         ↓
-tick_brain.think()        Layer 1   Groq qwen/qwen3-32b judgment  $0.00 (free tier)
+tick_brain.think()        Layer 1   Groq openai/gpt-oss-120b judgment  $0.00 (free tier)
   purpose='tick_autonomous'         {should_act, reason, draft, topic_key}
         ↓
   if should_act=False → EXIT                                       $0.00
