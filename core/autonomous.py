@@ -432,6 +432,23 @@ def _gather_meals_since_last_tick(
         return []
 
 
+def _gather_protocol(project_id: str, database: str) -> list:
+    """Supplement & habit protocol — active items only, CONTEXT not trigger.
+
+    The brain/tick-brain judge anchor moments (post-meal, morning wake,
+    evening winddown) for themselves against this list — coaching
+    philosophy: never a dispatch table. ``[]`` on unset or failure; the
+    prompt builders silent-omit an empty list.
+    """
+    try:
+        from memory.firestore_db import ProtocolStore
+        ps = ProtocolStore(project_id=project_id, database=database)
+        return ps.active_items()
+    except Exception:
+        logger.warning("autonomous: protocol gather failed", exc_info=True)
+        return []
+
+
 def _gather_training_status() -> dict:
     """(j) PHASE 19 — Garmin training status (live)."""
     try:
@@ -603,6 +620,9 @@ def gather_situation(now: datetime) -> dict:
         ),
         "training_status": _gather_training_status,
         "acwr": _gather_acwr,
+        # Supplement & habit protocol — CONTEXT for anchor-moment judgment
+        # (post-meal, morning, night), never a trigger (see _is_empty_signals).
+        "protocol": lambda: _gather_protocol(project_id, database),
         # Phase 28 Plan 03 (HABIT-05 / D-15/D-16/D-17): pending habit/supplement adherence
         "habit_pending": lambda: _gather_habit_adherence(now, project_id, database),
         # Recovery deviation vs 7-day baseline — trigger only when flags fire.
@@ -713,6 +733,10 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         # calendar session happened (or didn't) without checking this.
         "training_evidence": situation.get("training_evidence", {}),
     }
+    # Supplement & habit protocol — silent-omit when untaught/empty; the
+    # triage prompt explains what an absent key means (bootstrap moment).
+    if situation.get("protocol"):
+        snap["protocol"] = situation["protocol"]
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
     snap_json = json.dumps(snap, indent=2, ensure_ascii=False)
@@ -867,7 +891,7 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
     # worker_agent.md does not silently bypass them.
     worker_system = orchestrator.render_smart_system(worker_system_template)
 
-    snap_summary = json.dumps({
+    snap_dict = {
         "calendar": situation.get("calendar", []),
         "ticktick_overdue": situation.get("ticktick_overdue", []),
         "unread_email_count": situation.get("unread_email_count", 0),
@@ -884,7 +908,11 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "recovery": situation.get("recovery", {}),
         # Today's completed-training ground truth (parity with triage).
         "training_evidence": situation.get("training_evidence", {}),
-    }, indent=2, ensure_ascii=False)
+    }
+    # Supplement & habit protocol (parity with triage; silent-omit on empty).
+    if situation.get("protocol"):
+        snap_dict["protocol"] = situation["protocol"]
+    snap_summary = json.dumps(snap_dict, indent=2, ensure_ascii=False)
 
     synthetic_content = (
         f"Situation snapshot:\n{snap_summary}\n\n"

@@ -882,6 +882,74 @@ class MealStore:
             "meals":               meals,  # ordered — prompt may render breakdown
         }
 
+    def replace_day(self, date_str: str, meals: dict[str, dict]) -> dict:
+        """Make ``meals`` the authoritative HealthKit set for one calendar day.
+
+        Nightly full-day reconcile (02:00 iOS automation): upsert every
+        incoming meal, then delete stale HealthKit docs in the date bucket —
+        docs where ``source == "healthkit"`` AND the doc id starts with
+        ``healthkit:`` AND the id is not in the incoming set. Docs from any
+        other source are never touched, and nothing outside ``date_str``'s
+        bucket is ever read or deleted.
+
+        Empty guard: an empty ``meals`` deletes NOTHING — a missing or empty
+        phone push must never wipe a day.
+
+        Per-doc try/except (like ``ingest_payload``): one bad doc never
+        aborts the batch. Idempotent — a second identical call finds only
+        incoming ids on disk and deletes nothing.
+
+        Args:
+            date_str: ``YYYY-MM-DD`` (Asia/Jerusalem calendar date).
+            meals:    ``{source_id: canonical_meal}`` for the whole day.
+
+        Returns:
+            ``{"noop": True, "upserted": 0, "deleted": 0}`` on empty input;
+            else ``{"upserted": int, "deleted": int, "errored": int}``.
+        """
+        if not meals:
+            return {"noop": True, "upserted": 0, "deleted": 0}
+
+        upserted = deleted = errored = 0
+        for source_id, meal in meals.items():
+            try:
+                self.upsert(source_id, meal)
+                upserted += 1
+            except Exception:
+                errored += 1  # upsert already logged the failure
+
+        try:
+            snaps = list(
+                self._col.document(date_str).collection("timestamps").stream()
+            )
+        except Exception:
+            logger.error(
+                "MealStore.replace_day(%r): listing existing docs failed — "
+                "skipping stale-doc cleanup", date_str, exc_info=True,
+            )
+            return {"upserted": upserted, "deleted": 0, "errored": errored + 1}
+
+        for snap in snaps:
+            doc = snap.to_dict() or {}
+            is_stale_healthkit = (
+                doc.get("source") == "healthkit"
+                and snap.id.startswith("healthkit:")
+                and snap.id not in meals
+            )
+            if not is_stale_healthkit:
+                continue
+            try:
+                snap.reference.delete()
+                deleted += 1
+            except Exception:
+                errored += 1
+                logger.error(
+                    "MealStore.replace_day(%r): delete of stale doc %r failed",
+                    date_str, snap.id, exc_info=True,
+                )
+
+        return {"upserted": upserted, "deleted": deleted, "errored": errored}
+
 
 def _jsonsafe_doc(d: dict) -> dict:
     """Return a copy of a Firestore doc dict with non-JSON-serialisable values
@@ -918,6 +986,70 @@ def _jsonsafe_value(v):
         except Exception:
             return str(v)
     return v
+
+
+class ProtocolStore:
+    """Supplement & habit protocol — single doc at ``protocol/supplements``.
+
+    Doc shape::
+
+        {"items": [{"name": "Creatine", "kind": "supplement",
+                    "anchor": "post_lunch", "notes": "5g with food",
+                    "active": true}, ...],
+         "updated_at": SERVER_TIMESTAMP}
+
+    ``anchor`` is a loose free-text hint (``morning``, ``post_lunch``,
+    ``night``, or anything) — CONTEXT for the model to reason over, never a
+    dispatch key. The protocol is taught conversationally over Telegram via
+    the get/update_supplement_protocol brain tools and threaded into the
+    autonomous tick, morning briefing, and nightly review gathers.
+
+    ``get`` returns ``{}`` when unset (silent-omit contract, same as
+    ``MealStore.get_day_aggregate``) and ISO-converts ``updated_at`` so the
+    result always survives ``json.dumps``. ``replace`` is a full-doc
+    overwrite (JournalStore-style, no merge) — a shrunken items list must
+    leave no stale entries.
+    """
+
+    _COLLECTION = "protocol"
+    _DOCUMENT = "supplements"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return the protocol doc; ``{}`` when unset or on any error."""
+        try:
+            snap = self._doc_ref.get()
+            if not snap.exists:
+                return {}
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("ProtocolStore.get() failed — returning empty", exc_info=True)
+            return {}
+
+    def replace(self, items: list[dict]) -> None:
+        """Overwrite the full items list. Raises on failure (caller decides)."""
+        try:
+            self._doc_ref.set({
+                "items": list(items),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            logger.error("ProtocolStore.replace() failed", exc_info=True)
+            raise
+
+    def active_items(self) -> list[dict]:
+        """Active protocol items only — the shape the gather sites inject.
+
+        A missing ``active`` key counts as active (teaching over Telegram
+        shouldn't require remembering the flag). ``[]`` when unset.
+        """
+        return [
+            i for i in self.get().get("items", [])
+            if i.get("active", True)
+        ]
 
 
 class TrainingLogStore:

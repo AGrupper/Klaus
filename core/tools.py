@@ -76,6 +76,9 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
     "fetch_recent_meals",
     "fetch_nutrition_trend",
+    # Supplement & habit protocol — taught/edited conversationally (brain-direct)
+    "get_supplement_protocol",
+    "update_supplement_protocol",
     # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
     "toggle_telegram_mirror",
     "get_push_health",
@@ -1088,6 +1091,63 @@ TOOL_SCHEMAS: list[dict] = [
             "required": [],
         },
     },
+    # --- Supplement & habit protocol (single-doc, conversational) ---
+    {
+        "name": "get_supplement_protocol",
+        "description": (
+            "Read the user's supplement & habit protocol — the persistent list "
+            "of what he takes/does and the loose moment each item anchors to "
+            "(e.g. morning, post_lunch, night). Returns {items: [{name, kind, "
+            "anchor, notes, active}]}. This is coaching CONTEXT, not a "
+            "checklist: reason for yourself about when a reminder is natural. "
+            "Empty items means the protocol hasn't been taught yet — ask the "
+            "user once what he wants tracked, then persist it with "
+            "update_supplement_protocol. Brain-direct."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "update_supplement_protocol",
+        "description": (
+            "Replace the user's supplement & habit protocol with the FULL new "
+            "items list (full-list replace — include every item that should "
+            "remain, not just the change). Use when the user teaches or edits "
+            "the protocol in conversation ('add magnesium at night', 'drop "
+            "the omega-3'). To retire an item while keeping its history in "
+            "the list, set active=false. Brain-direct."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "description": (
+                        "The complete replacement protocol. Each item: name "
+                        "(required), kind ('supplement' or 'habit'), anchor "
+                        "(free-text moment hint like 'morning', 'post_lunch', "
+                        "'night'), notes (dose/details), active (bool, "
+                        "default true)."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name":   {"type": "string"},
+                            "kind":   {"type": "string"},
+                            "anchor": {"type": "string"},
+                            "notes":  {"type": "string"},
+                            "active": {"type": "boolean"},
+                        },
+                        "required": ["name"],
+                    },
+                },
+            },
+            "required": ["items"],
+        },
+    },
     # ============ PHASE 20 Plan 01 — TRAINING LOG (LOG-03/LOG-04) ============
     {
         "name": "log_training",
@@ -1441,6 +1501,9 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         # (was worker-delegated; the worker summarization hop made totals drift)
         "fetch_recent_meals",
         "fetch_nutrition_trend",
+        # Supplement & habit protocol — brain-direct (taught over Telegram)
+        "get_supplement_protocol",
+        "update_supplement_protocol",
     }
 ]
 
@@ -1621,6 +1684,43 @@ def _get_task_store():
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
+
+
+def _get_protocol_store():
+    """Return a ProtocolStore instance using env-driven project/database config."""
+    from memory.firestore_db import ProtocolStore
+    return ProtocolStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _handle_get_supplement_protocol() -> str:
+    """Brain-direct read of the supplement & habit protocol doc.
+
+    Returns the full doc (including inactive items — the brain needs them to
+    edit the list faithfully). ``{"items": []}`` when the protocol has never
+    been taught — and also when Firestore reads fail, because
+    ``ProtocolStore.get()`` is fail-open by contract (silent-omit); only a
+    store-construction failure surfaces as ``{"error": ...}``.
+    """
+    try:
+        doc = _get_protocol_store().get()
+        return json.dumps({"items": doc.get("items", []),
+                           "updated_at": doc.get("updated_at")})
+    except Exception as exc:
+        logger.warning("get_supplement_protocol failed", exc_info=True)
+        return json.dumps({"error": str(exc)})
+
+
+def _handle_update_supplement_protocol(items: list[dict]) -> str:
+    """Brain-direct FULL-list replace of the supplement & habit protocol."""
+    try:
+        _get_protocol_store().replace(items)
+        return json.dumps({"ok": True, "count": len(items)})
+    except Exception as exc:
+        logger.warning("update_supplement_protocol failed", exc_info=True)
+        return json.dumps({"error": str(exc)})
 
 
 def _task_today_iso() -> str:
@@ -2865,6 +2965,9 @@ _HANDLERS: dict[str, object] = {
     # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
     "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
     "fetch_nutrition_trend":   lambda args: _handle_fetch_nutrition_trend(**args),
+    # Supplement & habit protocol — taught/edited conversationally (brain-direct)
+    "get_supplement_protocol":    lambda args: _handle_get_supplement_protocol(),
+    "update_supplement_protocol": lambda args: _handle_update_supplement_protocol(**args),
     "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
     "notion_search":          lambda args: _handle_notion_search(**args),
     "notion_get_page":        lambda args: _handle_notion_get_page(**args),

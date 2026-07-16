@@ -305,3 +305,50 @@ def test_nightly_backstop_dev_bypass_runs_nightly():
     assert resp.json() == {"sent": False}
     run_mock.assert_awaited_once()
     assert run_mock.await_args.kwargs.get("trigger") == "backstop"
+
+
+# ---------------------------------------------------------------------------
+# Supplement & habit protocol in the nightly gather (silent-omit)
+# ---------------------------------------------------------------------------
+
+def test_gather_tomorrow_includes_protocol_when_set():
+    import core.nightly_review as nr
+    items = [{"name": "Magnesium", "kind": "supplement", "anchor": "night", "active": True}]
+    mock_ps = MagicMock()
+    mock_ps.active_items.return_value = items
+    with patch("memory.firestore_db.ProtocolStore", return_value=mock_ps), \
+         patch.object(nr, "_planned_workouts_for", return_value=None), \
+         patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")), \
+         patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
+        data = nr._gather_tomorrow("2026-07-16")
+    assert data["protocol"] == items
+
+
+def test_gather_tomorrow_omits_protocol_when_empty_or_failing():
+    import core.nightly_review as nr
+    mock_ps = MagicMock()
+    mock_ps.active_items.return_value = []
+    common = [
+        patch.object(nr, "_planned_workouts_for", return_value=None),
+        patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")),
+        patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")),
+        patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")),
+    ]
+    for p in common:
+        p.start()
+    try:
+        with patch("memory.firestore_db.ProtocolStore", return_value=mock_ps):
+            data_empty = nr._gather_tomorrow("2026-07-16")
+        with patch("memory.firestore_db.ProtocolStore", side_effect=RuntimeError("down")):
+            data_fail = nr._gather_tomorrow("2026-07-16")
+    finally:
+        for p in common:
+            p.stop()
+    assert "protocol" not in data_empty
+    assert "protocol" not in data_fail
+
+
+def test_nightly_prompt_carries_protocol_guidance():
+    text = open("prompts/nightly_review.md", encoding="utf-8").read()
+    assert "protocol" in text.lower()

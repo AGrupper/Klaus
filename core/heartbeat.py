@@ -112,6 +112,7 @@ _CRON_MAX_STALENESS_HOURS = {
     "nightly-backstop": 26,       # WS2 — 01:00 daily journal+nightly guarantee, 26h tolerance
     "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
     "healthkit-sync": 48,         # Phase 19.1 — D-18; 48h tolerance for iPhone Shortcut push bridge
+    "healthkit-reconcile": 30,    # 02:00 phone-triggered full-day reconcile; 30h flags one missed night by next morning
     "weekly-training-review": 170,  # Phase 20 — Sunday 10:00; 170h = 7d + 2h slack
     "run-sync": 26,               # Garmin per-run detail pull, 05:15; 26h tolerance
     "biometric-sync": 26,         # Garmin daily HRV/RHR pull, 05:30; 26h tolerance

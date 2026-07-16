@@ -707,6 +707,98 @@ def test_ingest_payload_validation_error_propagates():
     assert store.upsert.call_count == 0
 
 
+# ------------------------------------------------------------------ #
+# reconcile_payload — nightly full-day reconcile                      #
+# ------------------------------------------------------------------ #
+
+def _kcal_sample(ts: str, value: float = 300.0, food: str | None = None) -> dict:
+    return {"uuid": "Lifesum", "start_date": ts, "food_item": food,
+            "quantity_type": "DietaryEnergyConsumed_kcal", "value": value}
+
+
+def test_reconcile_payload_partitions_by_date():
+    """Midnight-spanning 26h payload: target-date meals go through
+    store.replace_day (authoritative), other-date meals get plain upserts."""
+    from mcp_tools.healthkit_tool import reconcile_payload
+
+    store = MagicMock()
+    store.replace_day.return_value = {"upserted": 2, "deleted": 1, "errored": 0}
+    payload = {"samples": [
+        _kcal_sample("2026-07-08T13:00:00+03:00", 500.0),
+        _kcal_sample("2026-07-08T20:00:00+03:00", 700.0),
+        _kcal_sample("2026-07-09T00:30:00+03:00", 150.0),  # past midnight
+    ]}
+    result = reconcile_payload(payload, store, target_date="2026-07-08")
+
+    # replace_day got ONLY the two target-date meals.
+    (date_arg, meals_arg), _ = store.replace_day.call_args
+    assert date_arg == "2026-07-08"
+    assert len(meals_arg) == 2
+    assert all(m["timestamp"].startswith("2026-07-08") for m in meals_arg.values())
+    # The 00:30 meal was plain-upserted — never routed through replace_day.
+    assert store.upsert.call_count == 1
+    upsert_meal = store.upsert.call_args.kwargs["meal"]
+    assert upsert_meal["timestamp"].startswith("2026-07-09")
+
+    assert result == {
+        "date": "2026-07-08", "received": 3, "kept_for_date": 2,
+        "upserted": 2, "deleted": 1, "upserted_other_days": 1, "errored": 0,
+    }
+
+
+def test_reconcile_payload_empty_payload_never_deletes():
+    """An empty sample list must never wipe the target day."""
+    from mcp_tools.healthkit_tool import reconcile_payload
+
+    store = MagicMock()
+    store.replace_day.return_value = {"noop": True, "upserted": 0, "deleted": 0}
+    result = reconcile_payload({"samples": []}, store, target_date="2026-07-08")
+    assert result["deleted"] == 0
+    assert result["received"] == 0
+    assert store.upsert.call_count == 0
+
+
+def test_reconcile_payload_naive_datetimes_partition_correctly():
+    """Naive rows get Asia/Jerusalem attached at parse time, so the
+    timestamp[:10] partition still lands them on the right date."""
+    from mcp_tools.healthkit_tool import reconcile_payload
+
+    store = MagicMock()
+    store.replace_day.return_value = {"upserted": 1, "deleted": 0, "errored": 0}
+    payload = {"samples": [_kcal_sample("2026-07-08T21:00:00", 400.0)]}
+    result = reconcile_payload(payload, store, target_date="2026-07-08")
+    (_, meals_arg), _ = store.replace_day.call_args
+    assert len(meals_arg) == 1
+    assert result["kept_for_date"] == 1
+    assert result["upserted_other_days"] == 0
+
+
+def test_reconcile_payload_validation_error_propagates():
+    """Malformed payload raises ValidationError — the route turns it into 422."""
+    from mcp_tools.healthkit_tool import reconcile_payload
+
+    store = MagicMock()
+    with pytest.raises(ValidationError):
+        reconcile_payload({"not_samples": []}, store, target_date="2026-07-08")
+    store.replace_day.assert_not_called()
+
+
+def test_reconcile_payload_other_day_upsert_error_isolated():
+    """A failing other-day upsert is counted, never raised."""
+    from mcp_tools.healthkit_tool import reconcile_payload
+
+    store = MagicMock()
+    store.replace_day.return_value = {"upserted": 1, "deleted": 0, "errored": 0}
+    store.upsert.side_effect = RuntimeError("boom")
+    payload = {"samples": [
+        _kcal_sample("2026-07-08T13:00:00+03:00", 500.0),
+        _kcal_sample("2026-07-09T00:30:00+03:00", 150.0),
+    ]}
+    result = reconcile_payload(payload, store, target_date="2026-07-08")
+    assert result["upserted_other_days"] == 0
+    assert result["errored"] == 1
+
+
 def test_ingest_payload_upsert_called_with_source_id_kw():
     """ingest_payload calls store.upsert(source_id=..., meal=...) — keyword form."""
     payload = {

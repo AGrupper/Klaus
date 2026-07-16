@@ -514,3 +514,11 @@ def test_check_push_health_registered_in_collect_signals_tuple(monkeypatch):
         heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
     assert called["push"] is True
 
+
+
+def test_healthkit_reconcile_staleness_threshold_is_30_hours():
+    """Nightly 02:00 reconcile: 30h flags a single missed night by the next
+    morning's heartbeat — tighter than healthkit-sync's 48 because this job
+    is the correctness backbone for the morning meal audit."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert _CRON_MAX_STALENESS_HOURS.get("healthkit-reconcile") == 30
