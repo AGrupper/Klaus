@@ -988,6 +988,70 @@ def _jsonsafe_value(v):
     return v
 
 
+class ProtocolStore:
+    """Supplement & habit protocol — single doc at ``protocol/supplements``.
+
+    Doc shape::
+
+        {"items": [{"name": "Creatine", "kind": "supplement",
+                    "anchor": "post_lunch", "notes": "5g with food",
+                    "active": true}, ...],
+         "updated_at": SERVER_TIMESTAMP}
+
+    ``anchor`` is a loose free-text hint (``morning``, ``post_lunch``,
+    ``night``, or anything) — CONTEXT for the model to reason over, never a
+    dispatch key. The protocol is taught conversationally over Telegram via
+    the get/update_supplement_protocol brain tools and threaded into the
+    autonomous tick, morning briefing, and nightly review gathers.
+
+    ``get`` returns ``{}`` when unset (silent-omit contract, same as
+    ``MealStore.get_day_aggregate``) and ISO-converts ``updated_at`` so the
+    result always survives ``json.dumps``. ``replace`` is a full-doc
+    overwrite (JournalStore-style, no merge) — a shrunken items list must
+    leave no stale entries.
+    """
+
+    _COLLECTION = "protocol"
+    _DOCUMENT = "supplements"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._doc_ref = self._client.collection(self._COLLECTION).document(self._DOCUMENT)
+
+    def get(self) -> dict:
+        """Return the protocol doc; ``{}`` when unset or on any error."""
+        try:
+            snap = self._doc_ref.get()
+            if not snap.exists:
+                return {}
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("ProtocolStore.get() failed — returning empty", exc_info=True)
+            return {}
+
+    def replace(self, items: list[dict]) -> None:
+        """Overwrite the full items list. Raises on failure (caller decides)."""
+        try:
+            self._doc_ref.set({
+                "items": list(items),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            logger.error("ProtocolStore.replace() failed", exc_info=True)
+            raise
+
+    def active_items(self) -> list[dict]:
+        """Active protocol items only — the shape the gather sites inject.
+
+        A missing ``active`` key counts as active (teaching over Telegram
+        shouldn't require remembering the flag). ``[]`` when unset.
+        """
+        return [
+            i for i in self.get().get("items", [])
+            if i.get("active", True)
+        ]
+
+
 class TrainingLogStore:
     """Per-session training log stored in Firestore (Phase 20 — LOG-01/LOG-02).
 
