@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-07-05T14:58:26Z
+generated_at: 2026-07-17T19:27:57Z
 sha: 43849c896f5ab9dcf98b4df3e146ac7fa419e269
 ---
 
@@ -21,85 +21,30 @@ Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving 
 | Brain (smart agent) | gemini-3.5-flash | Gemini (AI Studio) |
 | Worker | deepseek-v4-flash | OpenAI-compat (DeepSeek / Groq) |
 | Smart agent fallback | claude-haiku-4-5 | Anthropic |
-| Tick-brain | qwen/qwen3-32b | Groq (OpenAI-compat) |
+| Tick-brain | openai/gpt-oss-120b | Groq (OpenAI-compat) |
 | Tick-brain fallback | gemini-3.5-flash | Gemini (AI Studio) |
 | Embeddings | gemini-embedding-2 | Gemini (AI Studio) |
 
 ## Tools
 
-| Tool | Routing | Purpose |
-|------|---------|---------|
-| `list_calendar_events` | worker-delegated | List all calendar events within a given date/time window. |
-| `create_calendar_event` | worker-delegated | Create a new event on the user's Google Calendar. |
-| `check_calendar_free` | worker-delegated | Check whether a specific time window is free of calendar events. |
-| `delete_calendar_event` | worker-delegated | Delete an event from any of the user's Google Calendars by event ID. |
-| `update_calendar_event` | worker-delegated | Edit an existing calendar event IN PLACE — change its title, time, or description. |
-| `list_unread_emails` | worker-delegated | List recent unread emails from the inbox with sender, subject, and snippet. |
-| `get_email` | worker-delegated | Fetch the full body and headers of a specific email by its ID. |
-| `task_create` | worker-delegated | Create a new native task in Klaus's task store. |
-| `task_list` | worker-delegated | Query Amit's native tasks by list, date, priority, or overdue flag. |
-| `task_complete` | worker-delegated | Mark a task as complete. |
-| `task_reschedule` | worker-delegated | Reschedule a task to a new due date (and optionally a new time). |
-| `task_edit` | worker-delegated | Edit a task's title, notes, priority, or list. |
-| `task_delete` | worker-delegated | Permanently delete a task. |
-| `get_habit_adherence` | worker-delegated | Read today's pending habits and supplements with streak info. |
-| `remember` | brain-direct | Save a durable piece of information about the user to long-term memory. |
-| `recall` | brain-direct | Search long-term memory for information relevant to a query. |
-| `search_chat_history` | brain-direct | Search ingested Claude Code chat history for relevant sessions. |
-| `fetch_weather` | worker-delegated | Fetch current weather conditions and today/tomorrow forecast for a location. |
-| `fetch_readwise_today` | worker-delegated | Fetch today's reading highlights from Readwise. |
-| `fetch_garmin_today` | worker-delegated | Fetch today's health summary from Garmin Connect: sleep score, sleep hours, HRV status, body battery, and resting heart rate. |
-| `run_morning_briefing` | brain-direct | Compose and send the morning briefing to Telegram immediately. |
-| `notion_search` | worker-delegated | Search across all Notion pages and databases shared with Klaus. |
-| `notion_get_page` | worker-delegated | Fetch the full content of a Notion page by its ID. |
-| `notion_query_database` | worker-delegated | Query a Notion database. |
-| `notion_create_page` | worker-delegated | Create a new page in Notion — either as a database entry or a sub-page. |
-| `notion_append_blocks` | worker-delegated | Append text content to the end of an existing Notion page. |
-| `list_own_files` | brain-direct | List Klaus's deployed source files. |
-| `read_own_source` | brain-direct | Read the contents of one of Klaus's own source files by relative path. |
-| `search_own_source` | brain-direct | Full-text search across Klaus's source files. |
-| `get_self_status` | brain-direct | Return Klaus's current operational status: container uptime, today's conversation message count (proxied via LLM call count), today's and month's LLM cost in USD, and latest heartbeat status. |
-| `toggle_telegram_mirror` | brain-direct | Flip the Telegram-mirror flag on or off. |
-| `get_push_health` | brain-direct | Return Web Push self-awareness data: how many devices are subscribed, each device's user agent / last successful delivery timestamp / failure count, whether the Telegram mirror is currently on, and when push was first enabled. |
-| `schedule_followup` | brain-direct | Schedule a self-managed check-back. |
-| `list_followups` | brain-direct | List your pending self-scheduled check-backs. |
-| `cancel_followup` | brain-direct | Cancel a previously scheduled follow-up by id. |
-| `get_training_profile` | brain-direct | Read Amit's stored training profile (athletic_goals, training_constraints, recovery_preferences). |
-| `read_coaching_guide` | brain-direct | Read a deep section of the coaching knowledge guide. |
-| `update_training_profile` | brain-direct | Merge new fields into Amit's stored training profile. |
-| `update_plan` | brain-direct | Update Amit's living training plan (goals, weekly split, nutrition targets, dates). |
-| `fetch_training_status` | worker-delegated | Fetch today's Garmin training status (PRODUCTIVE / MAINTAINING / RECOVERY / DETRAINING / OVERREACHING), VO2 max, and load focus. |
-| `fetch_recent_activities` | worker-delegated | Fetch Amit's last N days of Garmin activities as a normalized list (activity_id, date, type, duration_sec, distance_m, perceived_exertion, feel, training_load). |
-| `get_acwr` | worker-delegated | Compute Amit's acute:chronic workload ratio (ACWR) from the Postgres `activities` table. |
-| `fetch_recent_meals` | brain-direct | Get the user's logged nutrition from the last N hours (Lifesum → Apple HealthKit → Klaus on iOS, or Google Fit on Android; both land in the same meal store). |
-| `fetch_nutrition_trend` | brain-direct | Get the user's nutrition TREND over the last N days: a per-day series of daily totals (calories, protein_g, carbs_g, fat_g, fiber_g, meal_count) plus SERVER-COMPUTED `averages` over the days that have logged meals (`days_with_data`). |
-| `log_training` | brain-direct | Log a completed or skipped training session. |
-| `get_training_history` | worker-delegated | Return recent training log entries from Firestore. |
-| `get_strength_progress` | brain-direct | Read Amit's strength-training history synced from Hevy (full per-set detail: every exercise, set, rep, weight_kg, RPE — plus derived top_set, est_1rm, and volume_kg). |
-| `get_training_context` | brain-direct | Get Amit's FULL cross-domain training picture in one call — strength (Hevy per-set), session log, running/cardio + training load, ACWR, Garmin training status/VO2, nutrition totals per day, and recovery (HRV/RHR/sleep). |
-| `get_run_detail` | brain-direct | Read Amit's per-run Garmin detail synced from Garmin Connect — the recorded laps/intervals exactly as the watch captured them (per-km for easy/tempo runs, per-rep for interval sessions), each with pace, HR, cadence, stride length and power; plus a whole-run min/avg/max summary of cadence, stride, vertical oscillation, ground contact, power and HR; plus derived split_shape (negative/positive/even), hr_drift, cadence_drift and pace_cv (interval consistency). |
-| `get_plan` | brain-direct | Read Amit's living training plan merged with the currently-active mesocycle block. |
-| `get_block_status` | brain-direct | Read the currently-active mesocycle block (resolved by today's date), its recorded benchmarks, and the raw per-facet delta versus the prior block. |
-| `log_benchmark` | brain-direct | Record one benchmark result for the current block. |
-| `get_benchmark_history` | brain-direct | Read the cross-block history for one benchmark facet, newest first. |
-| `get_goal_projection` | brain-direct | Compute a deterministic linear-trend projection for one benchmark facet toward its dated goal. |
-| `start_block` | brain-direct | Bookkeeping: mark a block active and set the current_block_id FK. |
-| `end_block` | brain-direct | Bookkeeping: mark a block complete and clear the current_block_id FK. |
+Grouped by category, one line each (call `list_own_files` / `read_own_source` for full per-tool schema detail):
+
+- **Calendar:** list/create/free-busy/delete/update
+- **Tasks & Habits:** create/list/complete/reschedule/edit/delete/habit-adherence
+- **Email:** list-unread/get
+- **Memory:** remember/recall/search-chat-history
+- **Notion:** search/get-page/query-db/create-page/append-blocks
+- **Coaching & Training:** get-profile/coaching-guide/update-profile/update-plan/training-status/recent-activities/acwr/recent-meals/nutrition-trend/log-session/history/strength-progress/context/run-detail
+- **Training Blocks & Benchmarks:** get-plan/block-status/log-benchmark/benchmark-history/goal-projection/start-block/end-block
+- **Briefing:** send-now
+- **External Data:** weather/readwise/garmin-today
+- **Follow-Ups:** schedule/list/cancel
+- **Self-Inspection:** list-files/read-source/search-source
+- **Self-Status & Hub:** status/toggle-mirror/push-health
 
 ## Cron Jobs
 
-| Job | Schedule (Asia/Jerusalem) | Handler |
-|-----|---------------------------|---------|
-| Heartbeat | `0 * * * *` | `/cron/heartbeat` |
-| Proactive alerts | `30 21 * * *` | `/cron/proactive-alerts` |
-| Morning briefing tick | `*/10 6-10 * * *` | `/cron/morning-briefing-tick` |
-| Chat ingest | `0 4 * * *` | `/cron/ingest-chats` |
-| Chat export ingest | `30 4 * * *` | `/cron/ingest-chat-exports` |
-| Daily reflection | `0 22 * * *` | `/cron/reflect` |
-| Autonomous tick | `*/20 7-21 * * *` | `/cron/autonomous-tick` |
-| Weekly training review | `0 10 * * 0` (Sundays) | `/cron/weekly-training-review` |
-| Strength sync (Hevy) | `0 5 * * *` | `/cron/strength-sync` |
-| Run-detail sync (Garmin) | `15 5 * * *` | `/cron/run-sync` |
+9 scheduled jobs (Asia/Jerusalem): heartbeat (hourly, `/cron/heartbeat`) · morning-briefing-tick (*/10 6-10, `/cron/morning-briefing-tick`) · chat-ingest (04:00, `/cron/ingest-chats`) · chat-export-ingest (04:30, `/cron/ingest-chat-exports`) · nightly-backstop (01:00, `/cron/nightly-backstop`) · autonomous-tick (*/20 7-21, `/cron/autonomous-tick`) · weekly-training-review (Sun 10:00, `/cron/weekly-training-review`) · strength-sync (05:00, `/cron/strength-sync`) · run-sync (05:15, `/cron/run-sync`). Plus push-driven `/cron/healthkit-sync` (see Push endpoints below).
 
 ## Push endpoints
 

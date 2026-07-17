@@ -276,6 +276,127 @@ def _load_tool_data_fallback() -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Tool grouping — BRAIN-06/D-07 compaction. Rendering-only: the introspected
+# data source (_load_tool_data / TOOL_SCHEMAS) is untouched; this just decides
+# how to *display* it compactly. Any tool name not recognized below falls back
+# to the "Other" category with its full name as the label, so a newly added
+# tool can never silently vanish from the manifest even before this map is
+# updated for it.
+# ---------------------------------------------------------------------------
+
+_TOOL_CATEGORIES: dict[str, str] = {
+    # Calendar
+    "list_calendar_events": "Calendar", "create_calendar_event": "Calendar",
+    "check_calendar_free": "Calendar", "delete_calendar_event": "Calendar",
+    "update_calendar_event": "Calendar",
+    # Email (read-only)
+    "list_unread_emails": "Email", "get_email": "Email",
+    # Tasks & habits (native TaskStore/HabitStore — v5.0)
+    "task_create": "Tasks & Habits", "task_list": "Tasks & Habits",
+    "task_complete": "Tasks & Habits", "task_reschedule": "Tasks & Habits",
+    "task_edit": "Tasks & Habits", "task_delete": "Tasks & Habits",
+    "get_habit_adherence": "Tasks & Habits",
+    # Long-term memory
+    "remember": "Memory", "recall": "Memory", "search_chat_history": "Memory",
+    # External data feeds
+    "fetch_weather": "External Data", "fetch_readwise_today": "External Data",
+    "fetch_garmin_today": "External Data",
+    # Notion
+    "notion_search": "Notion", "notion_get_page": "Notion",
+    "notion_query_database": "Notion", "notion_create_page": "Notion",
+    "notion_append_blocks": "Notion",
+    # Self-inspection (own source code)
+    "list_own_files": "Self-Inspection", "read_own_source": "Self-Inspection",
+    "search_own_source": "Self-Inspection",
+    # Self-status & hub controls
+    "get_self_status": "Self-Status & Hub", "toggle_telegram_mirror": "Self-Status & Hub",
+    "get_push_health": "Self-Status & Hub",
+    # Self-scheduled follow-ups
+    "schedule_followup": "Follow-Ups", "list_followups": "Follow-Ups",
+    "cancel_followup": "Follow-Ups",
+    # Coaching & training data
+    "get_training_profile": "Coaching & Training", "read_coaching_guide": "Coaching & Training",
+    "update_training_profile": "Coaching & Training", "update_plan": "Coaching & Training",
+    "fetch_training_status": "Coaching & Training", "fetch_recent_activities": "Coaching & Training",
+    "get_acwr": "Coaching & Training", "fetch_recent_meals": "Coaching & Training",
+    "fetch_nutrition_trend": "Coaching & Training", "log_training": "Coaching & Training",
+    "get_training_history": "Coaching & Training", "get_strength_progress": "Coaching & Training",
+    "get_training_context": "Coaching & Training", "get_run_detail": "Coaching & Training",
+    # Training blocks & benchmarks
+    "get_plan": "Training Blocks & Benchmarks", "get_block_status": "Training Blocks & Benchmarks",
+    "log_benchmark": "Training Blocks & Benchmarks", "get_benchmark_history": "Training Blocks & Benchmarks",
+    "get_goal_projection": "Training Blocks & Benchmarks", "start_block": "Training Blocks & Benchmarks",
+    "end_block": "Training Blocks & Benchmarks",
+    # Briefing
+    "run_morning_briefing": "Briefing",
+}
+
+# Display order for categories in the compact manifest (stable, readable).
+_CATEGORY_ORDER: list[str] = [
+    "Calendar", "Tasks & Habits", "Email", "Memory", "Notion",
+    "Coaching & Training", "Training Blocks & Benchmarks", "Briefing",
+    "External Data", "Follow-Ups", "Self-Inspection", "Self-Status & Hub",
+    "Other",
+]
+
+# Short action labels for one-liner grouping. Falls back to the full tool
+# name when a tool isn't listed here (forward-compat safety net).
+_TOOL_SHORT_LABELS: dict[str, str] = {
+    "list_calendar_events": "list", "create_calendar_event": "create",
+    "check_calendar_free": "free-busy", "delete_calendar_event": "delete",
+    "update_calendar_event": "update",
+    "list_unread_emails": "list-unread", "get_email": "get",
+    "task_create": "create", "task_list": "list", "task_complete": "complete",
+    "task_reschedule": "reschedule", "task_edit": "edit", "task_delete": "delete",
+    "get_habit_adherence": "habit-adherence",
+    "remember": "remember", "recall": "recall", "search_chat_history": "search-chat-history",
+    "fetch_weather": "weather", "fetch_readwise_today": "readwise",
+    "fetch_garmin_today": "garmin-today",
+    "notion_search": "search", "notion_get_page": "get-page",
+    "notion_query_database": "query-db", "notion_create_page": "create-page",
+    "notion_append_blocks": "append-blocks",
+    "list_own_files": "list-files", "read_own_source": "read-source",
+    "search_own_source": "search-source",
+    "get_self_status": "status", "toggle_telegram_mirror": "toggle-mirror",
+    "get_push_health": "push-health",
+    "schedule_followup": "schedule", "list_followups": "list", "cancel_followup": "cancel",
+    "get_training_profile": "get-profile", "read_coaching_guide": "coaching-guide",
+    "update_training_profile": "update-profile", "update_plan": "update-plan",
+    "fetch_training_status": "training-status", "fetch_recent_activities": "recent-activities",
+    "get_acwr": "acwr", "fetch_recent_meals": "recent-meals",
+    "fetch_nutrition_trend": "nutrition-trend", "log_training": "log-session",
+    "get_training_history": "history", "get_strength_progress": "strength-progress",
+    "get_training_context": "context", "get_run_detail": "run-detail",
+    "get_plan": "get-plan", "get_block_status": "block-status",
+    "log_benchmark": "log-benchmark", "get_benchmark_history": "benchmark-history",
+    "get_goal_projection": "goal-projection", "start_block": "start-block",
+    "end_block": "end-block",
+    "run_morning_briefing": "send-now",
+}
+
+
+def _group_tools_by_category(tool_rows: list[dict]) -> "dict[str, list[str]]":
+    """Group introspected tool rows into category → short-label lists.
+
+    Args:
+        tool_rows: Output of ``_load_tool_data`` — unchanged introspection data.
+
+    Returns:
+        Ordered mapping of category name to a list of short action labels,
+        in ``_CATEGORY_ORDER``. Unrecognized tools land under "Other" using
+        their full name as the label, so new tools never silently disappear.
+    """
+    grouped: dict[str, list[str]] = {cat: [] for cat in _CATEGORY_ORDER}
+    for row in tool_rows:
+        name = row["name"]
+        category = _TOOL_CATEGORIES.get(name, "Other")
+        label = _TOOL_SHORT_LABELS.get(name, name)
+        grouped.setdefault(category, [])
+        grouped[category].append(label)
+    return grouped
+
+
+# ---------------------------------------------------------------------------
 # Manifest renderer
 # ---------------------------------------------------------------------------
 
@@ -361,35 +482,44 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
     ]
 
-    # ----- §3 Tools ------------------------------------------------------
+    # ----- §3 Tools (D-07 compact form — grouped category one-liners) ----
     lines += [
         "## Tools",
         "",
-        "| Tool | Routing | Purpose |",
-        "|------|---------|---------|",
+        (
+            "Grouped by category, one line each (call `list_own_files` / "
+            "`read_own_source` for full per-tool schema detail):"
+        ),
+        "",
     ]
-    for row in tool_rows:
-        # Escape pipes in purpose text so table renders correctly
-        purpose = row["purpose"].replace("|", "\\|")
-        lines.append(f"| `{row['name']}` | {row['routing']} | {purpose} |")
+    grouped = _group_tools_by_category(tool_rows)
+    for category in _CATEGORY_ORDER:
+        labels = grouped.get(category) or []
+        if not labels:
+            continue
+        lines.append(f"- **{category}:** {'/'.join(labels)}")
     lines.append("")
 
-    # ----- §4 Cron Jobs --------------------------------------------------
+    # ----- §4 Cron Jobs (D-07 compact form — one summary line) -----------
+    # Trued against CLAUDE.md §5 (the "current live infrastructure" section):
+    # proactive-alerts (21:30) and reflect (22:00) are RETIRED, folded into
+    # the nightly review; nightly-backstop/autonomous-tick/strength-sync/
+    # run-sync are the current live jobs.
     lines += [
         "## Cron Jobs",
         "",
-        "| Job | Schedule (Asia/Jerusalem) | Handler |",
-        "|-----|---------------------------|---------|",
-        "| Heartbeat | `0 * * * *` | `/cron/heartbeat` |",
-        "| Proactive alerts | `30 21 * * *` | `/cron/proactive-alerts` |",
-        "| Morning briefing tick | `*/10 6-10 * * *` | `/cron/morning-briefing-tick` |",
-        "| Chat ingest | `0 4 * * *` | `/cron/ingest-chats` |",
-        "| Chat export ingest | `30 4 * * *` | `/cron/ingest-chat-exports` |",
-        "| Daily reflection | `0 22 * * *` | `/cron/reflect` |",
-        "| Autonomous tick | `*/20 7-21 * * *` | `/cron/autonomous-tick` |",
-        "| Weekly training review | `0 10 * * 0` (Sundays) | `/cron/weekly-training-review` |",
-        "| Strength sync (Hevy) | `0 5 * * *` | `/cron/strength-sync` |",
-        "| Run-detail sync (Garmin) | `15 5 * * *` | `/cron/run-sync` |",
+        (
+            "9 scheduled jobs (Asia/Jerusalem): heartbeat (hourly, `/cron/heartbeat`) · "
+            "morning-briefing-tick (*/10 6-10, `/cron/morning-briefing-tick`) · "
+            "chat-ingest (04:00, `/cron/ingest-chats`) · "
+            "chat-export-ingest (04:30, `/cron/ingest-chat-exports`) · "
+            "nightly-backstop (01:00, `/cron/nightly-backstop`) · "
+            "autonomous-tick (*/20 7-21, `/cron/autonomous-tick`) · "
+            "weekly-training-review (Sun 10:00, `/cron/weekly-training-review`) · "
+            "strength-sync (05:00, `/cron/strength-sync`) · "
+            "run-sync (05:15, `/cron/run-sync`). "
+            "Plus push-driven `/cron/healthkit-sync` (see Push endpoints below)."
+        ),
         "",
     ]
 
