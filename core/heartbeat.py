@@ -700,6 +700,158 @@ def _compose_message(signals: list[Signal]) -> str:
     return _plain_text_fallback(signals)
 
 
+_DEFAULT_DAILY_COST_ALERT = 5.0
+_COST_DRIVER_TOP_N = 3
+
+
+def _parse_daily_cost_alert_threshold() -> float:
+    """Defensively parse KLAUS_DAILY_COST_ALERT (T-30.5-13).
+
+    Mirrors core/tick_brain.py's try/except float-parse pattern (lines
+    95-106) — a malformed or unset value falls back to the $5 default
+    without raising.
+    """
+    raw = os.getenv("KLAUS_DAILY_COST_ALERT", str(_DEFAULT_DAILY_COST_ALERT))
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "heartbeat: malformed KLAUS_DAILY_COST_ALERT=%r — using default $%.2f",
+            raw, _DEFAULT_DAILY_COST_ALERT,
+        )
+        return _DEFAULT_DAILY_COST_ALERT
+
+
+def _cost_drivers(summary: dict, top_n: int = _COST_DRIVER_TOP_N) -> list[tuple[str, float]]:
+    """Return the top-N {purpose}_cost_usd drivers from a usage summary doc,
+    sorted descending by cost, as (purpose, cost_usd) pairs."""
+    drivers: list[tuple[str, float]] = []
+    for key, value in summary.items():
+        if key == "total_cost_usd" or not key.endswith("_cost_usd"):
+            continue
+        purpose = key[: -len("_cost_usd")]
+        try:
+            drivers.append((purpose, float(value)))
+        except (TypeError, ValueError):
+            continue
+    drivers.sort(key=lambda pair: pair[1], reverse=True)
+    return drivers[:top_n]
+
+
+def _cache_hit_rate(summary: dict) -> float:
+    """Return cache_read_tokens / (in_tokens + cache_read_tokens) as a 0..1
+    fraction. Returns 0.0 if there's no token data (never raises)."""
+    try:
+        cache_read = float(summary.get("total_cache_read_tokens", 0) or 0)
+        in_tokens = float(summary.get("total_in_tokens", 0) or 0)
+        denom = in_tokens + cache_read
+        if denom <= 0:
+            return 0.0
+        return cache_read / denom
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _spend_plain_text_fallback(payload: dict) -> str:
+    """Deterministic plain-text spend alert, used when the Sonnet compose
+    call fails (D-04)."""
+    lines = [
+        f"Daily spend alert: yesterday ({payload['date']}) cost "
+        f"${payload['total_cost_usd']:.2f}, over the ${payload['threshold']:.2f} threshold.",
+    ]
+    top_drivers = payload.get("top_drivers") or []
+    if top_drivers:
+        drivers_str = ", ".join(f"{purpose} (${cost:.2f})" for purpose, cost in top_drivers)
+        lines.append(f"Top cost drivers: {drivers_str}.")
+    lines.append(f"Cache-hit rate: {payload.get('cache_hit_rate', 0.0):.0%}.")
+    return "\n".join(lines)
+
+
+def _compose_spend_alert(payload: dict) -> str:
+    """Compose the Klaus-voiced daily-spend alert via Sonnet (SMART_AGENT_*),
+    with a deterministic plain-text fallback on any failure (D-04).
+
+    Mirrors _compose_message/_plain_text_fallback's shape but points at the
+    smart agent with prompts/cost_tripwire.md, and tags the call
+    purpose="cost_tripwire" so its own cost is auditable (T-30.5-15).
+    """
+    prompt_path = Path(__file__).parent.parent / "prompts" / "cost_tripwire.md"
+    try:
+        system_prompt = prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        return _spend_plain_text_fallback(payload)
+
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        from core.llm_client import LLMClient
+        client = LLMClient(
+            backend=os.environ["SMART_AGENT_BACKEND"],
+            model=os.environ["SMART_AGENT_MODEL"],
+            api_key=os.environ["SMART_AGENT_API_KEY"],
+            base_url=os.environ.get("SMART_AGENT_BASE_URL"),
+        )
+        response = client.chat(
+            messages=[{"role": "user", "content": body}],
+            system=system_prompt,
+            purpose="cost_tripwire",
+        )
+        text = (response.get("text") or "").strip()
+        if text:
+            return text
+    except Exception:
+        logger.warning("heartbeat: spend-tripwire LLM composition failed", exc_info=True)
+
+    return _spend_plain_text_fallback(payload)
+
+
+def check_daily_spend() -> dict | None:
+    """Once-daily, per-date-suppressed spend tripwire (BRAIN-04, D-01..D-04).
+
+    Reads yesterday's LLMUsageStore summary; if total_cost_usd exceeds the
+    defensively-parsed KLAUS_DAILY_COST_ALERT threshold (default $5) and the
+    tripwire has not already fired for that date, composes a Klaus-voiced
+    alert (Sonnet, with deterministic template fallback) and returns it for
+    the caller to send and mark fired.
+
+    Returns {"date": yesterday_iso, "text": alert_text, "summary": summary}
+    when an alert should be sent, or None if under threshold, already fired,
+    or on any internal error. Never raises into the cron — the caller
+    (run_tick) is responsible for sending the text and gating
+    CostTripwireLogStore.mark_fired on a successful send (D-10 pattern).
+    """
+    try:
+        from memory.firestore_db import LLMUsageStore, CostTripwireLogStore
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+
+        threshold = _parse_daily_cost_alert_threshold()
+        yesterday = (datetime.now(_TZ) - timedelta(days=1)).date().isoformat()
+
+        usage_store = LLMUsageStore(project_id=project_id, database=database)
+        summary = usage_store.summary_for_date(yesterday)
+        total_cost = float(summary.get("total_cost_usd", 0) or 0)
+
+        if total_cost <= threshold:
+            return None
+
+        tripwire_store = CostTripwireLogStore(project_id=project_id, database=database)
+        if tripwire_store.already_fired(yesterday):
+            return None
+
+        payload = {
+            "date": yesterday,
+            "total_cost_usd": total_cost,
+            "threshold": threshold,
+            "top_drivers": _cost_drivers(summary),
+            "cache_hit_rate": _cache_hit_rate(summary),
+        }
+        text = _compose_spend_alert(payload)
+        return {"date": yesterday, "text": text, "summary": summary}
+    except Exception:
+        logger.warning("heartbeat: check_daily_spend failed", exc_info=True)
+        return None
+
+
 def _load_config() -> dict:
     """Load heartbeat config from Firestore. Returns defaults on error."""
     try:
