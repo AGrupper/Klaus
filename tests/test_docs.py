@@ -118,19 +118,33 @@ SELF_MD_PATH = os.path.join(
 
 
 class TestPhase19SelfManifest:
-    """PROMPT-03 — docs/SELF.md regenerated lists all 5 new Phase 19 tools."""
+    """PROMPT-03 — docs/SELF.md covers the 5 Phase 19 coaching tools.
+
+    Since BRAIN-06 (Phase 30.5) the Tools section renders grouped category
+    one-liners instead of per-tool rows, so coverage is asserted via the
+    Coaching & Training category capabilities rather than snake_case names.
+    """
 
     def test_self_md_lists_phase19_tools(self):
         with open(SELF_MD_PATH, encoding="utf-8") as f:
             content = f.read()
-        for tool in (
-            "get_training_profile",
-            "update_training_profile",
-            "fetch_training_status",
-            "fetch_recent_activities",
-            "fetch_recent_meals",
+        assert "**Coaching & Training:**" in content, (
+            "docs/SELF.md missing the Coaching & Training tool category"
+        )
+        coaching_line = next(
+            line for line in content.splitlines()
+            if "**Coaching & Training:**" in line
+        )
+        for capability in (
+            "get-profile",
+            "update-profile",
+            "training-status",
+            "recent-activities",
+            "recent-meals",
         ):
-            assert tool in content, f"docs/SELF.md missing tool: {tool}"
+            assert capability in coaching_line, (
+                f"docs/SELF.md Coaching & Training line missing: {capability}"
+            )
 
 
 # ---------------------------------------------------------------------------
