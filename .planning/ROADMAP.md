@@ -56,10 +56,10 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
   4. When yesterday's total LLM cost exceeds `KLAUS_DAILY_COST_ALERT`, Klaus proactively tells Amit with a per-purpose cost breakdown and cache-hit rate
   5. Every Anthropic-backend call succeeds with no `temperature`/`top_p`/`top_k`/manual-`thinking` 400 errors, the always-on system prompt is measurably smaller (re-measured with the real Sonnet-5 tokenizer), and `UserProfileStore` reads are TTL-cached with no uncached Firestore read on every smart turn
 **Plans**: 6 plans (4 waves)
-- [ ] 30.5-01-PLAN.md — Tick-brain fallback decoupling (TICK_BRAIN_FALLBACK_*), ship + live-verify before the flip (BRAIN-03)
-- [ ] 30.5-02-PLAN.md — Storage layer: LLMUsage cache/per-purpose cost + yesterday summary, UserProfileStore TTL cache, CostTripwireLog (BRAIN-02/04/07)
+- [x] 30.5-01-PLAN.md — Tick-brain fallback decoupling (TICK_BRAIN_FALLBACK_*), ship + live-verify before the flip (BRAIN-03)
+- [x] 30.5-02-PLAN.md — Storage layer: LLMUsage cache/per-purpose cost + yesterday summary, UserProfileStore TTL cache, CostTripwireLog (BRAIN-02/04/07)
 - [ ] 30.5-03-PLAN.md — Anthropic prompt caching + cache-token metering + pricing + Sonnet-5 param/max_tokens compat (BRAIN-02/05)
-- [ ] 30.5-04-PLAN.md — Prompt slimming: compact SELF.md generator + light smart_agent.md de-prescription + count_tokens measurement (BRAIN-06)
+- [x] 30.5-04-PLAN.md — Prompt slimming: compact SELF.md generator + light smart_agent.md de-prescription + count_tokens measurement (BRAIN-06)
 - [ ] 30.5-05-PLAN.md — Heartbeat daily-spend tripwire, once/day, brain-composed with template fallback (BRAIN-04)
 - [ ] 30.5-06-PLAN.md — Brain flip to claude-sonnet-5 + 3-tier fallback chain + D-12 disclosure + D-14 live checklist (BRAIN-01)
 
@@ -132,7 +132,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 30.5. Brain Upgrade (Sonnet 5) | 0/? | Not started | - |
+| 30.5. Brain Upgrade (Sonnet 5) | 3/6 | In Progress|  |
 | 31. Standing Directives | 0/? | Not started | - |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
