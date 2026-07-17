@@ -167,6 +167,107 @@ class TestTickBrainConstructor(unittest.TestCase):
             with patch.object(tb, "LLMClient", StubLLMClient):
                 self.assertEqual(tb.TickBrain()._max_tokens, 2048)
 
+    # ---- BRAIN-03: fallback decoupled onto TICK_BRAIN_FALLBACK_* ----
+
+    def test_fallback_constructed_from_tick_brain_fallback_env(self):
+        """Fallback client must be built from TICK_BRAIN_FALLBACK_* env vars,
+        never SMART_AGENT_* — asserts _fallback_model == 'gemini-3.5-flash'."""
+        _calls = []
+
+        class CaptureLLMClient:
+            def __init__(self, backend, model, api_key, base_url=None):
+                _calls.append({"backend": backend, "model": model,
+                                "api_key": api_key, "base_url": base_url})
+
+        import core.tick_brain as tb
+        env = {
+            "TICK_BRAIN_API_KEY": "gsk_test",
+            "TICK_BRAIN_FALLBACK_BACKEND": "gemini",
+            "TICK_BRAIN_FALLBACK_MODEL": "gemini-3.5-flash",
+            "TICK_BRAIN_FALLBACK_API_KEY": "gemini_test_key",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(tb, "LLMClient", CaptureLLMClient):
+                brain = tb.TickBrain()
+                self.assertEqual(brain._fallback_model, "gemini-3.5-flash")
+                fallback_call = _calls[1]
+                self.assertEqual(fallback_call["backend"], "gemini")
+                self.assertEqual(fallback_call["model"], "gemini-3.5-flash")
+                self.assertEqual(fallback_call["api_key"], "gemini_test_key")
+
+    def test_fallback_defaults_to_gemini_when_backend_model_unset(self):
+        """Backend/model default to gemini/gemini-3.5-flash on a fresh deploy
+        (vars unset) as long as TICK_BRAIN_FALLBACK_API_KEY is present."""
+        _calls = []
+
+        class CaptureLLMClient:
+            def __init__(self, backend, model, api_key, base_url=None):
+                _calls.append({"backend": backend, "model": model})
+
+        import core.tick_brain as tb
+        env = {
+            "TICK_BRAIN_API_KEY": "gsk_test",
+            "TICK_BRAIN_FALLBACK_API_KEY": "gemini_test_key",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(tb, "LLMClient", CaptureLLMClient):
+                brain = tb.TickBrain()
+                self.assertEqual(brain._fallback_model, "gemini-3.5-flash")
+                self.assertEqual(_calls[1]["backend"], "gemini")
+                self.assertEqual(_calls[1]["model"], "gemini-3.5-flash")
+
+    def test_fallback_none_when_fallback_api_key_absent(self):
+        """No TICK_BRAIN_FALLBACK_API_KEY -> fallback client stays None even
+        though backend/model default (optional-client shape preserved)."""
+        class StubLLMClient:
+            def __init__(self, backend, model, api_key, base_url=None):
+                pass
+
+        import core.tick_brain as tb
+        env = {"TICK_BRAIN_API_KEY": "gsk_test"}
+        with patch.dict(os.environ, env, clear=True):
+            with patch.object(tb, "LLMClient", StubLLMClient):
+                brain = tb.TickBrain()
+                self.assertIsNone(brain._fallback_client)
+                self.assertIsNone(brain._fallback_model)
+
+    def test_module_never_reads_smart_agent_env(self):
+        """core/tick_brain.py must not read any SMART_AGENT_* var (BRAIN-03)."""
+        import inspect
+        import core.tick_brain as tb
+        source = inspect.getsource(tb)
+        self.assertNotIn("SMART_AGENT", source)
+
+    def test_forced_groq_failure_routes_to_decoupled_fallback(self):
+        """RESEARCH.md Code Examples shape: a forced Groq (primary) failure
+        must route to the decoupled TICK_BRAIN_FALLBACK_* client and report
+        gemini-3.5-flash — NEVER claude-sonnet-5, even when SMART_AGENT_MODEL
+        has already been flipped to claude-sonnet-5 (post-flip state, D-13)."""
+        from core.llm_client import LLMError
+        import core.tick_brain as tb
+
+        env = {
+            "TICK_BRAIN_API_KEY": "gsk_test",
+            "TICK_BRAIN_FALLBACK_BACKEND": "gemini",
+            "TICK_BRAIN_FALLBACK_MODEL": "gemini-3.5-flash",
+            "TICK_BRAIN_FALLBACK_API_KEY": "test-key",
+            "SMART_AGENT_MODEL": "claude-sonnet-5",  # post-flip state
+        }
+        with patch.dict(os.environ, env, clear=True):
+            brain = tb.TickBrain()
+            with patch.object(brain._client, "chat",
+                               side_effect=LLMError("boom", backend="openai")):
+                with patch.object(brain._fallback_client, "chat") as mock_fb:
+                    mock_fb.return_value = {
+                        "text": '{"should_act": false, "reason": "test"}',
+                        "tool_calls": [], "stop_reason": "end_turn",
+                        "usage": {"in_tokens": 1, "out_tokens": 1},
+                    }
+                    brain.think("test prompt")
+                    self.assertEqual(brain._fallback_model, "gemini-3.5-flash")
+                    self.assertNotEqual(brain._fallback_model, "claude-sonnet-5")
+                    mock_fb.assert_called_once()
+
 
 class TestTickBrainThink(unittest.TestCase):
     """Tests for TickBrain.think() — uses mocked LLMClient."""
