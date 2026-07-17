@@ -834,3 +834,49 @@ class TestLLMUsageStoreCacheAndPerPurposeCost:
             result = store.summary_for_date("2026-07-16")
 
         assert result == {}
+
+
+# =============================================================================
+# UserProfileStore — TTL cache on load() (Phase 30.5 Plan 02 — BRAIN-07)
+# =============================================================================
+
+class TestUserProfileStoreCache:
+    """load() must be served from the shared _READ_CACHE within TTL; update()
+    must invalidate; the existing {}-on-error contract must be preserved."""
+
+    def _profile_store(self, data: dict):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "amit", data)
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.UserProfileStore("test-project")
+        return store, doc_ref
+
+    def test_user_profile_load_served_from_cache_within_ttl(self):
+        store, doc_ref = self._profile_store({"dated_goals": []})
+
+        first = store.load()
+        second = store.load()
+
+        assert first == second == {"dated_goals": []}
+        assert doc_ref.get.call_count == 1, "second load() must be a cache hit"
+
+    def test_user_profile_update_invalidates_cache(self):
+        store, doc_ref = self._profile_store({"dated_goals": []})
+
+        store.load()
+        store.update({"dated_goals": [{"goal_label": "marathon"}]})
+        store.load()
+
+        assert doc_ref.get.call_count == 2, "update() must force a re-read"
+
+    def test_user_profile_load_error_path_not_cached_and_returns_empty(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated failure")
+        col.document.return_value = doc_ref
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.UserProfileStore("test-project")
+
+        assert store.load() == {}
+        assert store.load() == {}
+        assert doc_ref.get.call_count == 2, "error path must never be cached"

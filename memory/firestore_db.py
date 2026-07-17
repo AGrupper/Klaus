@@ -228,20 +228,35 @@ class UserProfileStore:
         self._doc_ref = (
             self._client.collection(self._COLLECTION).document(self._DOCUMENT_ID)
         )
+        self._cache_key = ("user_profile", project_id, database)
 
     def load(self) -> dict:
-        """PROFILE-01: return the user profile dict. Returns {} on any error — never raises."""
+        """PROFILE-01: return the user profile dict. Returns {} on any error — never raises.
+
+        Served from the module TTL cache between writes — the profile changes
+        rarely but is read on chat turns and coaching prompts (BRAIN-07).
+        """
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return dict(cached)
         try:
             snap = self._doc_ref.get()
-            if snap.exists:
-                return snap.to_dict() or {}
-            return {}
+            result = snap.to_dict() or {} if snap.exists else {}
         except Exception:
             logger.warning("UserProfileStore.load() failed — returning empty", exc_info=True)
             return {}
+        if cache_key is not None:
+            _cache_put(cache_key, dict(result))
+        return result
 
     def update(self, patch: dict) -> None:
-        """PROFILE-02: merge patch and stamp updated_at SERVER_TIMESTAMP. Re-raises on failure."""
+        """PROFILE-02: merge patch and stamp updated_at SERVER_TIMESTAMP. Re-raises on failure.
+
+        Invalidates the read cache on the success path so a same-instance
+        load() never serves the pre-write value.
+        """
         try:
             self._doc_ref.set(
                 {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
@@ -250,6 +265,9 @@ class UserProfileStore:
         except Exception:
             logger.error("UserProfileStore.update() failed", exc_info=True)
             raise
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            _cache_invalidate_prefix(cache_key)
 
     def bootstrap_if_empty(self) -> None:
         """PROFILE-03: seed users/amit with empty scaffold if absent.
