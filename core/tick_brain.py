@@ -25,8 +25,16 @@ Env vars:
                            default ~1.0 makes the judgment gate flip on
                            borderline cases run-to-run).
 
-Fallback uses:
-    SMART_AGENT_BACKEND / SMART_AGENT_MODEL / SMART_AGENT_API_KEY
+Fallback (decoupled from the smart brain's own model-selection env vars —
+BRAIN-03; a Groq failure must never silently bill the brain's model, e.g.
+claude-sonnet-5):
+    TICK_BRAIN_FALLBACK_BACKEND  — default "gemini" when unset
+    TICK_BRAIN_FALLBACK_MODEL    — default "gemini-3.5-flash" when unset
+    TICK_BRAIN_FALLBACK_API_KEY  — required for the fallback client to be
+                                   constructed; fallback is skipped (None) if
+                                   absent, even though backend/model default
+    TICK_BRAIN_FALLBACK_BASE_URL — optional, only relevant for OpenAI-compatible
+                                   fallback backends
 """
 from __future__ import annotations
 
@@ -44,6 +52,12 @@ _DEFAULT_MODEL       = "openai/gpt-oss-120b"
 _DEFAULT_BASE_URL    = "https://api.groq.com/openai/v1"
 _DEFAULT_MAX_TOKENS  = 2048  # ample for reasoning + the JSON verdict
 _DEFAULT_TEMPERATURE = 0.6   # tames verdict flapping vs the ~1.0 provider default
+
+# Decoupled fallback defaults (BRAIN-03) — a forced Groq failure must always
+# route to the cheap Gemini tier, never inherit the smart brain's own model
+# (which post-flip is claude-sonnet-5, ~10-30x more expensive).
+_DEFAULT_FALLBACK_BACKEND = "gemini"
+_DEFAULT_FALLBACK_MODEL   = "gemini-3.5-flash"
 
 _TICK_SYSTEM_PROMPT = """\
 You are Klaus's judgment layer. You receive raw health signals or situation data.
@@ -113,15 +127,23 @@ class TickBrain:
         )
         self._model = model
 
-        # Fallback: main brain (Gemini). Optional — skipped if vars absent.
-        fallback_backend = os.getenv("SMART_AGENT_BACKEND")
-        fallback_model   = os.getenv("SMART_AGENT_MODEL")
-        fallback_key     = os.getenv("SMART_AGENT_API_KEY")
+        # Fallback (BRAIN-03 — decoupled from the smart brain's own
+        # model-selection env so a transient Groq failure never silently
+        # bills the brain's model).
+        # Backend/model default to Gemini even when unset (safe on a fresh
+        # deploy); the client is only constructed when a usable API key is
+        # present — no key means no fallback, same optional-client shape as
+        # AgentOrchestrator's smart_agent_fallback.
+        fallback_backend = os.getenv("TICK_BRAIN_FALLBACK_BACKEND", _DEFAULT_FALLBACK_BACKEND)
+        fallback_model   = os.getenv("TICK_BRAIN_FALLBACK_MODEL", _DEFAULT_FALLBACK_MODEL)
+        fallback_key     = os.getenv("TICK_BRAIN_FALLBACK_API_KEY")
+        fallback_base_url = os.getenv("TICK_BRAIN_FALLBACK_BASE_URL")
         if fallback_backend and fallback_model and fallback_key:
             self._fallback_client: LLMClient | None = LLMClient(
                 backend=fallback_backend,
                 model=fallback_model,
                 api_key=fallback_key,
+                base_url=fallback_base_url if fallback_backend == "openai" else None,
             )
             self._fallback_model = fallback_model
         else:
