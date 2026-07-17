@@ -228,20 +228,35 @@ class UserProfileStore:
         self._doc_ref = (
             self._client.collection(self._COLLECTION).document(self._DOCUMENT_ID)
         )
+        self._cache_key = ("user_profile", project_id, database)
 
     def load(self) -> dict:
-        """PROFILE-01: return the user profile dict. Returns {} on any error — never raises."""
+        """PROFILE-01: return the user profile dict. Returns {} on any error — never raises.
+
+        Served from the module TTL cache between writes — the profile changes
+        rarely but is read on chat turns and coaching prompts (BRAIN-07).
+        """
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            cached = _cache_get(cache_key)
+            if cached is not None:
+                return dict(cached)
         try:
             snap = self._doc_ref.get()
-            if snap.exists:
-                return snap.to_dict() or {}
-            return {}
+            result = snap.to_dict() or {} if snap.exists else {}
         except Exception:
             logger.warning("UserProfileStore.load() failed — returning empty", exc_info=True)
             return {}
+        if cache_key is not None:
+            _cache_put(cache_key, dict(result))
+        return result
 
     def update(self, patch: dict) -> None:
-        """PROFILE-02: merge patch and stamp updated_at SERVER_TIMESTAMP. Re-raises on failure."""
+        """PROFILE-02: merge patch and stamp updated_at SERVER_TIMESTAMP. Re-raises on failure.
+
+        Invalidates the read cache on the success path so a same-instance
+        load() never serves the pre-write value.
+        """
         try:
             self._doc_ref.set(
                 {**patch, "updated_at": firestore.SERVER_TIMESTAMP},
@@ -250,6 +265,9 @@ class UserProfileStore:
         except Exception:
             logger.error("UserProfileStore.update() failed", exc_info=True)
             raise
+        cache_key = getattr(self, "_cache_key", None)
+        if cache_key is not None:
+            _cache_invalidate_prefix(cache_key)
 
     def bootstrap_if_empty(self) -> None:
         """PROFILE-03: seed users/amit with empty scaffold if absent.
@@ -408,11 +426,15 @@ class LLMUsageStore:
     Numeric fields use firestore.Increment so concurrent calls are safe.
 
     Schema (all fields are firestore.Increment targets):
-        total_in_tokens:   int   — sum of input tokens across all calls
-        total_out_tokens:  int   — sum of output tokens across all calls
-        total_cost_usd:    float — sum of compute_cost() results
-        call_count:        int   — total number of calls
-        {purpose}_calls:   int   — per-purpose call counter (e.g. "smart_calls", "worker_calls")
+        total_in_tokens:         int   — sum of input tokens across all calls
+        total_out_tokens:        int   — sum of output tokens across all calls
+        total_cost_usd:          float — sum of compute_cost() results
+        call_count:              int   — total number of calls
+        {purpose}_calls:         int   — per-purpose call counter (e.g. "smart_calls", "worker_calls")
+        total_cache_read_tokens: int   — sum of cache-read tokens across all calls (BRAIN-02)
+        total_cache_write_tokens:int   — sum of cache-write tokens across all calls (BRAIN-02)
+        {purpose}_cost_usd:      float — per-purpose cost driver (e.g. "smart_cost_usd") — feeds
+                                  the daily cost tripwire's "top 2-3 cost drivers by purpose" (BRAIN-04)
     """
 
     _COLLECTION = "llm_usage"
@@ -421,13 +443,19 @@ class LLMUsageStore:
         self._client = _make_firestore_client(project_id, database)
 
     def record(self, model: str, purpose: str, in_tokens: int,
-               out_tokens: int, cost: float) -> None:
-        """Increment today's usage doc. Never raises."""
+               out_tokens: int, cost: float, cache_read_tokens: int = 0,
+               cache_write_tokens: int = 0) -> None:
+        """Increment today's usage doc. Never raises.
+
+        cache_read_tokens/cache_write_tokens default to 0 so existing
+        5-positional-arg callers keep working unchanged.
+        """
         try:
             from datetime import date
             today = date.today().isoformat()
             doc_ref = self._client.collection(self._COLLECTION).document(today)
             purpose_key = f"{purpose}_calls" if purpose else "unknown_calls"
+            cost_key = f"{purpose}_cost_usd" if purpose else "unknown_cost_usd"
             doc_ref.set(
                 {
                     "date": today,
@@ -436,6 +464,9 @@ class LLMUsageStore:
                     "total_cost_usd":   firestore.Increment(cost),
                     "call_count":       firestore.Increment(1),
                     purpose_key:        firestore.Increment(1),
+                    "total_cache_read_tokens":  firestore.Increment(cache_read_tokens),
+                    "total_cache_write_tokens": firestore.Increment(cache_write_tokens),
+                    cost_key:           firestore.Increment(cost),
                 },
                 merge=True,
             )
@@ -477,6 +508,20 @@ class LLMUsageStore:
             return {}
         except Exception:
             logger.warning("LLMUsageStore.summary() failed", exc_info=True)
+            return {}
+
+    def summary_for_date(self, date_str: str) -> dict:
+        """Return the usage doc for an arbitrary YYYY-MM-DD date.
+
+        Used by the daily cost tripwire (BRAIN-04) to read "yesterday"'s
+        spend and per-purpose cost drivers. Returns {} if the doc is absent
+        or on any Firestore error — never raises.
+        """
+        try:
+            snap = self._client.collection(self._COLLECTION).document(date_str).get()
+            return snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("LLMUsageStore.summary_for_date() failed", exc_info=True)
             return {}
 
 
@@ -1819,6 +1864,58 @@ class OutreachLogStore:
         """
         entries = self.get_today(date_str)
         return [str(e.get("topic_key", "")) for e in entries if e.get("topic_key")]
+
+
+class CostTripwireLogStore:
+    """Per-date once-only suppression gate for the daily cost tripwire (BRAIN-04).
+
+    Firestore collection: cost_tripwire_log (lowercase per project casing invariant).
+    Document ID: the date string (YYYY-MM-DD) — one doc per calendar day.
+
+    Plain existence-check + set — no ArrayUnion needed since at most one
+    tripwire alert can fire per date. Mirrors the OutreachLogStore per-date
+    document-ID pattern. Phase 30.5 Plan 02 builds the store only; Plan 05
+    wires it into the heartbeat cron.
+    """
+
+    _COLLECTION = "cost_tripwire_log"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def already_fired(self, date_str: str) -> bool:
+        """Return True if the tripwire has already fired for date_str.
+
+        Never raises — returns False on any Firestore read error so a
+        transient outage does not permanently suppress (or spuriously
+        re-fire) the alert.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            return bool(snap.exists)
+        except Exception:
+            logger.warning("CostTripwireLogStore.already_fired(%r) failed", date_str, exc_info=True)
+            return False
+
+    def mark_fired(self, date_str: str, summary: dict) -> None:
+        """Record that the tripwire fired for date_str, with a cost summary.
+
+        Re-raises after logging on write failure, matching
+        OutreachLogStore.append's discipline — the caller decides whether to
+        abort the alert send.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "fired_at": firestore.SERVER_TIMESTAMP,
+                    **summary,
+                },
+            )
+        except Exception:
+            logger.error("CostTripwireLogStore.mark_fired(%r) failed", date_str, exc_info=True)
+            raise
 
 
 class CoachingTopicStore:

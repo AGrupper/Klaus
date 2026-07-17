@@ -753,3 +753,197 @@ class TestReadCache:
         second = store.get("2026-06-10")
 
         assert second["summary"] == "day"
+
+
+# =============================================================================
+# LLMUsageStore — cache-token fields, per-purpose cost, per-date summary
+# (Phase 30.5 Plan 02 — BRAIN-02/BRAIN-04)
+# =============================================================================
+
+class TestLLMUsageStoreCacheAndPerPurposeCost:
+    """record() must accumulate cache-read/cache-write tokens and per-purpose
+    cost; summary_for_date() must be a never-raises per-date reader."""
+
+    def test_record_payload_includes_cache_token_and_purpose_cost_fields(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            store.record(
+                "claude-sonnet-5", "smart", 1000, 500, 0.03,
+                cache_read_tokens=200, cache_write_tokens=50,
+            )
+
+        doc_ref.set.assert_called_once()
+        args, kwargs = doc_ref.set.call_args
+        payload = args[0]
+        assert kwargs.get("merge") is True
+
+        for key in ("total_cache_read_tokens", "total_cache_write_tokens", "smart_cost_usd"):
+            assert key in payload, f"Missing key: {key}"
+            assert "Increment" in type(payload[key]).__name__
+
+        assert payload["total_cache_read_tokens"].value == 200
+        assert payload["total_cache_write_tokens"].value == 50
+        assert payload["smart_cost_usd"].value == 0.03
+
+    def test_record_without_cache_kwargs_defaults_to_zero(self):
+        """Existing 5-positional-arg callers must keep working unchanged."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            store.record("claude-sonnet-5", "worker", 100, 50, 0.001)
+
+        args, _ = doc_ref.set.call_args
+        payload = args[0]
+        assert payload["total_cache_read_tokens"].value == 0
+        assert payload["total_cache_write_tokens"].value == 0
+        assert payload["worker_cost_usd"].value == 0.001
+
+    def test_summary_for_date_returns_doc_dict(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, "2026-07-16", {"total_cost_usd": 1.23, "smart_cost_usd": 1.0})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {"total_cost_usd": 1.23, "smart_cost_usd": 1.0}
+
+    def test_summary_for_date_missing_doc_returns_empty_dict(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "2026-07-16")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {}
+
+    def test_summary_for_date_never_raises(self):
+        client = MagicMock()
+        client.collection.side_effect = RuntimeError("simulated Firestore failure")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {}
+
+
+# =============================================================================
+# UserProfileStore — TTL cache on load() (Phase 30.5 Plan 02 — BRAIN-07)
+# =============================================================================
+
+class TestUserProfileStoreCache:
+    """load() must be served from the shared _READ_CACHE within TTL; update()
+    must invalidate; the existing {}-on-error contract must be preserved."""
+
+    def _profile_store(self, data: dict):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "amit", data)
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.UserProfileStore("test-project")
+        return store, doc_ref
+
+    def test_user_profile_load_served_from_cache_within_ttl(self):
+        store, doc_ref = self._profile_store({"dated_goals": []})
+
+        first = store.load()
+        second = store.load()
+
+        assert first == second == {"dated_goals": []}
+        assert doc_ref.get.call_count == 1, "second load() must be a cache hit"
+
+    def test_user_profile_update_invalidates_cache(self):
+        store, doc_ref = self._profile_store({"dated_goals": []})
+
+        store.load()
+        store.update({"dated_goals": [{"goal_label": "marathon"}]})
+        store.load()
+
+        assert doc_ref.get.call_count == 2, "update() must force a re-read"
+
+    def test_user_profile_load_error_path_not_cached_and_returns_empty(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated failure")
+        col.document.return_value = doc_ref
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.UserProfileStore("test-project")
+
+        assert store.load() == {}
+        assert store.load() == {}
+        assert doc_ref.get.call_count == 2, "error path must never be cached"
+
+
+# =============================================================================
+# CostTripwireLogStore — per-date once-only suppression (Phase 30.5 Plan 02 —
+# BRAIN-04 gate)
+# =============================================================================
+
+class TestCostTripwireLogStore:
+    """already_fired()/mark_fired() provide a per-date once-only gate for the
+    daily cost tripwire alert. Reads never raise; writes log-and-re-raise."""
+
+    def test_already_fired_false_before_mark_fired(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "2026-07-16")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            assert store.already_fired("2026-07-16") is False
+
+    def test_already_fired_true_after_mark_fired(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            store.mark_fired("2026-07-16", {"total_cost_usd": 12.5})
+
+        doc_ref.set.assert_called_once()
+        args, _ = doc_ref.set.call_args
+        payload = args[0]
+        assert payload["date"] == "2026-07-16"
+        assert payload["total_cost_usd"] == 12.5
+        assert "fired_at" in payload
+
+        # Now simulate the doc existing for a subsequent already_fired() check.
+        snap = MagicMock()
+        snap.exists = True
+        doc_ref.get.return_value = snap
+        assert store.already_fired("2026-07-16") is True
+
+    def test_already_fired_returns_false_on_read_error(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            assert store.already_fired("2026-07-16") is False
+
+    def test_mark_fired_reraises_on_write_failure(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = RuntimeError("simulated write failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            try:
+                store.mark_fired("2026-07-16", {"total_cost_usd": 1.0})
+                assert False, "expected mark_fired to re-raise"
+            except RuntimeError:
+                pass
+
+    def test_collection_name_is_lowercase(self):
+        assert firestore_db.CostTripwireLogStore._COLLECTION == "cost_tripwire_log"
