@@ -361,3 +361,166 @@ def test_llm_timeout_env_override(monkeypatch):
     monkeypatch.setenv("LLM_TIMEOUT_SECONDS", "45")
     backend = _OpenAIBackend("deepseek-v4-flash", "fake-api-key")
     assert backend.client.timeout == 45.0
+
+
+# --------------------------------------------------------------------------- #
+# Anthropic prompt caching + cache-token metering + param audit (BRAIN-02/05) #
+# --------------------------------------------------------------------------- #
+
+
+def _make_anthropic_response(text="hi", cache_read=0, cache_write=0,
+                              in_tokens=100, out_tokens=20):
+    """Build a MagicMock standing in for an anthropic.types.Message response."""
+    block = MagicMock()
+    block.type = "text"
+    block.text = text
+
+    usage = MagicMock()
+    usage.input_tokens = in_tokens
+    usage.output_tokens = out_tokens
+    usage.cache_read_input_tokens = cache_read
+    usage.cache_creation_input_tokens = cache_write
+
+    response = MagicMock()
+    response.content = [block]
+    response.stop_reason = "end_turn"
+    response.usage = usage
+    return response
+
+
+def test_anthropic_backend_sends_cache_control_system_block():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response()
+    )
+
+    backend.chat(
+        [{"role": "user", "content": "hello"}],
+        system="You are Klaus.",
+    )
+
+    _, kwargs = backend.client.messages.create.call_args
+    system_kwarg = kwargs["system"]
+    assert isinstance(system_kwarg, list)
+    assert len(system_kwarg) == 1
+    assert system_kwarg[0]["type"] == "text"
+    assert system_kwarg[0]["text"] == "You are Klaus."
+    assert system_kwarg[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_anthropic_backend_no_system_block_when_system_empty():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response()
+    )
+
+    backend.chat([{"role": "user", "content": "hello"}], system=None)
+
+    _, kwargs = backend.client.messages.create.call_args
+    assert "system" not in kwargs
+
+
+def test_anthropic_backend_extracts_cache_tokens():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response(cache_read=500, cache_write=1200)
+    )
+
+    result = backend.chat(
+        [{"role": "user", "content": "hello"}], system="You are Klaus."
+    )
+
+    assert result["usage"]["cache_read_tokens"] == 500
+    assert result["usage"]["cache_write_tokens"] == 1200
+
+
+def test_anthropic_backend_cache_tokens_default_zero_when_absent():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    # Simulate an older SDK/response shape with no cache fields at all.
+    response = _make_anthropic_response()
+    del response.usage.cache_read_input_tokens
+    del response.usage.cache_creation_input_tokens
+    backend.client.messages.create = MagicMock(return_value=response)
+
+    result = backend.chat([{"role": "user", "content": "hello"}], system="sys")
+
+    assert result["usage"]["cache_read_tokens"] == 0
+    assert result["usage"]["cache_write_tokens"] == 0
+
+
+def test_anthropic_backend_no_forbidden_params_on_smart_path():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response()
+    )
+
+    # Smart-path call: no temperature, no explicit thinking config, no tools.
+    backend.chat([{"role": "user", "content": "hello"}], system="You are Klaus.")
+
+    _, kwargs = backend.client.messages.create.call_args
+    assert "temperature" not in kwargs
+    assert "top_p" not in kwargs
+    assert "top_k" not in kwargs
+    assert "thinking" not in kwargs
+
+
+def test_anthropic_backend_temperature_still_gated_when_explicitly_passed():
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-haiku-4-5", "fake-api-key")
+    backend.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response()
+    )
+
+    backend.chat(
+        [{"role": "user", "content": "hello"}], system=None, temperature=0.6
+    )
+
+    _, kwargs = backend.client.messages.create.call_args
+    assert kwargs["temperature"] == 0.6
+
+
+def test_max_tokens_raised_for_thinking_headroom():
+    from core.llm_client import MAX_TOKENS
+    assert MAX_TOKENS >= 16000
+
+
+def test_llm_client_chat_meters_cache_tokens(monkeypatch):
+    """LLMClient.chat must thread cache tokens into compute_cost + LLMUsageStore.record."""
+    from core.llm_client import LLMClient
+
+    client = LLMClient(backend="anthropic", model="claude-sonnet-5", api_key="fake-key")
+    client._impl.client.messages.create = MagicMock(
+        return_value=_make_anthropic_response(cache_read=300, cache_write=800,
+                                               in_tokens=1000, out_tokens=50)
+    )
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "fake-project")
+
+    captured = {}
+
+    class _FakeLLMUsageStore:
+        def __init__(self, project_id, database):
+            captured["project_id"] = project_id
+
+        def record(self, **kwargs):
+            captured["record_kwargs"] = kwargs
+
+    with patch("memory.firestore_db.LLMUsageStore", _FakeLLMUsageStore), \
+         patch("core.pricing.compute_cost", return_value=0.0042) as mock_compute_cost:
+        client.chat(
+            [{"role": "user", "content": "hello"}],
+            system="You are Klaus.",
+            purpose="smart",
+        )
+
+    _, compute_kwargs = mock_compute_cost.call_args
+    assert compute_kwargs.get("cache_read_tokens") == 300
+    assert compute_kwargs.get("cache_write_tokens") == 800
+
+    assert captured["record_kwargs"]["cache_read_tokens"] == 300
+    assert captured["record_kwargs"]["cache_write_tokens"] == 800

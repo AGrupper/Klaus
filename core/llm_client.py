@@ -33,7 +33,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-MAX_TOKENS = 4096
+MAX_TOKENS = 16000  # D-11: headroom for default-on adaptive thinking (Sonnet 5) so
+                     # the visible reply never truncates with stop_reason "max_tokens".
+                     # Deliberately small per-call ceilings (e.g. tick-brain's 2048,
+                     # passed explicitly) are unaffected — this is only the default.
 
 
 def _llm_timeout_seconds() -> float:
@@ -130,8 +133,14 @@ class LLMClient:
             usage = result.get("usage") or {}
             in_tok  = usage.get("in_tokens", 0) or 0
             out_tok = usage.get("out_tokens", 0) or 0
+            cache_read_tok  = usage.get("cache_read_tokens", 0) or 0
+            cache_write_tok = usage.get("cache_write_tokens", 0) or 0
             from core.pricing import compute_cost
-            cost = compute_cost(self.model, in_tok, out_tok)
+            cost = compute_cost(
+                self.model, in_tok, out_tok,
+                cache_read_tokens=cache_read_tok,
+                cache_write_tokens=cache_write_tok,
+            )
             import os
             project_id = os.getenv("GCP_PROJECT_ID", "")
             if project_id:
@@ -143,6 +152,8 @@ class LLMClient:
                     in_tokens=in_tok,
                     out_tokens=out_tok,
                     cost=cost,
+                    cache_read_tokens=cache_read_tok,
+                    cache_write_tokens=cache_write_tok,
                 )
         except Exception:
             logger.debug("LLM usage metering failed (non-fatal)", exc_info=True)
@@ -208,7 +219,18 @@ class _AnthropicBackend(_BaseBackend):
         if temperature is not None:
             kwargs["temperature"] = temperature
         if system:
-            kwargs["system"] = system
+            # Cache the stable system prefix (1h TTL) — Klaus's system prompt is
+            # well over the 1,024-token minimum cacheable prefix. NOTE: no
+            # temperature/top_p/top_k/manual `thinking` is ever added here —
+            # Sonnet 5 hard-400s on those params; `temperature` above is the
+            # sole param-gate pattern any future addition must mirror.
+            kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                },
+            ]
         if tools:
             # Anthropic tool format is our canonical format — pass through directly.
             kwargs["tools"] = tools
@@ -244,6 +266,12 @@ class _AnthropicBackend(_BaseBackend):
             "usage": {
                 "in_tokens":  response.usage.input_tokens,
                 "out_tokens": response.usage.output_tokens,
+                "cache_read_tokens":  getattr(
+                    response.usage, "cache_read_input_tokens", 0
+                ) or 0,
+                "cache_write_tokens": getattr(
+                    response.usage, "cache_creation_input_tokens", 0
+                ) or 0,
             },
         }
 

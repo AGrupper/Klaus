@@ -22,7 +22,7 @@ google-cloud-tasks>=2.16           # Telegram update dispatch → full-CPU in-re
 pinecone>=5.0
 
 # --- LLM SDKs (dual-model architecture + universal fallback) ---
-anthropic>=0.40                    # Likely main "Smart" agent (Claude)
+anthropic>=0.99,<1.0                # Main "Smart" agent (claude-sonnet-5) — floor bump for typed adaptive-thinking/Sonnet-5 support (30.5-03)
 google-genai>=1.0                  # Gemini Flash router (fast/cheap) — new official SDK (google-generativeai is deprecated)
 openai>=1.50                       # OpenAI-compatible protocol = lingua franca for self-hosted models (e.g. Hermes)
 
