@@ -695,3 +695,122 @@ def test_compose_spend_alert_falls_back_on_llm_failure(monkeypatch):
     assert "12.00" in result
     assert "5.00" in result
 
+
+# ---------------------------------------------------------------------------
+# Phase 30.5 Plan 05 Task 2 — wiring _send_daily_spend_alert into run_tick
+# ---------------------------------------------------------------------------
+
+def test_send_daily_spend_alert_sends_and_marks_fired_on_success(monkeypatch):
+    """The tripwire is sent via send_and_inject, then mark_fired is called
+    only after that send succeeds."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-16", "text": "spend alert text", "summary": {"total_cost_usd": 12.0}}
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: alert)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append((text, kw))
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["date"] = date_str
+            marked["summary"] = summary
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert sent == [("spend alert text", {"inject_into_conversation": True, "message_class": "alert"})]
+    assert marked == {"date": "2026-07-16", "summary": {"total_cost_usd": 12.0}}
+
+
+def test_send_daily_spend_alert_no_alert_sends_nothing(monkeypatch):
+    """Second heartbeat tick on the same date: check_daily_spend returns None
+    (already_fired) -> no send, no mark_fired call."""
+    import asyncio
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: None)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append(text)
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {"called": False}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert sent == []
+    assert marked["called"] is False
+
+
+def test_send_daily_spend_alert_send_failure_leaves_not_fired(monkeypatch):
+    """A simulated send failure must NOT call mark_fired — retry-safe on the
+    next tick (mirrors OutreachLogStore D-10 gating)."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-16", "text": "spend alert text", "summary": {"total_cost_usd": 12.0}}
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: alert)
+
+    async def _failing_send(bot, text, **kw):
+        raise RuntimeError("Telegram send failed")
+    monkeypatch.setattr(heartbeat, "send_and_inject", _failing_send)
+
+    marked = {"called": False}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    # Never raises into the caller (wrapped in try/except).
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert marked["called"] is False
+
+
+def test_run_tick_invokes_daily_spend_alert(monkeypatch):
+    """run_tick must call _send_daily_spend_alert as a separate guarded step,
+    outside _collect_signals/_tiers_for_now."""
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "_load_config", lambda: {
+        "enabled": True, "quiet_start": "22:00", "quiet_end": "07:00",
+        "timezone": "Asia/Jerusalem", "digest_hour": 9,
+        "weekly_digest_day": 1, "reping_interval_hours": 24})
+    monkeypatch.setattr(heartbeat, "_collect_signals", lambda **k: [])
+    monkeypatch.setattr(heartbeat, "_register_incidents", lambda crits, cfg: [])
+    monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
+    monkeypatch.setattr(heartbeat, "_run_tick_brain_pass", lambda s, **k: None)
+
+    async def _noop_drain(bot, now, cfg):
+        pass
+    monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
+
+    called = {"spend": False}
+    async def _spy_spend(bot):
+        called["spend"] = True
+    monkeypatch.setattr(heartbeat, "_send_daily_spend_alert", _spy_spend)
+
+    noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    asyncio.run(heartbeat.run_tick(object(), now=noon))
+
+    assert called["spend"] is True
+

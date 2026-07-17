@@ -998,6 +998,33 @@ def _run_tick_brain_pass(signals: list[Signal], *, weekly: bool) -> str | None:
     return None
 
 
+async def _send_daily_spend_alert(bot) -> None:
+    """Send the daily-spend tripwire alert (BRAIN-04), if one is due.
+
+    Separate guarded action, NOT part of _collect_signals — this is a
+    once-daily paid-compose-and-send action, not a Signal-emitting ops
+    checker. Per-date suppression in check_daily_spend() makes the exact
+    trigger hour irrelevant: safe to check on every hourly tick. Marks the
+    tripwire fired ONLY after a successful send (mirrors the OutreachLog
+    D-10 gating) so a delivery failure retries on the next tick rather than
+    being silently suppressed. Never raises into the cron.
+    """
+    try:
+        alert = check_daily_spend()
+        if not alert:
+            return
+        await send_and_inject(
+            bot, alert["text"], inject_into_conversation=True, message_class="alert",
+        )
+        from memory.firestore_db import CostTripwireLogStore
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        CostTripwireLogStore(project_id=project_id, database=database).mark_fired(
+            alert["date"], alert["summary"])
+    except Exception:
+        logger.warning("heartbeat: daily-spend tripwire send/mark_fired failed", exc_info=True)
+
+
 async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
     """Run one heartbeat tick. Returns the signals collected."""
     now = now or datetime.now(_TZ)
@@ -1007,6 +1034,7 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
         return []
 
     await _drain_quiet_queue(bot, now, config)
+    await _send_daily_spend_alert(bot)
 
     tiers = _tiers_for_now(config, now)
     signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
