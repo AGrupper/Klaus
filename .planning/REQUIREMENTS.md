@@ -17,7 +17,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 - [ ] **BRAIN-03**: Tick-brain fallback is decoupled from `SMART_AGENT_*` via explicit `TICK_BRAIN_FALLBACK_*` env (Gemini) — deployed BEFORE the brain model flip so Groq failures never bill at Sonnet rates
 - [ ] **BRAIN-04**: Heartbeat daily-spend tripwire — if yesterday's total LLM cost exceeds `KLAUS_DAILY_COST_ALERT` (default $5), Klaus tells Amit with a per-purpose breakdown and cache-hit rate
 - [ ] **BRAIN-05**: Sonnet-5 compatibility — no `temperature`/`top_p`/`top_k`/manual `thinking` sent on the Anthropic path; `max_tokens` policy set per call site with headroom for default-on adaptive thinking (module default 4096 revisited); `LLM_TIMEOUT_SECONDS` invariant kept and re-validated live
-- [ ] **BRAIN-06**: Always-on system prompt measurably slimmed — compact SELF.md manifest (per-tool + cron tables dropped) plus a light `smart_agent.md` de-prescription pass; target re-measured with the real Sonnet-5 tokenizer (`count_tokens`), not char estimates
+- [x] **BRAIN-06**: Always-on system prompt measurably slimmed — compact SELF.md manifest (per-tool + cron tables dropped) plus a light `smart_agent.md` de-prescription pass; target re-measured with the real Sonnet-5 tokenizer (`count_tokens`), not char estimates
 - [ ] **BRAIN-07**: `UserProfileStore` reads are TTL-cached (existing `_READ_CACHE` pattern) — no uncached Firestore read on every smart turn
 
 ### Standing Directives (Phase 31)
@@ -102,7 +102,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | BRAIN-03 | Phase 30.5 | Pending |
 | BRAIN-04 | Phase 30.5 | Pending |
 | BRAIN-05 | Phase 30.5 | Pending |
-| BRAIN-06 | Phase 30.5 | Pending |
+| BRAIN-06 | Phase 30.5 | Complete |
 | BRAIN-07 | Phase 30.5 | Pending |
 | DIR-01 | Phase 31 | Pending |
 | DIR-02 | Phase 31 | Pending |
