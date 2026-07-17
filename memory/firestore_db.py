@@ -408,11 +408,15 @@ class LLMUsageStore:
     Numeric fields use firestore.Increment so concurrent calls are safe.
 
     Schema (all fields are firestore.Increment targets):
-        total_in_tokens:   int   — sum of input tokens across all calls
-        total_out_tokens:  int   — sum of output tokens across all calls
-        total_cost_usd:    float — sum of compute_cost() results
-        call_count:        int   — total number of calls
-        {purpose}_calls:   int   — per-purpose call counter (e.g. "smart_calls", "worker_calls")
+        total_in_tokens:         int   — sum of input tokens across all calls
+        total_out_tokens:        int   — sum of output tokens across all calls
+        total_cost_usd:          float — sum of compute_cost() results
+        call_count:              int   — total number of calls
+        {purpose}_calls:         int   — per-purpose call counter (e.g. "smart_calls", "worker_calls")
+        total_cache_read_tokens: int   — sum of cache-read tokens across all calls (BRAIN-02)
+        total_cache_write_tokens:int   — sum of cache-write tokens across all calls (BRAIN-02)
+        {purpose}_cost_usd:      float — per-purpose cost driver (e.g. "smart_cost_usd") — feeds
+                                  the daily cost tripwire's "top 2-3 cost drivers by purpose" (BRAIN-04)
     """
 
     _COLLECTION = "llm_usage"
@@ -421,13 +425,19 @@ class LLMUsageStore:
         self._client = _make_firestore_client(project_id, database)
 
     def record(self, model: str, purpose: str, in_tokens: int,
-               out_tokens: int, cost: float) -> None:
-        """Increment today's usage doc. Never raises."""
+               out_tokens: int, cost: float, cache_read_tokens: int = 0,
+               cache_write_tokens: int = 0) -> None:
+        """Increment today's usage doc. Never raises.
+
+        cache_read_tokens/cache_write_tokens default to 0 so existing
+        5-positional-arg callers keep working unchanged.
+        """
         try:
             from datetime import date
             today = date.today().isoformat()
             doc_ref = self._client.collection(self._COLLECTION).document(today)
             purpose_key = f"{purpose}_calls" if purpose else "unknown_calls"
+            cost_key = f"{purpose}_cost_usd" if purpose else "unknown_cost_usd"
             doc_ref.set(
                 {
                     "date": today,
@@ -436,6 +446,9 @@ class LLMUsageStore:
                     "total_cost_usd":   firestore.Increment(cost),
                     "call_count":       firestore.Increment(1),
                     purpose_key:        firestore.Increment(1),
+                    "total_cache_read_tokens":  firestore.Increment(cache_read_tokens),
+                    "total_cache_write_tokens": firestore.Increment(cache_write_tokens),
+                    cost_key:           firestore.Increment(cost),
                 },
                 merge=True,
             )
@@ -477,6 +490,20 @@ class LLMUsageStore:
             return {}
         except Exception:
             logger.warning("LLMUsageStore.summary() failed", exc_info=True)
+            return {}
+
+    def summary_for_date(self, date_str: str) -> dict:
+        """Return the usage doc for an arbitrary YYYY-MM-DD date.
+
+        Used by the daily cost tripwire (BRAIN-04) to read "yesterday"'s
+        spend and per-purpose cost drivers. Returns {} if the doc is absent
+        or on any Firestore error — never raises.
+        """
+        try:
+            snap = self._client.collection(self._COLLECTION).document(date_str).get()
+            return snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("LLMUsageStore.summary_for_date() failed", exc_info=True)
             return {}
 
 

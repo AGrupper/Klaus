@@ -753,3 +753,84 @@ class TestReadCache:
         second = store.get("2026-06-10")
 
         assert second["summary"] == "day"
+
+
+# =============================================================================
+# LLMUsageStore — cache-token fields, per-purpose cost, per-date summary
+# (Phase 30.5 Plan 02 — BRAIN-02/BRAIN-04)
+# =============================================================================
+
+class TestLLMUsageStoreCacheAndPerPurposeCost:
+    """record() must accumulate cache-read/cache-write tokens and per-purpose
+    cost; summary_for_date() must be a never-raises per-date reader."""
+
+    def test_record_payload_includes_cache_token_and_purpose_cost_fields(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            store.record(
+                "claude-sonnet-5", "smart", 1000, 500, 0.03,
+                cache_read_tokens=200, cache_write_tokens=50,
+            )
+
+        doc_ref.set.assert_called_once()
+        args, kwargs = doc_ref.set.call_args
+        payload = args[0]
+        assert kwargs.get("merge") is True
+
+        for key in ("total_cache_read_tokens", "total_cache_write_tokens", "smart_cost_usd"):
+            assert key in payload, f"Missing key: {key}"
+            assert "Increment" in type(payload[key]).__name__
+
+        assert payload["total_cache_read_tokens"].value == 200
+        assert payload["total_cache_write_tokens"].value == 50
+        assert payload["smart_cost_usd"].value == 0.03
+
+    def test_record_without_cache_kwargs_defaults_to_zero(self):
+        """Existing 5-positional-arg callers must keep working unchanged."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            store.record("claude-sonnet-5", "worker", 100, 50, 0.001)
+
+        args, _ = doc_ref.set.call_args
+        payload = args[0]
+        assert payload["total_cache_read_tokens"].value == 0
+        assert payload["total_cache_write_tokens"].value == 0
+        assert payload["worker_cost_usd"].value == 0.001
+
+    def test_summary_for_date_returns_doc_dict(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, "2026-07-16", {"total_cost_usd": 1.23, "smart_cost_usd": 1.0})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {"total_cost_usd": 1.23, "smart_cost_usd": 1.0}
+
+    def test_summary_for_date_missing_doc_returns_empty_dict(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "2026-07-16")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {}
+
+    def test_summary_for_date_never_raises(self):
+        client = MagicMock()
+        client.collection.side_effect = RuntimeError("simulated Firestore failure")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.LLMUsageStore("test-project")
+            result = store.summary_for_date("2026-07-16")
+
+        assert result == {}
