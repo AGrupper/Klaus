@@ -55,7 +55,13 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
   3. A forced Groq failure in staging logs the tick-brain fallback as `gemini-3.5-flash` via the decoupled `TICK_BRAIN_FALLBACK_*` env — never `claude-sonnet-5` — verified deployed BEFORE the brain model flip
   4. When yesterday's total LLM cost exceeds `KLAUS_DAILY_COST_ALERT`, Klaus proactively tells Amit with a per-purpose cost breakdown and cache-hit rate
   5. Every Anthropic-backend call succeeds with no `temperature`/`top_p`/`top_k`/manual-`thinking` 400 errors, the always-on system prompt is measurably smaller (re-measured with the real Sonnet-5 tokenizer), and `UserProfileStore` reads are TTL-cached with no uncached Firestore read on every smart turn
-**Plans**: TBD
+**Plans**: 6 plans (4 waves)
+- [ ] 30.5-01-PLAN.md — Tick-brain fallback decoupling (TICK_BRAIN_FALLBACK_*), ship + live-verify before the flip (BRAIN-03)
+- [ ] 30.5-02-PLAN.md — Storage layer: LLMUsage cache/per-purpose cost + yesterday summary, UserProfileStore TTL cache, CostTripwireLog (BRAIN-02/04/07)
+- [ ] 30.5-03-PLAN.md — Anthropic prompt caching + cache-token metering + pricing + Sonnet-5 param/max_tokens compat (BRAIN-02/05)
+- [ ] 30.5-04-PLAN.md — Prompt slimming: compact SELF.md generator + light smart_agent.md de-prescription + count_tokens measurement (BRAIN-06)
+- [ ] 30.5-05-PLAN.md — Heartbeat daily-spend tripwire, once/day, brain-composed with template fallback (BRAIN-04)
+- [ ] 30.5-06-PLAN.md — Brain flip to claude-sonnet-5 + 3-tier fallback chain + D-12 disclosure + D-14 live checklist (BRAIN-01)
 
 ### Phase 31: Standing Directives
 **Goal**: Amit can state a lasting wish about Klaus's behavior once and have it honored everywhere, indefinitely or until it expires/is cancelled, with conflicts surfaced and Klaus able to learn new directives from how Amit reacts to his own outreach
