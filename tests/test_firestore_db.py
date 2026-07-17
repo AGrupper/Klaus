@@ -880,3 +880,70 @@ class TestUserProfileStoreCache:
         assert store.load() == {}
         assert store.load() == {}
         assert doc_ref.get.call_count == 2, "error path must never be cached"
+
+
+# =============================================================================
+# CostTripwireLogStore — per-date once-only suppression (Phase 30.5 Plan 02 —
+# BRAIN-04 gate)
+# =============================================================================
+
+class TestCostTripwireLogStore:
+    """already_fired()/mark_fired() provide a per-date once-only gate for the
+    daily cost tripwire alert. Reads never raise; writes log-and-re-raise."""
+
+    def test_already_fired_false_before_mark_fired(self):
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "2026-07-16")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            assert store.already_fired("2026-07-16") is False
+
+    def test_already_fired_true_after_mark_fired(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            store.mark_fired("2026-07-16", {"total_cost_usd": 12.5})
+
+        doc_ref.set.assert_called_once()
+        args, _ = doc_ref.set.call_args
+        payload = args[0]
+        assert payload["date"] == "2026-07-16"
+        assert payload["total_cost_usd"] == 12.5
+        assert "fired_at" in payload
+
+        # Now simulate the doc existing for a subsequent already_fired() check.
+        snap = MagicMock()
+        snap.exists = True
+        doc_ref.get.return_value = snap
+        assert store.already_fired("2026-07-16") is True
+
+    def test_already_fired_returns_false_on_read_error(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            assert store.already_fired("2026-07-16") is False
+
+    def test_mark_fired_reraises_on_write_failure(self):
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = RuntimeError("simulated write failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.CostTripwireLogStore("test-project")
+            try:
+                store.mark_fired("2026-07-16", {"total_cost_usd": 1.0})
+                assert False, "expected mark_fired to re-raise"
+            except RuntimeError:
+                pass
+
+    def test_collection_name_is_lowercase(self):
+        assert firestore_db.CostTripwireLogStore._COLLECTION == "cost_tripwire_log"

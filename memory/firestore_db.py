@@ -1866,6 +1866,58 @@ class OutreachLogStore:
         return [str(e.get("topic_key", "")) for e in entries if e.get("topic_key")]
 
 
+class CostTripwireLogStore:
+    """Per-date once-only suppression gate for the daily cost tripwire (BRAIN-04).
+
+    Firestore collection: cost_tripwire_log (lowercase per project casing invariant).
+    Document ID: the date string (YYYY-MM-DD) — one doc per calendar day.
+
+    Plain existence-check + set — no ArrayUnion needed since at most one
+    tripwire alert can fire per date. Mirrors the OutreachLogStore per-date
+    document-ID pattern. Phase 30.5 Plan 02 builds the store only; Plan 05
+    wires it into the heartbeat cron.
+    """
+
+    _COLLECTION = "cost_tripwire_log"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def already_fired(self, date_str: str) -> bool:
+        """Return True if the tripwire has already fired for date_str.
+
+        Never raises — returns False on any Firestore read error so a
+        transient outage does not permanently suppress (or spuriously
+        re-fire) the alert.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            return bool(snap.exists)
+        except Exception:
+            logger.warning("CostTripwireLogStore.already_fired(%r) failed", date_str, exc_info=True)
+            return False
+
+    def mark_fired(self, date_str: str, summary: dict) -> None:
+        """Record that the tripwire fired for date_str, with a cost summary.
+
+        Re-raises after logging on write failure, matching
+        OutreachLogStore.append's discipline — the caller decides whether to
+        abort the alert send.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "fired_at": firestore.SERVER_TIMESTAMP,
+                    **summary,
+                },
+            )
+        except Exception:
+            logger.error("CostTripwireLogStore.mark_fired(%r) failed", date_str, exc_info=True)
+            raise
+
+
 class CoachingTopicStore:
     """Per-day coaching topic gate for cross-cron dedup (Phase 24 — COACH-05).
 
