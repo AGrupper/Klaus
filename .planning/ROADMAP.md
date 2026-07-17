@@ -13,6 +13,125 @@ This file is a compact milestone summary. Per-milestone phase detail lives in
 - ✅ **v3.0 — Project Shifu** — Phases 19–20 (shipped 2026-06-02)
 - ✅ **v4.0 — Specific Training & Nutrition Coaching** — Phases 21–25 (shipped 2026-06-08)
 - ✅ **v5.0 — Klaus Hub** — Phases 26–30 (shipped 2026-07-09)
+- [ ] **v6.0 — Klaus Becomes an Agent** — Phases 30.5, 31–35 (in progress)
+
+---
+
+## v6.0 — Klaus Becomes an Agent (Phases 30.5, 31–35) — In Progress
+
+Rebuild Klaus from four independent, template-driven pipelines into one agent — a
+capable model (`claude-sonnet-5`) with tools, ambient memory, standing directives,
+and a single judgment cascade behind every proactive surface, guided by values
+rather than behavior scripts. Klaus remembers involuntarily, perceives his full
+situation (directives + recent conversation + reconciled training reality),
+decides for himself what's worth saying — silence included — and can explain his
+own decisions. Phase numbering follows the approved implementation plan's own
+labels (decimal 30.5 is deliberate, precedent: v3.0's 19.1–19.3); previous
+milestone (v5.0) ended at Phase 30.
+
+**Phases:** 6 (30.5, 31, 32, 33, 34, 35) · **Requirements:** 37/37 mapped · Plan: `~/.claude/plans/klaus-is-extremely-stupid-graceful-cascade.md` (+ review `~/.claude/plans/mellow-puzzling-nest.md`) · Architecture: `.planning/research/ARCHITECTURE.md`
+
+Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
+(commit `b784a1d`) and is not tracked as a roadmap phase.
+
+## Phases
+
+- [ ] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt
+- [ ] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop
+- [ ] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate
+- [ ] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome
+- [ ] **Phase 34: Write-Backs** — Calendar workout actions and chat-reported training changes mechanically and idempotently update the single training-reality source of truth
+- [ ] **Phase 35: Hardening & Subtraction** — New judgment eval fixtures, a token-budget guard test, dead-code deletion, and updated invariants close the milestone
+
+## Phase Details
+
+### Phase 30.5: Brain Upgrade (Sonnet 5)
+**Goal**: Klaus's smart brain runs on `claude-sonnet-5` with prompt caching active and cost metering that can be trusted — no silent fallback-cost inversion, no sampling-parameter errors, and a measurably lighter always-on prompt
+**Depends on**: Nothing (first phase of v6.0; Phase 0 tick-brain migration already shipped pre-milestone)
+**Requirements**: BRAIN-01, BRAIN-02, BRAIN-03, BRAIN-04, BRAIN-05, BRAIN-06, BRAIN-07
+**Success Criteria** (what must be TRUE):
+  1. Every conversation turn and every paid proactive compose is answered by `claude-sonnet-5`, and a forced Anthropic outage falls back cleanly to `gemini-3.5-flash`
+  2. LLMUsage records cache-read/cache-write token counts with correctly computed cost, and Klaus's cost reporting is within ~10% of the Anthropic console
+  3. A forced Groq failure in staging logs the tick-brain fallback as `gemini-3.5-flash` via the decoupled `TICK_BRAIN_FALLBACK_*` env — never `claude-sonnet-5` — verified deployed BEFORE the brain model flip
+  4. When yesterday's total LLM cost exceeds `KLAUS_DAILY_COST_ALERT`, Klaus proactively tells Amit with a per-purpose cost breakdown and cache-hit rate
+  5. Every Anthropic-backend call succeeds with no `temperature`/`top_p`/`top_k`/manual-`thinking` 400 errors, the always-on system prompt is measurably smaller (re-measured with the real Sonnet-5 tokenizer), and `UserProfileStore` reads are TTL-cached with no uncached Firestore read on every smart turn
+**Plans**: TBD
+
+### Phase 31: Standing Directives
+**Goal**: Amit can state a lasting wish about Klaus's behavior once and have it honored everywhere, indefinitely or until it expires/is cancelled, with conflicts surfaced and Klaus able to learn new directives from how Amit reacts to his own outreach
+**Depends on**: Phase 30.5
+**Requirements**: DIR-01, DIR-02, DIR-03, DIR-04, DIR-05, DIR-06, DIR-07
+**Success Criteria** (what must be TRUE):
+  1. Amit can state a lasting wish in chat (including "I already told you…") and Klaus stores it verbatim with origin + triggering-context quote, acknowledging it in one line
+  2. A directive with a stated or implied end condition expires on it automatically; a directive with none persists until Amit cancels it — Klaus asks "until when?" only when genuinely unsure
+  3. An active directive changes Klaus's behavior everywhere it's relevant — chat, tick triage (as a Step-0 veto above all other logic), Layer-2 compose, and follow-up compose — not just the surface where it was stated
+  4. Amit can list and cancel standing directives from chat
+  5. When a directive contradicts a baked-in persona routine, Klaus flags it, asks once which wins, and records the answer as a refined directive with a `superseded_by` link on the old one
+  6. Nightly reflection reads the full day's conversation (not an empty 6h window) via `get_recent_window`, pairs each Klaus-initiated outreach with Amit's reaction, and may propose self-directives surfaced in the nightly message with a one-line veto
+**Plans**: TBD
+
+### Phase 32: Unified Situation (Ambient Memory)
+**Goal**: Klaus perceives his full situation on every reasoning path — relevant memories, conversation continuity, and reconciled training reality — without ever letting ordinary chat activity defeat the free-tier cost gate that is Klaus's entire cost model
+**Depends on**: Phase 31 (`get_recent_window()` primitive)
+**Requirements**: MEM-01, MEM-02, MEM-03, MEM-04, MEM-05, MEM-06, MEM-07
+**Success Criteria** (what must be TRUE):
+  1. Every chat turn auto-injects relevant Pinecone memories as a "Things you remember" block, best-effort with a short timeout — a slow or failed recall never blocks the turn
+  2. After a 6h+ idle gap, a fresh "hey" is met with continuity (recent conversation tail prepended) instead of amnesia
+  3. Amit can deliberately forget a memory via `forget_memory`, and reflection flags memories contradicted by newer facts — nothing decays automatically
+  4. Tick triage and paid Layer-2 compose both see a reconciled `training_reality` window (planned vs. logged vs. Garmin/Hevy vs. calendar) — a session completed or moved earlier is never re-asked about
+  5. A token-budget guard test confirms the maximal rendered triage prompt plus `max_tokens` fits Groq's verified per-request ceiling, and none of the new gathers (`conversation_tail`, `standing_directives`, `training_reality`, `location`) flip an otherwise-empty tick to non-empty
+  6. Weather and travel-time gathers use Klaus's derived `current_location` (from calendar travel events + standing directives) — no more Tel Aviv forecasts delivered to Paris — and a local Groq daily token ledger alerts via heartbeat as usage nears the 200K TPD cap
+**Plans**: TBD
+
+### Phase 33: Occasion Cascade
+**Goal**: Nightly review, morning briefing, and the Sunday weekly review stop being always-fire templates and become judgment-driven occasions through the same 3-layer cascade as the tick, with silence a valid, self-explainable outcome distinguishable from infra failure
+**Depends on**: Phase 32 (context-only invariant + Groq token ledger must be safe before occasion traffic routes through triage)
+**Requirements**: OCC-01, OCC-02, OCC-03, OCC-04, OCC-05, OCC-06, OCC-07
+**Success Criteria** (what must be TRUE):
+  1. The nightly review runs through the cascade and can be skipped by judgment (recorded as `skipped_by_judgment`); a total infra failure still sends the deterministic plain-text fallback, and the two are distinguishable in the logs
+  2. The morning briefing runs through the cascade behind its existing Garmin wake-up anchor and 10:15 cutoff, writing the `structured` snapshot and `daily_note` only on an actual send
+  3. The Sunday weekly review runs through the cascade as `occasion="weekly_review"`, retiring the last legacy composer (fold-in locked by user decision 2026-07-17)
+  4. Occasions always get a free triage judgment regardless of the empty-signal gate, with `OutreachLog` topic keys `nightly:<date>` / `morning:<date>` / `weekly:<date>` and log entries written only after a successful send
+  5. Layer 2 composes agentically within a bounded tool-call budget, and a directive-gated proactive calendar write checks for an existing planned row before creating a duplicate
+  6. Amit can ask "why didn't you message me yesterday?" and `get_recent_decisions` returns a real answer from recent tick/occasion verdicts and reasoning
+  7. `OCCASION_CASCADE` ships behind a flag with both the cascade and legacy composers live for a 3-4 day observation window before any legacy composer code is deleted
+**Plans**: TBD
+
+### Phase 34: Write-Backs
+**Goal**: Calendar workout actions and chat-reported training changes durably and idempotently update `TrainingLogStore` — the thing Klaus was told stays true even if the model doesn't restate it later
+**Depends on**: Phase 33 (occasion machinery supplies the date+slot dedup key for idempotency)
+**Requirements**: WB-01, WB-02, WB-03, WB-04
+**Success Criteria** (what must be TRUE):
+  1. Creating a workout calendar event best-effort writes a planned `TrainingLogStore` row — the calendar create itself never fails because of it
+  2. Moving or deleting a workout event updates the planned row symmetrically (a move merges a new-date row and marks the old one `skipped_reason="moved"`; a delete removes/marks the row)
+  3. When Amit tells Klaus in chat that he did/moved/skipped a session, Klaus logs it before replying, and the chat-created row merges idempotently with later Garmin/Hevy completion data for the same `{date}_{slot}`
+  4. The weekly review and the occasion cascade both read the same shared `training_reality` window instead of independently re-deriving split-vs-log guesses
+**Plans**: TBD
+
+### Phase 35: Hardening & Subtraction
+**Goal**: Klaus's judgment is measurably tested against new fixtures, the codebase sheds retired pipelines and dead weight accumulated across the milestone, and the invariants this milestone introduces are documented for whoever builds on Klaus next
+**Depends on**: Phase 34 (system stable enough to write fixtures against; Phase 33's observation window must have elapsed)
+**Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, HARD-05
+**Success Criteria** (what must be TRUE):
+  1. ≥6 new eval fixtures (vacation suppression, directive-expiry resumption, moved-session no-re-ask, nightly judgment-skip, nightly fold, follow-up cancelled by directive) pass via `scripts/eval_tick_brain.py`
+  2. `core/proactive_alerts.py` (+ its route/prompt/tests), TickTick residue, the oversized `.venv.py314.bak/`, and `.claude/worktrees/` residue are gone from the repo, and the full suite still passes
+  3. Chat-ingest (04:00) and chat-export-ingest (04:30) Cloud Scheduler jobs are paused, with the code kept and resumable anytime
+  4. `PROJECT.md` Key Decisions records a worker-layer retirement verdict backed by measured post-Sonnet LLMUsage delegation volume
+  5. `CLAUDE.md`/`TECHNICAL_PLAN.md`/`DEPLOYMENT.md` reflect the milestone's new invariants (directives-in-every-path, Groq per-request budget), and phase-pinned tool-registration tests are consolidated into one current-invariant test
+**Plans**: TBD
+
+---
+
+## Progress
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 30.5. Brain Upgrade (Sonnet 5) | 0/? | Not started | - |
+| 31. Standing Directives | 0/? | Not started | - |
+| 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
+| 33. Occasion Cascade | 0/? | Not started | - |
+| 34. Write-Backs | 0/? | Not started | - |
+| 35. Hardening & Subtraction | 0/? | Not started | - |
 
 ---
 

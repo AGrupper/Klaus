@@ -95,17 +95,51 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 
 ## Traceability
 
-Updated during roadmap creation.
-
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (populated by roadmapper) | | |
+| BRAIN-01 | Phase 30.5 | Pending |
+| BRAIN-02 | Phase 30.5 | Pending |
+| BRAIN-03 | Phase 30.5 | Pending |
+| BRAIN-04 | Phase 30.5 | Pending |
+| BRAIN-05 | Phase 30.5 | Pending |
+| BRAIN-06 | Phase 30.5 | Pending |
+| BRAIN-07 | Phase 30.5 | Pending |
+| DIR-01 | Phase 31 | Pending |
+| DIR-02 | Phase 31 | Pending |
+| DIR-03 | Phase 31 | Pending |
+| DIR-04 | Phase 31 | Pending |
+| DIR-05 | Phase 31 | Pending |
+| DIR-06 | Phase 31 | Pending |
+| DIR-07 | Phase 31 | Pending |
+| MEM-01 | Phase 32 | Pending |
+| MEM-02 | Phase 32 | Pending |
+| MEM-03 | Phase 32 | Pending |
+| MEM-04 | Phase 32 | Pending |
+| MEM-05 | Phase 32 | Pending |
+| MEM-06 | Phase 32 | Pending |
+| MEM-07 | Phase 32 | Pending |
+| OCC-01 | Phase 33 | Pending |
+| OCC-02 | Phase 33 | Pending |
+| OCC-03 | Phase 33 | Pending |
+| OCC-04 | Phase 33 | Pending |
+| OCC-05 | Phase 33 | Pending |
+| OCC-06 | Phase 33 | Pending |
+| OCC-07 | Phase 33 | Pending |
+| WB-01 | Phase 34 | Pending |
+| WB-02 | Phase 34 | Pending |
+| WB-03 | Phase 34 | Pending |
+| WB-04 | Phase 34 | Pending |
+| HARD-01 | Phase 35 | Pending |
+| HARD-02 | Phase 35 | Pending |
+| HARD-03 | Phase 35 | Pending |
+| HARD-04 | Phase 35 | Pending |
+| HARD-05 | Phase 35 | Pending |
 
 **Coverage:**
 - v6.0 requirements: 37 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 37 ⚠️ (expected pre-roadmap)
+- Mapped to phases: 37/37 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-07-17*
-*Last updated: 2026-07-17 after initial definition*
+*Last updated: 2026-07-17 after roadmap creation — 37/37 requirements mapped to Phases 30.5, 31, 32, 33, 34, 35 (100% coverage)*

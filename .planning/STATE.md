@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: planning
-last_updated: "2026-07-17T03:37:45.561Z"
+last_updated: "2026-07-17T00:00:00.000Z"
 last_activity: 2026-07-17
 progress:
-  total_phases: 0
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,10 +17,10 @@ progress:
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 30.5 — Brain Upgrade (Sonnet 5) — not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-07-17 — Milestone v6.0 started
+Status: Roadmap created, awaiting phase planning (`/gsd:plan-phase 30.5`)
+Last activity: 2026-07-17 — Milestone v6.0 roadmap created (6 phases: 30.5, 31, 32, 33, 34, 35; 37/37 requirements mapped)
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -67,21 +67,36 @@ Last activity: 2026-07-17 — Milestone v6.0 started
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
+See: `.planning/PROJECT.md` (updated 2026-07-17 for v6.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Milestone complete
+**Current focus:** v6.0 Klaus Becomes an Agent — Phase 30.5 (Brain Upgrade) not started
 
 ## Architecture (current)
 
-- Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `qwen3-32b` (Groq, free) + Gemini fallback
+- Brain `gemini-3.5-flash` (AI Studio) · Worker `deepseek-v4-flash` (DeepSeek) · Fallback `claude-haiku-4-5` (Anthropic, inline) · Tick-brain `openai/gpt-oss-120b` (Groq, free, migrated pre-milestone 2026-07-16) + Gemini fallback
+- **v6.0 will change:** Brain → `claude-sonnet-5` (Phase 30.5, Gemini flips to fallback); tick-brain fallback decoupled to explicit `TICK_BRAIN_FALLBACK_*` env (Phase 30.5, must ship before the brain flip)
 - Embeddings `gemini-embedding-2` via AI Studio (NOT Vertex)
 - All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404); `load_dotenv(override=True)` always
 - Postgres holds the 3-year Garmin backfill; `MealStore` + `TrainingLogStore` + `StrengthSessionStore` (Hevy per-set) + `RunDetailStore` (Garmin per-run) in Firestore; `UserProfileStore` populated with Amit's living blueprint; `BlockStore` + `BenchmarkStore` + `CoachingTopicStore` added in v4.0
 - 10 cron jobs deployed (heartbeat hourly, proactive-alerts 21:30, morning-briefing */10 6-10, chat-ingest 04:00, chat-export-ingest 04:30, reflect 22:00, autonomous-tick */20 7-21, weekly-training-review Sun 10:00, strength-sync 05:00, run-sync 05:15; plus push-driven `/cron/healthkit-sync`)
-- **v5.0 adds:** React + TypeScript + Vite PWA frontend (Tailwind), served by FastAPI from the `klaus-agent` container; `TaskStore`, `HabitStore`, `PushSubscriptionStore` (new Firestore stores); `/api/*` routes with Google session auth; Web Push (VAPID); multi-stage Dockerfile (Node build stage)
+- v5.0 added: React + TypeScript + Vite PWA frontend (Tailwind), served by FastAPI from the `klaus-agent` container; `TaskStore`, `HabitStore`, `PushSubscriptionStore` (new Firestore stores); `/api/*` routes with Google session auth; Web Push (VAPID); multi-stage Dockerfile (Node build stage)
+- **v6.0 adds (planned):** `StandingDirectiveStore` (Phase 31); `get_recent_window()` on `FirestoreConversationStore` + per-message `ts` (Phase 31); ambient Pinecone auto-recall on the chat path, `conversation_tail`/`training_reality`/`location` gather jobs, `forget_memory` tool, Groq daily token ledger (Phase 32); `occasion` parameter on `run_autonomous_tick`, `get_recent_decisions` tool, `OCCASION_CASCADE` flag (Phase 33); calendar-handler write-back hooks into `TrainingLogStore` (Phase 34); `proactive_alerts.py` + TickTick/worktree residue deleted, chat-ingest crons paused (Phase 35)
 
-## v5.0 Roadmap Summary
+## v6.0 Roadmap Summary
+
+| Phase | Goal | Requirements |
+|-------|------|--------------|
+| 30.5 - Brain Upgrade (Sonnet 5) | Smart brain runs on claude-sonnet-5 with prompt caching, truthful cost metering, decoupled tick-brain fallback, daily-spend tripwire, slimmed prompt | BRAIN-01..07 (7 reqs) |
+| 31 - Standing Directives | Amit's lasting behavioral wishes are captured, injected into every reasoning path, listable/cancellable, and self-proposed from reflection | DIR-01..07 (7 reqs) |
+| 32 - Unified Situation (Ambient Memory) | Ambient auto-recall, conversation continuity, reconciled training reality reach every reasoning path as context-only signals | MEM-01..07 (7 reqs) |
+| 33 - Occasion Cascade | Nightly/morning/weekly become judgment-driven occasions through the shared cascade; silence is a valid, explainable outcome | OCC-01..07 (7 reqs) |
+| 34 - Write-Backs | Calendar workout actions + chat-reported training changes mechanically and idempotently update TrainingLogStore | WB-01..04 (4 reqs) |
+| 35 - Hardening & Subtraction | New eval fixtures, token-budget guard test, dead-code deletion, updated invariants | HARD-01..05 (5 reqs) |
+
+See `.planning/ROADMAP.md` for full phase detail (goals, dependencies, success criteria).
+
+## v5.0 Roadmap Summary (shipped 2026-07-09)
 
 | Phase | Goal | Requirements |
 |-------|------|--------------|
@@ -95,6 +110,9 @@ See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 
 ### Decisions
 
+- [v6.0 roadmap 2026-07-17]: Phase numbering follows the approved plan's own labels — 30.5, 31, 32, 33, 34, 35 (decimal 30.5 deliberate, precedent: v3.0's 19.1–19.3). Not renumbered to 31–36.
+- [v6.0 roadmap 2026-07-17]: Phase sequencing is dependency-locked per `.planning/research/ARCHITECTURE.md`'s verified build order — BRAIN-03 (tick-brain fallback decoupling) must deploy before the brain model flip within Phase 30.5; `get_recent_window()` lands in Phase 31 (not 32) because the reflection learning-loop fix needs it immediately; MEM-05's context-only invariant + Groq ledger must be complete before Phase 33 routes nightly/morning traffic through triage; OCC-06's flag rollout requires a 3-4 day observation window before legacy composer deletion in Phase 35.
+- [v6.0 roadmap 2026-07-17]: `core/autonomous.py` must never import `core/nightly_review.py` — the shared `planned_sessions_for()` primitive routes through the neutral `core/training_checkin.py` module instead.
 - [v5.0 design spec 2026-06-13]: Frontend is React + TypeScript + Vite PWA with Tailwind, served by FastAPI from `klaus-agent` — same origin, no CORS, one deploy.
 - [v5.0 design spec 2026-06-13]: Auth is Google Sign-In allowlisted to Amit's account only → session cookie. All hub routes under `/api/*`; existing Telegram/cron/internal routes untouched.
 - [v5.0 design spec 2026-06-13]: Chat reuses Firestore conversation history from `memory/firestore_conversation.py` — one shared history with Telegram. Hub POST → Cloud Tasks → `/internal/process-hub-message` (same full-CPU path as Telegram).
@@ -114,6 +132,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-13 for v5.0)
 ### Pending Todos
 
 - Deploy the Groq tick-brain fix + tuned triage prompt (ready as of 2026-06-12) — ships together: `core/tick_brain.py` fixes, request-shape fixes (max_tokens 2048, temperature 0.6), tuned `prompts/autonomous_triage.md`. No Cloud Run env changes needed.
+- Start v6.0 Phase 30.5 planning: `/gsd:plan-phase 30.5`
 
 ### Blockers/Concerns
 
@@ -144,20 +163,21 @@ Carried forward from v4.0 close (still open):
 
 ## Notes
 
-- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 1153+ passing baseline must hold after every v5.0 phase.
+- **Test env:** full `pytest tests/` segfaults in one process (grpc/protobuf GC, Python 3.13) — verify per-file. 1775+ backend passing baseline must hold after every v6.0 phase.
 - **Firestore SERVER_TIMESTAMP** reads back as `DatetimeWithNanoseconds` — ISO-convert before `json.dumps` in any read tool. See `_jsonsafe_doc` helper in `memory/firestore_db.py`.
-- **Cron jobs (10):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull), run-sync (05:15, Garmin per-run detail pull). Plus push-driven `/cron/healthkit-sync`.
+- **Cron jobs (10):** heartbeat (hourly), proactive-alerts (21:30), morning-briefing (*/10 6-10), chat-ingest (04:00), chat-export-ingest (04:30), reflect (22:00), autonomous-tick (*/20 7-21), weekly-training-review (Sun 10:00), strength-sync (05:00, Hevy pull), run-sync (05:15, Garmin per-run detail pull). Plus push-driven `/cron/healthkit-sync`. v6.0 Phase 35 will pause chat-ingest + chat-export-ingest (code kept) and delete `proactive_alerts.py` (route confirm-dormant first) — no new Cloud Scheduler jobs added this milestone.
 - **Slot timestamps caveat:** HealthKit/Lifesum meal timestamps are canonical slot times (08:00/12:00/20:00), NOT actual eating times — never build UI that infers eating time from them.
 - **GCP resource casing:** All GCP/Pinecone names lowercase `klaus-` (uppercase = silent 404).
 - **Python version:** venv must be Python 3.11 (prod Dockerfile) or 3.13 (local) — NEVER 3.14 (grpc/protobuf GC segfault).
 - **Agent turns:** Must run inside a tracked Cloud Tasks request (`/internal/process-update` or `/internal/process-hub-message`) — never in a Starlette BackgroundTask (CPU throttled after response).
+- **v6.0 sequencing constraints (do not reorder):** tick-brain fallback decoupling before the brain model flip (both within Phase 30.5); `get_recent_window()` before the reflection learning-loop fix (both within Phase 31); context-only invariant + Groq ledger complete before Phase 33 routes occasion traffic through triage; `OCCASION_CASCADE` flag introduction (Phase 33) strictly before legacy composer deletion (Phase 35) — never collapsed into one change.
 
 ## Session Continuity
 
-Last session: 2026-07-06T11:16:41.610Z
-Stopped at: Phase 30 UI-SPEC approved
-Resume file: .planning/phases/30-health-pages/30-UI-SPEC.md
+Last session: 2026-07-17T00:00:00.000Z
+Stopped at: v6.0 ROADMAP.md + REQUIREMENTS.md traceability created — 6 phases, 37/37 requirements mapped
+Resume file: .planning/ROADMAP.md
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Review and approve the v6.0 roadmap, then run `/gsd:plan-phase 30.5` to begin Phase 30.5 (Brain Upgrade — Sonnet 5)
