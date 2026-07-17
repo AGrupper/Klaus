@@ -1,27 +1,26 @@
 ---
 gsd_state_version: 1.0
-milestone: v5.0
-milestone_name: Klaus Hub
-status: Awaiting next milestone
-stopped_at: Phase 30 UI-SPEC approved
-last_updated: "2026-07-09T19:39:54.815Z"
-last_activity: 2026-07-09 — Milestone v5.0 completed and archived
+milestone: v6.0
+milestone_name: Klaus Becomes an Agent
+status: planning
+last_updated: "2026-07-17T03:37:45.561Z"
+last_activity: 2026-07-17
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 39
-  completed_plans: 39
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Phase: Milestone v5.0 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-09 — Milestone v5.0 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-17 — Milestone v6.0 started
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 

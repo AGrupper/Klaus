@@ -25,7 +25,7 @@ requirements satisfied · milestone audit `passed` (cross-phase integration 5/5 
 1775 backend + 160 frontend. Two deferred items remain, both non-code: physical-device /
 mirror-week push verification, and Phase 26 cosmetic UX polish (see § Requirements → Deferred).
 
-**Next milestone:** not yet defined — start with `/gsd:new-milestone`.
+**Next milestone:** v6.0 Klaus Becomes an Agent — see § Current Milestone below.
 
 **Milestones shipped:** v1.0 Foundation (2026-05-18) · v2.0 Consciousness & Autonomy
 (2026-05-23) · v3.0 Project Shifu (2026-06-02) · v4.0 Specific Training & Nutrition Coaching
@@ -92,9 +92,50 @@ Oct/Nov deadlines (deterministic `core/projection.py`, surfaced in the Sunday we
 - ✓ **Web Push & transition** — VAPID push to the installed iPhone PWA behind a chat-visibility gate, injectManifest service worker + IndexedDB unread badge, `PushSubscriptionStore`, runtime Telegram-mirror toggle (default ON) — v5.0 (Phase 29) — PUSH-01..04
 - ✓ **Health pages** — training / nutrition / sleep-recovery visualizations on a zero-dependency inline-SVG chart toolkit, reading existing Firestore + Postgres stores via session-authed `/api/health/*` — v5.0 (Phase 30) — HLTH-01..03
 
+## Current Milestone: v6.0 Klaus Becomes an Agent
+
+**Goal:** Rebuild Klaus from pipelines into an agent — a capable model with tools, ambient
+memory, standing directives, and one judgment cascade behind every proactive surface, guided by
+values rather than behavior scripts. Klaus remembers involuntarily, perceives his full situation
+(directives + recent conversation + reconciled training reality), decides for himself what's
+worth saying — silence included — and can explain his own decisions.
+
+**Target features:**
+- **Brain upgrade (Phase 30.5):** smart brain → `claude-sonnet-5` (Gemini flips to fallback);
+  Anthropic prompt caching + cache-token metering so LLMUsage stays truthful; daily-spend
+  tripwire in the heartbeat; explicit `TICK_BRAIN_FALLBACK_*` env (Gemini, decoupled from
+  `SMART_AGENT_*`); compact SELF.md manifest + first smart_agent.md slimming pass (~4.5K tokens
+  off every call); `UserProfileStore` TTL cache
+- **Standing directives (Phase 31):** `StandingDirectiveStore` + set/list/cancel tools, injected
+  verbatim into every reasoning path with a Step-0 triage veto; reflection learning loop (reads a
+  24h conversation window, pairs outreach with Amit's reactions) proposing self-directives with
+  one-line veto
+- **Unified situation (Phase 32):** ambient auto-recall each turn (best-effort, timeout-guarded);
+  conversation continuity past the 6h purge; conversation tail + reconciled `training_reality`
+  into the cascade — all new gathers context-only in the empty gate; Groq daily token ledger;
+  memory hygiene (`forget_memory`); location awareness
+- **Occasion cascade (Phase 33):** nightly review + morning briefing become occasion-tagged
+  wake-ups through the 3-layer cascade, fully skippable by judgment (plain-text infra fallback);
+  `OCCASION_CASCADE` flag rollout; agentic Layer 2 with bounded tool budget; brain-direct
+  `get_recent_decisions` introspection tool; weekly-review fold-in decision
+- **Write-backs (Phase 34):** calendar workout create/move/delete mechanically writes planned
+  rows to `TrainingLogStore`; proactive calendar writes idempotency-checked
+- **Evals, hardening & subtraction (Phase 35):** ≥6 new judgment fixtures; token-budget guard
+  test; dead-code deletion sweep (proactive_alerts ~2.85K LOC, TickTick residue, stale
+  venv/worktree trees); worker-layer measurement + retirement decision; docs/invariants updated
+
+**Key context:** Full plan at `~/.claude/plans/klaus-is-extremely-stupid-graceful-cascade.md`,
+amended by the approved review at `~/.claude/plans/mellow-puzzling-nest.md` (cost landmines,
+learning-loop window bug, introspection tool, subtraction audit). Phase 0 (tick-brain →
+`openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16 (commit `b784a1d`). Locked decisions:
+free-first cost gating stays; conversation tail to Groq triage accepted; directive-gated
+proactive calendar writes; nightly fully skippable; directive-vs-persona conflicts flagged once
+then recorded. Prompt philosophy: identity + values + full data — no trigger checklists, no
+scripted acknowledgments.
+
 ### Active
 
-_None — v5.0 (Klaus Hub) shipped. Next milestone not yet defined; start with `/gsd:new-milestone`._
+_v6.0 requirements being defined — see `.planning/REQUIREMENTS.md` once scoped._
 
 **Deferred (carried forward):**
 - Live-staging verification of v2.0 SC-1/SC-2/SC-4 (see STATE.md § Deferred Items)
@@ -175,4 +216,6 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-09 — v5.0 Klaus Hub milestone closed (Phases 26–30, 39 plans, 36/36 requirements, audit passed, suite 1775+160). Archived to `.planning/milestones/v5.0-*`; ROADMAP collapsed; REQUIREMENTS.md retired. Next: `/gsd:new-milestone`.*
+*Last updated: 2026-07-17 — Milestone v6.0 "Klaus Becomes an Agent" started (plan approved
+2026-07-16 + review amendments approved 2026-07-17; Phase 0 tick-brain migration shipped
+pre-milestone). Next: requirements + roadmap.*
