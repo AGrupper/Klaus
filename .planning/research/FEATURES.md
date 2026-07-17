@@ -1,257 +1,220 @@
 # Feature Research
 
-**Domain:** Personal AI hub — web PWA replacing Telegram chat + TickTick + habit tracker, with Today timeline and health pages (Klaus v5.0)
-**Researched:** 2026-06-13
-**Confidence:** HIGH (task/habit/PWA patterns well-established in best-in-class apps; Klaus-specific integration constraints are HIGH from reading design spec + existing codebase)
+**Domain:** Agentic self-governance for a personal AI assistant — standing directives, ambient memory, judgment-driven proactivity
+**Researched:** 2026-07-17
+**Confidence:** MEDIUM-HIGH (patterns cross-verified across 3+ independent sources per finding; Klaus-specific complexity estimates are HIGH confidence from direct codebase knowledge)
 
 ---
+
+## Context
+
+This research covers only the three NEW capability areas in v6.0 Phases 31–33: standing
+directives, ambient/auto-recall memory, and judgment-driven proactivity (occasion cascade).
+Existing capabilities (Pinecone RAG via explicit `recall` tool, autonomous tick engine with
+repeat-suppression, template-composed briefings, cost metering) are assumed and not
+re-researched. Findings are grounded in named, verifiable systems: OpenAI ChatGPT memory,
+Anthropic Claude memory + memory tool, MemGPT/Letta, Zep/Graphiti, LangGraph/LangMem, and the
+Stanford "Generative Agents" (Park et al.) memory-stream architecture, plus arXiv literature on
+memory conflict resolution, forgetting, provenance, and notification-budget design. This
+document replaces the prior (v5.0 Klaus Hub) FEATURES.md, which is superseded — see git history
+if that research is still needed.
 
 ## Feature Landscape
 
 ### Table Stakes (Users Expect These)
 
-Features Amit will immediately notice are missing. Not having these makes the hub feel incomplete vs the apps it replaces.
+Features any credible "agent with memory and proactivity" is expected to have. Missing these
+makes v6.0 feel like a half-built version of what ChatGPT/Claude already ship for free.
 
 | Feature | Why Expected | Complexity | Notes |
 |---------|--------------|------------|-------|
-| Task: title + due date + priority | Every task manager has these three | LOW | Title is the only truly required field; due and priority are optional at capture, editable later. No subtasks needed for single user. |
-| Task: simple recurrence | Daily, weekdays, weekly, monthly — the four patterns covering ~95% of personal recurrence needs | MEDIUM | "Every N days from completion" is expected for supplement reminders. Complex RRULE patterns (every 3rd Thursday, last weekday of month) are TickTick power features safe to omit — they require a full rule engine that creates bugs at DST boundaries and month-end. |
-| Task: quick-add with low friction | TickTick and Todoist have trained users to expect one-action task capture | LOW | A floating FAB (phone) or keyboard shortcut (⌘K / Q on desktop) opening a focused input. Parse "tomorrow", "Friday", "next week" as due dates. The friction here directly determines whether Amit will stop using the app. |
-| Task: list/group assignment | TickTick users organize by area of life | LOW | Two to four hardcoded lists (Personal, Health, Work, Someday) is enough for a single user. Dynamic list creation is a nice-to-have, not table stakes at launch. |
-| Task: mark complete with satisfying animation | Checkmark is the primary reward mechanism in task apps | LOW | The completion micro-animation matters psychologically — it's the dopamine hit that makes task apps sticky. |
-| Habit: scheduled days per habit | "Gym Mon/Wed/Fri" must not demand a Monday check-off on Tuesday | MEDIUM | Streak must only count or break on scheduled days. Non-scheduled days are neutral — not missed. This is the core model of Streaks (iOS Apple Design Award winner). |
-| Habit: single-tap check-off | Under 10 seconds to log; longer = users stop doing it | LOW | One tap per habit per day. No sub-prompts. Simplicity here is not laziness — it's the reason habit apps succeed or fail. |
-| Habit: streak display | "7-day streak" or flame icon on each habit card | LOW | Consecutive scheduled-day completions. Streak breaks only when user misses a scheduled day, not on skip/rest days. Streak count is the primary motivation signal. |
-| Habit: dose display for supplements | Vitamin D 2000 IU, Creatine 5g — dose is what distinguishes a supplement from a generic habit | LOW | Dose is display-only at check-off time — shown as a reminder label, not re-entered. Stored in HabitStore definition once, referenced at every check-off. |
-| Chat: optimistic send (message appears instantly) | Any delay between tapping Send and seeing the message looks like a bug | LOW | User's message renders immediately in the chat UI before Cloud Tasks confirms. Status indicator below it: "sending" → "sent" → "error". |
-| Chat: reply polling while app is open | Klaus replies asynchronously; user needs to see the reply when it arrives | MEDIUM | Poll every 2-3 seconds while the chat tab is active. Animated "Klaus is thinking..." indicator while awaiting reply. Stop polling when a reply arrives or when the tab loses focus. |
-| Chat: conversation history | The same history Telegram has — shared Firestore conversation | LOW | Reuses `firestore_conversation.py` exactly. No new data model. Telegram messages appear in hub history and vice versa — intentional. |
-| Chat: unread badge on Klaus tab | When Klaus sends a proactive autonomous message and Amit is on another tab, there must be a visible signal | LOW | Count of messages since last-seen timestamp. The center-tab placement on phone makes this badge the primary notification signal before push is configured. |
-| Today timeline: calendar events | What is happening today, in time order — the most critical home-screen data | LOW | Reads from existing `calendar_tool.py`. Timed events shown chronologically; all-day events pinned at top. |
-| Today timeline: habits and supplements due today | Which ones are pending right now vs already checked off | LOW | Filter HabitStore by today's scheduled days. Completed = checked/colored, pending = unchecked. One-tap check-off from the timeline directly. |
-| Today timeline: Garmin morning stats | Sleep score, HRV, body battery — already gathered every morning | LOW | Display-only; reads from existing morning briefing data / `garmin_tool.py`. Three numbers, not a paragraph. |
-| Today timeline: weather | Temperature and rain forecast — already in `weather_tool.py` | LOW | One line on the glance rail or at the top of the timeline. Do not show a full 7-day forecast on the home screen — information overload. |
-| Today timeline: meals (display only) | What has been logged via HealthKit today | LOW | Read from `MealStore.get_day()`. Show "Breakfast logged: 42g protein, 85g carbs" — slot labels only, never infer eating time from the slot timestamps (Lifesum caveat: slot times are canonical, not actual eating times). |
-| PWA: installable on iOS home screen | Users who "install" it expect an app-like standalone experience | MEDIUM | Requires: HTTPS, web app manifest with 192px + 512px icons, service worker registration. iOS shows no automatic install prompt — must provide clear "Add to Home Screen" instructions in the UI. Without installation, Web Push does not work on iOS. |
-| PWA: offline shell | A blank white screen on a bad connection destroys trust in the app | MEDIUM | Service worker pre-caches app shell (HTML/CSS/JS bundles). API data can fail gracefully with skeleton loaders. iOS enforces 7-day cache expiry — users who open weekly always get a fresh cache hit. 50MB storage ceiling applies; app shell easily fits. |
-| Google auth gate | Single user; no anonymous access to Amit's personal data | LOW | Google Sign-In → session cookie. Every `/api/*` route requires the session. Existing `/webhook` and `/cron/*` routes are completely untouched. |
+| Explicit directive capture from natural language ("remember to stop nagging about X") | ChatGPT ("remember that...") and Claude ("add to memory that...") both support instant, user-triggered memory writes with immediate confirmation — this is the baseline UX for any memory feature | LOW | Klaus already has the pattern (tool-calling agent); `StandingDirectiveStore` + a `set_directive` tool is a straightforward Firestore-store addition mirroring `TaskStore`/`HabitStore` |
+| Preference/directive vs. fact distinction | Universally modeled: MemGPT/Letta separates "core memory" (persona/user facts, pinned) from "archival memory" (retrieved history); the broader literature explicitly frames preferences as "durable assertions about how the user wants the agent to behave... standing instructions the agent applies to shape action," distinct from facts the agent merely reasons over | LOW-MEDIUM | Klaus's split maps cleanly: `StandingDirectiveStore` (behavioral orders) is architecturally distinct from Pinecone `fact`/`chat` kinds (evidence) — the milestone plan already gets this right by design |
+| Provenance/source tagging on every memory write | Zep tracks full transaction lineage (ingestion time vs. valid time); the personal-agent memory literature is explicit that "a user explicitly saying 'remember X' is straightforward, while an agent inferring X from repeated conversations is far more sensitive" — production systems tag source type, timestamp, authoring agent, confidence | LOW | Directives Klaus proposes himself (learning loop) MUST be flagged distinctly from directives Amit stated verbatim — this is the difference between "Amit said" and "Klaus inferred," and it directly gates the one-line veto step already locked into the plan |
+| Recency-wins as the default conflict-resolution rule | "The convention in most modern memory systems is that the most recent fact wins... replacing an old preference with a conflicting new one is correct conflict resolution, not a deletion error" (arXiv 2606.01435, "Don't Ask the LLM to Track Freshness") | LOW | Applies directly to directive supersession — no need for the brain to "judge" which of two contradictory directives is right; last-write-wins with the old one archived (not silently deleted) for audit |
+| Directive expiry / TTL, not permanent-forever | Every reviewed memory system (Letta, Zep, the aging-policy literature) treats unbounded retention as a bug: "retention windows (TTL) should expire memory unless it's still useful," with importance/criticality determining whether something ages out or persists | LOW-MEDIUM | Directly addresses the stated milestone example — "stop nagging about training while I'm in France" needs either an explicit end condition or a default TTL + renewal nudge, or it silently outlives its purpose and Klaus starts under-serving Amit for no reason |
+| Ambient auto-injection of relevant memory without an explicit tool call | Both ChatGPT ("reference chat history": "the system selects memory relevant to your prompt and injects it into the model's context, like a hidden system note") and Claude.ai memory work this way by default — this is the literal definition of "ambient" vs. Klaus's current explicit `recall` tool | MEDIUM | Requires wiring the existing Pinecone recall path into every brain turn as a best-effort, timeout-guarded gather step (per plan) rather than waiting for the brain to decide to call a tool |
+| Relevance/recency/importance-weighted retrieval, not pure similarity | The canonical reference (Stanford Generative Agents, Park et al. 2023) explicitly combines all three: recency (exponential decay since last access), importance (score at creation time), relevance (embedding similarity) — pure cosine-similarity retrieval is the known-inferior baseline every subsequent system improves on | MEDIUM | Klaus's existing Pinecone recall is similarity-only; ambient auto-recall for v6.0 needs at minimum a recency/importance boost on top, or it will surface stale-but-similar memories over fresh-but-differently-worded ones |
+| Absolute quiet-hours / suppression honoring | Consistently framed as non-negotiable in the proactive-agent literature: "respect over reach means proactive agents must prioritize user context over their own assessments of importance... honoring quiet hours absolutely" | LOW | Already implemented (7-21 cron window); directives extend this to per-topic suppression, same principle |
+| Notification/outreach budget discipline | Cross-source finding: proactive agents "collide with a hard daily ceiling of three to five notifications per user"; treating each notification as "a withdrawal from a finite account" forces honest upstream prioritization | LOW (already exists) | Klaus's repeat-suppression + tick-brain gating already implements this in spirit; occasion cascade must not regress it by turning skippable nightly/morning slots into always-send slots |
 
 ### Differentiators (Competitive Advantage)
 
-Features that make the hub genuinely better than Telegram + TickTick + habit app combined — because Klaus knows everything about Amit.
+Features that go beyond what ChatGPT/Claude/mainstream personal-agent products ship today —
+genuinely rare in the surveyed literature, and where Klaus's judgment-driven design earns its
+name.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Today timeline: training plan item | What is on the training plan today (Upper/Lower/Rest, current block week) — no other app knows this | MEDIUM | Reads from UserProfileStore weekly_split + BlockStore current week. "Week 7 of 16 — Lower Body A" displayed on the timeline. No other personal dashboard has this. |
-| Today timeline: leave-by and Get Ready time | "Leave by 08:15 for your 09:00 gym appointment — 15 min travel + 45 min Get Ready" — from live traffic via `routes_tool.py` | MEDIUM | Already works in `calendar_tool.py`. Surface it on the Today timeline for any event with a location. Real utility; no other personal dashboard does this. |
-| Autonomous-tick habit adherence awareness | Klaus knows at tick time (every 20 min, 07:00–21:00) which habits and supplements are still pending; can nudge before end of day | MEDIUM | Extend Layer-0 gather in `autonomous.py` to read today's HabitStore completion state. Tick-brain then decides: "Sir, Creatine not yet logged — it is 20:30." Cheapest path to proactive supplement accountability. |
-| Chat shares Telegram history seamlessly | One brain, one memory — switching mid-day from Telegram to hub or back works with zero setup | LOW | Zero extra implementation — same Firestore conversation store. Telegram messages appear in hub; hub messages appear in Telegram during the transition period. Genuine differentiator vs any third-party chat UI. |
-| Supplement dose as a first-class habit field | No separate supplement app needed; dose is visible at check-off; Klaus reads adherence in coaching context | LOW | HabitStore `type=supplement` + `dose` string field. Klaus's coaching prompts can cite: "Creatine 5g: checked off 5/7 days this week." |
-| Tasks via Klaus natural language | "Add a task to call the dentist Friday p1" — Klaus creates it in native TaskStore instead of TickTick via the tool swap | LOW | Tool swap in `core/tools.py`. The real differentiator is that Klaus can proactively surface overdue tasks, reschedule conflicts, and reference task state in coaching context. |
-| Glance rail: due tasks + current streaks | Desktop right rail shows what needs attention today — tasks due or overdue + habit streak counts — at a glance without opening any tab | LOW | Pure filtered reads: TaskStore (due today / overdue) + HabitStore (streak count per habit). No computation required; very low implementation cost for high daily utility. |
-| Health pages: training history with coaching context | Hevy sessions, Garmin runs, benchmark results — visualized with Klaus's coaching annotations inline | HIGH | Requires composing Hevy StrengthSessionStore + BenchmarkStore + RunDetailStore + coaching context. All underlying data already exists. This is visualization work, not data-pipeline work. Phase 5 appropriately. |
-| Web Push as Telegram replacement | Receive autonomous-tick outreaches as native iOS push notifications, eliminating Telegram dependency over time | MEDIUM | VAPID push + PushSubscriptionStore. Telegram mirror flag allows hybrid transition: both channels active simultaneously until trust is established, then mirror turned off. |
+| Agent-proposed directives from observed reactions (reflection learning loop) | Neither ChatGPT nor Claude memory self-proposes standing behavioral rules from user reaction patterns — memory writes there are always user-initiated or extracted-from-explicit-statement. An agent that reads a 24h window, notices "Amit went quiet/annoyed after two nagging outreach attempts," and proposes its own directive is a step past every reviewed consumer system | HIGH | This is the riskiest and most novel piece — closest analog is "procedural memory" in LangMem (system-prompt-level learned routines), but no reviewed system does it via reaction-inference + human veto for a single user. The one-line veto step is the correct mitigation (matches literature's universal insistence that inferred memory needs more scrutiny than stated memory) |
+| Self-explainable proactive decisions (`get_recent_decisions` introspection tool) | The explainability literature is unanimous that this matters ("as AI agents gain independent decision-making ability, the need for transparency becomes critical... real-time interpretability enables humans to understand and intervene") but is rarely implemented for consumer proactive agents — most background/notification agents are black boxes even when they stay silent | MEDIUM | Differentiator specifically because it also explains *silence* — "why didn't Klaus say anything this morning" is answerable, which almost no consumer proactive-AI product surfaces |
+| Judgment-gated, fully skippable scheduled occasions (nightly/morning as "wake-ups," not scripted sends) | Nearly all personal-assistant products (ChatGPT, Claude, morning-briefing apps) treat scheduled compose slots as always-fire, template-filled. Making silence a first-class valid outcome of a real judgment cascade — not a fallback for missing data — is a genuine architectural differentiator matching the "graceful presence... silent competence" ideal described in the proactive-agent literature | MEDIUM-HIGH | Directly addresses the core value statement ("silence being a valid choice"); complexity is in Layer 2 needing a bounded tool budget so "should I speak" reasoning doesn't itself become an expensive, unbounded agentic loop |
+| Bitemporal-style provenance on directive supersession (created-at vs. superseded-at, not delete-and-overwrite) | Zep/Graphiti's bitemporal model (`t'created`/`t'expired` vs. `tvalid`/`tinvalid`) is the SOTA reference for non-destructive fact evolution | LOW-MEDIUM (lightweight version only) | Full bitemporal knowledge-graph is overkill for Klaus's directive volume (single user, low cardinality) — the useful subset is: never hard-delete a superseded directive, keep it with a `superseded_by`/`superseded_at` field for the "why did you stop respecting X" question |
+| Conversation continuity across the 6h Firestore reset boundary | Most consumer chat products treat "session" as a UI construct only, not a hard backend reset — Klaus's existing 6h purge is the odd one out here, so restoring continuity is closing a gap rather than a true SOTA-beating differentiator, but it's rare enough among *self-hosted* single-user agents to note | MEDIUM | Depends on ambient memory (Phase 32) carrying enough of the prior session's gist forward that the reset is invisible to Amit |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| Real-time token streaming in chat | Feels faster; ChatGPT-style | Klaus's Cloud Tasks architecture delivers one complete reply after the full agent turn. There is no token stream available at the client boundary. Faking streaming via SSE would require restructuring the entire agent loop and is not warranted for a single-user app. | Polling every 2-3 seconds with an animated "Klaus is thinking..." indicator is honest and appropriate for this architecture. Add SSE as an enhancement only if turn latency becomes a measured pain point. |
-| WebSocket persistent connection for chat | Lower latency, more "real-time" | Cloud Run scales to zero between requests. WebSocket keepalive pings fight the scale-to-zero behavior and drive unnecessary cost. Single-user traffic volume does not justify the operational complexity. | HTTP polling while the tab is active + Web Push when backgrounded. Identical UX outcome, simpler operations. |
-| Complex recurrence rules (every 3rd Thursday, last weekday of month, bi-weekly on alternating Tuesdays) | Power users want this in task managers | Requires a full RRULE engine (RFC 5545). Bugs surface at DST transitions and month-end edge cases. For single-user personal use, daily / weekdays / weekly / monthly covers nearly all real needs. | Four simple recurrence patterns plus "every N days from completion." For edge cases, tell Klaus in chat and he will manually reschedule. |
-| Full calendar create/edit/delete in the hub | "One place for everything" | Google Calendar is the authoritative source-of-truth backend. Bidirectional sync creates conflict-resolution complexity, especially for recurring events and shared calendars. The spec explicitly defers this. | Today timeline shows events read from GCal (display-only). Klaus can create events via `calendar_tool.py` through chat — that path already works and is the correct model. |
-| Nutrition data entry or meal logging in the hub | Seems natural for a health hub | Lifesum → HealthKit is the established pipeline that already works. Duplicating entry in the hub would create sync conflicts and a second competing data source. Amit explicitly decided nutrition is display-only in the hub. | Display MealStore data beautifully; coach on adherence via Klaus chat. The logging pipeline is solved — do not rebuild it. |
-| GitHub-style habit contribution grid on the home screen | Visually impressive; motivating | The grid shows months of history, requiring horizontal scrolling or a large card. It is noise on the home screen where glanceability is the goal. Showing 180 colored squares competes with today's actual actionable items. | Show streak count + today's check-off status on the Today timeline and Habits tab header. Full calendar grid available in the Habits tab detail view only — where the user is already in the context of reviewing history. |
-| Subtasks and task hierarchies | Power feature in Todoist and TickTick | Single-user personal use rarely requires true parent-child task relationships. The UI required to capture, display, and navigate subtasks adds friction to the common case (a simple task) for a rare case (a hierarchical project). | Use Klaus chat to plan complex projects conversationally. Track atomic, actionable tasks in TaskStore. |
-| Collaborative features (sharing, assignees, team views) | Standard in team task apps | Single user throughout v5.0 and the foreseeable future. Adds zero value and nonzero complexity. | Explicitly out of scope per design spec and PROJECT.md. |
-| Always-visible full calendar in sidebar or glance rail | Comprehensive time awareness | The Today timeline already shows today's events in order. A mini-calendar showing a full month adds 30+ cells of information competing with actionable items. The Calendar tab exists for this view. | Show "next event" summary or a 3-day strip in the glance rail at most. Full calendar is one tab navigation away. |
-| Pomodoro timer or time-tracking | TickTick includes this; feels productive | No connection to Amit's workflow. Adds a stateful timer UI requiring active management. Zero data value to Klaus's coaching or autonomous reasoning. | Not included at any phase. |
-| Favicon badge count for unread messages | Looks polished in the browser tab | The iOS PWA installed to home screen uses the Web App Badging API on the icon — not the browser favicon. Favicon badging only matters when the browser tab is open, which is not the primary usage mode for an installed PWA. | Use `navigator.setAppBadge(count)` for the home screen icon badge (Badging API, iOS 16.4+). Also update the in-app tab badge. Do not invest in favicon badge libraries. |
-| Offline task creation and sync | Seems like a good PWA feature | Requires an offline queue with conflict resolution for server-sync on reconnect. For a single-user personal hub used on a phone that is almost always online, the complexity is not worth the edge case. | Cache the app shell and recent data for offline reading. Show a clear "you are offline" indicator for write operations. |
+Patterns that look like reasonable extensions of directives/memory/proactivity but are
+documented failure modes in the literature.
 
----
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|------------------|-------------|
+| Unbounded ambient recall (inject "everything relevant-ish" every turn) | Feels safer — more context should mean fewer misses | Documented as "context window poisoning": overlapping/redundant chunks, stale-but-similar memories crowding out fresh ones, and directly inflates every brain call's token cost — conflicts with the milestone's own token-budget philosophy (SELF.md/prompt slimming, TTL caches) | Score-thresholded, recency/importance-weighted retrieval with a hard cap on injected items, timeout-guarded so a slow Pinecone call never blocks the turn (already the plan's stated design) |
+| Permanent, never-expiring directives by default | Simpler to implement — "just remember it forever" | Directly causes the exact failure the milestone example warns about: a France-trip suppression directive that silently outlives the trip and starts hiding real problems (e.g., missed training) indefinitely | Default TTL or explicit end-condition capture at directive-creation time; heartbeat-style periodic re-surfacing of near-expiry directives for renewal, not silent auto-persistence |
+| Silent, unflagged conflict resolution between directives or between a directive and Klaus's persona/values | Feels smoother — no friction, no "Klaus asking permission" | Loses the provenance trail the whole memory-provenance literature insists on; if Amit never sees the conflict, he can't correct a bad inference before it compounds | Flag once, then record (this is already the locked decision in PROJECT.md) — matches the "provenance metadata... calibrate confidence" pattern from the literature |
+| Memory-driven validation/agreement (using stored preferences to always side with or flatter the user) | Feels warmer, more "personal," more in line with a companion persona | Directly measured: memory-enabled personalization raises LLM sycophancy from ~19.3% to 37.5–44.9% (Penn State study) — for a coaching-focused agent this is actively dangerous (Klaus's whole v4.0 value is "volunteers structural critique," not validation) | Use stored preferences for style/logistics/scheduling, never as license to suppress independent judgment — matches Klaus's existing "no fabrication," "recommend-not-rewrite" coaching philosophy directly |
+| Optimizing for outreach volume / treating "ticks that produced a message" as the success metric | Natural instinct when building an eval harness — more proactive touches feels like more value delivered | Named explicitly as a "vanity metric": "notifications sent... unconsciously optimizes for the exact behavior (dismissals) that predicts churn three weeks later"; a hard 3–5/day attention ceiling exists regardless of how good the content is | Eval harness (Phase 35) should score judgment quality and acted-on/positive-reaction rate, not raw tick-to-message conversion — silence on a correctly-judged quiet day should score as a *win*, not a null result |
+| Full LLM-managed freshness/conflict tracking (asking the brain "which of these two memories is current?" at read time) | Seems like the "smart" solution — let the reasoning model sort it out | Explicitly shown to be unreliable and wasteful compared to a deterministic recency-wins rule ("Don't Ask the LLM to Track Freshness," arXiv 2606.01435) — burns tokens and judgment budget on a solved problem | Deterministic supersession logic in the store layer (same pattern Klaus already uses for `core/projection.py` — deterministic pure functions, brain frames but never computes) |
 
 ## Feature Dependencies
 
 ```
-[Google Auth]
-    └──required by──> ALL /api/* routes (every hub feature)
+StandingDirectiveStore (durable behavioral orders, Phase 31)
+    └──requires──> Step-0 triage veto wired into every reasoning path (Phase 31)
+                       └──enhances──> Occasion cascade judgment (Phase 33)
+                                          (directives are load-bearing input to "should I speak")
 
-[Service Worker registration (Phase 1)]
-    └──required by──> [Web Push subscriptions (Phase 4)]
-    └──required by──> [Offline shell (Phase 1)]
-    └──required by──> [PWA installability — manifest works without SW, but push does not]
-    └──required by──> [Badging API (requires installed PWA + notification permission)]
+Reflection learning loop / self-proposed directives (Phase 31)
+    └──requires──> StandingDirectiveStore
+    └──requires──> 24h conversation-window read + reaction pairing (existing reflection cron, extended)
+    └──requires──> Provenance flag distinguishing "Amit-stated" vs "Klaus-proposed" directives
+                       └──requires──> One-line human veto step before a proposed directive activates
 
-[HabitStore (Phase 3)]
-    └──required by──> [Habit check-off UI]
-    └──required by──> [Streak computation]
-    └──required by──> [Dose display at check-off]
-    └──required by──> [Habits on Today timeline]
-    └──required by──> [Autonomous-tick habit awareness (Layer-0 gather extension)]
-    └──required by──> [Klaus coaching supplement-adherence references]
+Ambient auto-recall (Phase 32)
+    └──requires──> Existing Pinecone recall infra (already built, v1.0)
+    └──requires──> Relevance + recency/importance scoring (new — current recall is similarity-only)
+    └──requires──> Timeout guard (best-effort; must never block the turn)
+    └──enhances──> Conversation continuity across the 6h Firestore purge boundary
 
-[TaskStore (Phase 2)]
-    └──required by──> [Hub task pages]
-    └──required by──> [Klaus tool swap — TickTick tool removed, native tools added]
-    └──required by──> [Glance rail due-tasks view]
-    └──required by──> [Tasks on Today timeline]
+Conversation continuity past 6h reset (Phase 32)
+    └──requires──> Ambient auto-recall (carries prior-session gist forward)
 
-[TickTick import script (Phase 2)]
-    └──must precede──> [TickTick subscription cancellation]
-    └──must precede──> [Klaus tool swap being deployed]
-    (TaskStore must be populated before the tool swap or Klaus loses task history)
+Memory hygiene / forget_memory (Phase 32)
+    └──requires──> Provenance + timestamp metadata on Pinecone writes (partially exists; may need extension)
+    └──conflicts-with──> Unbounded ambient recall (hygiene is the release valve that keeps ambient
+                          recall from silently accumulating stale/poisoned context over months)
 
-[PushSubscriptionStore (Phase 4)]
-    └──required by──> [Web Push delivery]
-    └──required by──> [Telegram mirror flag logic in scheduled_message.py]
+Occasion cascade — judgment-driven proactivity (Phase 33)
+    └──requires──> StandingDirectiveStore + Step-0 veto (Phase 31)
+    └──requires──> Ambient/unified situation — conversation tail + training_reality (Phase 32)
+    └──enhances──> get_recent_decisions introspection tool (self-explainability)
+                       └──requires──> Occasion cascade decisions being logged with rationale, not just outcome
 
-[Web Push trusted for 1+ week (Phase 4 UAT)]
-    └──enables──> [Telegram mirror flag turned OFF → Telegram retirement]
-
-[Health pages (Phase 5)]
-    └──requires──> [StrengthSessionStore — already built (Hevy)]
-    └──requires──> [RunDetailStore — already built (Garmin)]
-    └──requires──> [MealStore — already built (HealthKit)]
-    └──requires──> [Garmin sleep/HRV data — already built]
-    (All underlying data already exists; health pages are visualization only)
-
-[Klaus tool swap (Phase 2)]
-    └──conflicts with──> [TickTick tool still active in tools.py]
-    (Cannot run both simultaneously — swap must be atomic: import → swap → UAT → cancel subscription)
+Self-proposed directives (learning loop) ──enhances──> Step-0 veto precision over time
+    (each accepted proposal sharpens future suppression judgment without new code)
 ```
 
 ### Dependency Notes
 
-- **Auth is the root dependency.** Google Sign-In ships in Phase 1. Nothing else is accessible without it.
-- **Service worker is the PWA unlock.** Registering it in Phase 1 enables push, offline, and home-screen badging — even if push subscriptions are not yet collected until Phase 4.
-- **HabitStore precedes autonomous awareness.** The tick-brain habit-nudge feature requires HabitStore to have data. This extension ships in Phase 3, not Phase 1 or 2.
-- **Tool swap must be atomic.** Running both TickTick tool and TaskStore tool simultaneously creates ambiguity in Klaus's tool dispatch. The TickTick import runs first (populates TaskStore), then the tool swap is deployed, then the subscription is cancelled after UAT confirms data integrity.
-- **Health pages have no new data dependencies.** All underlying stores are built and deployed. Phase 5 is pure visualization — it is additive to the shell with no backend changes required beyond new read endpoints.
-- **Web Push mirror must run for at least one week before Telegram mirror is turned off.** This is an explicit UAT requirement in the design spec. Phase 4 ships with mirror ON; mirror is turned OFF manually after validated trust.
+- **Occasion cascade requires both directives (31) and unified situation (32):** the research is
+  consistent that judgment about *whether to speak* needs both a durable behavioral constraint
+  layer (directives) and enough situational memory to apply it correctly — this matches the
+  milestone's own phase ordering (31 → 32 → 33) and is not something to reorder.
+- **Reflection learning loop requires provenance before it requires anything else:** every
+  reviewed system treats inferred/agent-generated memory as needing more scrutiny than
+  user-stated memory. If the "Klaus-proposed" flag isn't in place from day one of Phase 31, the
+  veto step has nothing reliable to gate.
+- **Memory hygiene conflicts with (i.e., is the necessary counterweight to) unbounded ambient
+  recall:** these aren't sequential dependencies but a design tension — shipping ambient
+  auto-recall (32) without `forget_memory` in the same phase risks exactly the stale-memory
+  poisoning failure mode documented in the RAG-poisoning and context-window-poisoning
+  literature. They should land together, not be split across phases.
+- **Self-explainability depends on the cascade logging rationale, not just firing/not-firing:**
+  `get_recent_decisions` is only useful if a "decided not to speak" event is logged with a
+  reason string, same shape as a "decided to speak" event — this is a data-model requirement on
+  Phase 33, not a Phase 33.5 nice-to-have.
 
----
+## This Milestone vs. Defer
 
-## MVP Definition
+Adapted from standard MVP framing to fit a subsequent-milestone, phase-scoped project (v6.0 is
+already phase-mapped in PROJECT.md; this maps the *researched* patterns onto that structure
+rather than proposing new phase ordering).
 
-This is a subsequent milestone (v5.0) on an existing working system. Each phase is independently shippable per the design spec.
+### In Scope This Milestone (Phases 31–33)
 
-### Phase 1 — Shell (Launch With)
+- [ ] Directive capture (verbatim, user-stated) with provenance tag — table stakes, low complexity, no reason to defer
+- [ ] Step-0 triage veto reading directives on every reasoning path — the entire point of Phase 31
+- [ ] Directive expiry/TTL (at minimum: explicit end-condition capture; ideally + renewal nudge) — prevents the exact stale-suppression failure the milestone is named for
+- [ ] Reflection learning loop proposing directives with one-line veto — differentiator, explicitly planned, but MUST ship with the provenance distinction from day one
+- [ ] Ambient auto-recall with relevance/recency/importance gating (not pure similarity) — table stakes for calling it "ambient," but the gating logic is the differentiator vs. a naive always-inject implementation
+- [ ] Timeout guard on ambient gather — non-negotiable given the existing "18-minute reply" incident class (CLAUDE.md invariant)
+- [ ] `forget_memory` hygiene tool — must ship alongside ambient recall, not deferred to Phase 35
+- [ ] Occasion cascade with silence as a first-class outcome — the core differentiator of this milestone
+- [ ] `get_recent_decisions` introspection tool — required for the "explain his own decisions" goal in PROJECT.md
 
-- [ ] Google auth gate — without this, nothing else is accessible
-- [ ] Today timeline (read-only): calendar events, Garmin stats, weather, meals, training plan item — validates the "glanceable day" value proposition
-- [ ] Chat: send + poll for reply + conversation history — validates the Telegram replacement story
-- [ ] Unread badge on Klaus tab — without this, chat feels broken when Klaus sends a proactive message
-- [ ] PWA manifest + service worker (offline shell + installable on iOS home screen)
-- [ ] Leave-by / Get Ready time on Today timeline — low complexity; high daily value
+### Add After Validation (Phase 34–35, or explicit fast-follow)
 
-### Phases 2-3 — Core Replacements (Add After Shell Validates)
+- [ ] Deeper bitemporal-style directive history (superseded-by chains queryable, not just logged) — useful once directive volume/conflict frequency is observed in production
+- [ ] Learning-loop tuning based on real veto-accept/reject ratio (Phase 35 eval fixtures should measure this)
+- [ ] Location-awareness feeding into ambient situation — planned in Phase 32 already, listed here only to flag it's lower urgency than directive/recall gating if Phase 32 needs to be trimmed
 
-- [ ] TaskStore + full task CRUD + quick-add — validates TickTick replacement; run for one week before cancelling subscription
-- [ ] TickTick one-time import script — must precede subscription cancellation and tool swap
-- [ ] Klaus tool swap (TickTick → native TaskStore) — atomic with import deployment
-- [ ] HabitStore + check-off UI + streak computation — validates habit-app replacement
-- [ ] Dose display for supplements — included in HabitStore schema from day one
-- [ ] Autonomous-tick Layer-0 habit gather extension — enables proactive supplement nudges
+### Explicitly Out of Scope (per PROJECT.md, reaffirmed by this research)
 
-### Phase 4 — Notifications (When Hub Is Trusted Daily)
-
-- [ ] VAPID Web Push infrastructure + PushSubscriptionStore
-- [ ] Telegram mirror flag in `scheduled_message.py`
-- [ ] iOS install instructions in the hub (required for push to work on iOS)
-- [ ] Badging API integration (`navigator.setAppBadge`)
-- [ ] Run with mirror ON for one week → turn mirror OFF after validation
-
-### Phase 5 — Health Pages (Additive; No New Data Pipelines)
-
-- [ ] Training history page: Hevy sessions + Garmin runs + benchmark results
-- [ ] Nutrition detail page: macro trends, fueling slot adherence
-- [ ] Sleep trends page: HRV, sleep score, body battery over time
-
----
+- Multi-user directive/preference conflict resolution — single-user system, not applicable
+- Full knowledge-graph memory backend (Zep/Graphiti-style) — the useful subset (non-destructive
+  supersession) is achievable inside the existing Firestore store pattern; a graph DB migration
+  is not warranted at this data volume
+- Memory-driven sycophancy/validation behavior of any kind — actively rejected per the
+  anti-features section above, consistent with existing "recommend-not-rewrite" coaching values
 
 ## Feature Prioritization Matrix
 
 | Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Google auth | HIGH | LOW | P1 |
-| Today timeline (calendar + weather + Garmin + meals) | HIGH | LOW | P1 |
-| Training plan item on Today | HIGH | LOW | P1 |
-| Chat send/poll + history | HIGH | MEDIUM | P1 |
-| Unread badge | HIGH | LOW | P1 |
-| PWA installable + offline shell | HIGH | MEDIUM | P1 |
-| Leave-by / Get Ready time on Today | MEDIUM | LOW | P1 |
-| Task CRUD + quick-add | HIGH | MEDIUM | P1 (Phase 2) |
-| TickTick import | HIGH | LOW | P1 (Phase 2, enables cancellation) |
-| Klaus task tool swap | HIGH | LOW | P1 (Phase 2) |
-| Habit check-off + streaks | HIGH | MEDIUM | P1 (Phase 3) |
-| Supplement dose display | HIGH | LOW | P1 (Phase 3) |
-| Autonomous habit-nudge awareness | HIGH | LOW | P1 (Phase 3, extend existing gather) |
-| Glance rail (due tasks + streaks) | MEDIUM | LOW | P2 (Phase 1 or 2) |
-| Web Push + Telegram mirror | HIGH | MEDIUM | P2 (Phase 4) |
-| Badging API | MEDIUM | LOW | P2 (Phase 4) |
-| Health pages (training history) | MEDIUM | MEDIUM | P2 (Phase 5) |
-| Health pages (nutrition + sleep) | MEDIUM | MEDIUM | P2 (Phase 5) |
-| SSE streaming for chat | LOW | HIGH | P3 (defer; polling works for this architecture) |
-| Full calendar create/edit in hub | LOW | HIGH | P3 (defer; GCal is the backend) |
-| Offline write queue (sync on reconnect) | LOW | HIGH | P3 (single user, almost always online) |
+|---------|------------|----------------------|----------|
+| Directive capture + Step-0 veto | HIGH | LOW-MEDIUM | P1 |
+| Directive provenance (stated vs. proposed) | HIGH | LOW | P1 |
+| Directive expiry/TTL | HIGH | LOW-MEDIUM | P1 |
+| Reflection learning loop (self-proposed directives) | MEDIUM-HIGH | HIGH | P1 (explicitly planned, but highest-risk item — needs the tightest veto discipline) |
+| Ambient auto-recall with relevance/recency/importance gating | HIGH | MEDIUM | P1 |
+| Timeout guard on ambient gather | HIGH (prevents regression) | LOW | P1 |
+| `forget_memory` hygiene | MEDIUM-HIGH | LOW-MEDIUM | P1 (should not be deferred — see dependency note) |
+| Conversation continuity past 6h reset | MEDIUM | MEDIUM | P2 |
+| Occasion cascade with silence-as-choice | HIGH | MEDIUM-HIGH | P1 |
+| `get_recent_decisions` introspection | MEDIUM | MEDIUM | P1 (small standalone cost, required for stated goal) |
+| Bitemporal-style supersession history (beyond simple flag) | LOW-MEDIUM | MEDIUM | P3 |
+| Location awareness in ambient situation | LOW-MEDIUM | MEDIUM | P2 |
 
----
+## Reference-System Comparison
 
-## Competitor Feature Analysis
-
-| Feature | TickTick | Streaks / HabitKit | Our Approach |
-|---------|----------|--------------------|--------------|
-| Task capture | Natural language (good), floating button + keyboard shortcut | N/A | FAB on phone + ⌘K on desktop. Parse "tomorrow", "Friday", "next week" as due dates. Omit NLP for labels and priority — not worth the parsing complexity for single user. |
-| Task recurrence | Full RRULE engine — complex patterns | N/A | Daily / Weekdays / Weekly / Monthly / Every-N-days-from-completion. Five patterns total. |
-| Task lists | Multiple lists + smart lists + filters | N/A | Two to four hardcoded lists (Personal, Health, Work, Someday). No dynamic list creation in Phase 2. |
-| Habit scheduling | Habits exist in TickTick but are separate from tasks | Specific weekdays, N-times-per-week, N-times-per-month | Specific weekdays per habit. N-times-per-week is a nice-to-have deferred to after launch. |
-| Streak rules | N/A | Streak breaks only on scheduled days; other days are neutral; "skip" does not break streak | Same model: streak increments on scheduled-day completions, breaks only when a scheduled day is missed without a check-off. |
-| Dose tracking | No | HabitKit supports multi-tap (e.g., "drink 8 glasses"), not dose display | Dose as a definition field (e.g., "Creatine — 5g"), displayed as a label at check-off. Not re-entered daily. Not multi-tap — dose is fixed per habit definition. |
-| Today home screen | TickTick "Today" view shows tasks only | HabitKit shows today's habits only | Compose calendar + training plan + habits/supplements + Garmin stats + weather + meals — significantly richer than either. No other personal dashboard has the coaching layer (leave-by times, training block context). |
-| AI integration | None | None | Klaus knows everything in the hub and can create tasks, read habit adherence, coach on supplement timing, project training goals. This is the core differentiator that justifies building a custom hub instead of customizing an existing app. |
-| Notifications | Push from their cloud service | Push from their cloud service | VAPID push from Klaus's own Cloud Run service (Phase 4). Telegram mirror during transition. |
-
----
-
-## Klaus-Specific Integration Constraints
-
-These constraints come from the existing codebase and are not discoverable from competitor research. They directly affect feature design.
-
-**Meal slot times are not eating times.** MealStore timestamps are canonical slot times (08:00 / 12:00 / 20:00), not actual eating times. The Today timeline must label meals as "Breakfast logged: 42g protein" — never as "ate at 08:00." This is documented in CLAUDE.md and the USER.md Lifesum caveat.
-
-**Chat turns run via Cloud Tasks, not inline.** The full-CPU path (`/internal/process-update`) is required for correct LLM replies. The hub's `POST /api/chat` must enqueue via `task_dispatch.py` — not execute inline in a request handler. This is the slow-reply fix from 2026-06-12 (commit 80809f9). No token streaming to the client is possible with this architecture. Polling every 2-3 seconds is the correct and honest model.
-
-**Same Firestore conversation as Telegram.** `firestore_conversation.py` stores one history per user ID. The hub reads and writes the same collection. Telegram messages are visible in hub history and vice versa during the transition. This is a feature (continuity), not a bug.
-
-**Autonomous tick already exists and can be extended cheaply.** `autonomous.py` Layer-0 gather runs every 20 minutes, 07:00–21:00, fanning out data collection across a thread pool. Adding a HabitStore read to the gather is a small addition — one more key in the gathered context dict. The tick-brain already has a judgment framework for when to speak up; it just needs the new data to reason about.
-
-**TickTick tool swap must be atomic.** `core/tools.py` registers TickTick handlers via `mcp_tools/ticktick_tool.py`. The Phase 2 swap removes those handlers and registers native TaskStore handlers instead. Both cannot be active simultaneously. Sequence: (1) run import script to populate TaskStore, (2) deploy tool swap, (3) run Phase 2 UAT, (4) cancel TickTick subscription.
-
-**Web Push on iOS requires home-screen installation.** iOS 16.4+ supports Web Push only for PWAs installed from Safari to the home screen. The EU DMA restriction (iOS 17.4+, PWA opens as Safari tab without push) does not apply to Amit in Tel Aviv. Must provide explicit Add-to-Home-Screen instructions in the hub UI — iOS never shows an automatic install prompt.
-
-**Badging API (iOS 16.4+).** Use `navigator.setAppBadge(count)` for the home-screen icon unread count. App icon shortcuts, widgets, and dynamic shortcuts on the iOS long-press menu are not supported for PWAs. Do not invest in these.
-
----
+| Capability | ChatGPT Memory | Claude.ai Memory | MemGPT/Letta | Zep/Graphiti | Klaus v6.0 Approach |
+|------------|-----------------|-------------------|--------------|---------------|----------------------|
+| Directive vs. fact distinction | Implicit ("saved memories" list is mostly preference-like) | Implicit (synthesized running summary of preferences + facts) | Explicit: core memory (pinned preferences/persona) vs. archival (facts/history) | Explicit via typed edges + bitemporal validity | Explicit: `StandingDirectiveStore` (behavioral orders, gates proactive speech) vs. Pinecone `fact`/`chat` kinds (evidence) |
+| Conflict resolution | Newest chat-history insight supersedes; saved memories are user-managed | Running summary updates in place, no visible history | Agent-managed via function calls into core memory blocks | Deterministic bitemporal invalidation (LLM detects contradiction, sets `tinvalid`) | Recency-wins default + flag-once-then-record for directive/persona conflicts (per locked decision) |
+| Who can write memory | User only (explicit or implicit from chat) | User only (explicit or implicit) | Agent itself, autonomously, via tool calls | Any source (user, tool, agent) with provenance metadata | Both: user-stated (verbatim) and agent-proposed (reflection loop) — this is the differentiator, with provenance as the safety rail |
+| Retrieval gating | Opaque ("system selects memory relevant to your prompt") | Opaque (synthesized summary always present, not scored per-turn) | Agent decides what to page in/out of core memory; archival is similarity search | Hybrid graph + semantic + BM25 search | Relevance + recency/importance weighted, timeout-guarded, capped injection (per this research) |
+| Proactive silence as a decision | N/A (not a proactive system) | N/A (not a proactive system) | N/A (not a proactive system) | N/A (memory layer only, not a proactivity engine) | Core differentiator: occasion cascade treats silence as a valid, logged, explainable outcome — no comparable consumer reference system does this |
+| Self-explainability of decisions | None surfaced to user | None surfaced to user | Agent memory operations are visible in traces but not user-facing explanations | Provenance is queryable but not framed as end-user explanation | `get_recent_decisions` — explicit differentiator goal |
 
 ## Sources
 
-- TickTick vs Todoist comparison: [upbase.io](https://upbase.io/blog/ticktick-vs-todoist/), [morgen.so](https://www.morgen.so/blog-posts/ticktick-vs-todoist), [toolfinder.com](https://toolfinder.com/comparisons/todoist-vs-ticktick)
-- Todoist Quick Add documentation: [todoist.com](https://www.todoist.com/help/articles/use-task-quick-add-in-todoist-va4Lhpzz)
-- Linear UX speed patterns: [nimpatil.substack.com](https://nimpatil.substack.com/p/the-ux-psychology-behind-linears)
-- Streaks app streak rules: [crunchybagel.com](https://crunchybagel.com/now-available-streaks-10/), [habitboard.app](https://habitboard.app/streaks/)
-- HabitKit: [habitkit.app](https://www.habitkit.app/), [zapier.com](https://zapier.com/blog/best-habit-tracker-app/)
-- Habit tracker iOS best practices: [timingapp.com](https://timingapp.com/blog/habit-tracker-apps-iphone-mac/), [clockify.me](https://clockify.me/blog/productivity/best-habit-tracker-apps/)
-- Widget and glanceable UX: [mindfulsuite.com](https://www.mindfulsuite.com/reviews/best-ios-widget-apps), [rapidnative.com](https://www.rapidnative.com/blogs/habit-tracker-calendar)
-- AI chat interface design: [setproduct.com](https://www.setproduct.com/blog/ai-chat-interface-ui-design), [thefrontkit.com](https://thefrontkit.com/blogs/ai-chat-ui-best-practices)
-- Agent UX patterns: [hatchworks.com](https://hatchworks.com/blog/ai-agents/agent-ux-patterns/)
-- SSE vs polling vs WebSocket: [blog.openreplay.com](https://blog.openreplay.com/websockets-sse-long-polling/), [codelit.io](https://codelit.io/blog/websocket-vs-polling-vs-sse)
-- PWA iOS limitations 2025-2026: [magicbell.com](https://www.magicbell.com/blog/pwa-ios-limitations-safari-support-complete-guide), [mobiloud.com](https://www.mobiloud.com/blog/progressive-web-apps-ios)
-- Web Push iOS 16.4: [pwa.io](https://pwa.io/articles/web-push-with-ios-safari-16-4-made-easy), [magicbell.com](https://www.magicbell.com/blog/using-push-notifications-in-pwas)
-- PWA push reliability 2026: [edana.ch](https://edana.ch/en/2026/03/19/push-notifications-on-web-applications-pwa-is-it-really-reliable-on-ios-and-android/)
-- Klaus design spec: `docs/superpowers/specs/2026-06-13-klaus-hub-design.md`
-- Klaus project context: `.planning/PROJECT.md`
+- [ChatGPT Memory FAQ (OpenAI)](https://help.openai.com/en/articles/8590148-memory-faq)
+- [How does "Reference saved memories" work? (OpenAI)](https://help.openai.com/en/articles/11146739-how-does-reference-saved-memories-work)
+- [Memory and new controls for ChatGPT (OpenAI)](https://openai.com/index/memory-and-new-controls-for-chatgpt/)
+- [Claude memory tool (Anthropic Platform Docs)](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool)
+- [Exploring Anthropic's Memory Tool — Leonie Monigatti](https://www.leoniemonigatti.com/blog/claude-memory-tool.html)
+- [Agent Memory: How to Build Agents That Learn and Remember — Letta](https://www.letta.com/blog/agent-memory/)
+- [Virtual context management with MemGPT and Letta — Leonie Monigatti](https://www.leoniemonigatti.com/blog/memgpt.html)
+- [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956)
+- [How Zep tracks provenance in agent memory](https://blog.getzep.com/how-zep-tracks-provenance-in-agent-memory/)
+- [Generative Agents: Interactive Simulacra of Human Behavior, Park et al. (arXiv 2304.03442)](https://ar5iv.labs.arxiv.org/html/2304.03442)
+- [Generative Agents Memory Stream — Subodh Jena](https://www.subodhjena.com/blog/generative-agents-memory-stanford)
+- [LangGraph memory overview (LangChain Docs)](https://docs.langchain.com/oss/python/concepts/memory)
+- [LangMem SDK for agent long-term memory (LangChain)](https://www.langchain.com/blog/langmem-sdk-launch)
+- [Don't Ask the LLM to Track Freshness: A Deterministic Recipe for Memory Conflict Resolution (arXiv 2606.01435)](https://arxiv.org/pdf/2606.01435)
+- [Agent Memory Systems: A Complete Engineering Guide — Tejpal Kumawat](https://medium.com/@tejpal.abhyuday/a-framework-agnostic-reference-for-designing-memory-in-any-ai-agent-not-just-travel-bots-0554fe803f59)
+- [Novel Memory Forgetting Techniques for Autonomous AI Agents (arXiv 2604.02280)](https://arxiv.org/html/2604.02280.pdf)
+- [Access-Weighted Memory Decay, Geometric Stickiness, and True Forgetting — Clawd Daily](https://clawddaily.com/papers/memory-decay)
+- [RAG Data Poisoning: Key Concepts Explained — Promptfoo](https://www.promptfoo.dev/blog/rag-poisoning/)
+- [Context poisoning in LLMs: How to defend your RAG system — Elastic](https://www.elastic.co/search-labs/blog/context-poisoning-llm)
+- [Retrieval as a Decision: Training-Free Adaptive Gating for Efficient RAG (arXiv 2511.09803)](https://arxiv.org/abs/2511.09803)
+- [Background Agents and the Notification Budget — TianPan.co](https://tianpan.co/blog/2026-05-13-background-agents-notification-budget-attention-economy)
+- [Proactive AI Agents — Lyzr](https://www.lyzr.ai/glossaries/proactive-ai-agents/)
+- [AI-powered chatbots can become too agreeable over time — Penn State University](https://www.psu.edu/news/information-sciences-and-technology/story/ai-powered-chatbots-can-become-too-agreeable-over-time)
+- [OP-Bench: Benchmarking Over-Personalization for Memory-Augmented Personalized Conversational Agents (arXiv 2601.13722)](https://arxiv.org/pdf/2601.13722)
+- [Beyond Similarity: Trustworthy Memory Search for Personal AI Agents (arXiv 2606.06054)](https://arxiv.org/pdf/2606.06054)
+- [Explainability and transparency in autonomous agents — AI Accelerator Institute](https://www.aiacceleratorinstitute.com/explainability-and-transparency-in-autonomous-agents/)
+- Klaus repo: `.planning/PROJECT.md` (v6.0 phase plan, locked decisions, existing architecture)
 
 ---
-*Feature research for: Klaus Hub (v5.0) — web PWA personal interface*
-*Researched: 2026-06-13*
+*Feature research for: Klaus v6.0 "Klaus Becomes an Agent" — standing directives, ambient memory, judgment-driven proactivity*
+*Researched: 2026-07-17*

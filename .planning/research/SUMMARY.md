@@ -1,228 +1,170 @@
 # Project Research Summary
 
-**Project:** Klaus v4.0 — Specific Training & Nutrition Coaching
-**Domain:** Expert hybrid-athlete coaching layer added to a live personal AI agent
-**Researched:** 2026-06-03
+**Project:** Klaus v6.0 "Klaus Becomes an Agent"
+**Domain:** Self-governance rework of an existing deployed personal AI agent — brain-model migration, standing directives, ambient memory, and judgment-driven proactivity, layered onto a live Cloud Run / Firestore / Pinecone system with 5 shipped milestones behind it
+**Researched:** 2026-07-17
 **Confidence:** HIGH
 
 ## Executive Summary
 
-Klaus v4.0 transforms an existing, working accountability system (evidence-first check-ins, Garmin/HRV/ACWR data, inline-keyboard session logging, macros via HealthKit/Lifesum) into a genuinely expert hybrid-athlete coach. The milestone is not greenfield: every data source, every cron, and every Firestore store already exists. The research converges on a single insight: three infrastructure additions unlock everything. First, populating `UserProfileStore` from the blueprint (structured fields, not raw markdown) gives the brain citable plan targets and creates a living guide it reasons from. Second, injecting curated expert coaching knowledge as a prompt-level doc (the `docs/COACHING_GUIDE.md` → `{coaching_guide}` pattern, identical to how `SELF.md` is handled today) eliminates generic advice without adding retrieval plumbing. Third, two new Firestore stores (`BlockStore`, `BenchmarkStore`) give the brain block-state awareness and facet-level improvement history. D-13 guard release follows from the first addition as a conditional prompt change, not a code toggle.
+Klaus v6.0 is not a greenfield build — it's a targeted rework of a proven proactive-agent architecture, moving the smart brain from `gemini-3.5-flash` to `claude-sonnet-5` (with Anthropic prompt caching), and adding three new capability layers (standing directives, ambient auto-recall memory, and a judgment-driven "occasion cascade" that replaces template-composed nightly/morning messages). All four research passes converge on the same core insight: the risk in this milestone is almost entirely in wiring discipline and sequencing, not in unknowns. The stack is well-documented (official Anthropic docs for Sonnet 5's API behavior, official Groq docs for the already-shipped tick-brain), the feature patterns are well-precedented (ChatGPT/Claude memory, MemGPT/Letta, Zep/Graphiti, Stanford Generative Agents all provide directly-applicable reference architectures), and the architecture reuses Klaus's existing store-per-collection, gather-isolation, and singleton-orchestrator patterns rather than inventing new ones. Nothing here requires a new library, a new datastore, or a new hosting primitive.
 
-The recommended build order is dependency-ordered and strictly additive: (A) blueprint ingestion + schema extension → (B) coaching knowledge doc + system prompt wiring → (C) D-13 guard replacement (requires A) → (D) block and benchmark stores + cron surface points (requires A and C) → (E) strict proactive and reactive coaching as the behavioral outcome of A–D working together. No new cron jobs, no new Python packages, no new API backends. The only net-new infrastructure is the `docs/COACHING_GUIDE.md` file and two Firestore store classes. Everything else is schema extension and prompt engineering on existing wired components.
+The recommended approach is to treat this as six tightly-ordered phases (30.5 → 31 → 32 → 33 → 34 → 35), each gated on specific plumbing from the prior phase: the tick-brain's fallback must be decoupled from the brain's env vars before the brain flips to Sonnet (or a Groq hiccup silently bills Anthropic pricing); `get_recent_window()` must exist before the reflection learning loop reads a day's conversation (the current 6h session-window read is empty at reflection time on most nights — a live bug, not a hypothetical); the context-only invariant on every new autonomous.py gather must be audited before Phase 33 routes nightly/morning traffic through triage (or routine chat activity defeats the free-tier cost gate that is Klaus's entire cost model); and the `OCCASION_CASCADE` flag must run old and new composers in parallel for an observation window before the legacy code is deleted in Phase 35.
 
-The critical risk is fabrication regression: releasing D-13 without a data-presence contract (Tier A = blueprint goals, citable as "your target"; Tier B = measured results, citable only when the relevant record is within a defined recency window) will cause Klaus to fill silent gaps with plausible-sounding invented numbers. The second risk is cross-cron nagging — each cron independently identifies coaching opportunities, and without a shared dedup gate (extending `OutreachLogStore` beyond the autonomous tick scope), the same topic fires in the morning briefing, the evening check-in, and the weekly review on the same day. Both risks must be addressed in the same commit as the features that introduce them, not retrofitted later.
+The dominant risk category, confirmed independently by both the pitfalls and stack research, is cost/metering correctness during the brain swap: Sonnet 5's new tokenizer produces ~30% more tokens for the same text than Gemini's, adaptive thinking is on by default and consumes the same `max_tokens` budget as the visible response, sampling parameters (`temperature`/`top_p`/`top_k`) now hard-reject with HTTP 400 instead of silently ignoring, and prompt-caching's billing fields (`cache_read_input_tokens`/`cache_creation_input_tokens`) must be extracted and priced correctly or the new daily-spend tripwire — the safety net for this exact risk — alerts on wrong numbers. The second dominant risk category is judgment regression from directives/memory features that look done but aren't: coarse-grained directive vetoes that over-suppress unrelated topics, casual venting captured as permanent directives, ambient memory silently poisoning judgment with stale facts, and judged silence being indistinguishable from infra failure without explicit status tracking. All of these have concrete, cheap mitigations identified in the pitfalls research and should become explicit phase acceptance criteria, not just implementation notes.
 
 ## Key Findings
 
 ### Recommended Stack
 
-All four researchers converge: v4.0 requires no new core frameworks, no new Python packages, and no new API backends. The guiding constraint is explicit: every decision must reuse existing infra unless a genuinely new capability is needed. The existing stack (Firestore, Postgres, Pinecone, gemini-3.5-flash brain, TrainingLogStore, MealStore, UserProfileStore scaffold, all crons) is already wired and verified. The only structural additions are a `docs/COACHING_GUIDE.md` flat file and two new Firestore store classes.
+No new libraries or infrastructure are needed for v6.0 — this is a version-floor bump (`anthropic>=0.40` → `anthropic>=0.99,<1.0`) plus disciplined use of already-integrated SDKs (Anthropic, Groq via OpenAI-compat, Gemini for embeddings). The actual engineering work is in `core/llm_client.py`/`core/pricing.py` integration points: restructuring `system` from a plain string to a content-block list carrying `cache_control`, extracting new usage fields from Anthropic responses, and auditing every Anthropic-backend call site for parameters that now hard-reject (temperature/top_p/top_k, manual `thinking.budget_tokens`). Streaming is explicitly not needed — Klaus's Cloud-Tasks-backed async architecture already avoids the idle-connection-timeout problem streaming exists to solve.
 
 **Core technologies:**
-- **Firestore `users/amit` (UserProfileStore extended):** Schema v2 adds `dated_goals`, `weekly_split`, `nutrition_targets`, `supplement_schedule`, `fueling_timeline`, `current_block_id`, `current_state`, `plan_start_date`. Existing merge-patch discipline; no new collection.
-- **Firestore `training_blocks` (BlockStore, new):** Tracks block lifecycle (start/end dates, phase, `benchmark_due` flag). New class, TrainingLogStore pattern. Six to ten lifetime blocks — not a collection-scale problem.
-- **Firestore `benchmarks` (BenchmarkStore, new):** Per-facet per-date benchmark results. Doc ID `{date}_{facet}` makes re-logging idempotent. `get_facet_history(facet, n)` feeds trend commentary.
-- **`docs/COACHING_GUIDE.md` (new flat file):** ~600-token curated expert knowledge loaded once at startup by `_load_coaching_guide()` and injected as `{coaching_guide}` in `render_smart_system`. Same `_load_self_md()` pattern. Not Pinecone RAG — the corpus is small, always relevant, and must never have a retrieval-miss failure mode.
-- **7 new brain-direct tools in `core/tools.py`:** `get_plan`, `get_block_status`, `update_plan`, `log_benchmark`, `get_benchmark_history`, `start_block`, `end_block`. All follow existing `_HANDLERS` dispatch + `SMART_AGENT_DIRECT_TOOLS` registration pattern.
-
-**Confirmed anti-additions:**
-- No Pinecone RAG for the coaching knowledge doc (always-needed ~600-token content; retrieval adds latency with no benefit at single-user bounded-corpus scale)
-- No new `CoachingKnowledgeStore` Firestore collection (static doc belongs in flat file)
-- No new cron job for benchmark triggers (flag-check in existing 21:30 proactive_alerts cron is sufficient)
-- No new Python ORM or new LLM model backend
+- `anthropic>=0.99,<1.0` (verified latest 0.117.0): Brain backend SDK — bump the floor to get typed `OutputConfigParam`/`ThinkingConfigAdaptiveParam` support; no breaking call-shape changes
+- `claude-sonnet-5` (API model ID): Smart-agent brain model — 1M context, 128K max output, $3/$15 per MTok standard ($2/$10 intro pricing through 2026-08-31 — cost dashboards need a dated note, not a static number)
+- Prompt caching (`cache_control: {"type": "ephemeral", "ttl": "1h"}`): The actual cost lever for the milestone — use the 1-hour TTL, not the 5-minute default, because Klaus's call cadence (20-min autonomous tick, bursty interactive chat) mostly exceeds 5 minutes between calls
+- `openai/gpt-oss-120b` on Groq (already shipped): Free tick-brain, 30 RPM/1,000 RPD/8,000 TPM/200,000 TPD — confirmed no deprecation notice, but keep the Gemini fallback wired and tested since Groq gave the prior model (qwen3-32b) a hard decommission with limited notice
 
 ### Expected Features
 
-**Must have (table stakes — without these Klaus stays generic):**
-- **UserProfileStore populated from blueprint** — master gate; all specificity downstream is blocked without it. Structured fields for dated goals (Oct/Nov), AM/PM weekly split, 16-week aerobic progression, fueling timeline (6 slots), supplement schedule (7 items), `plan_start_date`.
-- **Expert coaching knowledge in system prompt** — `docs/COACHING_GUIDE.md` injected as `{coaching_guide}`. Covers concurrent training interference effect, block periodization, session execution cues, fueling science, how to read recovery signals. Reasoning substrate for all other coaching quality.
-- **D-13 guard released with data-presence contract** — Tier A (blueprint goals, citable as targets) + Tier B (measured data, citable only within recency window). Must ship in same commit as guard removal.
-- **Session naming in every coaching message** — "Tuesday Upper Body A — Bench 4x3-5, top-set target 82.5kg" not "your strength session."
-- **Block tracking (`BlockStore`)** — provides "Week 7 of 16, Capacity Build phase" context to all crons.
-- **Recovery-vs-plan advice with named trade-off** — fact + plan conflict + ranked options + explicit "your call, Sir." Never dictating; never hedging.
+Klaus's planned three new capability areas (standing directives, ambient auto-recall, judgment-driven proactivity) map cleanly onto well-established patterns from ChatGPT memory, Claude memory, MemGPT/Letta, and Zep/Graphiti — but the milestone's specific combination (agent-proposed directives from observed reactions, self-explainable silence as a first-class outcome) goes beyond every reviewed consumer reference system. That novelty is exactly where the highest implementation risk concentrates.
 
-**Should have (differentiators that make Klaus genuinely expert):**
-- Macro adherence vs fueling timeline (map `MealStore` timestamps to 6 blueprint slots, flag structural misses)
-- Morning briefing session-context framing (recovery state + today's named session + fueling reminder in one specific block)
-- Per-facet weekly progress in Sunday review (block-relative framing, volume vs target, lift trajectory)
-- Skip/off-plan pushback with deficit calculation (volume gap in km or sets, named consequence for goal timeline)
-- Session quality rating via 21:30 follow-up (strong / neutral / grind, stored for trend annotation)
-- End-of-block benchmark prompts (triggered by `benchmark_due` flag, biometric validity gate)
-- Supplement timing accountability (cross-reference `MealStore` windows against supplement schedule)
-- Interference-effect-aware commentary (when ACWR >1.3 or HRV suppressed, name session-type interaction)
+**Must have (table stakes):**
+- Explicit directive capture with immediate confirmation, provenance tagging (Amit-stated vs. Klaus-proposed), and recency-wins conflict resolution (not LLM-adjudicated freshness)
+- Directive expiry/TTL by default — every reviewed memory system treats unbounded retention as a bug, and this directly addresses the milestone's own motivating example (a stale "stop nagging about training while I'm in France" directive silently outliving the trip)
+- Ambient ("hidden system note") auto-injection of relevant memory, gated by relevance + recency + importance — not pure cosine similarity, which is the known-inferior baseline every reviewed system improves on
+- Absolute quiet-hours/suppression honoring and notification-budget discipline (already implemented in spirit; must not regress under the new occasion cascade)
 
-**Anti-features (explicitly out of scope — do not build):**
-- Mid-cycle / periodic testing (blueprint is explicit: test only at block ends + Oct/Nov deadlines, not weekly)
-- Coach-override on recovery decisions (Klaus advises, Amit decides — always)
-- Daily micro-macro optimization (flag structural slot misses; do not optimize marginal adjustments)
-- Autonomous plan modification (Klaus coaches the blueprint; Amit modifies it)
-- Real-time session monitoring (architecturally fake in a cron + Telegram system)
-- Injury diagnosis or injury management language (flag warning patterns; never diagnose)
-- Parallel Telegram meal logging (MealStore pipeline via HealthKit already works; a parser creates divergence)
-- Caloric surplus/deficit framing (blueprint uses 6-slot fueling architecture, not CICO)
+**Should have (differentiators — genuinely rare in the reviewed literature):**
+- Agent-proposed directives from observed reactions (reflection learning loop) — no reviewed consumer system self-proposes behavioral rules; the one-line human veto is the correct, literature-consistent mitigation for this being the riskiest, most novel piece
+- Self-explainable proactive decisions (`get_recent_decisions`) that explain silence, not just action — almost no consumer proactive-AI product surfaces this
+- Judgment-gated, fully skippable scheduled occasions (nightly/morning stop being always-fire templates) — the core differentiator matching the milestone's "silence as a valid choice" value statement
+
+**Defer (v2+/fast-follow, not this milestone):**
+- Deeper bitemporal-style directive history (queryable supersession chains) — the lightweight version (never hard-delete, `superseded_by` field) is sufficient at Klaus's single-user data volume
+- Full knowledge-graph memory backend (Zep/Graphiti-style) — not warranted at this scale; the existing Firestore store pattern covers the useful subset
+- Hub-surfaced directive/decision visibility — flagged as a natural v6.1 follow-up, not required for v6.0's backend-first scope
 
 ### Architecture Approach
 
-The v4.0 architecture is a horizontal extension across four existing layers: prompt layer (four prompt files), orchestration layer (main.py render_smart_system + three cron compose functions), tools layer (7 new brain-direct tools), and persistence layer (UserProfileStore schema extension + two new Firestore stores). All four layers have established patterns that v4.0 follows exactly. No new architectural concepts are introduced.
+The target architecture is explicitly a collapse, not an addition: four independent proactive pipelines (tick, nightly, morning, weekly) become one judgment cascade (`core/autonomous.py::run_autonomous_tick`) parameterized by an `occasion` argument, with the existing state-machine wrappers (`nightly_review.py`, `morning_briefing.py`) staying as thin callers that keep their idempotency/dedup/cutoff logic but delegate composition to the shared cascade. New context (standing directives, conversation tail, reconciled training reality, location) is added via the existing sentinel-on-failure gather-isolation pattern already used for 14 sources in `gather_situation()`, and rendered once per call site through shared formatter functions backed by the existing `_READ_CACHE` mechanism — avoiding the "five independent formatters drift" failure mode this codebase has already hit once.
 
-**Major components and their v4.0 roles:**
-1. **`docs/COACHING_GUIDE.md` + `{coaching_guide}` injection** — startup-cached expert knowledge. Single source of truth for interference effect rules, periodization logic, fueling science, benchmark testing protocol. Edited in text, versioned in git, picked up on next deploy.
-2. **`UserProfileStore` (extended schema)** — the living blueprint guide. Brain reads it for dated goals, today's weekly split session, nutrition targets, and `current_block_id`. Framed as a reference guide ("Coaching blueprint:") in `render_smart_system`, not a binding schedule.
-3. **`BlockStore` + `BenchmarkStore` (new Firestore stores)** — block lifecycle and per-facet measurement history. `BlockStore.get_current()` surfaces in all three crons via best-effort gather wrapping. `BenchmarkStore.get_facet_history()` powers per-facet trend commentary in the weekly review.
-4. **D-13 guard replacement** — prompt-only change across four prompt files. No Python code changes required.
-5. **7 new brain-direct tools** — judgment-requiring tools in `SMART_AGENT_DIRECT_TOOLS`; none delegated to the worker.
-6. **Cross-cron coaching topic dedup gate** — `OutreachLogStore` extension (or thin `CoachingTouchStore`) covering all coaching crons, not just the autonomous tick. Per-day per-topic check.
+**Major components:**
+1. `core/llm_client.py::_AnthropicBackend` + `core/pricing.py` — Sonnet-5 compatibility audit, cache_control wiring, cache-token extraction and pricing (Phase 30.5)
+2. `memory/firestore_db.py::StandingDirectiveStore` (new, modeled on `FollowupStore`) + a shared `render_standing_directives_block()` formatter consumed by 5 call sites (chat, triage, compose, follow-up compose, interim legacy-cron injection) (Phase 31)
+3. `memory/firestore_conversation.py::get_recent_window()` (new, per-message `ts` field) — a genuine shared dependency consumed across Phase 31's learning-loop fix, Phase 32's ambient-recall tail-prepend, and Phase 32's `conversation_tail` gather job; must land in Phase 31 per an explicit sequencing amendment (B3)
+4. `core/autonomous.py::gather_situation()` extended with `standing_directives`, `conversation_tail`, `training_reality`, `location` — all must be context-only in `_is_empty_signals`, never triggers, to protect the free-tier cost gate (Phase 32)
+5. `core/autonomous.py::run_autonomous_tick(occasion=...)` — occasion parameter bypasses the empty-gate and selects prompt/routing, reused by nightly/morning behind an `OCCASION_CASCADE` flag for a parallel-run observation window before legacy composer deletion (Phase 33)
+6. `core/tools.py` calendar handlers gain mechanical write-back hooks to `TrainingLogStore` — fires from the tool handler itself, not a prompt instruction, because a prompt instruction is exactly the failure mode this milestone exists to fix (Phase 34)
 
-**Key patterns to follow (all existing):**
-- Omit-empty discipline: missing data keys are absent from the prompt context dict, never `None` placeholders
-- Best-effort gather wrapping: all new gather calls wrapped in try/except, failures log at WARNING
-- Brain-direct for judgment / worker for execution: block lifecycle and benchmark decisions are brain-direct
-- Startup-cached stable content: `_load_coaching_guide()` reads once at startup, no per-message file I/O
+A hard, explicitly-verified constraint threads through the whole build: `core/autonomous.py` must never import `core/nightly_review.py`. The one piece of logic both need (`planned_sessions_for`) moves into the already-neutral `core/training_checkin.py`, reusing a proven acyclic import direction rather than introducing a new dependency edge.
 
 ### Critical Pitfalls
 
-1. **Fabrication regression (D-13 release without data-presence gate)** — Without a Tier A / Tier B contract, the brain conflates blueprint goal numbers with current performance facts. Mitigation: define the two-tier contract in the same commit that removes the guard. Test: coaching query when `TrainingLogStore` has no recent bench data must return "I don't have a recent bench logged, Sir" — not an invented number.
-
-2. **Cross-cron nagging (four independent coaching paths, no shared dedup)** — Morning briefing, proactive alerts, weekly review, and autonomous tick each fire independently on valid coaching signals. Without a shared per-day per-topic gate, the same protein miss or skipped session fires four times in one day, eroding trust. Mitigation: extend `OutreachLogStore` dedup to all coaching crons before any proactive coaching ships.
-
-3. **Rigidity drift (blueprint stored as prescription, not guide)** — If the weekly split is stored with per-session `completed` booleans, any missed session is structurally a failure and Klaus nags repeatedly. Mitigation: store as a weekly template with session priorities and block-level volume targets. Coach against volume completion and trend, not day-specific attendance. This schema decision is hard to retrofit — get it right at ingest time.
-
-4. **v3.0 cron regression** — Adding blueprint context and expert knowledge to existing cron prompts can cause non-coaching outputs (weather alerts, travel time) to disappear from the proactive alerts path. Mitigation: dry-run every modified cron with a fully populated profile; verify non-coaching outputs are unchanged; pin the 630+ test baseline with zero new failures required before any cron change deploys.
-
-5. **Block and benchmark ambiguity (periodic testing, non-comparable benchmarks)** — Without `block_start_date` / `block_end_date` in `UserProfileStore` and a biometric validity gate, Klaus may prompt a 1RM test in Week 3 or compare a tired benchmark to a rested one. Mitigation: benchmark prompts fire only within 3 days of stored `block_end_date`; validity gate checks HRV >= 70% of 7-day baseline and ACWR < 1.2 before allowing the prompt.
+1. **Tick-brain fallback silently inherits the new (expensive) brain model** — `core/tick_brain.py`'s Groq-failure fallback currently reads `SMART_AGENT_*`; the instant Phase 30.5 repoints those to `claude-sonnet-5`, every Groq hiccup lands on Sonnet pricing invisibly. Must ship decoupled `TICK_BRAIN_FALLBACK_*` env vars in the same deploy as the model flip, verified by forcing a Groq error in staging and confirming the fallback logs `gemini-3.5-flash`.
+2. **Prompt-caching billing fields aren't captured, so the new cost tripwire alerts on wrong numbers** — `cache_read_input_tokens`/`cache_creation_input_tokens` must be extracted and priced correctly (reads at ~0.1x, writes at ~1.25x base input) in the same change that ships `cache_control`, verified against the real Anthropic console within ~10%.
+3. **Sonnet's literal instruction-following turns Gemini-era prescriptive prompt rules into over-application bugs** — `smart_agent.md`/`autonomous_triage.md` were empirically tuned against a flash-tier model's weaker instruction-following; a smarter model executes the same `ALWAYS`/`NEVER` imperatives more aggressively, which is the opposite of the milestone's "judgment replacing scripts" goal. Requires a light de-prescription pass before cutover and a deep rewrite across Phases 31-33, verified by eval-harness parity plus a canary comparison on real conversation snippets.
+4. **New gathers silently defeat the free-tier cost gate if not marked context-only** — any new field in `gather_situation()` (conversation tail, standing directives, training_reality, location) that becomes truthy on an ordinary day (chat activity is nearly always true) flips `_is_empty_signals` and spends Groq/Sonnet budget on what used to be free no-ops. Every new gather needs an explicit, documented context-only exclusion, plus a token-budget guard test against Groq's verified per-request ceiling.
+5. **Judgment-driven silence is indistinguishable from infra failure without explicit status tracking** — the milestone's core deliverable is "trust the silences," but an LLM error, Groq outage, or assembler bug also produces silence. Without `status: sent|skipped_by_judgment` actively wired and monitored (not just present in Firestore), a real outage looks identical to healthy autonomy and can run for days unnoticed — the same shape as a known past incident (weeks of silent Groq→paid fallback), but now invisible by design.
 
 ## Implications for Roadmap
 
-All four researchers independently derived the same dependency-ordered build sequence. The phase structure is unambiguous.
+Based on combined research, the milestone's already-approved phase structure (30.5 → 31 → 32 → 33 → 34 → 35) is correct and should not be reordered — all four research passes independently converge on the same dependency chain. The value of this synthesis is less "propose new phases" and more "harden the acceptance criteria within each approved phase" using the specific pitfalls, stack facts, and feature patterns surfaced above.
 
-### Phase A: Blueprint Ingestion + Living Plan
+### Phase 1 (30.5): Brain migration — Sonnet 5 + prompt caching
+**Rationale:** Everything downstream (directive injection, ambient recall, occasion cascade) assumes a working, correctly-metered, non-over-literal brain. Must land first and in the specific internal order the architecture research lays out: decouple tick-brain fallback env → Anthropic backend compatibility audit + cache-token extraction (same change as the cost tripwire) → pricing/LLMUsage field additions → flip `SMART_AGENT_*` env → SELF.md/prompt slimming pass → heartbeat daily-spend tripwire.
+**Delivers:** `claude-sonnet-5` as the live brain with truthful cost metering, prompt caching active on the stable prefix, and a decoupled Gemini fallback for both the smart agent and the tick-brain.
+**Addresses:** Stack research's core recommendation (1h TTL caching, typed SDK support); Pitfalls 1, 2, 3.
+**Avoids:** Silent fallback-cost-inversion (Pitfall 1), wrong-tripwire-numbers (Pitfall 3), sampling-parameter 400 errors and adaptive-thinking truncation (Stack integration points 1-2).
 
-**Rationale:** Master gate — all downstream coaching specificity is blocked without this. Must come first.
+### Phase 2 (31): Standing directives
+**Rationale:** Directives are the first new judgment-input layer and the most self-contained new store — no dependency on ambient memory or the cascade. Must include `get_recent_window()` on `FirestoreConversationStore`, sequenced here (not Phase 32) because the reflection learning-loop fix needs it immediately (the current 6h session read is empty at reflection time on most nights).
+**Delivers:** `StandingDirectiveStore` + capture/list/cancel tools, Step-0 triage veto, reflection learning loop with provenance-gated one-line veto, interim direct injection into legacy nightly/morning composers.
+**Addresses:** Features research's P1 items (directive capture, provenance, TTL, reflection learning loop); Architecture's shared-formatter pattern.
+**Avoids:** Coarse-topic-match over-suppression (Pitfall 5) and vent-captured-as-permanent-directive (Pitfall 6) — both need negative-case eval fixtures and default-bounded expiry, not just the happy path.
 
-**Delivers:** `UserProfileStore` with dated goals (Oct/Nov), weekly split, fueling timeline (6 slots), supplement schedule (7 items), `plan_start_date`, block boundary fields. `update_plan` brain-direct tool. One-shot `scripts/ingest_blueprint.py` CLI ingest script.
+### Phase 3 (32): Unified situation — ambient memory, conversation tail, training reality
+**Rationale:** Depends on Phase 31's `get_recent_window()` primitive. This phase carries the highest reliability risk in the milestone (new chat-critical-path network call) and the highest cost-model risk (prompt growth toward Groq's per-request ceiling), so its acceptance criteria must be the most rigorous.
+**Delivers:** Ambient auto-recall (timeout-guarded, best-effort, off the chat critical path), `conversation_tail`/`training_reality`/`location` gather jobs (all context-only in the empty gate), `forget_memory` hygiene tool shipped alongside auto-recall (not deferred), Groq daily token ledger, token-budget guard test.
+**Uses:** Features research's relevance/recency/importance-weighted retrieval pattern (not pure similarity); Stack research's confirmation that no header exposes Groq's daily cap (must build a local ledger).
+**Implements:** Architecture's gather-isolation and render-once-reuse patterns extended to four new sources.
+**Avoids:** Chat-turn latency regression from an unguarded network call (Pitfall 7 — literally the same incident class, worse blast radius, as a known past 500-error incident); ambient memory poisoning judgment with stale facts (Pitfall 8 — hygiene must ship in the same phase as retrieval); Groq silent-fallback recurrence via token growth rather than a code bug (Pitfall 11).
 
-**Addresses:** UserProfileStore populated from blueprint (table stakes master gate); plan_start_date stored explicitly (prevents block boundary ambiguity pitfall).
+### Phase 4 (33): Occasion cascade
+**Rationale:** Depends on Phase 32's context-only invariant and Groq ledger being in place before nightly/morning traffic routes through triage — otherwise the volume increase silently breaks the free-tier cost model on day one.
+**Delivers:** `occasion` parameter on `run_autonomous_tick`, `OCCASION_CASCADE` flag running legacy and cascade composers in parallel for an observation window, `get_recent_decisions` introspection tool, differentiated failure semantics per surface (tick=silence, nightly=deterministic plain-text fallback, morning=silent skip).
+**Addresses:** Features research's core differentiator (silence as a first-class judged outcome); Architecture's Pattern 3 (occasion as a cascade parameter, not a new pipeline).
+**Avoids:** A fifth independent proactive pipeline (Architecture Anti-Pattern 1); judged-silence-vs-infra-failure ambiguity (Pitfall 9 — needs active status-field monitoring, not just a schema field); flag-and-delete-in-one-PR (Architecture Anti-Pattern 4 / Pitfall's technical-debt table).
 
-**Avoids:** Blueprint-as-raw-markdown technical debt; rigidity drift (weekly template + volume targets, not per-session booleans); block boundary ambiguity (explicit date fields from day one).
+### Phase 5 (34): Write-backs
+**Rationale:** Write-back hooks only depend on stable `core/tools.py` calendar handlers and `TrainingLogStore`, but the idempotency check for directive-gated proactive writes needs Phase 33's occasion machinery and produces the natural dedup key (date+slot) — hence sequenced right after 33.
+**Delivers:** Mechanical, tool-handler-level write-backs on calendar create/move/delete (fires unconditionally on success, never a prompt instruction), idempotency guard against duplicate events/rows on compose-succeeds/delivery-fails retries.
+**Addresses:** The milestone's own root-cause finding (Klaus was told things and didn't durably act) — Architecture Anti-Pattern 5 names this explicitly.
+**Avoids:** Non-idempotent proactive side effects under retry (Pitfall 10) — the write-back layer must double as its own dedup guard, not a separate concern bolted on later.
 
-**Gate:** `UserProfileStore.load()` returns non-empty `dated_goals`, `weekly_split`, `nutrition_targets`, `plan_start_date`.
-
-### Phase B: Coaching Knowledge Layer
-
-**Rationale:** No runtime dependency on Phase A data. Can be built concurrently with Phase A. Must complete before Phase C so the brain has coaching context when it starts naming numbers.
-
-**Delivers:** `docs/COACHING_GUIDE.md` (hybrid-athlete principles, interference effect rules, periodization, session execution, fueling science, benchmark protocols — ~600 tokens, source-tier tagged). Wired into `render_smart_system` as `{coaching_guide}`. Condensed versions appended to three cron-specific prompts.
-
-**Addresses:** Expert coaching knowledge in system prompt (reasoning substrate for all other coaching quality); hallucinated sports science prevention (claim tagging, no derivative physiological predictions).
-
-**Avoids:** Generic-advice regression despite curated knowledge (prompt structured as decision tree, not knowledge dump; dry-run must name specific session, specific numbers, specific recovery trade-off before this phase is done).
-
-**Gate:** Brain demonstrates expert coaching reasoning in dry-run chat: specific session named, specific load named, recovery trade-off framed with numbers.
-
-### Phase C: D-13 Guard Replacement
-
-**Rationale:** Requires Phase A (profile must have real targets before the guard releases). Prompt-only change — no Python code. Must ship the data-presence contract in the same commit as the guard removal.
-
-**Delivers:** Two-tier data-presence contract live in all four coaching prompts. Tier A (blueprint goals) citable as "your target." Tier B (measured data) citable only within recency window (lift <= 14 days, pace <= 7 days, nutrition <= 2 days). Explicit "no recent data" fallback when Tier B is absent or stale.
-
-**Addresses:** D-13 guard released (unblocks session naming with load numbers, load prescription with personal numbers, all number-citing coaching behavior).
-
-**Avoids:** Fabrication regression (Tier A vs Tier B distinction; test with empty TrainingLogStore before shipping); conflict UX failure (recovery-conflict template: fact + conflict + ranked recommendation + "your call").
-
-**Gate:** Coaching query with empty `TrainingLogStore` returns "no recent data" not an invented number. Morning briefing names plan targets when recovery concern fires.
-
-### Phase D: Block and Benchmark Tracking
-
-**Rationale:** Requires Phase A (profile needs `current_block_id` field; `block_end_date` drives benchmark triggers). Phase C should be complete so the brain can name targets when surfacing benchmark trends. Unlocks all progress-tracking and end-of-block behaviors.
-
-**Delivers:** `BlockStore` + `BenchmarkStore` Firestore store classes. Six additional brain-direct tools (`get_plan`, `get_block_status`, `log_benchmark`, `get_benchmark_history`, `start_block`, `end_block`). Block state surfaced in morning briefing, weekly review, and proactive alerts (benchmark trigger check). First training block created.
-
-**Addresses:** Block tracking (unlocks per-facet progress, end-of-block benchmark prompts, skip/off-plan deficit calculation, block-relative weekly review framing); end-of-block benchmark prompts with biometric validity gate.
-
-**Avoids:** New cron anti-pattern (reuse existing 21:30 `benchmark_due` flag check — no 8th scheduler job); non-comparable benchmark results (validity gate defers on poor biometric state); block ambiguity (explicit `block_end_date` drives all triggers, not week-number inference from the 16-week table).
-
-**Gate:** `BlockStore.get_current()` returns active block with correct week number. Benchmark prompt fires within 3 days of `block_end_date`. Weekly review surfaces per-facet benchmark trend.
-
-### Phase E: Strict Proactive + Reactive Coaching (Integration Validation)
-
-**Rationale:** Behavioral outcome of Phases A–D working together. No new Python logic for the coaching behaviors themselves. This phase adds the cross-cron coordination layer and validates the full coaching stack end-to-end.
-
-**Delivers:** Cross-cron coaching topic dedup gate (extend `OutreachLogStore` per-day per-topic across all coaching crons). Macro adherence vs fueling timeline slot mapping. Morning briefing session-context framing with named session + recovery state + fueling reminder. Skip/off-plan pushback with deficit calculation. Session quality rating in 21:30 flow. End-to-end validation across all four coaching touchpoints.
-
-**Addresses:** Cross-cron nagging prevention (shared per-day per-topic dedup); macro adherence vs fueling timeline (slot-to-timestamp window mapping); skip/off-plan strict pushback; morning briefing session-context framing; interference-effect-aware commentary (total weekly load tier gates volume recommendations).
-
-**Avoids:** Over-coaching / nagging (dedup gate covers all paths, not just autonomous tick); interference-effect overreach (total weekly stress computation gates volume recommendations at HIGH load tier); v3.0 cron regression (dry-run all modified crons; non-coaching outputs verified unchanged; 630+ test suite zero new failures).
-
-**Validation scenarios (required before phase closes):** Recovery conflict with threshold run scheduled; off-plan nutrition critique; mid-block progress question; end-of-block benchmark trigger on good biometric state; end-of-block benchmark trigger on poor biometric state (should defer); supplement miss at evening check-in; same topic appears in morning briefing (should be suppressed at evening check-in).
+### Phase 6 (35): Evals, hardening, subtraction
+**Rationale:** Purely additive/subtractive with no new integration surface — must come last so fixtures can be written against a stable system, and legacy-composer deletion can only happen after the Phase 33 flag has been observed stable across a multi-day window.
+**Delivers:** ≥6 new judgment eval fixtures (including required negative cases per Pitfall 5/9), token-budget guard test, deletion of `_compose_nightly`/`_compose_briefing` legacy branches + `OCCASION_CASCADE` flag + dead code (`proactive_alerts.py`, TickTick/worktree residue), updated `CLAUDE.md` invariants.
+**Addresses:** Features research's anti-feature warning (eval harness must score judgment quality and silence-as-win, not raw tick-to-message conversion — a documented "vanity metric" trap).
 
 ### Phase Ordering Rationale
 
-- Phases A → C are strictly sequential: the profile must be populated before the guard releases, because the guard exists to prevent citing numbers that don't exist yet.
-- Phase B can overlap Phase A: coaching knowledge is a static doc with no runtime dependency on profile data. Draft COACHING_GUIDE.md and wire the injection while Phase A ingest script is being built.
-- Phase D requires Phase A for the `current_block_id` field and block date fields, but the Firestore store classes and tools can be scaffolded before Phase A completes. The first `start_block` call happens after the profile is populated.
-- Phase E is the integration and coordination step — validates emergent behavior, adds the cross-cron dedup gate, and closes the milestone.
+- Brain migration (30.5) must precede any prompt-philosophy rewrite (31-33) because the de-prescription pass assumes Sonnet's more literal instruction-following — reordering would mean rewriting prompts twice.
+- `get_recent_window()` must land in Phase 31, not 32, because the Phase 31 reflection learning-loop bug fix needs it immediately — this is a hard dependency surfaced by direct codebase inspection (`core/reflection.py:159` reads an empty 6h window at reflection time), not a preference.
+- The context-only invariant and Groq token ledger (32) must be complete before Phase 33 routes nightly/morning traffic through triage — this is the single highest-leverage cost-safety gate in the whole milestone, since it protects against the free-tier budget being silently defeated by ordinary chat volume.
+- The `OCCASION_CASCADE` flag introduction (33) and legacy composer deletion (35) must be two separate phases/PRs, never collapsed — this is independently confirmed by both the architecture anti-patterns and the pitfalls technical-debt table as a rollback-safety requirement.
 
 ### Research Flags
 
-Phases requiring careful validation during planning (domain is understood, execution details need verification):
-- **Phase C (D-13 replacement):** The Tier A / Tier B contract is conceptually clear but easy to miscalibrate. Test with three scenarios: fresh data present, stale data (should note staleness), no data at all (should name the gap). Both over-restrictive and over-permissive outcomes are failure modes.
-- **Phase E (cross-cron dedup):** The `OutreachLogStore` scope extension needs an explicit taxonomy of coaching topic keys before implementation. Define the topic list at Phase E planning time to avoid ambiguous suppression decisions during coding.
-- **Phase B (COACHING_GUIDE.md content):** Writing the coaching knowledge doc requires time and care. Every claim needs a source-tier tag. LOW-confidence claims (specific thresholds not in the blueprint) must be prefaced with "research suggests" in coaching output. Allocate explicit authoring time.
+Phases likely needing deeper research during planning (`--research-phase`):
+- **Phase 31 (standing directives):** The directive-scoping veto logic (avoiding both under- and over-suppression) and the venting-vs-genuine-directive classification are genuinely hard LLM-judgment problems without a deterministic solution — worth a focused pass on prompt design and eval fixture construction before implementation.
+- **Phase 32 (unified situation):** The token-budget arithmetic (current triage ≈3.2-3.7K tokens against an admission ceiling that leaves as little as ~0.3K headroom once all Phase 32 additions land) is tight enough that implementation should re-verify the actual combined prompt size empirically, not from the estimates in this research, before shipping.
 
-Phases with standard patterns (skip additional research):
-- **Phase A:** Firestore merge-patch schema extension is established practice in this codebase. The CLI ingest script follows `scripts/ingest_garmin_zip.py` pattern.
-- **Phase B (wiring):** `_load_self_md()` / `{self_md}` pattern is live and proven. Appending coaching context to cron prompts follows the `meal_audit.md` append pattern in `weekly_training_review.py`.
-- **Phase D:** `BlockStore` and `BenchmarkStore` follow the `TrainingLogStore` pattern exactly. The 7 new tools follow the `_HANDLERS` dispatch pattern exactly.
+Phases with standard, well-documented patterns (skip research-phase):
+- **Phase 30.5 (brain migration):** Stack research is HIGH confidence and directly actionable — official Anthropic docs cover every integration point (sampling parameters, adaptive thinking, caching, usage fields) with no ambiguity.
+- **Phase 34 (write-backs):** Mechanical, well-scoped, reuses existing `TrainingLogStore` patterns with no new architectural questions.
+- **Phase 35 (evals/hardening):** Additive/subtractive work against an already-understood system; the main task is fixture-writing, not design.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All extension points verified from live source code; zero new dependencies; every primitive already imported and used |
-| Features | HIGH | Grounded in Amit's actual blueprint (primary source) + sports-science literature; anti-features explicit from the blueprint philosophy |
-| Architecture | HIGH | All integration points verified with line numbers from live source; `render_smart_system` pattern, `_HANDLERS` pattern, TrainingLogStore pattern all confirmed live |
-| Pitfalls | HIGH | Drawn from live codebase analysis, shipped v3.0 artifacts, and blueprint document; not speculative |
+| Stack | HIGH | All Anthropic facts verified against official `platform.claude.com` docs published for the Sonnet 5 launch; Groq limits verified against official docs and cross-checked by an independent tracker; direct codebase inspection confirms current call-site behavior |
+| Features | MEDIUM-HIGH | Patterns cross-verified across 3+ independent named systems (ChatGPT, Claude, MemGPT/Letta, Zep/Graphiti, Stanford Generative Agents) per finding; Klaus-specific complexity estimates are HIGH confidence (direct codebase knowledge), but the "agent-proposed directives from reactions" differentiator has no directly comparable production reference system, so its risk/complexity estimate is inherently more speculative |
+| Architecture | HIGH | All findings verified against live source with file:line citations; the two approved planning documents were treated as primary sources and cross-checked against the actual files they reference, not inferred |
+| Pitfalls | HIGH | Grounded in the live codebase, the approved plan and review, four known past incidents in this exact system, and external sources on prompt caching, memory poisoning, Groq limits, and idempotent agent side effects |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **COACHING_GUIDE.md content authoring:** The injection mechanism is clear, but the actual coaching knowledge (interference-effect rules as applied to Amit's specific AM/PM split, exact benchmark protocols, fueling science with source tiers) must be authored carefully. This is a writing task, not an engineering task — allocate explicit time in Phase B.
-- **Fueling timeline slot-to-timestamp mapping:** The six fueling slots have approximate time windows ("post-AM run" = 06:30–09:00 approximately). The slot-to-window mapping table `(slot_name, start_time, end_time)` needs to be defined before the macro adherence feature in Phase E can be implemented correctly.
-- **Cross-cron dedup topic taxonomy:** The list of coaching topic keys (what counts as one dedup-able "topic") needs to be defined at Phase E planning time, not discovered during coding.
-- **Firestore vs Postgres for benchmark results:** STACK.md and ARCHITECTURE.md reached slightly different conclusions. Recommendation: start with Firestore `BenchmarkStore` (consistent with existing patterns, lower friction) and add the Postgres table only if multi-block trend queries become unwieldy after 3+ blocks of data.
+- **Actual Sonnet-5 tokenized size of `smart_agent.md`/`autonomous_triage.md`:** The milestone's "~4.5K tokens off every call" slimming target was sized against the old (Gemini) token count; Sonnet 5's new tokenizer produces ~30% more tokens for the same text. Re-run `client.messages.count_tokens(...)` against the actual model before treating any slimming number as a phase acceptance criterion — flag this for Phase 30.5 requirements, not just as an FYI.
+- **Combined triage prompt size under Phase 32's full gather load:** Research estimates ~7-8K tokens/call against Groq's ~6-8K TPM per-request admission window, leaving thin headroom — this needs empirical re-verification during Phase 32 implementation with a guard test that encodes the actually-verified ceiling, not the estimate in this document.
+- **Weekly-review fold-in decision (E1):** Explicitly left as an open decision in the approved plan/review — whether `weekly_training_review.py` gets a compose swap into the occasion cascade or stays a legacy path. Must be resolved as an explicit checkpoint before Phase 35 cleanup, not left ambiguous (per both the architecture research and the pitfalls technical-debt table).
+- **Directive-scoping veto precision in production:** The research identifies the over/under-suppression risk and a design mitigation (require stated scope to plausibly cover the specific occasion), but real precision can only be validated against production directive text once Amit starts using the feature — budget for iteration after initial ship, informed by the Phase 35 eval fixtures.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-
-- `memory/firestore_db.py` — `UserProfileStore` scaffold (lines 93–168), `TrainingLogStore`, `MealStore` patterns — live code read
-- `core/main.py` — `AgentOrchestrator.__init__`, `render_smart_system` (lines 239–307), `_load_self_md()` pattern — live code read
-- `core/tools.py` — `TOOL_SCHEMAS`, `SMART_AGENT_DIRECT_TOOLS`, `_HANDLERS` dispatch (lines 39–57, 651–827, 1433–1471) — live code read
-- `core/weekly_training_review.py` — `_gather_week_data`, meal_audit append pattern (lines 42–266) — live code read
-- `core/training_checkin.py` — `compute_recovery_concern`, D-13 guard location — live code read
-- `prompts/smart_agent.md` — `{training_profile}` placeholder, D-13 training section (lines 85–100) — live code read
-- `prompts/morning_briefing.md` — D-13 guard (lines 138–143) — live code read
-- `prompts/proactive_alert.md` — D-13 guard (lines 22–23) — live code read
-- Hybrid Athlete Master Blueprint: Oct/Nov Peak V2 — dated goals, weekly split, fueling architecture, supplement schedule, 16-week aerobic progression — primary source for all blueprint-specific details
-- `.planning/PROJECT.md` — v4.0 goal statement, D-13 context, facet-mastery philosophy, advise-not-override invariant
+- [What's new in Claude Sonnet 5](https://platform.claude.com/docs/en/about-claude/models/whats-new-sonnet-5) — sampling-parameter 400 behavior, adaptive thinking, tokenizer change, pricing
+- [Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) — cache prefix minimums, TTL/pricing multipliers, usage fields
+- [Adaptive thinking](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking) — effort levels, max_tokens interaction, cache-breakpoint interaction
+- [console.groq.com/docs/rate-limits](https://console.groq.com/docs/rate-limits) and [model card](https://console.groq.com/docs/model/openai/gpt-oss-120b) — Groq free-tier limits, header semantics
+- PyPI `anthropic` package JSON API — current SDK version verification
+- `~/.claude/plans/klaus-is-extremely-stupid-graceful-cascade.md` (approved v6.0 plan) and `~/.claude/plans/mellow-puzzling-nest.md` (approved review/amendments) — primary sources, cross-checked against code
+- Klaus codebase direct inspection (`core/main.py`, `core/autonomous.py`, `core/tick_brain.py`, `core/llm_client.py`, `core/nightly_review.py`, `core/morning_briefing.py`, `memory/firestore_db.py`, `memory/firestore_conversation.py`, `core/tools.py`, `interfaces/web_server.py`) — file:line verified integration points and known incident precedent
+- `.planning/PROJECT.md` — milestone scope, locked decisions, phase target features
 
 ### Secondary (MEDIUM confidence)
+- OpenAI/Anthropic memory product documentation (ChatGPT Memory FAQ, Claude memory tool docs) — reference-system comparison
+- Letta/MemGPT, Zep/Graphiti architecture docs and blog posts — directive-vs-fact distinction, provenance, bitemporal supersession patterns
+- [grizzlypeaksoftware.com — Groq API Free Tier Limits](https://www.grizzlypeaksoftware.com/articles/p/groq-api-free-tier-limits-in-2026-what-you-actually-get-uwysd6mb) — third-party cross-check, matches official docs exactly
+- Idempotent agent side-effect pattern articles (Chanl, tianpan.co) — check-before-act pattern for proactive calendar writes
 
-- Barbell Medicine: Concurrent Training and the Interference Effect — interference effect management rules
-- TrainingPeaks: Implementing Block Periodization — block phase structure and benchmark cadence
-- ACWR optimal zone research (PMC:8138569) — 0.8–1.3 zone, injury risk at >1.3
-- Block periodization research (PMC:7693826) — accumulation/transmutation/realization structure
-- Concurrent training meta-analysis (PMC:11688070) — conditions for manageable interference effect
-- Fathom Nutrition: Hybrid Training Blueprint — fueling science for concurrent athletes
-- Lift Living: Nutrition Guide for Hybrid Athletes — fueling timeline principles
-
-### Tertiary (LOW confidence — background only, do not cite specific statistics in coaching output)
-
-- Creatine + Beta-Alanine co-supplementation (MDPI:2072-6643/17/13/2074) — individual evidence strong; combined advantage contested
-- TrainHeroic: How to Build a Culture of Athlete Accountability — skip/off-plan communication framing
+### Tertiary (LOW-MEDIUM confidence, used as directional signal)
+- arXiv papers on memory conflict resolution, forgetting, and over-personalization (2606.01435, 2604.02280, 2601.13722, 2606.06054) — recency-wins default, sycophancy risk, retrieval-as-decision framing; single-paper findings, not yet production-proven at Klaus's scale
+- Stanford Generative Agents (Park et al., arXiv 2304.03442) — recency/importance/relevance retrieval scoring, foundational but a research simulation, not a production system
 
 ---
-*Research completed: 2026-06-03*
+*Research completed: 2026-07-17*
 *Ready for roadmap: yes*
