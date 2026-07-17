@@ -514,3 +514,303 @@ def test_check_push_health_registered_in_collect_signals_tuple(monkeypatch):
         heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
     assert called["push"] is True
 
+
+# ---------------------------------------------------------------------------
+# Phase 30.5 Plan 05 — daily cost tripwire (BRAIN-04, D-01..D-04)
+# ---------------------------------------------------------------------------
+
+def _mock_tripwire_stores(monkeypatch, *, summary, already_fired):
+    """Patch memory.firestore_db.LLMUsageStore/CostTripwireLogStore so
+    check_daily_spend() never reaches real Firestore."""
+    from unittest.mock import MagicMock, patch
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+    mock_usage_store = MagicMock()
+    mock_usage_store.summary_for_date.return_value = summary
+    mock_tripwire_store = MagicMock()
+    mock_tripwire_store.already_fired.return_value = already_fired
+
+    return (
+        patch("memory.firestore_db.LLMUsageStore", return_value=mock_usage_store),
+        patch("memory.firestore_db.CostTripwireLogStore", return_value=mock_tripwire_store),
+        mock_tripwire_store,
+    )
+
+
+def test_daily_cost_alert_threshold_defaults_on_malformed_env(monkeypatch):
+    """T-30.5-13: a malformed KLAUS_DAILY_COST_ALERT falls back to $5.0, never raises."""
+    from core import heartbeat
+    monkeypatch.setenv("KLAUS_DAILY_COST_ALERT", "not-a-number")
+    assert heartbeat._parse_daily_cost_alert_threshold() == 5.0
+
+
+def test_daily_cost_alert_threshold_parses_valid_env(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setenv("KLAUS_DAILY_COST_ALERT", "12.5")
+    assert heartbeat._parse_daily_cost_alert_threshold() == 12.5
+
+
+def test_daily_cost_alert_threshold_defaults_when_unset(monkeypatch):
+    from core import heartbeat
+    monkeypatch.delenv("KLAUS_DAILY_COST_ALERT", raising=False)
+    assert heartbeat._parse_daily_cost_alert_threshold() == 5.0
+
+
+def test_check_daily_spend_under_threshold_returns_none(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setenv("KLAUS_DAILY_COST_ALERT", "5")
+    summary = {"total_cost_usd": 1.23, "smart_cost_usd": 1.0, "worker_cost_usd": 0.23}
+    patch_usage, patch_tripwire, mock_tripwire = _mock_tripwire_stores(
+        monkeypatch, summary=summary, already_fired=False)
+    with patch_usage, patch_tripwire:
+        result = heartbeat.check_daily_spend()
+    assert result is None
+    mock_tripwire.mark_fired.assert_not_called()
+
+
+def test_check_daily_spend_already_fired_returns_none(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setenv("KLAUS_DAILY_COST_ALERT", "5")
+    summary = {"total_cost_usd": 12.0, "smart_cost_usd": 10.0, "worker_cost_usd": 2.0}
+    patch_usage, patch_tripwire, mock_tripwire = _mock_tripwire_stores(
+        monkeypatch, summary=summary, already_fired=True)
+    with patch_usage, patch_tripwire:
+        result = heartbeat.check_daily_spend()
+    assert result is None
+    mock_tripwire.mark_fired.assert_not_called()
+
+
+def test_check_daily_spend_over_threshold_composes_alert(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setenv("KLAUS_DAILY_COST_ALERT", "5")
+    summary = {
+        "total_cost_usd": 12.0, "smart_cost_usd": 9.0, "worker_cost_usd": 2.5,
+        "cost_tripwire_cost_usd": 0.5,
+        "total_cache_read_tokens": 800, "total_in_tokens": 200,
+    }
+    patch_usage, patch_tripwire, mock_tripwire = _mock_tripwire_stores(
+        monkeypatch, summary=summary, already_fired=False)
+    monkeypatch.setattr(heartbeat, "_compose_spend_alert", lambda payload: "composed alert text")
+    with patch_usage, patch_tripwire:
+        result = heartbeat.check_daily_spend()
+    assert result is not None
+    assert result["text"] == "composed alert text"
+    assert result["summary"] == summary
+    assert "date" in result
+    # mark_fired must NOT be called here — Task 2 gates it on successful send.
+    mock_tripwire.mark_fired.assert_not_called()
+
+
+def test_check_daily_spend_never_raises_on_store_error(monkeypatch):
+    """T-30.5-13/blocking-error safety: any internal error returns None, never raises."""
+    from core import heartbeat
+    from unittest.mock import patch
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    with patch("memory.firestore_db.LLMUsageStore", side_effect=RuntimeError("boom")):
+        result = heartbeat.check_daily_spend()
+    assert result is None
+
+
+def test_cost_drivers_ranks_top_purposes_by_cost():
+    from core.heartbeat import _cost_drivers
+    summary = {
+        "total_cost_usd": 12.0, "smart_cost_usd": 9.0, "worker_cost_usd": 2.5,
+        "cost_tripwire_cost_usd": 0.5,
+    }
+    drivers = _cost_drivers(summary, top_n=2)
+    assert drivers == [("smart", 9.0), ("worker", 2.5)]
+
+
+def test_cache_hit_rate_computes_fraction():
+    from core.heartbeat import _cache_hit_rate
+    summary = {"total_cache_read_tokens": 800, "total_in_tokens": 200}
+    rate = _cache_hit_rate(summary)
+    assert abs(rate - 0.8) < 1e-9
+
+
+def test_cache_hit_rate_zero_when_no_data():
+    from core.heartbeat import _cache_hit_rate
+    assert _cache_hit_rate({}) == 0.0
+
+
+def test_spend_plain_text_fallback_contains_key_numbers():
+    from core.heartbeat import _spend_plain_text_fallback
+    payload = {
+        "date": "2026-07-16", "total_cost_usd": 12.0, "threshold": 5.0,
+        "top_drivers": [("smart", 9.0), ("worker", 2.5)], "cache_hit_rate": 0.8,
+    }
+    msg = _spend_plain_text_fallback(payload)
+    assert "12.00" in msg
+    assert "5.00" in msg
+    assert "smart" in msg and "9.00" in msg
+    assert "80%" in msg
+
+
+def test_compose_spend_alert_uses_purpose_cost_tripwire(monkeypatch):
+    """D-04/T-30.5-15: the compose call must use purpose='cost_tripwire' (auditable cost)."""
+    from core import heartbeat
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def chat(self, *, messages, system, purpose):
+            captured["purpose"] = purpose
+            return {"text": "a real Klaus-composed alert"}
+
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+    monkeypatch.setattr("core.llm_client.LLMClient", _FakeClient)
+    payload = {
+        "date": "2026-07-16", "total_cost_usd": 12.0, "threshold": 5.0,
+        "top_drivers": [("smart", 9.0)], "cache_hit_rate": 0.8,
+    }
+    result = heartbeat._compose_spend_alert(payload)
+    assert result == "a real Klaus-composed alert"
+    assert captured["purpose"] == "cost_tripwire"
+
+
+def test_compose_spend_alert_falls_back_on_llm_failure(monkeypatch):
+    """D-04: if the Sonnet compose call fails, use the deterministic template."""
+    from core import heartbeat
+
+    class _RaisingClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, *, messages, system, purpose):
+            raise RuntimeError("Anthropic is down")
+
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+    monkeypatch.setattr("core.llm_client.LLMClient", _RaisingClient)
+    payload = {
+        "date": "2026-07-16", "total_cost_usd": 12.0, "threshold": 5.0,
+        "top_drivers": [("smart", 9.0)], "cache_hit_rate": 0.8,
+    }
+    result = heartbeat._compose_spend_alert(payload)
+    assert "12.00" in result
+    assert "5.00" in result
+
+
+# ---------------------------------------------------------------------------
+# Phase 30.5 Plan 05 Task 2 — wiring _send_daily_spend_alert into run_tick
+# ---------------------------------------------------------------------------
+
+def test_send_daily_spend_alert_sends_and_marks_fired_on_success(monkeypatch):
+    """The tripwire is sent via send_and_inject, then mark_fired is called
+    only after that send succeeds."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-16", "text": "spend alert text", "summary": {"total_cost_usd": 12.0}}
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: alert)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append((text, kw))
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["date"] = date_str
+            marked["summary"] = summary
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert sent == [("spend alert text", {"inject_into_conversation": True, "message_class": "alert"})]
+    assert marked == {"date": "2026-07-16", "summary": {"total_cost_usd": 12.0}}
+
+
+def test_send_daily_spend_alert_no_alert_sends_nothing(monkeypatch):
+    """Second heartbeat tick on the same date: check_daily_spend returns None
+    (already_fired) -> no send, no mark_fired call."""
+    import asyncio
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: None)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append(text)
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {"called": False}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert sent == []
+    assert marked["called"] is False
+
+
+def test_send_daily_spend_alert_send_failure_leaves_not_fired(monkeypatch):
+    """A simulated send failure must NOT call mark_fired — retry-safe on the
+    next tick (mirrors OutreachLogStore D-10 gating)."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-16", "text": "spend alert text", "summary": {"total_cost_usd": 12.0}}
+    monkeypatch.setattr(heartbeat, "check_daily_spend", lambda: alert)
+
+    async def _failing_send(bot, text, **kw):
+        raise RuntimeError("Telegram send failed")
+    monkeypatch.setattr(heartbeat, "send_and_inject", _failing_send)
+
+    marked = {"called": False}
+    class _FakeTripwireStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_fired(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.CostTripwireLogStore", _FakeTripwireStore)
+
+    # Never raises into the caller (wrapped in try/except).
+    asyncio.run(heartbeat._send_daily_spend_alert(object()))
+
+    assert marked["called"] is False
+
+
+def test_run_tick_invokes_daily_spend_alert(monkeypatch):
+    """run_tick must call _send_daily_spend_alert as a separate guarded step,
+    outside _collect_signals/_tiers_for_now."""
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "_load_config", lambda: {
+        "enabled": True, "quiet_start": "22:00", "quiet_end": "07:00",
+        "timezone": "Asia/Jerusalem", "digest_hour": 9,
+        "weekly_digest_day": 1, "reping_interval_hours": 24})
+    monkeypatch.setattr(heartbeat, "_collect_signals", lambda **k: [])
+    monkeypatch.setattr(heartbeat, "_register_incidents", lambda crits, cfg: [])
+    monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
+    monkeypatch.setattr(heartbeat, "_run_tick_brain_pass", lambda s, **k: None)
+
+    async def _noop_drain(bot, now, cfg):
+        pass
+    monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
+
+    called = {"spend": False}
+    async def _spy_spend(bot):
+        called["spend"] = True
+    monkeypatch.setattr(heartbeat, "_send_daily_spend_alert", _spy_spend)
+
+    noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    asyncio.run(heartbeat.run_tick(object(), now=noon))
+
+    assert called["spend"] is True
+
