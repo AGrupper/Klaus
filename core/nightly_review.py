@@ -266,6 +266,28 @@ def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> 
     except Exception:
         logger.warning("nightly_review: LLM composition failed", exc_info=True)
 
+    # Phase 30.5 Plan 06 (BRAIN-01) — before dropping to the deterministic
+    # plain-text template, try the SMART_AGENT_FALLBACK_* Gemini compose (same
+    # 2-tier shape as core/reflection.py::_brain_reflect). Silent try/except —
+    # a fallback failure must never crash the nightly-review cron.
+    try:
+        from core.llm_client import LLMClient
+        client_fb = LLMClient(
+            backend=os.environ["SMART_AGENT_FALLBACK_BACKEND"],
+            model=os.environ["SMART_AGENT_FALLBACK_MODEL"],
+            api_key=os.environ["SMART_AGENT_FALLBACK_API_KEY"],
+        )
+        response_fb = client_fb.chat(
+            messages=[{"role": "user", "content": user_message}],
+            system=system_prompt,
+            purpose="nightly_review",
+        )
+        text_fb = (response_fb.get("text") or "").strip()
+        if text_fb:
+            return text_fb
+    except Exception:
+        logger.warning("nightly_review: LLM fallback composition failed", exc_info=True)
+
     return _plain_text_fallback(journal, tomorrow)
 
 
