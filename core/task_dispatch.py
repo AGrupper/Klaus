@@ -103,7 +103,9 @@ def enqueue_update(payload: dict) -> bool:
         return False
 
 
-def enqueue_hub_message(content: str, user_id: int) -> bool:
+def enqueue_hub_message(
+    content: str, user_id: int, attachments: list[dict] | None = None
+) -> bool:
     """Enqueue a hub chat message for full-CPU agent processing.
 
     Mirrors enqueue_update exactly — same queue, same OIDC token, same
@@ -120,6 +122,10 @@ def enqueue_hub_message(content: str, user_id: int) -> bool:
         content: The user's message text.
         user_id: The Telegram user ID (FirestoreConversationStore key) so the
                  agent turn shares the same conversation history as Telegram.
+        attachments: Optional attachment metadata dicts from /api/chat/upload
+                 ({id, kind, mime, name, size}). Metadata only — the bytes
+                 stay in GCS (Cloud Tasks bodies cap at ~1MB) and the worker
+                 re-downloads them by id.
 
     Returns:
         True if the task was created; False on ANY failure (queue env unset,
@@ -139,13 +145,16 @@ def enqueue_hub_message(content: str, user_id: int) -> bool:
 
         client = _get_client()
         parent = client.queue_path(project, location, queue)
+        payload: dict = {"content": content, "user_id": user_id}
+        if attachments:
+            payload["attachments"] = attachments
         task = {
             "dispatch_deadline": {"seconds": _DISPATCH_DEADLINE_SECONDS},
             "http_request": {
                 "http_method": "POST",
                 "url": f"{base_url}/internal/process-hub-message",
                 "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"content": content, "user_id": user_id}).encode("utf-8"),
+                "body": json.dumps(payload).encode("utf-8"),
                 "oidc_token": {
                     "service_account_email": sa_email,
                     # WHY: audience must match what _verify_cron_request

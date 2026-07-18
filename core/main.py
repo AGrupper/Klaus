@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -68,6 +69,25 @@ CONNECTIVITY_ERROR_TEXT = (
 FALLBACK_DISCLOSURE_TEXT = (
     "\n\n_(Running on backup reasoning at the moment, Sir — primary's stepped out.)_"
 )
+
+
+# ------------------------------------------------------------------ #
+# Inbound attachments                                                #
+# ------------------------------------------------------------------ #
+
+@dataclass(frozen=True)
+class InboundAttachment:
+    """One image or PDF riding along with a user message for a single turn.
+
+    Transient by design: the bytes are injected into a throwaway copy of the
+    message list inside ``_run_smart_loop`` and never persisted — history keeps
+    only the text, so the model sees the attachment on the turn it arrives and
+    the reply carries the analysis forward.
+    """
+
+    data: bytes
+    mime_type: str
+    kind: str  # "image" | "pdf" — selects the content-block type emitted
 
 
 # ------------------------------------------------------------------ #
@@ -475,16 +495,15 @@ class AgentOrchestrator:
         self,
         user_message: str,
         user_id: int,
-        photo_bytes: bytes | None = None,
-        photo_mime_type: str | None = None,
+        attachments: list[InboundAttachment] | None = None,
     ) -> str:
         """Process one user message through the full dual-model pipeline.
 
         Args:
-            user_message:    Raw text from the user interface.
-            user_id:         Unique identifier for the user (Telegram ID or similar).
-            photo_bytes:     Optional raw bytes of an attached photo.
-            photo_mime_type: Optional MIME type of an attached photo.
+            user_message: Raw text from the user interface.
+            user_id:      Unique identifier for the user (Telegram ID or similar).
+            attachments:  Optional images/PDFs for this turn only (transient —
+                          only the text is persisted to history).
 
         Returns:
             The agent's final response string, ready to send to the user.
@@ -514,20 +533,12 @@ class AgentOrchestrator:
         messages = self.conversation_manager.get(user_id)
 
         # Run the Smart Agent orchestration loop.
-        if photo_bytes is not None:
-            response_text = self._run_smart_loop(
-                messages,
-                smart_system,
-                worker_system,
-                photo_bytes=photo_bytes,
-                photo_mime_type=photo_mime_type,
-            )
-        else:
-            response_text = self._run_smart_loop(
-                messages,
-                smart_system,
-                worker_system,
-            )
+        response_text = self._run_smart_loop(
+            messages,
+            smart_system,
+            worker_system,
+            attachments=attachments,
+        )
 
         # Guard against an empty/whitespace-only reply (e.g. an LLM failure
         # path that yields ""). Without this, an empty assistant turn gets
@@ -557,8 +568,7 @@ class AgentOrchestrator:
         messages: list[dict],
         smart_system: str,
         worker_system: str,
-        photo_bytes: bytes | None = None,
-        photo_mime_type: str | None = None,
+        attachments: list[InboundAttachment] | None = None,
     ) -> str:
         """Run the Smart Agent tool-use loop until it produces a final text response.
 
@@ -571,25 +581,30 @@ class AgentOrchestrator:
         import copy
         current_messages = copy.deepcopy(messages)
 
-        # Inject the photo bytes as base64 into the last user message block if present.
-        if photo_bytes and photo_mime_type and current_messages:
+        # Inject attachment bytes as base64 content blocks into the last user
+        # message of the local copy: "image" blocks for images, Anthropic
+        # "document" blocks for PDFs. An empty text is omitted entirely —
+        # Anthropic rejects empty text blocks (image-only messages).
+        if attachments and current_messages:
             last_msg = current_messages[-1]
             if last_msg.get("role") == "user":
                 import base64
-                photo_base64 = base64.b64encode(photo_bytes).decode("utf-8")
                 user_content = last_msg.get("content")
                 if isinstance(user_content, str):
-                    last_msg["content"] = [
-                        {"type": "text", "text": user_content},
-                        {
-                            "type": "image",
+                    blocks: list[dict] = []
+                    if user_content:
+                        blocks.append({"type": "text", "text": user_content})
+                    for att in attachments:
+                        block_type = "document" if att.kind == "pdf" else "image"
+                        blocks.append({
+                            "type": block_type,
                             "source": {
                                 "type": "base64",
-                                "media_type": photo_mime_type,
-                                "data": photo_base64,
-                            }
-                        }
-                    ]
+                                "media_type": att.mime_type,
+                                "data": base64.b64encode(att.data).decode("utf-8"),
+                            },
+                        })
+                    last_msg["content"] = blocks
 
         # Extract last user message to see if we should include self-inspect schemas
         last_user_text = ""

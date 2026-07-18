@@ -16,7 +16,7 @@ import os
 
 from telegram import Update
 
-from core.main import AgentOrchestrator
+from core.main import AgentOrchestrator, InboundAttachment
 from core.push_sender import send_push_to_all
 
 logger = logging.getLogger(__name__)
@@ -97,8 +97,7 @@ class MessageRouter:
 
         message_text = update.message.text or update.message.caption or ""
 
-        photo_bytes = None
-        photo_mime_type = None
+        attachments: list[InboundAttachment] | None = None
 
         if update.message.photo:
             try:
@@ -106,7 +105,11 @@ class MessageRouter:
                 photo = update.message.photo[-1]
                 file = await photo.get_file()
                 photo_bytes = bytes(await file.download_as_bytearray())
-                photo_mime_type = "image/jpeg"
+                attachments = [
+                    InboundAttachment(
+                        data=photo_bytes, mime_type="image/jpeg", kind="image"
+                    )
+                ]
                 logger.info("Successfully downloaded photo, size=%d bytes", len(photo_bytes))
             except Exception as e:
                 logger.exception("Failed to download Telegram photo: %s", e)
@@ -139,8 +142,7 @@ class MessageRouter:
                 update,
                 telegram_user_id,
                 message_text,
-                photo_bytes=photo_bytes,
-                photo_mime_type=photo_mime_type,
+                attachments=attachments,
             )
 
     # ------------------------------------------------------------------ #
@@ -314,17 +316,15 @@ class MessageRouter:
         update: Update,
         telegram_user_id: int,
         message_text: str,
-        photo_bytes: bytes | None = None,
-        photo_mime_type: str | None = None,
+        attachments: list[InboundAttachment] | None = None,
     ) -> None:
-        """Forward a message (text and optional photo) to the orchestrator and reply.
+        """Forward a message (text and optional attachments) to the orchestrator and reply.
 
         Args:
             update:           The originating Telegram Update.
             telegram_user_id: Verified, allow-listed Telegram user ID.
             message_text:     Raw text content or caption of the message.
-            photo_bytes:      Optional raw bytes of the downloaded photo.
-            photo_mime_type:  Optional MIME type of the downloaded photo.
+            attachments:      Optional downloaded photo(s) for this turn.
 
         Returns:
             None — sends reply directly via Telegram.
@@ -345,8 +345,7 @@ class MessageRouter:
                 self.orchestrator.handle_message,
                 message_text,
                 telegram_user_id,
-                photo_bytes,
-                photo_mime_type,
+                attachments,
             )
         except Exception as exc:
             # WHY: a crash in the orchestrator must never silently discard the

@@ -524,3 +524,34 @@ def test_llm_client_chat_meters_cache_tokens(monkeypatch):
 
     assert captured["record_kwargs"]["cache_read_tokens"] == 300
     assert captured["record_kwargs"]["cache_write_tokens"] == 800
+
+
+def test_gemini_backend_converts_document_block_to_pdf_part():
+    """Anthropic 'document' blocks (hub PDF attachments) must convert to a
+    Part.from_bytes with the PDF mime — Gemini reads PDF bytes natively, so the
+    brain-fallback tier keeps PDF vision when Sonnet is down."""
+    backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Summarize this"},
+                {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": "ZmFrZS1wZGYtZGF0YQ==",  # "fake-pdf-data"
+                    },
+                },
+            ],
+        }
+    ]
+    contents = backend._convert_messages(messages)
+    assert len(contents) == 1
+    parts = contents[0].parts
+    assert parts[0].text == "Summarize this"
+    inline = parts[1].inline_data
+    assert inline.mime_type == "application/pdf"
+    assert inline.data == b"fake-pdf-data"

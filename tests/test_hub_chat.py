@@ -331,3 +331,213 @@ def test_internal_process_hub_message_oidc_gated(monkeypatch):
             )
 
     assert resp.status_code in (401, 403), f"expected 401/403, got {resp.status_code}: {resp.text}"
+
+
+# ------------------------------------------------------------------ #
+# Hub attachments — upload route + attachment-carrying send/worker   #
+# ------------------------------------------------------------------ #
+
+_FAKE_JPEG = b"\xff\xd8\xff\xe0fakejpeg"
+
+
+def test_upload_route_saves_and_returns_metadata():
+    """POST /api/chat/upload streams raw bytes to GCS via save_attachment and
+    echoes the transport metadata the client will send back on /api/chat."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        meta = {"id": "a" * 32, "kind": "image", "mime": "image/jpeg",
+                "name": "photo.jpg", "size": len(_FAKE_JPEG)}
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch("core.hub_attachments.save_attachment", return_value=meta) as mock_save:
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/api/chat/upload?filename=photo.jpg",
+                    content=_FAKE_JPEG,
+                    headers={"Content-Type": "image/jpeg"},
+                )
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    assert resp.json() == meta
+    mock_save.assert_called_once_with(_FAKE_JPEG, "image/jpeg", "photo.jpg")
+
+
+def test_upload_route_rejects_bad_mime_with_400():
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch("core.hub_attachments.save_attachment",
+                       side_effect=ValueError("Unsupported attachment type")):
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/api/chat/upload?filename=evil.exe",
+                    content=b"MZ\x90\x00",
+                    headers={"Content-Type": "application/x-msdownload"},
+                )
+
+    assert resp.status_code == 400
+
+
+def test_upload_route_rejects_oversize_with_413():
+    """Oversize bodies are rejected by length check before any GCS work."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        from core.hub_attachments import MAX_ATTACHMENT_BYTES  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch("core.hub_attachments.save_attachment") as mock_save:
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/api/chat/upload?filename=huge.jpg",
+                    content=b"\xff\xd8\xff" + b"0" * (MAX_ATTACHMENT_BYTES + 1),
+                    headers={"Content-Type": "image/jpeg"},
+                )
+
+    assert resp.status_code == 413
+    mock_save.assert_not_called()
+
+
+def test_post_chat_forwards_attachments_to_enqueue():
+    """POST /api/chat with an attachments list passes it through to the Cloud
+    Tasks payload (metadata only — bytes stay in GCS)."""
+    stubs = _stub_web_server_imports()
+    atts = [{"id": "b" * 32, "kind": "image", "mime": "image/jpeg",
+             "name": "photo.jpg", "size": 123}]
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "look", "attachments": atts})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    mock_enqueue.assert_called_once_with("look", 123456, atts)
+
+
+def test_post_chat_allows_empty_content_with_attachments():
+    """Image-only sends are valid: empty content is fine when attachments exist."""
+    stubs = _stub_web_server_imports()
+    atts = [{"id": "c" * 32, "kind": "pdf", "mime": "application/pdf",
+             "name": "doc.pdf", "size": 5}]
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True):
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "", "attachments": atts})
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+
+
+@pytest.mark.parametrize("bad_atts", [
+    [{"id": "../../etc/passwd", "kind": "image"}],          # malformed id
+    [{"id": "d" * 32, "kind": "script"}],                    # unknown kind
+    [{"id": "e" * 32, "kind": "image"}] * 5,                 # too many (max 4)
+    "not-a-list",                                            # wrong type
+])
+def test_post_chat_rejects_invalid_attachments(bad_atts):
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat", json={"content": "x", "attachments": bad_atts})
+
+    assert resp.status_code == 400, f"{resp.status_code}: {resp.text}"
+    mock_enqueue.assert_not_called()
+
+
+def test_internal_worker_downloads_attachments_and_forwards():
+    """The Cloud Tasks worker re-downloads attachment bytes from GCS and hands
+    InboundAttachment objects to handle_message for the single turn."""
+    stubs = _stub_web_server_imports()
+    # The worker lazily imports InboundAttachment from the (stubbed) core.main —
+    # expose the real dataclass on the stub so the objects it builds are real.
+    from core.main import InboundAttachment as _RealInboundAttachment
+    stubs["core.main"].InboundAttachment = _RealInboundAttachment
+    atts = [{"id": "f" * 32, "kind": "image", "mime": "image/jpeg",
+             "name": "photo.jpg", "size": len(_FAKE_JPEG)}]
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_orch = MagicMock()
+        fake_orch.handle_message.return_value = "I see it."
+        with patch.dict(os.environ, _ENV):
+            with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch("core.hub_attachments.load_attachment",
+                       return_value=(_FAKE_JPEG, "image/jpeg", "photo.jpg")) as mock_load, \
+                 patch("core.scheduled_message.send_and_inject", new=MagicMock()):
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/internal/process-hub-message",
+                    json={"content": "what's this?", "user_id": 123456,
+                          "attachments": atts},
+                )
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    mock_load.assert_called_once_with("f" * 32)
+    args, kwargs = fake_orch.handle_message.call_args
+    assert args[0] == "what's this?"
+    assert args[1] == 123456
+    passed = kwargs.get("attachments") or (args[2] if len(args) > 2 else None)
+    assert passed is not None and len(passed) == 1
+    att = passed[0]
+    assert att.data == _FAKE_JPEG
+    assert att.mime_type == "image/jpeg"
+    assert att.kind == "image"
+
+
+def test_internal_worker_drops_missing_attachment_but_runs_turn():
+    """A lifecycle-expired GCS object must not fail the whole turn — the
+    attachment is dropped and the text still reaches the agent."""
+    stubs = _stub_web_server_imports()
+    atts = [{"id": "a1" * 16, "kind": "image", "mime": "image/jpeg",
+             "name": "gone.jpg", "size": 10}]
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_orch = MagicMock()
+        fake_orch.handle_message.return_value = "ok"
+        with patch.dict(os.environ, _ENV):
+            with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch("core.hub_attachments.load_attachment",
+                       side_effect=FileNotFoundError("gone")) as mock_load, \
+                 patch("core.scheduled_message.send_and_inject", new=MagicMock()):
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/internal/process-hub-message",
+                    json={"content": "hi", "user_id": 123456, "attachments": atts},
+                )
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    # The download was attempted (the worker consumed the attachments field)…
+    mock_load.assert_called_once_with("a1" * 16)
+    # …but the failed attachment was dropped and the text turn still ran.
+    args, kwargs = fake_orch.handle_message.call_args
+    passed = kwargs.get("attachments") or (args[2] if len(args) > 2 else None)
+    assert not passed  # dropped — empty list or None

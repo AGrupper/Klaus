@@ -24,9 +24,20 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { fetchMessages, postChatMessage } from '../api/chat'
-import type { ChatMessage } from '../api/chat'
+import type { AttachmentMeta, ChatMessage } from '../api/chat'
 
 export const CHAT_QUERY_KEY = ['chat', 'messages'] as const
+
+/**
+ * Input for sendMessage. A plain string is still accepted (retry path,
+ * older callers) and means "text only".
+ */
+export interface SendMessageInput {
+  content: string
+  attachments?: AttachmentMeta[]
+  /** Object URLs for image previews, parallel to `attachments`. */
+  previewUrls?: string[]
+}
 
 // Page size for both the live poll tail and each "load earlier" page.
 const TAIL_LIMIT = 50
@@ -115,10 +126,37 @@ export function useChat(isVisible: boolean = true) {
   const [hasMoreOlder, setHasMoreOlder] = useState(true)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
 
-  const messages: ChatMessage[] = useMemo(
-    () => mergeMessages(olderMessages, tailMessages),
-    [olderMessages, tailMessages],
-  )
+  // -------------------------------------------------------------------------
+  // Session-local attachment previews (hub attachments feature).
+  // Attachments are transient — the server stores only the text — so once the
+  // poll replaces the optimistic entry with the real server message the chips
+  // would vanish mid-conversation. This registry re-attaches each sent
+  // attachment set to the LAST attachment-less user message with the same
+  // content, keeping previews visible until refresh (accepted behavior).
+  // -------------------------------------------------------------------------
+  const [sentAttachments, setSentAttachments] = useState<
+    { content: string; attachments: AttachmentMeta[]; previewUrls?: string[] }[]
+  >([])
+
+  const messages: ChatMessage[] = useMemo(() => {
+    const merged = mergeMessages(olderMessages, tailMessages)
+    if (sentAttachments.length === 0) return merged
+    const annotated = [...merged]
+    for (const sent of sentAttachments) {
+      for (let i = annotated.length - 1; i >= 0; i--) {
+        const m = annotated[i]
+        if (m.role === 'user' && m.content === sent.content && !m.attachments) {
+          annotated[i] = {
+            ...m,
+            attachments: sent.attachments,
+            previewUrls: sent.previewUrls,
+          }
+          break
+        }
+      }
+    }
+    return annotated
+  }, [olderMessages, tailMessages, sentAttachments])
 
   /**
    * Fetch the page immediately older than the oldest currently-loaded
@@ -155,9 +193,10 @@ export function useChat(isVisible: boolean = true) {
   // Optimistic send mutation (CHAT-03)
   // -------------------------------------------------------------------------
   const mutation = useMutation({
-    mutationFn: (content: string) => postChatMessage(content),
+    mutationFn: (input: SendMessageInput) =>
+      postChatMessage(input.content, input.attachments),
 
-    onMutate: async (content: string) => {
+    onMutate: async (input: SendMessageInput) => {
       // 1. Cancel any in-flight refetch to avoid a race that overwrites our
       //    optimistic entry before the mutation resolves.
       await queryClient.cancelQueries({ queryKey: CHAT_QUERY_KEY })
@@ -167,12 +206,21 @@ export function useChat(isVisible: boolean = true) {
         CHAT_QUERY_KEY,
       )
 
+      // Register the attachment set so previews survive the optimistic →
+      // server-message swap (see the annotation pass in `messages` above).
+      if (input.attachments && input.attachments.length > 0) {
+        const { content, attachments, previewUrls } = input
+        setSentAttachments((prev) => [...prev, { content, attachments, previewUrls }])
+      }
+
       // 3. Append the optimistic message with status 'sending'.
       const optimisticMessage: ChatMessage = {
         id: `optimistic-${Date.now()}`,
         role: 'user',
-        content,
+        content: input.content,
         status: 'sending',
+        attachments: input.attachments,
+        previewUrls: input.previewUrls,
       }
       queryClient.setQueryData<{ messages: ChatMessage[]; hasMore: boolean }>(
         CHAT_QUERY_KEY,
@@ -200,12 +248,21 @@ export function useChat(isVisible: boolean = true) {
     },
   })
 
+  // Normalize the plain-string form (retry path, older callers) into
+  // SendMessageInput before handing off to the mutation.
+  const sendMessage = useCallback(
+    (input: string | SendMessageInput) => {
+      mutation.mutate(typeof input === 'string' ? { content: input } : input)
+    },
+    [mutation.mutate],
+  )
+
   return {
     messages,
     isLoading: query.isLoading,
     isError: query.isError,
     isKlausThinking,
-    sendMessage: mutation.mutate,
+    sendMessage,
     isSending: mutation.isPending,
     loadOlder,
     hasMoreOlder,

@@ -2286,9 +2286,31 @@ async def api_chat_send(
     """
     body = await request.json()
     content = body.get("content", "")
+    attachments = body.get("attachments") or None
 
-    # Input validation (ASVS V5 / T-26-05-04)
-    if not content or not content.strip():
+    # Attachment metadata validation (hub attachments feature): shape-check the
+    # echoed /api/chat/upload metadata before it rides the Cloud Tasks payload.
+    # Ids are 32 lowercase hex (uuid4.hex) — anything else never reaches GCS.
+    if attachments is not None:
+        from core.hub_attachments import ALLOWED_MIMES, MAX_ATTACHMENTS_PER_MESSAGE
+        valid_kinds = set(ALLOWED_MIMES.values())
+        if (
+            not isinstance(attachments, list)
+            or len(attachments) > MAX_ATTACHMENTS_PER_MESSAGE
+            or not all(
+                isinstance(a, dict)
+                and isinstance(a.get("id"), str)
+                and len(a["id"]) == 32
+                and all(c in "0123456789abcdef" for c in a["id"])
+                and a.get("kind") in valid_kinds
+                for a in attachments
+            )
+        ):
+            raise HTTPException(status_code=400, detail={"error": "invalid attachments"})
+
+    # Input validation (ASVS V5 / T-26-05-04). An empty content is allowed when
+    # attachments are present (image-only sends).
+    if (not content or not content.strip()) and not attachments:
         raise HTTPException(status_code=400, detail={"error": "content must be non-empty"})
     if len(content) > _CHAT_CONTENT_MAX_LEN:
         raise HTTPException(
@@ -2314,7 +2336,12 @@ async def api_chat_send(
     # persisted and the client safely retries.
     # NEVER use background_tasks.add_task — it runs after the response and gets
     # CPU-throttled by Cloud Run.
-    ok = await loop.run_in_executor(None, enqueue_hub_message, content, user_id)
+    if attachments:
+        ok = await loop.run_in_executor(
+            None, enqueue_hub_message, content, user_id, attachments
+        )
+    else:
+        ok = await loop.run_in_executor(None, enqueue_hub_message, content, user_id)
     if not ok:
         logger.error("api_chat_send: enqueue_hub_message returned False (user_id=%s)", user_id)
         return JSONResponse(
@@ -2323,6 +2350,45 @@ async def api_chat_send(
         )
 
     return JSONResponse(content={"ok": True})
+
+
+@app.post("/api/chat/upload")
+async def api_chat_upload(
+    request: Request,
+    filename: str = Query("", max_length=255),
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Receive one attachment (raw body) and stage it in GCS for the next send.
+
+    The client POSTs the file bytes directly as the request body with the
+    file's own Content-Type header (raw body, not multipart — avoids a
+    python-multipart dependency and works through the hub's apiFetch wrapper).
+    The returned metadata dict is echoed back verbatim in POST /api/chat's
+    ``attachments`` list; the worker re-downloads the bytes by id. Transient:
+    nothing is written to conversation history.
+
+    Raises:
+        HTTPException 400: unsupported/mismatched type or empty body.
+        HTTPException 413: body exceeds MAX_ATTACHMENT_BYTES.
+    """
+    from core.hub_attachments import MAX_ATTACHMENT_BYTES, save_attachment
+
+    data = await request.body()
+    if len(data) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail={"error": f"attachment exceeds {MAX_ATTACHMENT_BYTES} bytes"},
+        )
+    mime = (request.headers.get("content-type") or "").split(";")[0].strip()
+
+    loop = asyncio.get_running_loop()
+    try:
+        meta = await loop.run_in_executor(
+            None, save_attachment, data, mime, filename or "attachment"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
+    return JSONResponse(content=meta)
 
 
 @app.get("/api/chat/messages")
@@ -2469,6 +2535,35 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
         raise HTTPException(status_code=400, detail={"error": "missing user_id"})
     user_id = int(raw_user_id)
 
+    # Hub attachments: re-download staged bytes from GCS by id and hand them to
+    # the orchestrator as InboundAttachment objects for this single turn. A
+    # missing blob (e.g. lifecycle-expired between upload and dispatch) drops
+    # that attachment but never fails the turn — the text must still reach the
+    # agent.
+    attachments = None
+    att_meta_list = request_json.get("attachments") or []
+    if att_meta_list:
+        from core.hub_attachments import load_attachment  # lazy import
+        from core.main import InboundAttachment  # lazy import
+
+        loop = asyncio.get_running_loop()
+        attachments = []
+        for entry in att_meta_list:
+            try:
+                data, mime, _name = await loop.run_in_executor(
+                    None, load_attachment, entry.get("id", "")
+                )
+                attachments.append(
+                    InboundAttachment(
+                        data=data, mime_type=mime, kind=entry.get("kind", "image")
+                    )
+                )
+            except (FileNotFoundError, ValueError):
+                logger.warning(
+                    "process-hub-message: dropping unavailable attachment id=%s",
+                    entry.get("id"),
+                )
+
     # Run the agent turn inside this tracked request (full CPU — D-09).
     # handle_message is the single writer: it appends BOTH the user turn and the
     # assistant reply to the shared FirestoreConversationStore (core/main.py
@@ -2476,7 +2571,9 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     # /api/chat/messages to receive the reply. We do NOT append here (doing so
     # double-wrote the assistant reply, CR-03).
     # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
-    reply_text = await asyncio.to_thread(_orchestrator.handle_message, content, user_id)
+    reply_text = await asyncio.to_thread(
+        _orchestrator.handle_message, content, user_id, attachments
+    )
 
     # Phase 29 (PUSH-02/03, D-01/D-08): push + mirror this reply too. bot=None
     # lets send_and_inject lazily build/reuse its own module-level Bot (this

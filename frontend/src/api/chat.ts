@@ -15,6 +15,20 @@ import { apiFetch } from './client'
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Transport metadata for one uploaded attachment, returned by
+ * POST /api/chat/upload and echoed back in POST /api/chat. Attachments are
+ * TRANSIENT: the server never stores them in conversation history, so this
+ * only ever lives client-side for the current session.
+ */
+export interface AttachmentMeta {
+  id: string
+  kind: 'image' | 'pdf'
+  mime: string
+  name: string
+  size: number
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -28,6 +42,10 @@ export interface ChatMessage {
    * client-only optimistic messages until the real message replaces them.
    */
   seq?: number
+  /** Client-only: attachments sent with this message (session-local). */
+  attachments?: AttachmentMeta[]
+  /** Client-only: object URLs for image previews, parallel to attachments. */
+  previewUrls?: string[]
 }
 
 interface MessagesResponse {
@@ -90,9 +108,32 @@ export async function fetchMessages(
  * Send a new user message into the Klaus agent loop.
  * Returns quickly — the agent response arrives asynchronously via polling.
  */
-export async function postChatMessage(content: string): Promise<void> {
+export async function postChatMessage(
+  content: string,
+  attachments?: AttachmentMeta[],
+): Promise<void> {
   await apiFetch<{ ok: boolean }>('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(
+      attachments && attachments.length > 0 ? { content, attachments } : { content },
+    ),
+  })
+}
+
+/**
+ * Upload one attachment (image/PDF) ahead of send. Raw-body upload — the
+ * file's own mime rides as Content-Type (overriding apiFetch's JSON default)
+ * and the filename goes in the query string, so no multipart encoding is
+ * needed. Returns the metadata dict to echo back in postChatMessage.
+ */
+export async function uploadAttachment(
+  blob: Blob,
+  filename: string,
+): Promise<AttachmentMeta> {
+  const params = new URLSearchParams({ filename })
+  return apiFetch<AttachmentMeta>(`/api/chat/upload?${params}`, {
+    method: 'POST',
+    body: blob,
+    headers: { 'Content-Type': blob.type || 'application/octet-stream' },
   })
 }

@@ -53,3 +53,46 @@ describe('MessageBubble markdown rendering', () => {
     expect(screen.getByText('is **this** bold?')).toBeInTheDocument()
   })
 })
+
+describe('MessageBubble attachments (transient session previews)', () => {
+  it('renders an image attachment as an <img> using its preview URL', () => {
+    const message = {
+      id: 'm-att',
+      role: 'user',
+      content: 'look',
+      attachments: [
+        { id: 'a'.repeat(32), kind: 'image', mime: 'image/jpeg', name: 'photo.jpg', size: 10 },
+      ],
+      previewUrls: ['blob:fake-preview'],
+    } as ChatMessage
+    render(<MessageBubble message={message} />)
+    const img = screen.getByRole('img', { name: 'photo.jpg' })
+    expect(img).toHaveAttribute('src', 'blob:fake-preview')
+  })
+
+  it('renders a PDF attachment as a file chip with its name', () => {
+    const message = {
+      id: 'm-pdf',
+      role: 'user',
+      content: '',
+      attachments: [
+        { id: 'b'.repeat(32), kind: 'pdf', mime: 'application/pdf', name: 'report.pdf', size: 999 },
+      ],
+    } as ChatMessage
+    render(<MessageBubble message={message} />)
+    expect(screen.getByText('report.pdf')).toBeInTheDocument()
+  })
+
+  it('renders an image attachment without a preview URL as a named chip (post-refresh fallback)', () => {
+    const message = {
+      id: 'm-noprev',
+      role: 'user',
+      content: '',
+      attachments: [
+        { id: 'c'.repeat(32), kind: 'image', mime: 'image/jpeg', name: 'old.jpg', size: 5 },
+      ],
+    } as ChatMessage
+    render(<MessageBubble message={message} />)
+    expect(screen.getByText('old.jpg')).toBeInTheDocument()
+  })
+})

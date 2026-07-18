@@ -414,7 +414,10 @@ class _GeminiBackend(_BaseBackend):
                     else:
                         parts.append(types.Part(text=block["text"]))
 
-                elif block_type == "image":
+                elif block_type in ("image", "document"):
+                    # "document" is Anthropic's PDF block (hub attachments) —
+                    # Gemini takes PDF bytes through the same inline-data Part
+                    # as images, so both convert identically here.
                     img_data = block["source"]["data"]
                     if isinstance(img_data, str):
                         img_bytes = base64.b64decode(img_data)

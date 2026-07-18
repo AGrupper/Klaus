@@ -505,3 +505,114 @@ describe('useUnread — unread count math (CHAT-04 / D-10 / D-11)', () => {
     )
   })
 })
+
+// ---------------------------------------------------------------------------
+// Describe: attachments (hub attachments feature — transient, session-local)
+// ---------------------------------------------------------------------------
+
+describe('useChat — attachments', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  const att = {
+    id: 'a'.repeat(32),
+    kind: 'image' as const,
+    mime: 'image/jpeg',
+    name: 'photo.jpg',
+    size: 1234,
+  }
+
+  it('sendMessage with attachments posts them and the optimistic message carries previews', async () => {
+    const { wrapper, queryClient } = makeWrapper()
+    queryClient.setQueryData(CHAT_QUERY_KEY, { messages: [], hasMore: false })
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false })
+
+    let resolveMutation!: () => void
+    mockPostChatMessage.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveMutation = resolve
+      }),
+    )
+
+    const { result } = renderHook(() => useChat(false), { wrapper })
+
+    act(() => {
+      result.current.sendMessage({
+        content: 'look at this',
+        attachments: [att],
+        previewUrls: ['blob:fake-url'],
+      })
+    })
+
+    await waitFor(() => {
+      expect(mockPostChatMessage).toHaveBeenCalledWith('look at this', [att])
+      const optimistic = result.current.messages.find(
+        (m) => m.role === 'user' && m.content === 'look at this',
+      )
+      expect(optimistic).toBeDefined()
+      expect(optimistic?.attachments).toEqual([att])
+      expect(optimistic?.previewUrls).toEqual(['blob:fake-url'])
+    })
+
+    act(() => {
+      resolveMutation()
+    })
+  })
+
+  it('keeps attachment previews on the matching server message after the poll replaces the optimistic entry', async () => {
+    const { wrapper, queryClient } = makeWrapper()
+    queryClient.setQueryData(CHAT_QUERY_KEY, { messages: [], hasMore: false })
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false })
+    mockPostChatMessage.mockResolvedValue(undefined)
+
+    const { result } = renderHook(() => useChat(false), { wrapper })
+
+    act(() => {
+      result.current.sendMessage({
+        content: 'look at this',
+        attachments: [att],
+        previewUrls: ['blob:fake-url'],
+      })
+    })
+    await waitFor(() => expect(mockPostChatMessage).toHaveBeenCalled())
+
+    // Simulate the poll tail replacing the optimistic entry with the server
+    // message — which is text-only (attachments are transient, never stored).
+    act(() => {
+      queryClient.setQueryData(CHAT_QUERY_KEY, {
+        messages: [
+          { role: 'user', content: 'look at this', seq: 0 },
+          { role: 'assistant', content: 'A lovely photo, Sir.', seq: 1 },
+        ],
+        hasMore: false,
+      })
+    })
+
+    await waitFor(() => {
+      const userMsg = result.current.messages.find(
+        (m) => m.role === 'user' && m.content === 'look at this',
+      )
+      expect(userMsg?.seq).toBe(0) // it IS the server message…
+      expect(userMsg?.previewUrls).toEqual(['blob:fake-url']) // …still showing the preview
+      expect(userMsg?.attachments).toEqual([att])
+    })
+  })
+
+  it('plain string sendMessage keeps working (back-compat for retry path)', async () => {
+    const { wrapper, queryClient } = makeWrapper()
+    queryClient.setQueryData(CHAT_QUERY_KEY, { messages: [], hasMore: false })
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false })
+    mockPostChatMessage.mockResolvedValue(undefined)
+
+    const { result } = renderHook(() => useChat(false), { wrapper })
+
+    act(() => {
+      result.current.sendMessage('just text')
+    })
+
+    await waitFor(() => {
+      expect(mockPostChatMessage).toHaveBeenCalledWith('just text', undefined)
+    })
+  })
+})

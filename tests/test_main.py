@@ -474,3 +474,139 @@ class TestThreeTierFallbackChain:
             orch = main_module.AgentOrchestrator()
 
         assert orch.smart_agent_tertiary is None
+
+
+# ---------------------------------------------------------------------------
+# Hub attachments feature — InboundAttachment injection into the smart loop
+# ---------------------------------------------------------------------------
+
+_JPEG_BYTES = b"\xff\xd8\xff\xe0fakejpeg"
+_PDF_BYTES = b"%PDF-1.7 fakepdf"
+
+
+def _run_loop_with_attachments(monkeypatch, messages, attachments):
+    """Run _run_smart_loop with a text-only brain response; return the messages
+    list the brain actually received."""
+    orch = _make_minimal_orchestrator()
+    orch.smart_agent.chat.return_value = _text_only_response("done")
+    monkeypatch.setattr(
+        "core.main.tool_registry.get_smart_schemas",
+        lambda user_message=None: [],
+    )
+    orch._run_smart_loop(messages, smart_system="", worker_system="",
+                         attachments=attachments)
+    return orch.smart_agent.chat.call_args.args[0]
+
+
+class TestAttachmentInjection:
+    """Attachments (images + PDFs) are injected as content blocks into a local
+    copy of the last user message — transient by design: history keeps only the
+    text (mirrors the original Telegram photo behavior, now generalized)."""
+
+    def test_image_attachment_injected_as_image_block(self, monkeypatch):
+        import base64
+        from core.main import InboundAttachment
+
+        messages = [{"role": "user", "content": "what is this?"}]
+        sent = _run_loop_with_attachments(
+            monkeypatch, messages,
+            [InboundAttachment(data=_JPEG_BYTES, mime_type="image/jpeg", kind="image")],
+        )
+
+        content = sent[-1]["content"]
+        assert isinstance(content, list)
+        assert content[0] == {"type": "text", "text": "what is this?"}
+        assert content[1]["type"] == "image"
+        assert content[1]["source"] == {
+            "type": "base64",
+            "media_type": "image/jpeg",
+            "data": base64.b64encode(_JPEG_BYTES).decode("utf-8"),
+        }
+
+    def test_pdf_attachment_injected_as_document_block(self, monkeypatch):
+        import base64
+        from core.main import InboundAttachment
+
+        messages = [{"role": "user", "content": "summarize this"}]
+        sent = _run_loop_with_attachments(
+            monkeypatch, messages,
+            [InboundAttachment(data=_PDF_BYTES, mime_type="application/pdf", kind="pdf")],
+        )
+
+        content = sent[-1]["content"]
+        assert content[1]["type"] == "document"
+        assert content[1]["source"] == {
+            "type": "base64",
+            "media_type": "application/pdf",
+            "data": base64.b64encode(_PDF_BYTES).decode("utf-8"),
+        }
+
+    def test_multiple_attachments_all_injected_in_order(self, monkeypatch):
+        from core.main import InboundAttachment
+
+        messages = [{"role": "user", "content": "both"}]
+        sent = _run_loop_with_attachments(
+            monkeypatch, messages,
+            [
+                InboundAttachment(data=_JPEG_BYTES, mime_type="image/jpeg", kind="image"),
+                InboundAttachment(data=_PDF_BYTES, mime_type="application/pdf", kind="pdf"),
+            ],
+        )
+
+        content = sent[-1]["content"]
+        assert [b["type"] for b in content] == ["text", "image", "document"]
+
+    def test_empty_content_omits_text_block(self, monkeypatch):
+        """Image-only message: Anthropic rejects empty text blocks, so the
+        content list must contain only the attachment blocks."""
+        from core.main import InboundAttachment
+
+        messages = [{"role": "user", "content": ""}]
+        sent = _run_loop_with_attachments(
+            monkeypatch, messages,
+            [InboundAttachment(data=_JPEG_BYTES, mime_type="image/jpeg", kind="image")],
+        )
+
+        content = sent[-1]["content"]
+        assert [b["type"] for b in content] == ["image"]
+
+    def test_original_history_not_polluted(self, monkeypatch):
+        """The injection must happen on a deep copy — the caller's messages
+        list (which mirrors persisted history) keeps its plain-string content."""
+        from core.main import InboundAttachment
+
+        messages = [{"role": "user", "content": "look"}]
+        _run_loop_with_attachments(
+            monkeypatch, messages,
+            [InboundAttachment(data=_JPEG_BYTES, mime_type="image/jpeg", kind="image")],
+        )
+
+        assert messages == [{"role": "user", "content": "look"}]
+
+    def test_no_attachments_leaves_string_content(self, monkeypatch):
+        sent = _run_loop_with_attachments(
+            monkeypatch, [{"role": "user", "content": "plain"}], None,
+        )
+        assert sent[-1]["content"] == "plain"
+
+
+class TestHandleMessageAttachments:
+    """handle_message forwards attachments to the loop and persists text only."""
+
+    def test_attachments_forwarded_and_history_text_only(self):
+        from core.main import InboundAttachment
+
+        orch = _make_orchestrator_for_handle_message(loop_return="I see a cat.")
+        atts = [InboundAttachment(data=_JPEG_BYTES, mime_type="image/jpeg", kind="image")]
+
+        result = orch.handle_message("what's this?", user_id=123456, attachments=atts)
+
+        assert result == "I see a cat."
+        # The loop received the attachments…
+        assert orch._run_smart_loop.call_args.kwargs.get("attachments") == atts
+        # …but history got only the plain text turns.
+        user_calls = [
+            c for c in orch.conversation_manager.append.call_args_list
+            if c.args[1] == "user"
+        ]
+        assert user_calls[-1].args[2] == "what's this?"

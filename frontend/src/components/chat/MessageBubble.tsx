@@ -246,6 +246,87 @@ function KlausMarkdown({ content }: { content: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Attachments (hub attachments feature — transient session previews)
+// ---------------------------------------------------------------------------
+
+/**
+ * Renders the attachments sent with a message. Images show as an inline
+ * preview when their object URL is still alive this session; after a refresh
+ * (or for PDFs always) a named file chip is shown instead — the bytes are
+ * transient and there is no server URL to recover them from.
+ */
+function AttachmentList({ message }: { message: ChatMessage }) {
+  const attachments = message.attachments ?? []
+  if (attachments.length === 0) return null
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: message.content ? '8px' : 0 }}>
+      {attachments.map((att, i) => {
+        const previewUrl = message.previewUrls?.[i]
+        if (att.kind === 'image' && previewUrl) {
+          return (
+            <img
+              key={att.id}
+              src={previewUrl}
+              alt={att.name}
+              style={{
+                maxWidth: '240px',
+                maxHeight: '240px',
+                borderRadius: '10px',
+                objectFit: 'cover',
+                display: 'block',
+              }}
+            />
+          )
+        }
+        // File chip: PDFs, and images whose preview URL is gone.
+        return (
+          <div
+            key={att.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 10px',
+              borderRadius: '8px',
+              backgroundColor: dominant,
+              border: `1px solid ${border}`,
+              maxWidth: '240px',
+            }}
+          >
+            <span aria-hidden="true" style={{ fontSize: '16px' }}>
+              {att.kind === 'pdf' ? '📄' : '🖼️'}
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  ...bodyText,
+                  fontSize: '0.85em',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {att.name}
+              </div>
+              <div style={{ color: textSecondary, fontSize: '0.75em', fontFamily }}>
+                {formatSize(att.size)}
+              </div>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function formatSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
+  return `${bytes} B`
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
@@ -273,10 +354,14 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
           position: 'relative',
         }}
       >
+        {/* Attachments sent with this message (session-local previews) */}
+        <AttachmentList message={message} />
+
         {/* Message text — never dangerouslySetInnerHTML (T-26-08-01).
             Klaus messages render as Markdown (React elements from an AST);
             user messages stay literal plain text. */}
         {isUser ? (
+          message.content ? (
           <p
             style={{
               margin: 0,
@@ -291,6 +376,7 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
           >
             {message.content}
           </p>
+          ) : null
         ) : (
           <KlausMarkdown content={message.content} />
         )}
