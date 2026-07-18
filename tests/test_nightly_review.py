@@ -75,6 +75,67 @@ def test_plain_text_fallback_includes_planned_training():
 
 
 # ---------------------------------------------------------------------------
+# Phase 30.5 Plan 06 (BRAIN-01) — SMART_AGENT_FALLBACK_* Gemini compose fallback
+# ---------------------------------------------------------------------------
+
+def test_compose_nightly_brain_fails_gemini_fallback_composes(monkeypatch):
+    """Brain raises -> SMART_AGENT_FALLBACK_* Gemini compose is used (not the plain template)."""
+    from core.nightly_review import _compose_nightly
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+
+    journal = {"summary": "Solid day."}
+    tomorrow = {"calendar": []}
+
+    call_count = {"n": 0}
+
+    def _client_factory(*args, **kwargs):
+        call_count["n"] += 1
+        client = MagicMock()
+        if call_count["n"] == 1:
+            client.chat.side_effect = Exception("brain down")
+        else:
+            client.chat.return_value = {
+                "text": "Gemini-composed nightly text.",
+                "tool_calls": [], "stop_reason": "end_turn",
+            }
+        return client
+
+    with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    assert result == "Gemini-composed nightly text."
+    assert "Tomorrow:" not in result
+
+
+def test_compose_nightly_brain_and_fallback_fail_returns_plain_template(monkeypatch):
+    """Brain + Gemini fallback both raise -> deterministic _plain_text_fallback returned."""
+    from core.nightly_review import _compose_nightly
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+
+    journal = {"summary": "Solid day."}
+    tomorrow = {"calendar": []}
+
+    with patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    assert "Nothing on the calendar." in result
+
+
+# ---------------------------------------------------------------------------
 # Planned-workout gather — tomorrow's weekly_split sessions
 # ---------------------------------------------------------------------------
 

@@ -307,3 +307,170 @@ class TestEmptyReplyGuard:
         result = orch.handle_message("what's today?", user_id=123456)
 
         assert result == "Here is your schedule for today."
+
+
+# ---------------------------------------------------------------------------
+# Phase 30.5 Plan 06 (D-16/D-12) — 3-tier Sonnet -> Gemini -> Haiku fallback
+# ---------------------------------------------------------------------------
+
+def _make_orchestrator_with_tiers(fallback=None, tertiary=None):
+    """Build a minimal AgentOrchestrator with all three fallback tiers wired."""
+    orch = _make_minimal_orchestrator()
+    orch.smart_agent_fallback = fallback
+    orch.smart_agent_tertiary = tertiary
+    return orch
+
+
+class TestThreeTierFallbackChain:
+    """D-16: Sonnet primary -> Gemini fallback -> Haiku tertiary -> CONNECTIVITY_ERROR_TEXT.
+
+    D-12: only the Gemini-fallback branch appends the backup-reasoning disclosure.
+    """
+
+    def test_sonnet_error_falls_back_to_gemini_with_disclosure(self, monkeypatch):
+        """Primary (Sonnet) LLMError -> Gemini fallback used; disclosure line appended."""
+        from core.llm_client import LLMError
+        from core.main import FALLBACK_DISCLOSURE_TEXT
+
+        fallback = MagicMock()
+        fallback.chat.return_value = _text_only_response("Here's your answer.")
+        orch = _make_orchestrator_with_tiers(fallback=fallback, tertiary=None)
+        orch.smart_agent.chat.side_effect = LLMError("boom", backend="anthropic")
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+
+        messages = [{"role": "user", "content": "hello"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        fallback.chat.assert_called_once()
+        assert fallback.chat.call_args.kwargs["purpose"] == "smart_fallback"
+        assert result.startswith("Here's your answer.")
+        assert FALLBACK_DISCLOSURE_TEXT in result
+
+    def test_sonnet_and_gemini_error_falls_back_to_haiku_no_disclosure(self, monkeypatch):
+        """Primary + Gemini fallback both LLMError -> tertiary (Haiku) used, purpose smart_fallback_2, no disclosure."""
+        from core.llm_client import LLMError
+        from core.main import FALLBACK_DISCLOSURE_TEXT
+
+        fallback = MagicMock()
+        fallback.chat.side_effect = LLMError("gemini down", backend="gemini")
+        tertiary = MagicMock()
+        tertiary.chat.return_value = _text_only_response("Backup answer from Haiku.")
+        orch = _make_orchestrator_with_tiers(fallback=fallback, tertiary=tertiary)
+        orch.smart_agent.chat.side_effect = LLMError("boom", backend="anthropic")
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+
+        messages = [{"role": "user", "content": "hello"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        tertiary.chat.assert_called_once()
+        assert tertiary.chat.call_args.kwargs["purpose"] == "smart_fallback_2"
+        assert result == "Backup answer from Haiku."
+        assert FALLBACK_DISCLOSURE_TEXT not in result
+
+    def test_all_three_tiers_fail_returns_connectivity_error(self, monkeypatch):
+        """Sonnet + Gemini + Haiku all LLMError -> CONNECTIVITY_ERROR_TEXT."""
+        from core.llm_client import LLMError
+        from core.main import CONNECTIVITY_ERROR_TEXT
+
+        fallback = MagicMock()
+        fallback.chat.side_effect = LLMError("gemini down", backend="gemini")
+        tertiary = MagicMock()
+        tertiary.chat.side_effect = LLMError("haiku down", backend="anthropic")
+        orch = _make_orchestrator_with_tiers(fallback=fallback, tertiary=tertiary)
+        orch.smart_agent.chat.side_effect = LLMError("boom", backend="anthropic")
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+
+        messages = [{"role": "user", "content": "hello"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        assert result == CONNECTIVITY_ERROR_TEXT
+
+    def test_tertiary_none_returns_connectivity_error_after_gemini_fails(self, monkeypatch):
+        """Tertiary is None-safe: Sonnet + Gemini fail, no tertiary configured -> CONNECTIVITY_ERROR_TEXT."""
+        from core.llm_client import LLMError
+        from core.main import CONNECTIVITY_ERROR_TEXT
+
+        fallback = MagicMock()
+        fallback.chat.side_effect = LLMError("gemini down", backend="gemini")
+        orch = _make_orchestrator_with_tiers(fallback=fallback, tertiary=None)
+        orch.smart_agent.chat.side_effect = LLMError("boom", backend="anthropic")
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+
+        messages = [{"role": "user", "content": "hello"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        assert result == CONNECTIVITY_ERROR_TEXT
+
+    def test_tertiary_client_constructed_from_env(self, monkeypatch):
+        """AgentOrchestrator.__init__ builds smart_agent_tertiary from SMART_AGENT_TERTIARY_* env."""
+        import importlib
+        import core.main as main_module
+
+        monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+        monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+        monkeypatch.setenv("WORKER_AGENT_BACKEND", "openai")
+        monkeypatch.setenv("WORKER_AGENT_MODEL", "deepseek-v4-flash")
+        monkeypatch.setenv("WORKER_AGENT_API_KEY", "test-key")
+        monkeypatch.setenv("SMART_AGENT_TERTIARY_BACKEND", "anthropic")
+        monkeypatch.setenv("SMART_AGENT_TERTIARY_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("SMART_AGENT_TERTIARY_API_KEY", "test-key")
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_BACKEND", raising=False)
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_MODEL", raising=False)
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_API_KEY", raising=False)
+
+        with patch("core.main._load_prompt", return_value="stub"), \
+             patch("core.main._load_self_md", return_value="stub"), \
+             patch("core.main._load_coaching_guide_slim", return_value="stub"), \
+             patch("core.main._build_self_state_store", return_value=None), \
+             patch("core.main._build_user_profile_store", return_value=None), \
+             patch("core.main._build_journal_store", return_value=None), \
+             patch("core.main.build_conversation_store_from_env", return_value=MagicMock()):
+            orch = main_module.AgentOrchestrator()
+
+        assert orch.smart_agent_tertiary is not None
+        assert orch.smart_agent_tertiary.model == "claude-haiku-4-5"
+
+    def test_tertiary_none_when_env_absent(self, monkeypatch):
+        """AgentOrchestrator.__init__ leaves smart_agent_tertiary as None when env unset."""
+        import core.main as main_module
+
+        monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+        monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+        monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+        monkeypatch.setenv("WORKER_AGENT_BACKEND", "openai")
+        monkeypatch.setenv("WORKER_AGENT_MODEL", "deepseek-v4-flash")
+        monkeypatch.setenv("WORKER_AGENT_API_KEY", "test-key")
+        monkeypatch.delenv("SMART_AGENT_TERTIARY_BACKEND", raising=False)
+        monkeypatch.delenv("SMART_AGENT_TERTIARY_MODEL", raising=False)
+        monkeypatch.delenv("SMART_AGENT_TERTIARY_API_KEY", raising=False)
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_BACKEND", raising=False)
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_MODEL", raising=False)
+        monkeypatch.delenv("SMART_AGENT_FALLBACK_API_KEY", raising=False)
+
+        with patch("core.main._load_prompt", return_value="stub"), \
+             patch("core.main._load_self_md", return_value="stub"), \
+             patch("core.main._load_coaching_guide_slim", return_value="stub"), \
+             patch("core.main._build_self_state_store", return_value=None), \
+             patch("core.main._build_user_profile_store", return_value=None), \
+             patch("core.main._build_journal_store", return_value=None), \
+             patch("core.main.build_conversation_store_from_env", return_value=MagicMock()):
+            orch = main_module.AgentOrchestrator()
+
+        assert orch.smart_agent_tertiary is None
