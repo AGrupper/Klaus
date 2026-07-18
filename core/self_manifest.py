@@ -433,13 +433,21 @@ def _render_manifest(root: Path, sha: str) -> str:
     # Model strings are read from env so SELF.md never goes stale when the
     # operator swaps backends. Defaults match the current production config
     # (see .env.example).
-    brain_model = os.getenv("SMART_AGENT_MODEL", "gemini-3.5-flash")
-    brain_backend = os.getenv("SMART_AGENT_BACKEND", "gemini")
+    # Phase 30.5 Plan 06 (BRAIN-01): brain flipped to claude-sonnet-5, Gemini is
+    # now the fallback tier, Haiku is the tertiary — defaults below match the
+    # post-flip production truth so a missing-env edge case still renders it.
+    brain_model = os.getenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    brain_backend = os.getenv("SMART_AGENT_BACKEND", "anthropic")
     worker_model = os.getenv("WORKER_AGENT_MODEL", "deepseek-v4-flash")
     worker_backend = os.getenv("WORKER_AGENT_BACKEND", "openai")
-    fallback_model = os.getenv("SMART_AGENT_FALLBACK_MODEL", "claude-haiku-4-5")
-    fallback_backend = os.getenv("SMART_AGENT_FALLBACK_BACKEND", "anthropic")
+    fallback_model = os.getenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    fallback_backend = os.getenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
     tick_model = os.getenv("TICK_BRAIN_MODEL", "openai/gpt-oss-120b")
+    # BRAIN-03 (Plan 01): tick-brain's fallback is decoupled onto its own
+    # TICK_BRAIN_FALLBACK_* env — it must NEVER be rendered as brain_model here
+    # (that was the pre-Plan-01 coupling bug this row previously had).
+    tick_fallback_model = os.getenv("TICK_BRAIN_FALLBACK_MODEL", "gemini-3.5-flash")
+    tick_fallback_backend = os.getenv("TICK_BRAIN_FALLBACK_BACKEND", "gemini")
 
     def _backend_label(name: str) -> str:
         return {
@@ -477,7 +485,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         f"| Worker | {worker_model} | {_backend_label(worker_backend)} |",
         f"| Smart agent fallback | {fallback_model} | {_backend_label(fallback_backend)} |",
         f"| Tick-brain | {tick_model} | Groq (OpenAI-compat) |",
-        f"| Tick-brain fallback | {brain_model} | {_backend_label(brain_backend)} |",
+        f"| Tick-brain fallback | {tick_fallback_model} | {_backend_label(tick_fallback_backend)} |",
         "| Embeddings | gemini-embedding-2 | Gemini (AI Studio) |",
         "",
     ]
