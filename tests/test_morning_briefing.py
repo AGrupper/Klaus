@@ -162,6 +162,62 @@ def test_compose_briefing_llm_empty_text_falls_back():
     assert result.startswith("Morning.")
 
 
+# --- Phase 30.5 Plan 06 (BRAIN-01) — SMART_AGENT_FALLBACK_* Gemini compose fallback ---
+
+def test_compose_briefing_brain_fails_gemini_fallback_composes(monkeypatch):
+    """Brain raises -> SMART_AGENT_FALLBACK_* Gemini compose is used (not the plain template)."""
+    from core.morning_briefing import _compose_briefing
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+    data = {
+        "weather": None, "calendar": [], "email": [],
+        "garmin": {"state": 2},
+        "tasks": {"staleness_warning": None, "overdue": [], "today": [], "due_today": []},
+    }
+
+    call_count = {"n": 0}
+
+    def _client_factory(*args, **kwargs):
+        call_count["n"] += 1
+        client = MagicMock()
+        if call_count["n"] == 1:
+            # Primary (brain) call raises.
+            client.chat.side_effect = Exception("brain down")
+        else:
+            # Fallback (Gemini) call succeeds.
+            client.chat.return_value = {
+                "text": "Gemini-composed briefing text.",
+                "tool_calls": [], "stop_reason": "end_turn",
+            }
+        return client
+
+    with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+        result = _compose_briefing(data, "2026-05-12")
+
+    assert result == "Gemini-composed briefing text."
+    assert not result.startswith("Morning.")
+
+
+def test_compose_briefing_brain_and_fallback_fail_returns_plain_template(monkeypatch):
+    """Brain + Gemini fallback both raise -> deterministic _plain_text_fallback returned."""
+    from core.morning_briefing import _compose_briefing
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+    data = {
+        "weather": None, "calendar": [], "email": [],
+        "garmin": {"state": 2},
+        "tasks": {"staleness_warning": None, "overdue": [], "today": [], "due_today": []},
+    }
+    with patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+        result = _compose_briefing(data, "2026-05-12")
+    assert result.startswith("Morning.")
+    assert "Today:" in result
+
+
 # --- Garmin sync detection tests ---
 
 def test_fetch_garmin_safe_returns_none_on_exception():
