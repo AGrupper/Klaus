@@ -61,6 +61,14 @@ CONNECTIVITY_ERROR_TEXT = (
     "Please try again in a moment."
 )
 
+# D-12 (Phase 30.5 Plan 06): appended to the response text ONLY when the Gemini
+# fallback tier (purpose="smart_fallback") serves a turn — a subtle, Klaus-voiced
+# self-aware disclosure that he's currently running on backup reasoning. Never
+# appended on the tertiary Haiku hop (purpose="smart_fallback_2").
+FALLBACK_DISCLOSURE_TEXT = (
+    "\n\n_(Running on backup reasoning at the moment, Sir — primary's stepped out.)_"
+)
+
 
 # ------------------------------------------------------------------ #
 # ConversationStore protocol + backends                              #
@@ -210,6 +218,24 @@ class AgentOrchestrator:
             )
         else:
             self.smart_agent_fallback = None
+
+        # WHY (D-16, Phase 30.5 Plan 06): tertiary Smart Agent is optional — a
+        # last-resort hop tried only after BOTH the primary and the fallback have
+        # raised LLMError. Same env-optional-client shape used 3x elsewhere in
+        # this codebase (smart_agent_fallback above, TickBrain's fallback client).
+        tb_backend = os.environ.get("SMART_AGENT_TERTIARY_BACKEND")
+        tb_model = os.environ.get("SMART_AGENT_TERTIARY_MODEL")
+        tb_key = os.environ.get("SMART_AGENT_TERTIARY_API_KEY")
+        if tb_backend and tb_model and tb_key:
+            self.smart_agent_tertiary: LLMClient | None = LLMClient(
+                backend=tb_backend, model=tb_model, api_key=tb_key,
+            )
+            logger.info(
+                "Smart Agent tertiary fallback configured: %s / %s",
+                tb_backend, tb_model,
+            )
+        else:
+            self.smart_agent_tertiary = None
 
         # Load prompts from disk at startup — avoids repeated file I/O per message.
         self._smart_prompt_template = _load_prompt("prompts/smart_agent.md")
@@ -613,13 +639,33 @@ class AgentOrchestrator:
                             tools=smart_tools,
                             purpose="smart_fallback",
                         )
+                        # D-12: Gemini fallback served this turn — append the
+                        # Klaus-voiced backup-reasoning disclosure line. Only on
+                        # this branch (never on the tertiary Haiku hop below).
+                        response["text"] = (response.get("text") or "") + FALLBACK_DISCLOSURE_TEXT
                     except LLMError as fallback_exc:
                         logger.error(
-
                             "Smart agent FALLBACK also failed (iter %d): %s",
                             iteration, fallback_exc,
                         )
-                        return CONNECTIVITY_ERROR_TEXT
+                        # D-16: tertiary Haiku hop — last resort before giving up.
+                        if self.smart_agent_tertiary is not None:
+                            try:
+                                logger.info("Retrying with Smart Agent tertiary (Haiku)…")
+                                response = self.smart_agent_tertiary.chat(
+                                    current_messages,
+                                    system=smart_system,
+                                    tools=smart_tools,
+                                    purpose="smart_fallback_2",
+                                )
+                            except LLMError as tertiary_exc:
+                                logger.error(
+                                    "Smart agent TERTIARY also failed (iter %d): %s",
+                                    iteration, tertiary_exc,
+                                )
+                                return CONNECTIVITY_ERROR_TEXT
+                        else:
+                            return CONNECTIVITY_ERROR_TEXT
                 else:
                     return CONNECTIVITY_ERROR_TEXT
 
