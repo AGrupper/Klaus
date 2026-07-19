@@ -859,6 +859,14 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:klaus-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
   --role="roles/storage.objectViewer"
+
+# Hub attachments (2026-07-19): the runtime SA ALSO needs objectCreator on
+# this bucket — POST /api/chat/upload stages attachment bytes under
+# hub-uploads/ (transient transport past the ~1MB Cloud Tasks body cap).
+# Without it every hub upload 500s with a GCS 403.
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:klaus-runtime@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/storage.objectCreator"
 ```
 
 ### 17c. Download the Uploader Key to Both Machines
