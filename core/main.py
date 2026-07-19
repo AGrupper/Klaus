@@ -72,6 +72,42 @@ FALLBACK_DISCLOSURE_TEXT = (
 
 
 # ------------------------------------------------------------------ #
+# Hub streaming                                                      #
+# ------------------------------------------------------------------ #
+
+class TurnCancelled(Exception):
+    """Raised (from a StreamSink.delta callback) when the user hit Stop.
+
+    Unwinds the in-flight LLM stream; handle_message catches it and persists
+    whatever partial text was generated so the turn isn't lost.
+    """
+
+    def __init__(self, partial_text: str = "") -> None:
+        super().__init__("turn cancelled by user")
+        self.partial_text = partial_text
+
+
+# Appended to a stopped reply's partial text so the history shows it was cut
+# off deliberately rather than ending mid-sentence for no reason.
+STOPPED_MARKER_TEXT = " —\n\n_(Stopped, Sir.)_"
+
+
+@runtime_checkable
+class StreamSink(Protocol):
+    """Receives the brain's streaming text during a hub turn.
+
+    ``reset()`` fires before each smart-loop iteration — text produced
+    alongside tool calls must not leak into the visible draft; only the final
+    iteration's text equals the reply. ``delta(text)`` receives each chunk and
+    may raise TurnCancelled to abort the turn.
+    """
+
+    def reset(self) -> None: ...
+
+    def delta(self, text: str) -> None: ...
+
+
+# ------------------------------------------------------------------ #
 # Inbound attachments                                                #
 # ------------------------------------------------------------------ #
 
@@ -496,6 +532,7 @@ class AgentOrchestrator:
         user_message: str,
         user_id: int,
         attachments: list[InboundAttachment] | None = None,
+        stream_sink: StreamSink | None = None,
     ) -> str:
         """Process one user message through the full dual-model pipeline.
 
@@ -504,6 +541,10 @@ class AgentOrchestrator:
             user_id:      Unique identifier for the user (Telegram ID or similar).
             attachments:  Optional images/PDFs for this turn only (transient —
                           only the text is persisted to history).
+            stream_sink:  Optional hub-streaming sink; receives the brain's text
+                          as it generates and may raise TurnCancelled (Stop
+                          button) — the partial reply is then persisted with a
+                          cutoff marker instead of being lost.
 
         Returns:
             The agent's final response string, ready to send to the user.
@@ -533,12 +574,22 @@ class AgentOrchestrator:
         messages = self.conversation_manager.get(user_id)
 
         # Run the Smart Agent orchestration loop.
-        response_text = self._run_smart_loop(
-            messages,
-            smart_system,
-            worker_system,
-            attachments=attachments,
-        )
+        try:
+            response_text = self._run_smart_loop(
+                messages,
+                smart_system,
+                worker_system,
+                attachments=attachments,
+                stream_sink=stream_sink,
+            )
+        except TurnCancelled as exc:
+            # Stop button: persist the partial with a cutoff marker so the turn
+            # survives in history (a bare partial would read as a glitch; an
+            # empty one would trip the WR-05 blank-bubble guard below).
+            if exc.partial_text.strip():
+                response_text = exc.partial_text + STOPPED_MARKER_TEXT
+            else:
+                response_text = "_(Stopped before I could get going, Sir.)_"
 
         # Guard against an empty/whitespace-only reply (e.g. an LLM failure
         # path that yields ""). Without this, an empty assistant turn gets
@@ -569,6 +620,7 @@ class AgentOrchestrator:
         smart_system: str,
         worker_system: str,
         attachments: list[InboundAttachment] | None = None,
+        stream_sink: StreamSink | None = None,
     ) -> str:
         """Run the Smart Agent tool-use loop until it produces a final text response.
 
@@ -627,13 +679,22 @@ class AgentOrchestrator:
         # the brain already produced a real answer (Phase 24 — double-send fix).
         last_response_text: str = ""
 
+        # Hub streaming: hand the sink's delta callback to every brain tier.
+        # (Gemini/OpenAI tiers accept-and-ignore it, so fallback turns simply
+        # arrive at once.) reset() fires before each iteration so text emitted
+        # alongside tool calls never leaks into the visible draft.
+        on_text_delta = stream_sink.delta if stream_sink is not None else None
+
         for iteration in range(MAX_TOOL_ITERATIONS):
+            if stream_sink is not None:
+                stream_sink.reset()
             try:
                 response = self.smart_agent.chat(
                     current_messages,
                     system=smart_system,
                     tools=smart_tools,
                     purpose="smart",
+                    on_text_delta=on_text_delta,
                 )
             except LLMError as exc:
                 logger.warning(
@@ -653,6 +714,7 @@ class AgentOrchestrator:
                             system=smart_system,
                             tools=smart_tools,
                             purpose="smart_fallback",
+                            on_text_delta=on_text_delta,
                         )
                         # D-12: Gemini fallback served this turn — append the
                         # Klaus-voiced backup-reasoning disclosure line. Only on
@@ -672,6 +734,7 @@ class AgentOrchestrator:
                                     system=smart_system,
                                     tools=smart_tools,
                                     purpose="smart_fallback_2",
+                                    on_text_delta=on_text_delta,
                                 )
                             except LLMError as tertiary_exc:
                                 logger.error(

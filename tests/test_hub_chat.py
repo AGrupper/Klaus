@@ -488,6 +488,7 @@ def test_internal_worker_downloads_attachments_and_forwards():
         fake_orch.handle_message.return_value = "I see it."
         with patch.dict(os.environ, _ENV):
             with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=MagicMock()), \
                  patch("core.hub_attachments.load_attachment",
                        return_value=(_FAKE_JPEG, "image/jpeg", "photo.jpg")) as mock_load, \
                  patch("core.scheduled_message.send_and_inject", new=MagicMock()):
@@ -525,6 +526,7 @@ def test_internal_worker_drops_missing_attachment_but_runs_turn():
         fake_orch.handle_message.return_value = "ok"
         with patch.dict(os.environ, _ENV):
             with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=MagicMock()), \
                  patch("core.hub_attachments.load_attachment",
                        side_effect=FileNotFoundError("gone")) as mock_load, \
                  patch("core.scheduled_message.send_and_inject", new=MagicMock()):
@@ -541,3 +543,139 @@ def test_internal_worker_drops_missing_attachment_but_runs_turn():
     args, kwargs = fake_orch.handle_message.call_args
     passed = kwargs.get("attachments") or (args[2] if len(args) > 2 else None)
     assert not passed  # dropped — empty list or None
+
+
+# ------------------------------------------------------------------ #
+# Hub streaming — draft plumbing, stop route, draft in the poll      #
+# ------------------------------------------------------------------ #
+
+def test_internal_worker_streams_draft_lifecycle():
+    """The worker opens a draft turn, hands a stream sink to handle_message,
+    and closes the draft when the turn completes."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_orch = MagicMock()
+        fake_orch.handle_message.return_value = "final reply"
+        fake_stream_store = MagicMock()
+        with patch.dict(os.environ, _ENV):
+            with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=fake_stream_store), \
+                 patch("core.scheduled_message.send_and_inject", new=MagicMock()):
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/internal/process-hub-message",
+                    json={"content": "hi", "user_id": 123456},
+                )
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    fake_stream_store.start_turn.assert_called_once()
+    turn_user, turn_id = fake_stream_store.start_turn.call_args.args
+    assert turn_user == 123456
+    # handle_message received a sink bound to the same turn.
+    sink = fake_orch.handle_message.call_args.kwargs.get("stream_sink")
+    assert sink is not None
+    # And the draft was closed as done afterwards.
+    fake_stream_store.finish_turn.assert_called_once()
+    assert fake_stream_store.finish_turn.call_args.args == (123456, turn_id)
+
+
+def test_internal_worker_finishes_turn_even_when_agent_raises():
+    """finish_turn must run on the error path too — a stuck 'generating' draft
+    would leave the hub showing a phantom typing bubble forever."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_orch = MagicMock()
+        fake_orch.handle_message.side_effect = RuntimeError("boom")
+        fake_stream_store = MagicMock()
+        with patch.dict(os.environ, _ENV):
+            with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=fake_stream_store):
+                client = TestClient(ws.app)
+                try:
+                    client.post(
+                        "/internal/process-hub-message",
+                        json={"content": "hi", "user_id": 123456},
+                    )
+                except RuntimeError:
+                    pass  # TestClient re-raises unhandled app exceptions
+
+    fake_stream_store.finish_turn.assert_called_once()
+
+
+def test_post_chat_stop_requests_cancel():
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_stream_store = MagicMock()
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            with patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=fake_stream_store):
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat/stop")
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    fake_stream_store.request_cancel.assert_called_once_with(123456)
+
+
+def test_get_messages_includes_draft_while_generating():
+    """While a turn is in flight (last message role=user) the poll carries the
+    live draft so the frontend can render the streaming bubble."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = [
+                {"role": "user", "content": "long question"},
+            ]
+            fake_stream_store = MagicMock()
+            fake_stream_store.get_draft.return_value = {
+                "turn_id": "t1", "text": "typing so far", "status": "generating",
+            }
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=fake_stream_store):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages")
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["draft"] == {"text": "typing so far", "status": "generating"}
+
+
+def test_get_messages_no_draft_when_last_is_assistant():
+    """No in-flight turn → no draft field (and no extra Firestore read)."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.get_full.return_value = [
+                {"role": "user", "content": "q"},
+                {"role": "assistant", "content": "a"},
+            ]
+            fake_stream_store = MagicMock()
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=fake_stream_store):
+                client = TestClient(ws.app)
+                resp = client.get("/api/chat/messages")
+
+    body = resp.json()
+    assert body.get("draft") is None
+    fake_stream_store.get_draft.assert_not_called()

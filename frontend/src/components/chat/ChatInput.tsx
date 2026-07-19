@@ -40,9 +40,13 @@ interface PendingAttachment {
 interface ChatInputProps {
   onSend: (input: SendMessageInput) => void
   disabled?: boolean
+  /** True while Klaus is generating — swaps the send button for Stop. */
+  generating?: boolean
+  /** Called when the user taps Stop (hub streaming feature). */
+  onStop?: () => void
 }
 
-export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
+export function ChatInput({ onSend, disabled = false, generating = false, onStop }: ChatInputProps) {
   const [value, setValue] = useState('')
   const [pending, setPending] = useState<PendingAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -349,7 +353,41 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
           aria-label="Message Klaus"
         />
 
-        {/* Send button — accent bg, ≥44px touch target (iOS HIG, UI-SPEC) */}
+        {/* Send button — accent bg, ≥44px touch target (iOS HIG, UI-SPEC).
+            While Klaus is generating it becomes a Stop button (hub streaming). */}
+        {generating ? (
+          <button
+            onClick={() => onStop?.()}
+            aria-label="Stop generating"
+            style={{
+              flexShrink: 0,
+              width: '44px',
+              height: '44px',
+              borderRadius: '10px',
+              border: `1px solid ${border}`,
+              backgroundColor: '#2A2A2A',
+              color: textPrimary,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background-color 0.15s',
+              flexDirection: 'column',
+            }}
+          >
+            {/* Stop icon — square */}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 14 14"
+              xmlns="http://www.w3.org/2000/svg"
+              aria-hidden="true"
+            >
+              <rect x="1" y="1" width="12" height="12" rx="2" fill="currentColor" />
+            </svg>
+            <span className="sr-only">Stop generating</span>
+          </button>
+        ) : (
         <button
           onClick={handleSend}
           disabled={!canSend}
@@ -390,6 +428,7 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
           {/* Screen-reader visible label */}
           <span className="sr-only">Send message</span>
         </button>
+        )}
       </div>
     </div>
   )

@@ -303,6 +303,93 @@ _HEARTBEAT_CONFIG_DEFAULTS: dict = {
 }
 
 
+class HubStreamStore:
+    """Hub streaming draft — one document per user in collection 'hub_stream'.
+
+    The Cloud Tasks worker writes the accumulating reply here (throttled to
+    ~1/sec by the caller — Firestore's sustained per-doc write limit) while the
+    brain streams; the /api/chat/messages poll surfaces it as a live draft
+    bubble; POST /api/chat/stop flips cancel_requested, which the worker reads
+    back on its next throttled write and aborts the turn.
+
+    Read paths never raise — a draft hiccup must not 500 the poll or kill a
+    turn mid-generation.
+    """
+
+    _COLLECTION = "hub_stream"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+
+    def _doc_ref(self, user_id: int):
+        return self._client.collection(self._COLLECTION).document(str(user_id))
+
+    def start_turn(self, user_id: int, turn_id: str) -> None:
+        """Reset the draft doc for a new turn (full overwrite, not merge)."""
+        self._doc_ref(user_id).set({
+            "turn_id": turn_id,
+            "text": "",
+            "status": "generating",
+            "cancel_requested": False,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+
+    def write_draft(self, user_id: int, turn_id: str, text: str) -> bool:
+        """Persist the accumulated draft text; return True if a cancel is pending.
+
+        The read and write ride the same throttled tick, so the stop button's
+        worst-case latency equals the throttle interval (~1s).
+        """
+        cancelled = False
+        doc_ref = self._doc_ref(user_id)
+        try:
+            snap = doc_ref.get()
+            data = (snap.to_dict() or {}) if snap.exists else {}
+            cancelled = bool(data.get("cancel_requested")) and data.get("turn_id") == turn_id
+        except Exception:
+            logger.warning("HubStreamStore.write_draft: cancel-flag read failed", exc_info=True)
+        doc_ref.set({
+            "turn_id": turn_id,
+            "text": text,
+            "status": "generating",
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+        return cancelled
+
+    def finish_turn(self, user_id: int, turn_id: str, status: str = "done") -> None:
+        """Mark the turn finished ('done' or 'stopped') and clear the draft text."""
+        self._doc_ref(user_id).set({
+            "turn_id": turn_id,
+            "text": "",
+            "status": status,
+            "cancel_requested": False,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        })
+
+    def request_cancel(self, user_id: int) -> None:
+        """Ask the in-flight turn to stop (picked up on the next draft write)."""
+        self._doc_ref(user_id).set({
+            "cancel_requested": True,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }, merge=True)
+
+    def get_draft(self, user_id: int) -> dict | None:
+        """Return {turn_id, text, status} for the current draft, or None."""
+        try:
+            snap = self._doc_ref(user_id).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            return {
+                "turn_id": data.get("turn_id"),
+                "text": data.get("text", ""),
+                "status": data.get("status", ""),
+            }
+        except Exception:
+            logger.warning("HubStreamStore.get_draft failed", exc_info=True)
+            return None
+
+
 class HeartbeatConfigStore:
     """Read/write heartbeat scheduler config stored in Firestore.
 

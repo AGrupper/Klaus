@@ -48,15 +48,24 @@ export interface ChatMessage {
   previewUrls?: string[]
 }
 
+/** Live draft of the reply Klaus is generating (hub streaming feature). */
+export interface ChatDraft {
+  text: string
+  status: string
+}
+
 interface MessagesResponse {
   messages: ChatMessage[]
   /** True when older messages exist beyond this page (UAT gap-closure). */
   has_more?: boolean
+  /** Present (non-null) only while a turn is generating. */
+  draft?: ChatDraft | null
 }
 
 export interface FetchMessagesResult {
   messages: ChatMessage[]
   hasMore: boolean
+  draft?: ChatDraft | null
 }
 
 export interface FetchMessagesOptions {
@@ -101,7 +110,19 @@ export async function fetchMessages(
   const qs = params.toString()
   const path = qs ? `/api/chat/messages?${qs}` : '/api/chat/messages'
   const data = await apiFetch<MessagesResponse>(path)
-  return { messages: data.messages, hasMore: data.has_more ?? false }
+  return {
+    messages: data.messages,
+    hasMore: data.has_more ?? false,
+    draft: data.draft ?? null,
+  }
+}
+
+/**
+ * Ask the server to stop the in-flight reply (hub streaming feature). The
+ * worker aborts within ~1s and persists the partial with a cutoff marker.
+ */
+export async function stopGeneration(): Promise<void> {
+  await apiFetch<{ ok: boolean }>('/api/chat/stop', { method: 'POST' })
 }
 
 /**

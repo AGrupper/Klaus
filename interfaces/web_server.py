@@ -2479,9 +2479,60 @@ async def api_chat_messages(
 
     messages, has_more = await loop.run_in_executor(None, _get_messages)
 
+    # Hub streaming: while a turn is in flight (last message is the user's),
+    # surface the live draft so the client can render the streaming bubble.
+    # Skipped entirely otherwise — no extra Firestore read on idle polls.
+    draft = None
+    if messages and messages[-1].get("role") == "user":
+        def _read_draft():
+            d = _get_hub_stream_store().get_draft(user_id)
+            if d and d.get("status") == "generating":
+                return {"text": d.get("text", ""), "status": "generating"}
+            return None
+        draft = await loop.run_in_executor(None, _read_draft)
+
     # _jsonsafe_doc on the full response (Pitfall 4 / T-26-05-06)
-    payload = _jsonsafe_doc({"messages": messages, "has_more": has_more})
+    payload = _jsonsafe_doc({"messages": messages, "has_more": has_more, "draft": draft})
     return JSONResponse(content=payload)
+
+
+# Process-lifetime HubStreamStore singleton (same pattern as the memoized
+# _resolve_hub_user_id): one client per Cloud Run instance, not per poll.
+_hub_stream_store = None
+
+
+def _get_hub_stream_store():
+    global _hub_stream_store
+    if _hub_stream_store is None:
+        from memory.firestore_db import HubStreamStore  # lazy import
+        _hub_stream_store = HubStreamStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+    return _hub_stream_store
+
+
+@app.post("/api/chat/stop")
+async def api_chat_stop(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Stop the in-flight hub turn (hub streaming feature).
+
+    Sets cancel_requested on the user's draft doc; the Cloud Tasks worker's
+    stream sink reads the flag back on its next throttled draft write (~1s)
+    and aborts the turn, persisting the partial reply with a cutoff marker.
+    Idempotent and safe with no turn in flight — the flag is simply reset by
+    the next start_turn.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
+    except ValueError as exc:
+        logger.error("api_chat_stop: cannot resolve user_id: %s", exc)
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
+
+    await loop.run_in_executor(None, _get_hub_stream_store().request_cancel, user_id)
+    return JSONResponse(content={"ok": True})
 
 
 @app.post("/internal/process-hub-message")
@@ -2571,9 +2622,32 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     # /api/chat/messages to receive the reply. We do NOT append here (doing so
     # double-wrote the assistant reply, CR-03).
     # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
-    reply_text = await asyncio.to_thread(
-        _orchestrator.handle_message, content, user_id, attachments
-    )
+    #
+    # Hub streaming: the turn streams its text into a HubStreamStore draft doc
+    # via a throttled sink; the poll surfaces it as a live bubble and the Stop
+    # button flips the doc's cancel flag (handled inside handle_message as
+    # TurnCancelled → partial reply). finish_turn runs on EVERY exit path — a
+    # draft stuck in status 'generating' would leave a phantom typing bubble.
+    import uuid as _uuid
+    from core.hub_stream import FirestoreStreamSink  # lazy import
+
+    stream_store = _get_hub_stream_store()
+    turn_id = _uuid.uuid4().hex
+    sink = FirestoreStreamSink(stream_store, user_id=user_id, turn_id=turn_id)
+
+    def _run_turn() -> str:
+        stream_store.start_turn(user_id, turn_id)
+        return _orchestrator.handle_message(
+            content, user_id, attachments, stream_sink=sink
+        )
+
+    try:
+        reply_text = await asyncio.to_thread(_run_turn)
+    finally:
+        try:
+            await asyncio.to_thread(stream_store.finish_turn, user_id, turn_id)
+        except Exception:
+            logger.warning("process-hub-message: finish_turn failed", exc_info=True)
 
     # Phase 29 (PUSH-02/03, D-01/D-08): push + mirror this reply too. bot=None
     # lets send_and_inject lazily build/reuse its own module-level Bot (this

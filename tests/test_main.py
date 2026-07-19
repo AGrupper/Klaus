@@ -610,3 +610,94 @@ class TestHandleMessageAttachments:
             if c.args[1] == "user"
         ]
         assert user_calls[-1].args[2] == "what's this?"
+
+
+# ---------------------------------------------------------------------------
+# Hub streaming feature — stream sink threading + TurnCancelled handling
+# ---------------------------------------------------------------------------
+
+class _RecordingSink:
+    """Test double for the orchestrator's StreamSink protocol."""
+
+    def __init__(self):
+        self.resets = 0
+        self.deltas: list[str] = []
+
+    def reset(self) -> None:
+        self.resets += 1
+
+    def delta(self, text: str) -> None:
+        self.deltas.append(text)
+
+
+class TestStreamSinkThreading:
+    def test_loop_passes_delta_callback_and_resets_per_iteration(self, monkeypatch):
+        """Each smart-loop iteration resets the sink (tool-round text must not
+        leak into the final draft) and hands sink.delta to the brain call."""
+        orch = _make_minimal_orchestrator()
+        # One tool round, then a final text answer → two brain calls.
+        orch.smart_agent.chat.side_effect = [
+            _tool_call_response(text=""),
+            _text_only_response("final answer"),
+        ]
+        monkeypatch.setattr(
+            "core.main.tool_registry.dispatch", lambda name, args: '{"ok": 1}',
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas", lambda user_message=None: [],
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.SMART_AGENT_DIRECT_TOOLS", {"read_coaching_guide"},
+        )
+
+        sink = _RecordingSink()
+        result = orch._run_smart_loop(
+            [{"role": "user", "content": "hi"}],
+            smart_system="", worker_system="", stream_sink=sink,
+        )
+
+        assert result == "final answer"
+        assert sink.resets == 2  # once per brain call
+        for call in orch.smart_agent.chat.call_args_list:
+            assert call.kwargs.get("on_text_delta") == sink.delta
+
+    def test_no_sink_passes_no_callback(self, monkeypatch):
+        orch = _make_minimal_orchestrator()
+        orch.smart_agent.chat.return_value = _text_only_response("done")
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas", lambda user_message=None: [],
+        )
+        orch._run_smart_loop([{"role": "user", "content": "hi"}], "", "")
+        assert orch.smart_agent.chat.call_args.kwargs.get("on_text_delta") is None
+
+
+class TestTurnCancelled:
+    def test_handle_message_persists_partial_on_cancel(self):
+        """A TurnCancelled unwind persists the partial text with a cutoff
+        marker instead of losing the turn entirely (stop-button contract)."""
+        from core.main import TurnCancelled
+
+        orch = _make_orchestrator_for_handle_message(loop_return="unused")
+        orch._run_smart_loop = MagicMock(
+            side_effect=TurnCancelled(partial_text="Here is the first half")
+        )
+
+        result = orch.handle_message("long question", user_id=123456)
+
+        assert "Here is the first half" in result
+        assert result != "Here is the first half"  # cutoff marker appended
+        assistant_calls = [
+            c for c in orch.conversation_manager.append.call_args_list
+            if c.args[1] == "assistant"
+        ]
+        assert assistant_calls[-1].args[2] == result
+
+    def test_handle_message_cancel_with_no_text_persists_stopped_note(self):
+        from core.main import TurnCancelled
+
+        orch = _make_orchestrator_for_handle_message(loop_return="unused")
+        orch._run_smart_loop = MagicMock(side_effect=TurnCancelled(partial_text=""))
+
+        result = orch.handle_message("q", user_id=123456)
+
+        assert result.strip()  # never persists an empty assistant turn (WR-05)

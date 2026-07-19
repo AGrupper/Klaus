@@ -750,7 +750,7 @@ def test_journal_digest_assembly():
     # so they return immediately without making real API calls.
     captured: dict = {}
 
-    def _fake_run_smart_loop(messages, smart_system, worker_system, attachments=None):
+    def _fake_run_smart_loop(messages, smart_system, worker_system, attachments=None, stream_sink=None):
         captured["smart_system"] = smart_system
         captured["worker_system"] = worker_system
         return "ok"

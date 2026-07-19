@@ -23,7 +23,7 @@
  */
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchMessages, postChatMessage } from '../api/chat'
+import { fetchMessages, postChatMessage, stopGeneration as apiStopGeneration } from '../api/chat'
 import type { AttachmentMeta, ChatMessage } from '../api/chat'
 
 export const CHAT_QUERY_KEY = ['chat', 'messages'] as const
@@ -105,7 +105,16 @@ export function useChat(isVisible: boolean = true) {
     // fresh per render, and refetchInterval below already gates polling on
     // isVisible, so chat_visible=1 is only ever sent while truly visible.
     queryFn: () => fetchMessages({ chatVisible: isVisible, limit: TAIL_LIMIT }),
-    refetchInterval: isVisible ? 2500 : false,
+    // Hub streaming: while a turn is in flight (last message is the user's)
+    // poll fast (~800ms) so the draft bubble grows smoothly; idle polls stay
+    // at the original 2.5s cadence.
+    refetchInterval: (q) => {
+      if (!isVisible) return false
+      const msgs = q.state.data?.messages
+      const turnInFlight =
+        !!msgs && msgs.length > 0 && msgs[msgs.length - 1].role === 'user'
+      return turnInFlight ? 800 : 2500
+    },
     // Pause when the browser tab loses focus (TanStack default; explicit here
     // for clarity and test-ability).
     refetchIntervalInBackground: false,
@@ -190,6 +199,26 @@ export function useChat(isVisible: boolean = true) {
     messages.length > 0 && messages[messages.length - 1].role === 'user'
 
   // -------------------------------------------------------------------------
+  // Streaming draft (hub streaming feature): the poll carries the text Klaus
+  // is generating right now; null when no turn is in flight. Only meaningful
+  // while the last message is still the user's — once the real assistant
+  // message lands, any stale draft from the same poll cycle is ignored.
+  // -------------------------------------------------------------------------
+  const draft = query.data?.draft
+  const streamingDraft: string | null =
+    isKlausThinking && draft && draft.status === 'generating' && draft.text
+      ? draft.text
+      : null
+
+  const stopGeneration = useCallback(() => {
+    // Fire-and-forget: the worker picks the flag up on its next throttled
+    // write; the UI reflects the stop when the partial reply lands via poll.
+    void Promise.resolve(apiStopGeneration()).catch(() => {
+      // A failed stop request is non-fatal — the reply simply completes.
+    })
+  }, [])
+
+  // -------------------------------------------------------------------------
   // Optimistic send mutation (CHAT-03)
   // -------------------------------------------------------------------------
   const mutation = useMutation({
@@ -262,6 +291,8 @@ export function useChat(isVisible: boolean = true) {
     isLoading: query.isLoading,
     isError: query.isError,
     isKlausThinking,
+    streamingDraft,
+    stopGeneration,
     sendMessage,
     isSending: mutation.isPending,
     loadOlder,

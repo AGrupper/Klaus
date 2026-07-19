@@ -30,6 +30,7 @@ import { type ReactNode } from 'react'
 vi.mock('../api/chat', () => ({
   fetchMessages: vi.fn(),
   postChatMessage: vi.fn(),
+  stopGeneration: vi.fn(),
 }))
 
 import { fetchMessages, postChatMessage } from '../api/chat'
@@ -614,5 +615,64 @@ describe('useChat — attachments', () => {
     await waitFor(() => {
       expect(mockPostChatMessage).toHaveBeenCalledWith('just text', undefined)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Describe: streaming draft (hub streaming feature)
+// ---------------------------------------------------------------------------
+
+describe('useChat — streaming draft', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('exposes the live draft text while the server reports a generating turn', async () => {
+    const { wrapper } = makeWrapper()
+    mockFetchMessages.mockResolvedValue({
+      messages: [{ role: 'user', content: 'long question', seq: 0 }],
+      hasMore: false,
+      draft: { text: 'typing so f', status: 'generating' },
+    })
+
+    const { result } = renderHook(() => useChat(true), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.streamingDraft).toBe('typing so f')
+    })
+  })
+
+  it('streamingDraft is null when there is no draft', async () => {
+    const { wrapper } = makeWrapper()
+    mockFetchMessages.mockResolvedValue({
+      messages: [
+        { role: 'user', content: 'q', seq: 0 },
+        { role: 'assistant', content: 'a', seq: 1 },
+      ],
+      hasMore: false,
+      draft: null,
+    })
+
+    const { result } = renderHook(() => useChat(true), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.messages.length).toBe(2)
+    })
+    expect(result.current.streamingDraft).toBeNull()
+  })
+
+  it('stopGeneration calls the stop endpoint', async () => {
+    // Direct import of the mocked module for assertion.
+    const { stopGeneration } = await import('../api/chat')
+
+    const { wrapper } = makeWrapper()
+    mockFetchMessages.mockResolvedValue({ messages: [], hasMore: false })
+    const { result } = renderHook(() => useChat(false), { wrapper })
+
+    act(() => {
+      result.current.stopGeneration()
+    })
+
+    expect(vi.mocked(stopGeneration)).toHaveBeenCalledTimes(1)
   })
 })

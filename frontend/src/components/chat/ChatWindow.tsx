@@ -59,6 +59,8 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
   const {
     messages,
     isKlausThinking,
+    streamingDraft,
+    stopGeneration,
     sendMessage,
     isSending,
     loadOlder,
@@ -142,6 +144,16 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
       })
     }
   }, [messages.length])
+
+  // Keep the growing streaming-draft bubble in view while the user is at the
+  // bottom (the message-count effect above never fires for draft growth).
+  useEffect(() => {
+    if (streamingDraft && wasNearBottomRef.current) {
+      scrollContainerRef.current?.scrollTo({
+        top: scrollContainerRef.current.scrollHeight,
+      })
+    }
+  }, [streamingDraft])
 
   // -------------------------------------------------------------------------
   // Preserve scroll position across a "load earlier messages" prepend
@@ -294,12 +306,25 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
           )
         })}
 
-        {/* Typing indicator (CHAT-03) */}
-        {isKlausThinking && <TypingIndicator />}
+        {/* Streaming draft bubble (hub streaming): once real text is coming
+            in, render it as a live assistant bubble with a typing cursor;
+            until then fall back to the classic dots indicator (CHAT-03). */}
+        {streamingDraft ? (
+          <MessageBubble
+            message={{ id: 'streaming-draft', role: 'assistant', content: `${streamingDraft} ▍` }}
+          />
+        ) : (
+          isKlausThinking && <TypingIndicator />
+        )}
       </div>
 
       {/* Input */}
-      <ChatInput onSend={sendMessage} disabled={isSending} />
+      <ChatInput
+        onSend={sendMessage}
+        disabled={isSending}
+        generating={isKlausThinking}
+        onStop={stopGeneration}
+      />
     </div>
   )
 }

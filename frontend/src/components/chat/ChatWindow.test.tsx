@@ -62,6 +62,8 @@ function baseChatReturn(overrides: Partial<ReturnType<typeof useChat>> = {}) {
   return {
     messages: [] as ChatMessage[],
     isKlausThinking: false,
+    streamingDraft: null as string | null,
+    stopGeneration: vi.fn(),
     sendMessage: vi.fn(),
     isSending: false,
     loadOlder: vi.fn().mockResolvedValue(undefined),
