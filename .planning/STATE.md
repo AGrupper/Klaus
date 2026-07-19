@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: executing
-stopped_at: Phase 31 context gathered
-last_updated: "2026-07-18T21:23:26.783Z"
+status: ready_to_plan
+stopped_at: Phase 30.5 complete (6/6) — ready to discuss Phase 31
+last_updated: 2026-07-19T14:11:38.958Z
 last_activity: 2026-07-18 -- Phase 30.5 execution started
 progress:
   total_phases: 6
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 30.5 (brain-upgrade-sonnet-5) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 30.5
-Last activity: 2026-07-18 -- Phase 30.5 execution started
+Phase: 31
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-19
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -71,7 +71,7 @@ Last activity: 2026-07-18 -- Phase 30.5 execution started
 See: `.planning/PROJECT.md` (updated 2026-07-17 for v6.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 30.5 — brain-upgrade-sonnet-5
+**Current focus:** Phase 31 — standing directives
 
 ## Architecture (current)
 

@@ -132,7 +132,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete   | 2026-07-19 |
+| 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 0/? | Not started | - |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
