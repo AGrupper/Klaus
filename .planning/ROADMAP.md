@@ -36,7 +36,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 
 ## Phases
 
-- [ ] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt
+- [x] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt (completed 2026-07-19)
 - [ ] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop
 - [ ] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate
 - [ ] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome
@@ -61,7 +61,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 30.5-03-PLAN.md — Anthropic prompt caching + cache-token metering + pricing + Sonnet-5 param/max_tokens compat (BRAIN-02/05)
 - [x] 30.5-04-PLAN.md — Prompt slimming: compact SELF.md generator + light smart_agent.md de-prescription + count_tokens measurement (BRAIN-06)
 - [x] 30.5-05-PLAN.md — Heartbeat daily-spend tripwire, once/day, brain-composed with template fallback (BRAIN-04)
-- [ ] 30.5-06-PLAN.md — Brain flip to claude-sonnet-5 + 3-tier fallback chain + D-12 disclosure + D-14 live checklist (BRAIN-01)
+- [x] 30.5-06-PLAN.md — Brain flip to claude-sonnet-5 + 3-tier fallback chain + D-12 disclosure + D-14 live checklist (BRAIN-01)
 
 ### Phase 31: Standing Directives
 **Goal**: Amit can state a lasting wish about Klaus's behavior once and have it honored everywhere, indefinitely or until it expires/is cancelled, with conflicts surfaced and Klaus able to learn new directives from how Amit reacts to his own outreach
@@ -132,7 +132,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 30.5. Brain Upgrade (Sonnet 5) | 5/6 | In Progress|  |
+| 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete   | 2026-07-19 |
 | 31. Standing Directives | 0/? | Not started | - |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
