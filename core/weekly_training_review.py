@@ -441,6 +441,29 @@ def _compose_review(week_data: dict, today_iso: str) -> str:
     except Exception:
         logger.warning("weekly_review: brain LLM call failed; using fallback", exc_info=True)
 
+    # Phase 30.5 D-14 gap fix — before dropping to the deterministic data
+    # string, try the SMART_AGENT_FALLBACK_* Gemini compose (same 2-tier shape
+    # as morning/nightly from Plan 06 Task 2). Silent try/except — a fallback
+    # failure must never crash the weekly cron. Surfaced 2026-07-19 when the
+    # Sonnet compose timed out and the review skipped straight to raw data.
+    try:
+        from core.llm_client import LLMClient
+        client_fb = LLMClient(
+            backend=os.environ["SMART_AGENT_FALLBACK_BACKEND"],
+            model=os.environ["SMART_AGENT_FALLBACK_MODEL"],
+            api_key=os.environ["SMART_AGENT_FALLBACK_API_KEY"],
+        )
+        response_fb = client_fb.chat(
+            messages=[{"role": "user", "content": user_message}],
+            system=system_prompt,
+            purpose="weekly_review",
+        )
+        text_fb = (response_fb.get("text") or "").strip()
+        if text_fb:
+            return text_fb
+    except Exception:
+        logger.warning("weekly_review: LLM fallback composition failed", exc_info=True)
+
     # Fallback: minimal data-derived string so D-24 (always send) is honoured
     week_start = week_data.get("week_start", "")
     week_end = week_data.get("week_end", "")

@@ -391,8 +391,8 @@ def _make_anthropic_response(text="hi", cache_read=0, cache_write=0,
 def test_anthropic_backend_sends_cache_control_system_block():
     from core.llm_client import _AnthropicBackend
     backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
-    backend.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response()
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
     )
 
     backend.chat(
@@ -400,7 +400,7 @@ def test_anthropic_backend_sends_cache_control_system_block():
         system="You are Klaus.",
     )
 
-    _, kwargs = backend.client.messages.create.call_args
+    _, kwargs = backend.client.messages.stream.call_args
     system_kwarg = kwargs["system"]
     assert isinstance(system_kwarg, list)
     assert len(system_kwarg) == 1
@@ -412,21 +412,23 @@ def test_anthropic_backend_sends_cache_control_system_block():
 def test_anthropic_backend_no_system_block_when_system_empty():
     from core.llm_client import _AnthropicBackend
     backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
-    backend.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response()
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
     )
 
     backend.chat([{"role": "user", "content": "hello"}], system=None)
 
-    _, kwargs = backend.client.messages.create.call_args
+    _, kwargs = backend.client.messages.stream.call_args
     assert "system" not in kwargs
 
 
 def test_anthropic_backend_extracts_cache_tokens():
     from core.llm_client import _AnthropicBackend
     backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
-    backend.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response(cache_read=500, cache_write=1200)
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream(
+            [], _make_anthropic_response(cache_read=500, cache_write=1200)
+        )
     )
 
     result = backend.chat(
@@ -444,7 +446,9 @@ def test_anthropic_backend_cache_tokens_default_zero_when_absent():
     response = _make_anthropic_response()
     del response.usage.cache_read_input_tokens
     del response.usage.cache_creation_input_tokens
-    backend.client.messages.create = MagicMock(return_value=response)
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], response)
+    )
 
     result = backend.chat([{"role": "user", "content": "hello"}], system="sys")
 
@@ -455,14 +459,14 @@ def test_anthropic_backend_cache_tokens_default_zero_when_absent():
 def test_anthropic_backend_no_forbidden_params_on_smart_path():
     from core.llm_client import _AnthropicBackend
     backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
-    backend.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response()
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
     )
 
     # Smart-path call: no temperature, no explicit thinking config, no tools.
     backend.chat([{"role": "user", "content": "hello"}], system="You are Klaus.")
 
-    _, kwargs = backend.client.messages.create.call_args
+    _, kwargs = backend.client.messages.stream.call_args
     assert "temperature" not in kwargs
     assert "top_p" not in kwargs
     assert "top_k" not in kwargs
@@ -472,15 +476,15 @@ def test_anthropic_backend_no_forbidden_params_on_smart_path():
 def test_anthropic_backend_temperature_still_gated_when_explicitly_passed():
     from core.llm_client import _AnthropicBackend
     backend = _AnthropicBackend("claude-haiku-4-5", "fake-api-key")
-    backend.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response()
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
     )
 
     backend.chat(
         [{"role": "user", "content": "hello"}], system=None, temperature=0.6
     )
 
-    _, kwargs = backend.client.messages.create.call_args
+    _, kwargs = backend.client.messages.stream.call_args
     assert kwargs["temperature"] == 0.6
 
 
@@ -494,9 +498,11 @@ def test_llm_client_chat_meters_cache_tokens(monkeypatch):
     from core.llm_client import LLMClient
 
     client = LLMClient(backend="anthropic", model="claude-sonnet-5", api_key="fake-key")
-    client._impl.client.messages.create = MagicMock(
-        return_value=_make_anthropic_response(cache_read=300, cache_write=800,
-                                               in_tokens=1000, out_tokens=50)
+    client._impl.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream(
+            [], _make_anthropic_response(cache_read=300, cache_write=800,
+                                         in_tokens=1000, out_tokens=50)
+        )
     )
 
     monkeypatch.setenv("GCP_PROJECT_ID", "fake-project")

@@ -29,7 +29,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +99,8 @@ class LLMClient:
              tools: list[dict] | None = None,
              purpose: str = "",
              max_tokens: int | None = None,
-             temperature: float | None = None) -> dict:
+             temperature: float | None = None,
+             on_text_delta: Callable[[str], None] | None = None) -> dict:
         """Send a multi-turn conversation and return a unified response.
 
         Args:
@@ -117,6 +118,12 @@ class LLMClient:
                       leaves the provider default. The tick-brain passes a low
                       value — a binary judgment gate should not flip on
                       borderline cases run-to-run.
+            on_text_delta: Optional callback invoked with each text chunk as it
+                      is generated (hub streaming). Only the Anthropic backend
+                      streams; Gemini/OpenAI accept and ignore the callback, so
+                      fallback tiers degrade to arrive-at-once replies. An
+                      exception raised by the callback (TurnCancelled) unwinds
+                      the stream and propagates to the caller unchanged.
 
         Returns:
             Unified envelope: {"text", "tool_calls", "stop_reason", "usage"}
@@ -126,7 +133,8 @@ class LLMClient:
             self.backend, self.model, len(messages), len(tools or []), purpose,
         )
         result = self._impl.chat(messages, system=system, tools=tools,
-                                 max_tokens=max_tokens, temperature=temperature)
+                                 max_tokens=max_tokens, temperature=temperature,
+                                 on_text_delta=on_text_delta)
 
         # --- Cost metering (never raises) ---
         try:
@@ -171,7 +179,8 @@ class _BaseBackend:
     def chat(self, messages: list[dict], *, system: str | None,
              tools: list[dict] | None,
              max_tokens: int | None = None,
-             temperature: float | None = None) -> dict:
+             temperature: float | None = None,
+             on_text_delta: Callable[[str], None] | None = None) -> dict:
         raise NotImplementedError
 
 
@@ -194,7 +203,8 @@ class _AnthropicBackend(_BaseBackend):
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
-             temperature: float | None = None) -> dict:
+             temperature: float | None = None,
+             on_text_delta: Callable[[str], None] | None = None) -> dict:
         import anthropic
 
         # Strip thought_signature from messages to prevent Anthropic validation errors on fallback
@@ -236,7 +246,28 @@ class _AnthropicBackend(_BaseBackend):
             kwargs["tools"] = tools
 
         try:
-            response = self.client.messages.create(**kwargs)
+            if on_text_delta is not None:
+                # Hub streaming: forward each text chunk as it is generated,
+                # then materialize the final Message so the envelope below is
+                # identical to the non-streaming path. A raising callback
+                # (TurnCancelled) exits the with-block, closing the HTTP
+                # stream, and propagates untouched — it must NOT become an
+                # LLMError or the fallback tiers would re-run a cancelled turn.
+                with self.client.messages.stream(**kwargs) as stream:
+                    for chunk in stream.text_stream:
+                        on_text_delta(chunk)
+                    response = stream.get_final_message()
+            else:
+                # Stream even without a delta consumer: a non-streaming create
+                # waits in one silent read while the model generates, so the
+                # httpx read timeout fires at LLM_TIMEOUT_SECONDS wall-clock on
+                # any long generation — and Anthropic still bills the finished
+                # request server-side, invisibly to our metering (2026-07-19:
+                # weekly-review compose timed out at 120s, billed 2x, metered
+                # $0). SSE chunks reset the read timeout, so slow-but-alive
+                # generations complete while a hung connection still times out.
+                with self.client.messages.stream(**kwargs) as stream:
+                    response = stream.get_final_message()
         except anthropic.APIStatusError as exc:
             raise LLMError(
                 str(exc), backend="anthropic", status_code=exc.status_code
@@ -308,7 +339,10 @@ class _GeminiBackend(_BaseBackend):
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
-             temperature: float | None = None) -> dict:
+             temperature: float | None = None,
+             on_text_delta: Callable[[str], None] | None = None) -> dict:
+        # on_text_delta is accepted but ignored — the Gemini fallback tier
+        # doesn't stream; its reply arrives at once (hub streaming degrades).
         from google import genai
         from google.genai import types
 
@@ -551,7 +585,10 @@ class _OpenAIBackend(_BaseBackend):
     def chat(self, messages: list[dict], *, system: str | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
-             temperature: float | None = None) -> dict:
+             temperature: float | None = None,
+             on_text_delta: Callable[[str], None] | None = None) -> dict:
+        # on_text_delta is accepted but ignored — OpenAI-compat callers (worker,
+        # tick-brain, tertiary fallback) don't stream to the hub.
         from openai import APIConnectionError, APIStatusError
 
         openai_messages = self._convert_messages(messages, system=system)

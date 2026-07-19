@@ -855,7 +855,8 @@ def test_compose_review_brain_fails_gemini_fallback_composes(monkeypatch):
         return client
 
     with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
-         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
         result = wtr._compose_review({"week_start": "2026-07-13", "week_end": "2026-07-19"},
                                      "2026-07-19")
 
@@ -868,7 +869,8 @@ def test_compose_review_brain_and_fallback_fail_returns_data_fallback(monkeypatc
     _fallback_env(monkeypatch)
 
     with patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
-         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
         result = wtr._compose_review(
             {"week_start": "2026-07-13", "week_end": "2026-07-19",
              "training_log": [{"a": 1}]},
