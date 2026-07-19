@@ -1224,3 +1224,300 @@ class TestPushSelfAwarenessTools:
         parsed = json.loads(result)
         assert "chat_visible_until" not in parsed
         assert parsed["subscription_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 — standing directives (DIR-01/DIR-04/DIR-05)
+# ---------------------------------------------------------------------------
+
+class _FakeStandingDirectiveStore:
+    """Test double for StandingDirectiveStore — records every call without I/O.
+
+    Mirrors _FakeFollowupStore's shape: class-level `instances` tracking so
+    tests can assert what was persisted without touching real Firestore.
+    """
+
+    instances: list["_FakeStandingDirectiveStore"] = []
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self.project_id = project_id
+        self.database = database
+        self.added: list[dict] = []
+        self.cancelled: list[str] = []
+        self.list_active_return: list[dict] = []
+        self.list_all_return: list[dict] = []
+        # Configurable behaviours
+        self.add_return: dict | None = None
+        self.cancel_return: bool = True
+        _FakeStandingDirectiveStore.instances.append(self)
+
+    def add(
+        self,
+        text: str,
+        origin: str = "user_chat",
+        context_quote: str = "",
+        expires_at: str | None = None,
+        condition_text: str | None = None,
+    ) -> dict:
+        record = {
+            "id": "fake-directive-123",
+            "text": text,
+            "origin": origin,
+            "context_quote": context_quote,
+            "status": "active",
+            "expires_at": expires_at,
+            "condition_text": condition_text,
+            "superseded_by": None,
+        }
+        self.added.append(record)
+        if self.add_return is not None:
+            return self.add_return
+        return record
+
+    def list_active(self) -> list[dict]:
+        return list(self.list_active_return)
+
+    def list_all(self) -> list[dict]:
+        return list(self.list_all_return)
+
+    def cancel(self, did: str) -> bool:
+        self.cancelled.append(did)
+        return self.cancel_return
+
+
+@pytest.fixture
+def fake_directive_store(monkeypatch):
+    """Patch StandingDirectiveStore in memory.firestore_db and ensure GCP_PROJECT_ID is set."""
+    _FakeStandingDirectiveStore.instances = []
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    import memory.firestore_db as firestore_db
+    monkeypatch.setattr(firestore_db, "StandingDirectiveStore", _FakeStandingDirectiveStore)
+    yield _FakeStandingDirectiveStore
+
+
+class TestStandingDirectiveTools:
+    """Tests for the 3 standing-directive tool handlers in core/tools.py."""
+
+    # ----- _handle_set_standing_directive ----- #
+
+    def test_set_standing_directive_captures_verbatim(self, fake_directive_store):
+        """set_standing_directive persists verbatim text with origin='user_chat'."""
+        result_str = tools._handle_set_standing_directive(
+            text="no training nudges until I'm back from France",
+        )
+        result = json.loads(result_str)
+        assert result.get("text") == "no training nudges until I'm back from France"
+        assert len(fake_directive_store.instances) == 1
+        added = fake_directive_store.instances[0].added
+        assert len(added) == 1
+        assert added[0]["origin"] == "user_chat"
+        assert added[0]["text"] == "no training nudges until I'm back from France"
+
+    def test_set_standing_directive_with_condition_text(self, fake_directive_store):
+        """condition_text (event-based expiry) is forwarded verbatim."""
+        tools._handle_set_standing_directive(
+            text="skip supplement nudges",
+            condition_text="while I'm in France",
+        )
+        added = fake_directive_store.instances[0].added[0]
+        assert added["condition_text"] == "while I'm in France"
+        assert added["expires_at"] is None
+
+    def test_set_standing_directive_with_iso_expires_at(self, fake_directive_store):
+        """ISO 8601 expires_at is normalized to UTC ISO."""
+        tools._handle_set_standing_directive(
+            text="always suggest two restaurant options",
+            expires_at="2026-08-01T00:00:00+00:00",
+        )
+        added = fake_directive_store.instances[0].added[0]
+        assert added["expires_at"] == "2026-08-01T00:00:00+00:00"
+
+    def test_set_standing_directive_with_natural_language_expiry(self, fake_directive_store):
+        """Natural-language expires_at parses via dateutil defense-in-depth."""
+        tools._handle_set_standing_directive(
+            text="hold the France directive",
+            expires_at="2026-09-01 10:00",
+        )
+        added = fake_directive_store.instances[0].added[0]
+        assert added["expires_at"] is not None
+        assert added["expires_at"].endswith("+00:00")
+
+    def test_set_standing_directive_no_expiry_persists_indefinitely(self, fake_directive_store):
+        """Neither expires_at nor condition_text → both stay None (DIR-02)."""
+        tools._handle_set_standing_directive(text="never schedule meetings before 9am")
+        added = fake_directive_store.instances[0].added[0]
+        assert added["expires_at"] is None
+        assert added["condition_text"] is None
+
+    # ----- _handle_list_standing_directives ----- #
+
+    def test_list_standing_directives_active_by_default(self, fake_directive_store):
+        """Default call (include_history=False) returns list_active(), not list_all()."""
+        class _CustomStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.list_active_return = [
+                    {"id": "a1", "text": "active one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "active"},
+                ]
+                self.list_all_return = [
+                    {"id": "a1", "text": "active one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "active"},
+                    {"id": "a2", "text": "cancelled one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "cancelled"},
+                ]
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _CustomStore):
+            result_str = tools._handle_list_standing_directives()
+
+        result = json.loads(result_str)
+        assert len(result) == 1
+        assert result[0]["id"] == "a1"
+
+    def test_list_standing_directives_include_history(self, fake_directive_store):
+        """include_history=True returns list_all() (D-18)."""
+        class _CustomStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.list_active_return = [
+                    {"id": "a1", "text": "active one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "active"},
+                ]
+                self.list_all_return = [
+                    {"id": "a1", "text": "active one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "active"},
+                    {"id": "a2", "text": "cancelled one", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "cancelled"},
+                ]
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _CustomStore):
+            result_str = tools._handle_list_standing_directives(include_history=True)
+
+        result = json.loads(result_str)
+        assert len(result) == 2
+        ids = {r["id"] for r in result}
+        assert ids == {"a1", "a2"}
+
+    def test_list_standing_directives_marks_self_proposed(self, fake_directive_store):
+        """origin='klaus_self' entries are preserved in the projection (D-18)."""
+        class _CustomStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.list_active_return = [
+                    {"id": "s1", "text": "self-proposed directive", "origin": "klaus_self",
+                     "expires_at": None, "condition_text": None, "status": "active"},
+                ]
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _CustomStore):
+            result_str = tools._handle_list_standing_directives()
+
+        result = json.loads(result_str)
+        assert result[0]["origin"] == "klaus_self"
+
+    def test_list_standing_directives_strips_internal_fields(self, fake_directive_store):
+        """Only id/text/origin/expires_at/condition_text/status are exposed."""
+        class _CustomStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.list_active_return = [
+                    {"id": "a1", "text": "t", "origin": "user_chat",
+                     "expires_at": None, "condition_text": None, "status": "active",
+                     "created_at": "2026-07-19T00:00:00+00:00", "superseded_by": None,
+                     "context_quote": "the raw quote"},
+                ]
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _CustomStore):
+            result_str = tools._handle_list_standing_directives()
+
+        result = json.loads(result_str)
+        entry = result[0]
+        assert set(entry.keys()) == {"id", "text", "origin", "expires_at", "condition_text", "status"}
+
+    def test_list_standing_directives_empty(self, fake_directive_store):
+        """Empty active list returns '[]'."""
+        result_str = tools._handle_list_standing_directives()
+        assert result_str == "[]"
+
+    # ----- _handle_cancel_standing_directive ----- #
+
+    def test_cancel_standing_directive_idempotent_returns_ok_true(self, fake_directive_store):
+        """cancel returns {ok: True} when the doc exists; idempotent across repeats."""
+        result_str = tools._handle_cancel_standing_directive(id="a1")
+        result = json.loads(result_str)
+        assert result == {"ok": True}
+
+        # Second call on same id — still {ok: True} (idempotent)
+        result_str = tools._handle_cancel_standing_directive(id="a1")
+        result = json.loads(result_str)
+        assert result == {"ok": True}
+
+    def test_cancel_standing_directive_nonexistent_returns_ok_false(self, fake_directive_store):
+        """cancel returns {ok: False} when the id does not exist."""
+        class _StoreReturnsFalse(_FakeStandingDirectiveStore):
+            def cancel(self, did: str) -> bool:
+                return False
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _StoreReturnsFalse):
+            result_str = tools._handle_cancel_standing_directive(id="nonexistent")
+
+        result = json.loads(result_str)
+        assert result == {"ok": False}
+
+    # ----- Registration tests ----- #
+
+    def test_all_three_tools_in_smart_agent_direct_tools(self):
+        """set/list/cancel_standing_directive are in SMART_AGENT_DIRECT_TOOLS."""
+        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
+            assert name in tools.SMART_AGENT_DIRECT_TOOLS, (
+                f"{name!r} missing from SMART_AGENT_DIRECT_TOOLS"
+            )
+
+    def test_all_three_tools_excluded_from_worker_schemas(self):
+        """None of the 3 directive tools appear in WORKER_TOOL_SCHEMAS."""
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
+            assert name not in worker_names, (
+                f"{name!r} must NOT appear in WORKER_TOOL_SCHEMAS — Klaus brain-only"
+            )
+
+    def test_all_three_tools_in_handlers_dispatch(self):
+        """All 3 directive tools are in _HANDLERS."""
+        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
+            assert name in tools._HANDLERS, f"{name!r} missing from _HANDLERS"
+
+    def test_all_three_tools_returned_by_get_smart_schemas(self):
+        """Brain-direct: all 3 tools are returned by get_smart_schemas (not worker-delegated)."""
+        schemas = tools.get_smart_schemas()
+        names = {s["name"] for s in schemas}
+        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
+            assert name in names, f"{name!r} missing from get_smart_schemas() output"
+
+    def test_all_three_tools_have_correct_schemas(self):
+        """Schemas exist in TOOL_SCHEMAS with correct `required` arrays and no-delegate phrasing."""
+        schemas_by_name = {s["name"]: s for s in tools.TOOL_SCHEMAS}
+
+        assert "set_standing_directive" in schemas_by_name
+        setd = schemas_by_name["set_standing_directive"]
+        assert set(setd["input_schema"]["required"]) == {"text"}
+        assert "expires_at" in setd["input_schema"]["properties"]
+        assert "condition_text" in setd["input_schema"]["properties"]
+        assert "Call this directly — do NOT delegate to the worker." in setd["description"]
+
+        assert "list_standing_directives" in schemas_by_name
+        listd = schemas_by_name["list_standing_directives"]
+        assert listd["input_schema"]["required"] == []
+        assert "include_history" in listd["input_schema"]["properties"]
+        assert "Call this directly — do NOT delegate to the worker." in listd["description"]
+
+        assert "cancel_standing_directive" in schemas_by_name
+        cancd = schemas_by_name["cancel_standing_directive"]
+        assert set(cancd["input_schema"]["required"]) == {"id"}
+        assert "Call this directly — do NOT delegate to the worker." in cancd["description"]
