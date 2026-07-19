@@ -879,3 +879,30 @@ def test_compose_review_brain_and_fallback_fail_returns_data_fallback(monkeypatc
 
     assert "Full review composition failed" in result
     assert "2026-07-19" in result
+
+
+def test_compose_review_passes_32k_max_tokens(monkeypatch):
+    """The weekly compose must request 32K output headroom: Sonnet's thinking
+    counts against max_tokens and the default 16K was exhausted mid-thinking
+    (2026-07-19, stop_reason=max_tokens, empty text)."""
+    _fallback_env(monkeypatch)
+    captured = {}
+
+    def _client_factory(*args, **kwargs):
+        client = MagicMock()
+
+        def _chat(**chat_kwargs):
+            captured.update(chat_kwargs)
+            return {"text": "Sonnet review.", "tool_calls": [], "stop_reason": "end_turn"}
+
+        client.chat.side_effect = _chat
+        return client
+
+    with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = wtr._compose_review({"week_start": "2026-07-13", "week_end": "2026-07-19"},
+                                     "2026-07-19")
+
+    assert result == "Sonnet review."
+    assert captured.get("max_tokens") == 32000

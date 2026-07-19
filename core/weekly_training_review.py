@@ -429,15 +429,23 @@ def _compose_review(week_data: dict, today_iso: str) -> str:
             model=os.environ["SMART_AGENT_MODEL"],
             api_key=os.environ["SMART_AGENT_API_KEY"],
         )
+        # max_tokens=32000: the weekly review is the largest compose in the
+        # system and Sonnet's internal thinking counts against the output
+        # budget — at the default 16K it exhausted max_tokens mid-thinking and
+        # returned no text block at all (2026-07-19, stop_reason=max_tokens).
         response = client.chat(
             messages=[{"role": "user", "content": user_message}],
             system=system_prompt,
             purpose="weekly_review",
+            max_tokens=32000,
         )
         text = (response.get("text") or "").strip()
         if text:
             return text
-        logger.warning("weekly_review: brain returned empty response; using fallback")
+        logger.warning(
+            "weekly_review: brain returned empty response (stop_reason=%s); using fallback",
+            response.get("stop_reason"),
+        )
     except Exception:
         logger.warning("weekly_review: brain LLM call failed; using fallback", exc_info=True)
 
