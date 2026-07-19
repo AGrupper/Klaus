@@ -402,6 +402,273 @@ class TestFollowupStore:
 
 
 # =============================================================================
+# StandingDirectiveStore — Phase 31, DIR-01..07 (D-05/D-08/D-16)
+# =============================================================================
+
+class TestStandingDirectiveStore:
+    """Unit tests for StandingDirectiveStore — durable, verbatim standing directives."""
+
+    def test_add_persists_active_doc_with_uuid_and_created_at(self):
+        """add() must persist status='active', a uuid `id`, ISO created_at, superseded_by=None."""
+        client, col = _make_mock_client_with_collection()
+        captured: dict = {}
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = lambda p: captured.update(p)
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            result = store.add(
+                text="Never schedule morning runs before 7am",
+                origin="user_chat",
+                context_quote="Amit: never schedule my runs before 7am",
+            )
+
+        assert "id" in captured and isinstance(captured["id"], str) and captured["id"]
+        assert captured["text"] == "Never schedule morning runs before 7am"
+        assert captured["origin"] == "user_chat"
+        assert captured["context_quote"] == "Amit: never schedule my runs before 7am"
+        assert captured["status"] == "active"
+        assert captured["superseded_by"] is None
+        assert "created_at" in captured and captured["created_at"]
+        assert result == captured
+
+    def test_add_with_explicit_expires_at_stores_it(self):
+        """add(expires_at=...) stores that ISO date; condition_text stays None."""
+        client, col = _make_mock_client_with_collection()
+        captured: dict = {}
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = lambda p: captured.update(p)
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            store.add(text="Remind me daily until March 1st", expires_at="2026-03-01T00:00:00+00:00")
+
+        assert captured["expires_at"] == "2026-03-01T00:00:00+00:00"
+        assert captured["condition_text"] is None
+
+    def test_add_with_condition_text_stores_it(self):
+        """add(condition_text=...) stores that text; expires_at stays None."""
+        client, col = _make_mock_client_with_collection()
+        captured: dict = {}
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = lambda p: captured.update(p)
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            store.add(text="Go easy on nutrition while I'm in France", condition_text="while I'm in France")
+
+        assert captured["condition_text"] == "while I'm in France"
+        assert captured["expires_at"] is None
+
+    def test_add_with_neither_leaves_both_none(self):
+        """add() with no expires_at/condition_text leaves both None — conditionless
+        directives persist indefinitely per DIR-02."""
+        client, col = _make_mock_client_with_collection()
+        captured: dict = {}
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = lambda p: captured.update(p)
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            store.add(text="Always ask before booking travel")
+
+        assert captured["expires_at"] is None
+        assert captured["condition_text"] is None
+
+    def test_list_active_filters_by_status(self):
+        """list_active() returns only status=='active' docs."""
+        client, col = _make_mock_client_with_collection()
+        active_doc = {"id": "a1", "status": "active", "text": "t1"}
+        snap = MagicMock()
+        snap.to_dict.return_value = active_doc
+
+        applied_filters = []
+
+        def _where(*args, **kwargs):
+            f = kwargs.get("filter")
+            if f is not None:
+                applied_filters.append(f)
+            return col
+
+        col.where.side_effect = _where
+        col.stream.return_value = iter([snap])
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            results = store.list_active()
+
+        assert results == [active_doc]
+        assert len(applied_filters) == 1
+        assert applied_filters[0].field == "status"
+        assert applied_filters[0].op == "=="
+        assert applied_filters[0].value == "active"
+
+    def test_list_all_returns_every_status(self):
+        """list_all() returns every doc regardless of status, unfiltered."""
+        client, col = _make_mock_client_with_collection()
+        docs = [
+            {"id": "a1", "status": "active"},
+            {"id": "a2", "status": "cancelled"},
+            {"id": "a3", "status": "superseded"},
+        ]
+        snaps = []
+        for d in docs:
+            s = MagicMock()
+            s.to_dict.return_value = d
+            snaps.append(s)
+        col.stream.return_value = iter(snaps)
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            results = store.list_all()
+
+        assert results == docs
+        col.where.assert_not_called()
+
+    def test_list_active_served_from_cache_within_ttl(self):
+        """A second list_active() call within the TTL must NOT re-hit Firestore."""
+        client, col = _make_mock_client_with_collection()
+        snap = MagicMock()
+        snap.to_dict.return_value = {"id": "a1", "status": "active"}
+        col.where.return_value = col
+        col.stream.return_value = iter([snap])
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            first = store.list_active()
+            second = store.list_active()
+
+        assert first == second
+        assert col.stream.call_count == 1, "second list_active() must be a cache hit"
+
+    def test_list_active_cache_invalidated_by_write(self):
+        """A write (add) between two list_active() calls must force a fresh read."""
+        client, col = _make_mock_client_with_collection()
+        snap = MagicMock()
+        snap.to_dict.return_value = {"id": "a1", "status": "active"}
+        col.where.return_value = col
+        col.stream.side_effect = [iter([snap]), iter([snap, snap])]
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            first = store.list_active()
+            store.add(text="a new directive")
+            second = store.list_active()
+
+        assert len(first) == 1
+        assert len(second) == 2
+        assert col.stream.call_count == 2, "write must invalidate the cache"
+
+    def test_cancel_sets_cancelled_and_returns_true(self):
+        """cancel(id) sets status='cancelled' and returns True; doc is NOT deleted."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.cancel("abc") is True
+
+        doc_ref.update.assert_called_with({"status": "cancelled"})
+        doc_ref.delete.assert_not_called()
+
+    def test_cancel_unknown_id_returns_false(self):
+        """cancel(unknown_id) returns False when the doc does not exist."""
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "ghost")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.cancel("ghost") is False
+
+    def test_cancelled_doc_still_present_via_list_all(self):
+        """A cancelled directive is a status transition, not a deletion — it must
+        still show up via list_all()."""
+        client, col = _make_mock_client_with_collection()
+        snap = MagicMock()
+        snap.to_dict.return_value = {"id": "abc", "status": "cancelled"}
+        col.stream.return_value = iter([snap])
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            results = store.list_all()
+
+        assert results == [{"id": "abc", "status": "cancelled"}]
+
+    def test_supersede_writes_superseded_by_and_status_on_old_doc(self):
+        """supersede(old_id, new_id) writes superseded_by=new_id and status='superseded'
+        on the OLD doc (DIR-05/D-16)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "old-id", {"id": "old-id", "status": "active"})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            result = store.supersede("old-id", "new-id")
+
+        assert result is True
+        doc_ref.update.assert_called_with({"status": "superseded", "superseded_by": "new-id"})
+
+    def test_expire_sets_expired_status(self):
+        """expire(id) sets status='expired' (D-05/D-08 nightly-judged expiry path)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            result = store.expire("abc")
+
+        assert result is True
+        doc_ref.update.assert_called_with({"status": "expired"})
+
+    def test_list_active_returns_empty_on_firestore_error(self):
+        """list_active() must return [] (not raise) when Firestore raises."""
+        client, col = _make_mock_client_with_collection()
+        col.where.side_effect = RuntimeError("simulated Firestore outage")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.list_active() == []
+
+    def test_list_all_returns_empty_on_firestore_error(self):
+        """list_all() must return [] (not raise) when Firestore raises."""
+        client, col = _make_mock_client_with_collection()
+        col.stream.side_effect = RuntimeError("boom")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.list_all() == []
+
+    def test_add_raises_on_firestore_error(self):
+        """add() must log and re-raise when Firestore .set() fails."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = RuntimeError("simulated set failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            with pytest.raises(RuntimeError):
+                store.add(text="boom")
+
+    def test_cancel_raises_on_firestore_error(self):
+        """cancel() must log and re-raise on a Firestore error (not a missing doc)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated get failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            with pytest.raises(RuntimeError):
+                store.cancel("abc")
+
+
+# =============================================================================
 # OutreachLogStore — AUTO-03, D-07/D-09/D-10/D-21
 # =============================================================================
 
