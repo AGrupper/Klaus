@@ -104,3 +104,12 @@ No blockers. The store's schema, cache-invalidation contract, and never-hard-del
 ---
 *Phase: 31-standing-directives*
 *Completed: 2026-07-19*
+
+## Self-Check: PASSED
+
+- FOUND: memory/firestore_db.py
+- FOUND: tests/test_firestore_db.py
+- FOUND: .planning/phases/31-standing-directives/31-01-SUMMARY.md
+- FOUND commit: 34a14e7 (test)
+- FOUND commit: cedad11 (feat)
+- FOUND commit: 012ccee (docs)
