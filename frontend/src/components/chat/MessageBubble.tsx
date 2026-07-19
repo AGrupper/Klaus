@@ -15,11 +15,12 @@
  * builds React elements from a Markdown AST and ignores embedded raw HTML by
  * default (no rehype-raw), so model/content HTML stays inert text.
  */
-import { useState } from 'react'
-import type { CSSProperties } from 'react'
+import { isValidElement, useRef, useState } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
+import rehypeHighlight from 'rehype-highlight'
 import type { ChatMessage } from '../../api/chat'
 import {
   accent,
@@ -142,6 +143,95 @@ const cellStyle: CSSProperties = {
 }
 
 /**
+ * Fenced code block with chrome (Workstream D): a header row carrying the
+ * fence language + a copy-code button, above the horizontally-scrolling
+ * highlighted <pre>. The raw code text for copying is read from the DOM
+ * (textContent) — after rehype-highlight the React children are token spans,
+ * but their concatenated text is exactly the original code.
+ */
+function CodeBlock({ children, ...props }: React.ComponentProps<'pre'>) {
+  const preRef = useRef<HTMLPreElement>(null)
+  const [copied, setCopied] = useState(false)
+
+  // The fence language rides on the child <code>'s className (language-*).
+  let language: string | null = null
+  const child: ReactNode = Array.isArray(children) ? children[0] : children
+  if (isValidElement<{ className?: string }>(child)) {
+    const match = /language-([\w-]+)/.exec(child.props.className ?? '')
+    if (match) language = match[1]
+  }
+
+  function handleCopyCode() {
+    const text = preRef.current?.textContent ?? ''
+    void navigator.clipboard?.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <div
+      style={{
+        border: `1px solid ${border}`,
+        borderRadius: '8px',
+        margin: '0 0 8px',
+        backgroundColor: dominant,
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '4px 10px',
+          borderBottom: `1px solid ${border}`,
+        }}
+      >
+        <span
+          style={{
+            color: textSecondary,
+            fontSize: '0.75em',
+            fontFamily: codeFont,
+          }}
+        >
+          {language ?? 'code'}
+        </span>
+        <button
+          onClick={handleCopyCode}
+          aria-label="Copy code"
+          style={{
+            background: 'none',
+            border: 'none',
+            cursor: 'pointer',
+            color: textSecondary,
+            fontSize: '0.75em',
+            fontFamily,
+            padding: '2px 4px',
+          }}
+        >
+          {copied ? '✓ Copied' : 'Copy'}
+        </button>
+      </div>
+      <pre
+        {...props}
+        ref={preRef}
+        style={{
+          fontFamily: codeFont,
+          fontSize: '0.85em',
+          padding: '8px 10px',
+          overflowX: 'auto',
+          margin: 0,
+          color: textPrimary,
+        }}
+      >
+        {children}
+      </pre>
+    </div>
+  )
+}
+
+/**
  * Styled element overrides for react-markdown. Everything inherits the chat
  * body type scale; tables scroll horizontally inside the bubble instead of
  * blowing past its 75% max-width.
@@ -191,22 +281,7 @@ const markdownComponents = {
       }}
     />
   ),
-  pre: (props: React.ComponentProps<'pre'>) => (
-    <pre
-      {...props}
-      style={{
-        fontFamily: codeFont,
-        fontSize: '0.85em',
-        backgroundColor: dominant,
-        border: `1px solid ${border}`,
-        borderRadius: '8px',
-        padding: '8px 10px',
-        overflowX: 'auto',
-        margin: '0 0 8px',
-        color: textPrimary,
-      }}
-    />
-  ),
+  pre: CodeBlock,
   table: (props: React.ComponentProps<'table'>) => (
     <div style={{ overflowX: 'auto', margin: '0 0 8px' }}>
       <table
@@ -243,7 +318,13 @@ function KlausMarkdown({ content }: { content: string }) {
     // Negative margin swallows the last block's 8px bottom margin so the
     // bubble's own padding stays visually even.
     <div style={{ marginBottom: '-8px' }}>
-      <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={markdownComponents}>
+      <Markdown
+        remarkPlugins={[remarkGfm, remarkBreaks]}
+        // ignoreMissing-free default set (common languages); unknown fences
+        // render unhighlighted rather than erroring.
+        rehypePlugins={[rehypeHighlight]}
+        components={markdownComponents}
+      >
         {content}
       </Markdown>
     </div>

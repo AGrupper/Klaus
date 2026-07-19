@@ -130,3 +130,33 @@ describe('MessageBubble actions (copy / regenerate / edit)', () => {
     expect(onEdit).toHaveBeenCalledWith('my typo message')
   })
 })
+
+describe('MessageBubble rich code blocks (Workstream D)', () => {
+  const pythonFence = '```python\ndef hello():\n    return 42\n```'
+
+  it('syntax-highlights fenced code (hljs token spans present)', () => {
+    const { container } = render(<MessageBubble message={msg('assistant', pythonFence)} />)
+    expect(container.querySelectorAll('[class*="hljs"]').length).toBeGreaterThan(0)
+  })
+
+  it('shows the fence language as a label on the block', () => {
+    render(<MessageBubble message={msg('assistant', pythonFence)} />)
+    expect(screen.getByText('python')).toBeInTheDocument()
+  })
+
+  it('copy-code button copies the raw code text', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+
+    render(<MessageBubble message={msg('assistant', pythonFence)} />)
+    screen.getByRole('button', { name: /copy code/i }).click()
+
+    expect(writeText).toHaveBeenCalledWith('def hello():\n    return 42\n')
+    vi.unstubAllGlobals()
+  })
+
+  it('inline code is untouched by block chrome (no label, no copy button)', () => {
+    render(<MessageBubble message={msg('assistant', 'use `pip install x` here')} />)
+    expect(screen.queryByRole('button', { name: /copy code/i })).toBeNull()
+  })
+})

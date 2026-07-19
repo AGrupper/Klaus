@@ -41,3 +41,57 @@ body {
     padding-bottom: 0;
   }
 }
+
+/* Syntax-highlight token colors for chat code blocks (Workstream D).
+   rehype-highlight emits hljs-* token spans; the hub is dark-themed, so this
+   is a compact One-Dark-ish palette rather than a full hljs theme import. */
+.hljs-comment,
+.hljs-quote {
+  color: #7f848e;
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-tag {
+  color: #c678dd;
+}
+.hljs-string,
+.hljs-addition,
+.hljs-regexp {
+  color: #98c379;
+}
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-meta {
+  color: #d19a66;
+}
+.hljs-title,
+.hljs-title.function_,
+.hljs-section,
+.hljs-name {
+  color: #61afef;
+}
+.hljs-title.class_,
+.hljs-type,
+.hljs-built_in {
+  color: #e5c07b;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: #e06c75;
+}
+.hljs-deletion {
+  color: #e06c75;
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: 600;
+}
