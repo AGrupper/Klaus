@@ -818,3 +818,62 @@ def test_derive_projection_topics(patched_sources_with_projection):
     assert "structural-critique:projection:squat_1rm" not in topics, (
         "no_data facets must NOT produce a projection topic key"
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 30.5 D-14 gap fix — SMART_AGENT_FALLBACK_* Gemini compose fallback
+# (weekly review is a paid Sonnet compose; 2026-07-19 it timed out with no
+# fallback tier — mirror the nightly/morning 2-tier shape from Plan 06 Task 2)
+# ---------------------------------------------------------------------------
+
+
+def _fallback_env(monkeypatch):
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+
+
+def test_compose_review_brain_fails_gemini_fallback_composes(monkeypatch):
+    """Brain raises -> SMART_AGENT_FALLBACK_* Gemini compose is used, NOT the
+    deterministic data-derived fallback string."""
+    _fallback_env(monkeypatch)
+    call_count = {"n": 0}
+
+    def _client_factory(*args, **kwargs):
+        call_count["n"] += 1
+        client = MagicMock()
+        if call_count["n"] == 1:
+            client.chat.side_effect = Exception("Sonnet timed out")
+        else:
+            client.chat.return_value = {
+                "text": "Gemini-composed weekly review.",
+                "tool_calls": [], "stop_reason": "end_turn",
+            }
+        return client
+
+    with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+        result = wtr._compose_review({"week_start": "2026-07-13", "week_end": "2026-07-19"},
+                                     "2026-07-19")
+
+    assert result == "Gemini-composed weekly review."
+    assert call_count["n"] == 2
+
+
+def test_compose_review_brain_and_fallback_fail_returns_data_fallback(monkeypatch):
+    """Brain + Gemini fallback both raise -> deterministic data-derived string."""
+    _fallback_env(monkeypatch)
+
+    with patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
+         patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"):
+        result = wtr._compose_review(
+            {"week_start": "2026-07-13", "week_end": "2026-07-19",
+             "training_log": [{"a": 1}]},
+            "2026-07-19",
+        )
+
+    assert "Full review composition failed" in result
+    assert "2026-07-19" in result

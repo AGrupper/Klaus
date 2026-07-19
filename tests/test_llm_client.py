@@ -555,3 +555,121 @@ def test_gemini_backend_converts_document_block_to_pdf_part():
     inline = parts[1].inline_data
     assert inline.mime_type == "application/pdf"
     assert inline.data == b"fake-pdf-data"
+
+
+# --------------------------------------------------------------------------- #
+# Streaming (hub streaming feature): on_text_delta callback                   #
+# --------------------------------------------------------------------------- #
+
+
+def _make_anthropic_stream(chunks, final_response):
+    """Context-manager mock standing in for client.messages.stream(...)."""
+    stream = MagicMock()
+    stream.text_stream = iter(chunks)
+    stream.get_final_message.return_value = final_response
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=stream)
+    cm.__exit__ = MagicMock(return_value=False)
+    return cm
+
+
+def test_anthropic_backend_streams_deltas_when_callback_given():
+    """With on_text_delta, the Anthropic backend uses messages.stream, forwards
+    each text chunk, and still returns the standard unified envelope."""
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    final = _make_anthropic_response(text="Hello there", in_tokens=42, out_tokens=7)
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream(["Hello ", "there"], final)
+    )
+    backend.client.messages.create = MagicMock()
+
+    deltas: list[str] = []
+    result = backend.chat(
+        [{"role": "user", "content": "hi"}],
+        on_text_delta=deltas.append,
+    )
+
+    assert deltas == ["Hello ", "there"]
+    assert result["text"] == "Hello there"
+    assert result["usage"]["in_tokens"] == 42
+    assert result["usage"]["out_tokens"] == 7
+    backend.client.messages.create.assert_not_called()
+
+
+def test_anthropic_backend_without_callback_also_streams():
+    """Without on_text_delta the Anthropic backend must STILL use messages.stream:
+    non-streaming waits in one silent read while the model generates, so httpx's
+    read timeout fires at LLM_TIMEOUT_SECONDS wall-clock on any long generation
+    (2026-07-19: weekly-review compose timed out at 120s, billed 2x, unmetered).
+    SSE chunks reset the read timeout, so slow-but-alive generations survive."""
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    final = _make_anthropic_response(text="Long compose", in_tokens=9, out_tokens=3)
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], final)
+    )
+    backend.client.messages.create = MagicMock()
+
+    result = backend.chat([{"role": "user", "content": "hi"}])
+
+    assert result["text"] == "Long compose"
+    assert result["usage"]["in_tokens"] == 9
+    backend.client.messages.stream.assert_called_once()
+    backend.client.messages.create.assert_not_called()
+
+
+def test_anthropic_backend_callback_exception_propagates():
+    """A raising callback (TurnCancelled from the hub stop button) must unwind
+    the stream and propagate — never be swallowed into an LLMError."""
+    from core.llm_client import _AnthropicBackend
+
+    class _Cancel(Exception):
+        pass
+
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream(["a", "b"], _make_anthropic_response())
+    )
+
+    def _boom(_chunk):
+        raise _Cancel()
+
+    with pytest.raises(_Cancel):
+        backend.chat([{"role": "user", "content": "hi"}], on_text_delta=_boom)
+
+
+def test_llm_client_facade_forwards_on_text_delta():
+    """LLMClient.chat must pass on_text_delta through to the backend."""
+    from core.llm_client import LLMClient
+    client = LLMClient(backend="anthropic", model="claude-sonnet-5", api_key="fake")
+    client._impl = MagicMock()
+    client._impl.chat.return_value = {
+        "text": "ok", "tool_calls": [], "stop_reason": "end_turn",
+        "usage": {"in_tokens": 1, "out_tokens": 1},
+    }
+    cb = lambda _s: None  # noqa: E731
+
+    client.chat([{"role": "user", "content": "hi"}], on_text_delta=cb)
+
+    _, kwargs = client._impl.chat.call_args
+    assert kwargs.get("on_text_delta") is cb
+
+
+def test_gemini_and_openai_backends_accept_and_ignore_callback():
+    """Fallback tiers don't stream — but must not crash when the kwarg is passed."""
+    backend = _OpenAIBackend("deepseek-v4-flash", "fake-api-key")
+    fake_completion = MagicMock()
+    fake_completion.choices = [MagicMock()]
+    fake_completion.choices[0].message.content = "ok"
+    fake_completion.choices[0].message.tool_calls = None
+    fake_completion.choices[0].finish_reason = "stop"
+    fake_completion.usage.prompt_tokens = 1
+    fake_completion.usage.completion_tokens = 1
+    backend.client.chat.completions.create = MagicMock(return_value=fake_completion)
+
+    result = backend.chat(
+        [{"role": "user", "content": "hi"}],
+        on_text_delta=lambda _s: None,
+    )
+    assert result["text"] == "ok"
