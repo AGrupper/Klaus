@@ -747,22 +747,25 @@ messages.append({
 
 **If this table is empty:** N/A — see above; both entries are LOW risk (both resolvable by a five-minute grep/read at the start of implementation) and do not block planning.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **How does the D-22 "skip verdict instead of a message" get expressed from the legacy composer's LLM call?**
    - What we know: D-22 says "the directives block is injected with instructions that it may output a skip verdict instead of a message. No new LLM call." `_parse_followup_action` in `core/autonomous.py` (lines 799-831) already demonstrates a precedent — a fenced ` ```json {"action": ...} ``` ` block trailing the message body, parsed out before display.
    - What's unclear: Whether `_compose_nightly`/`_compose_briefing` should adopt the identical fenced-JSON-trailer convention (parse a `{"skip": true, "reason": "..."}` block) or a different sentinel (e.g. a fixed leading token like `SKIP:`).
    - Recommendation: Reuse the `_parse_followup_action` fenced-JSON-trailer pattern exactly — it's already proven, already has a test precedent, and keeps the parsing logic consistent across the codebase. The planner should specify the exact sentinel shape as an implementation task, not leave it to per-composer improvisation.
+   - RESOLVED: adopted — 31-05 (`_parse_briefing_skip`) and 31-06 reuse the `_parse_followup_action` fenced-JSON-trailer convention with a `{"skip": true, "reason": "..."}` object.
 
 2. **Does the morning-briefing D-22 skip verdict still write the `structured` snapshot / `daily_note` used by the hub's `/api/today` contract?**
    - What we know: CONTEXT.md's `<deferred>` section explicitly flags this as undecided for Phase 31, with Claude's discretion to keep the hub contract unbroken; Phase 33's OCC-02 will make "snapshot-on-send" the formal rule.
    - What's unclear: For this phase specifically, if a directive causes `run_morning_briefing` to skip the send, should `_set_state`'s `structured` write and the `daily_note`/`daily_note_date` write (morning_briefing.py:163-197) still happen?
    - Recommendation: For Phase 31 only, do NOT write `structured`/`daily_note` on a directive-skipped morning briefing — the hub's `/api/today` should fall back to its existing "Coach note coming after your morning briefing" placeholder (referenced in the existing code comment at morning_briefing.py:176) rather than surface stale or misleading structured data from a briefing that didn't actually fire. This keeps the hub contract unbroken (no crash, sensible placeholder) without pre-deciding Phase 33's formal rule.
+   - RESOLVED: adopted — 31-05 Task 1 explicitly skips the `structured`/`daily_note` writes on a directive-skipped morning briefing, keeping the hub `/api/today` placeholder fallback.
 
 3. **What exact reflection-window "read time" does D-11's "no reply by reflection-window read time" mean in practice, given the nightly can fire organically (Sleep-Focus trigger, any time) or via the 01:00 backstop?**
    - What we know: `nightly_target_date()` (nightly_review.py:46-48) already handles the wind-down-belongs-to-prior-day logic via a 5-hour shift; `_ensure_reflection` runs whenever the nightly fires, organic or backstop.
    - What's unclear: If Amit's reply to an outreach arrives AFTER the organic Sleep-Focus trigger fires but BEFORE the 01:00 backstop, does that late-but-real reply get correctly classified as "replied" (not "ignored"), or does reflection only ever see the conversation snapshot as of whichever trigger actually ran it?
    - Recommendation: Since `_ensure_reflection` only runs once per `target_date` (idempotent, guarded by journal presence), the reaction-pairing read happens exactly once, at whichever time the nightly actually fires for that date. This is an accepted, inherent limitation of the once-per-night design — a genuinely late reply (after the organic trigger, before backstop) that arrives in the gap is a rare edge case, not worth special-casing. Flag this as a known limitation in the plan rather than building extra machinery to handle it.
+   - RESOLVED: adopted — 31-06 Task 1 records the once-per-night read-time limitation as an accepted edge case (no special-casing).
 
 ## Environment Availability
 
