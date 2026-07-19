@@ -7,7 +7,7 @@
  * T-26-08-01 invariant holds — embedded raw HTML is inert text, never
  * parsed (no rehype-raw, no dangerouslySetInnerHTML).
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import '@testing-library/jest-dom'
 import type { ChatMessage } from '../../api/chat'
@@ -94,5 +94,39 @@ describe('MessageBubble attachments (transient session previews)', () => {
     } as ChatMessage
     render(<MessageBubble message={message} />)
     expect(screen.getByText('old.jpg')).toBeInTheDocument()
+  })
+})
+
+describe('MessageBubble actions (copy / regenerate / edit)', () => {
+  it('copy button writes the raw message content to the clipboard', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+
+    render(<MessageBubble message={msg('assistant', '**bold** reply')} />)
+    const copyBtn = screen.getByRole('button', { name: /copy message/i })
+    copyBtn.click()
+
+    expect(writeText).toHaveBeenCalledWith('**bold** reply')
+    vi.unstubAllGlobals()
+  })
+
+  it('renders a regenerate button only when onRegenerate is provided, and wires it', () => {
+    const onRegenerate = vi.fn()
+    const { rerender } = render(
+      <MessageBubble message={msg('assistant', 'answer')} onRegenerate={onRegenerate} />,
+    )
+    const regenBtn = screen.getByRole('button', { name: /regenerate/i })
+    regenBtn.click()
+    expect(onRegenerate).toHaveBeenCalledTimes(1)
+
+    rerender(<MessageBubble message={msg('assistant', 'answer')} />)
+    expect(screen.queryByRole('button', { name: /regenerate/i })).toBeNull()
+  })
+
+  it('renders an edit button on user messages when onEdit is provided, passing the content', () => {
+    const onEdit = vi.fn()
+    render(<MessageBubble message={msg('user', 'my typo message')} onEdit={onEdit} />)
+    screen.getByRole('button', { name: /edit message/i }).click()
+    expect(onEdit).toHaveBeenCalledWith('my typo message')
   })
 })

@@ -67,6 +67,39 @@ def _txn_append(
     )
 
 
+@firestore.transactional
+def _txn_pop_trailing_assistant(
+    transaction: firestore.Transaction,
+    doc_ref: firestore.DocumentReference,
+) -> str | None:
+    """Transactional helper: drop the trailing assistant message.
+
+    Returns the content of the user message that precedes it (the text to
+    re-run for a regenerate), or None when there is nothing to pop — history
+    empty, or a turn already in flight (last message is the user's).
+    """
+    snapshot = doc_ref.get(transaction=transaction)
+    if not snapshot.exists:
+        return None
+    doc_data: dict = snapshot.to_dict() or {}
+    messages: list[dict] = list(doc_data.get("messages", []))
+    if not messages or messages[-1].get("role") != "assistant":
+        return None
+    messages = messages[:-1]
+    if not messages or messages[-1].get("role") != "user":
+        return None
+    session_start = min(int(doc_data.get("session_start_index", 0)), len(messages))
+    transaction.set(
+        doc_ref,
+        {
+            "messages": messages,
+            "session_start_index": session_start,
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        },
+    )
+    return str(messages[-1].get("content", ""))
+
+
 class FirestoreConversationStore:
     """Firestore-backed per-user conversation history.
 
@@ -164,6 +197,24 @@ class FirestoreConversationStore:
         if not snapshot.exists:
             return []
         return list((snapshot.to_dict() or {}).get("messages", []))
+
+    def pop_trailing_assistant(self, user_id: int) -> str | None:
+        """Remove the trailing assistant message (hub regenerate feature).
+
+        Returns the preceding user message's text — the content to re-run —
+        or None when there is nothing to pop (empty history, or a turn already
+        in flight). Transactional: safe against a concurrent append.
+        """
+        doc_ref = self._col.document(str(user_id))
+        transaction = self._client.transaction()
+        try:
+            return _txn_pop_trailing_assistant(transaction, doc_ref)
+        except GoogleAPICallError:
+            logger.error(
+                "FirestoreConversationStore.pop_trailing_assistant failed for user_id=%d",
+                user_id,
+            )
+            return None
 
     def append(self, user_id: int, role: str, content: str) -> None:
         """Append one message and cap the list via a Firestore transaction."""

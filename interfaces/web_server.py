@@ -2512,6 +2512,54 @@ def _get_hub_stream_store():
     return _hub_stream_store
 
 
+@app.post("/api/chat/regenerate")
+async def api_chat_regenerate(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Regenerate Klaus's last reply (hub message actions).
+
+    Transactionally pops the trailing assistant message from the shared
+    conversation and re-enqueues the preceding user message with the
+    regenerate flag, so the worker re-runs the turn WITHOUT re-appending the
+    user message (it is already the trailing history entry). Attachments from
+    the original turn are not re-injected — their bytes are transient.
+
+    Returns 409 when there is nothing to regenerate (empty history, or a turn
+    already in flight) — the pop is the guard, so a double-tap can't enqueue
+    two turns for one popped reply.
+    """
+    loop = asyncio.get_running_loop()
+    try:
+        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
+    except ValueError as exc:
+        logger.error("api_chat_regenerate: cannot resolve user_id: %s", exc)
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
+
+    def _pop() -> str | None:
+        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
+        store = FirestoreConversationStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        return store.pop_trailing_assistant(user_id)
+
+    user_text = await loop.run_in_executor(None, _pop)
+    if user_text is None:
+        raise HTTPException(status_code=409, detail={"error": "nothing to regenerate"})
+
+    ok = await loop.run_in_executor(
+        None,
+        lambda: enqueue_hub_message(user_text, user_id, regenerate=True),
+    )
+    if not ok:
+        logger.error("api_chat_regenerate: enqueue failed (user_id=%s)", user_id)
+        return JSONResponse(
+            status_code=503,
+            content={"ok": False, "error": "Could not dispatch the regenerate — please retry"},
+        )
+    return JSONResponse(content={"ok": True})
+
+
 @app.post("/api/chat/stop")
 async def api_chat_stop(
     _email: str = Depends(require_hub_session),
@@ -2635,10 +2683,15 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     turn_id = _uuid.uuid4().hex
     sink = FirestoreStreamSink(stream_store, user_id=user_id, turn_id=turn_id)
 
+    # Hub regenerate: the route already popped the old reply, leaving the user
+    # message as the trailing history entry — re-appending it would double it.
+    persist_user_message = not bool(request_json.get("regenerate"))
+
     def _run_turn() -> str:
         stream_store.start_turn(user_id, turn_id)
         return _orchestrator.handle_message(
-            content, user_id, attachments, stream_sink=sink
+            content, user_id, attachments, stream_sink=sink,
+            persist_user_message=persist_user_message,
         )
 
     try:

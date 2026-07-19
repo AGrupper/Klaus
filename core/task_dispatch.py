@@ -104,7 +104,8 @@ def enqueue_update(payload: dict) -> bool:
 
 
 def enqueue_hub_message(
-    content: str, user_id: int, attachments: list[dict] | None = None
+    content: str, user_id: int, attachments: list[dict] | None = None,
+    regenerate: bool = False,
 ) -> bool:
     """Enqueue a hub chat message for full-CPU agent processing.
 
@@ -148,6 +149,10 @@ def enqueue_hub_message(
         payload: dict = {"content": content, "user_id": user_id}
         if attachments:
             payload["attachments"] = attachments
+        if regenerate:
+            # Hub regenerate: the user message is already the trailing history
+            # entry (its old reply was popped) — the worker must not re-append.
+            payload["regenerate"] = True
         task = {
             "dispatch_deadline": {"seconds": _DISPATCH_DEADLINE_SECONDS},
             "http_request": {

@@ -701,3 +701,29 @@ class TestTurnCancelled:
         result = orch.handle_message("q", user_id=123456)
 
         assert result.strip()  # never persists an empty assistant turn (WR-05)
+
+
+class TestPersistUserMessageFlag:
+    """Regenerate re-runs a user message already in history — handle_message
+    must be able to skip the duplicate user append."""
+
+    def test_skip_user_append_still_appends_assistant(self):
+        orch = _make_orchestrator_for_handle_message(loop_return="better answer")
+        orch.conversation_manager.get.return_value = [
+            {"role": "user", "content": "the question"},
+        ]
+
+        result = orch.handle_message(
+            "the question", user_id=123456, persist_user_message=False,
+        )
+
+        assert result == "better answer"
+        roles = [c.args[1] for c in orch.conversation_manager.append.call_args_list]
+        assert "user" not in roles
+        assert roles == ["assistant"]
+
+    def test_default_still_appends_user(self):
+        orch = _make_orchestrator_for_handle_message(loop_return="ok")
+        orch.handle_message("hello", user_id=123456)
+        roles = [c.args[1] for c in orch.conversation_manager.append.call_args_list]
+        assert roles == ["user", "assistant"]

@@ -126,6 +126,16 @@ export async function stopGeneration(): Promise<void> {
 }
 
 /**
+ * Regenerate Klaus's last reply (hub message actions). The server pops the
+ * trailing assistant message and re-runs the preceding user message; the new
+ * reply arrives via the normal poll. 409 (surfaced as an API error) when
+ * there is nothing to regenerate.
+ */
+export async function regenerateReply(): Promise<void> {
+  await apiFetch<{ ok: boolean }>('/api/chat/regenerate', { method: 'POST' })
+}
+
+/**
  * Send a new user message into the Klaus agent loop.
  * Returns quickly — the agent response arrives asynchronously via polling.
  */

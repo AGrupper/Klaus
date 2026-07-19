@@ -90,3 +90,79 @@ def test_get_full_returns_entire_history_even_after_idle(monkeypatch, isolated_m
     )
     # The hub shows the whole conversation regardless of idle (CR-02).
     assert store.get_full(1) == _MSGS
+
+
+# ---------------------------------------------------------------------------
+# pop_trailing_assistant (hub regenerate feature)
+# ---------------------------------------------------------------------------
+
+def _store_for_pop(doc: dict):
+    """Store whose transactional pop helper sees `doc` and records the write."""
+    from memory.firestore_conversation import FirestoreConversationStore  # noqa: PLC0415
+
+    store = FirestoreConversationStore(project_id="p", database="(default)")
+    snap = MagicMock()
+    snap.exists = doc is not None
+    snap.to_dict.return_value = doc
+    doc_ref = store._col.document.return_value
+    doc_ref.get.return_value = snap
+    return store, doc_ref
+
+
+def test_pop_trailing_assistant_removes_reply_and_returns_user_text(
+    monkeypatch, isolated_modules,
+):
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store, doc_ref = _store_for_pop({
+        "messages": [
+            {"role": "user", "content": "q1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "q2"},
+            {"role": "assistant", "content": "a2"},
+        ],
+        "session_start_index": 0,
+        "updated_at": _RECENT,
+    })
+
+    result = store.pop_trailing_assistant(1)
+
+    assert result == "q2"
+    # The transactional write (transaction.set(doc_ref, payload), mirroring
+    # _txn_append) drops only the trailing assistant message.
+    txn = store._client.transaction.return_value
+    written = txn.set.call_args.args[1]
+    assert written["messages"] == [
+        {"role": "user", "content": "q1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "q2"},
+    ]
+
+
+def test_pop_trailing_assistant_noops_when_last_is_user(
+    monkeypatch, isolated_modules,
+):
+    """A turn is already in flight (last message is the user's) — nothing to
+    regenerate; must not mutate history."""
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store, doc_ref = _store_for_pop({
+        "messages": [{"role": "user", "content": "pending"}],
+        "session_start_index": 0,
+        "updated_at": _RECENT,
+    })
+
+    assert store.pop_trailing_assistant(1) is None
+    store._client.transaction.return_value.set.assert_not_called()
+
+
+def test_pop_trailing_assistant_noops_on_empty_history(
+    monkeypatch, isolated_modules,
+):
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store, doc_ref = _store_for_pop({
+        "messages": [], "session_start_index": 0, "updated_at": _RECENT,
+    })
+    assert store.pop_trailing_assistant(1) is None
+    store._client.transaction.return_value.set.assert_not_called()

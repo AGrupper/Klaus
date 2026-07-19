@@ -533,6 +533,7 @@ class AgentOrchestrator:
         user_id: int,
         attachments: list[InboundAttachment] | None = None,
         stream_sink: StreamSink | None = None,
+        persist_user_message: bool = True,
     ) -> str:
         """Process one user message through the full dual-model pipeline.
 
@@ -545,6 +546,9 @@ class AgentOrchestrator:
                           as it generates and may raise TurnCancelled (Stop
                           button) — the partial reply is then persisted with a
                           cutoff marker instead of being lost.
+            persist_user_message: False on a hub regenerate — the user message
+                          is already the trailing history entry (the old reply
+                          was popped), so appending it again would double it.
 
         Returns:
             The agent's final response string, ready to send to the user.
@@ -570,7 +574,8 @@ class AgentOrchestrator:
         )
 
         # Persist the incoming message and get the full history for this session.
-        self.conversation_manager.append(user_id, "user", user_message)
+        if persist_user_message:
+            self.conversation_manager.append(user_id, "user", user_message)
         messages = self.conversation_manager.get(user_id)
 
         # Run the Smart Agent orchestration loop.

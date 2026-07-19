@@ -17,7 +17,7 @@
  *   - Send is enabled with text OR ready attachments; blocked while any
  *     upload is still in flight.
  */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { uploadAttachment } from '../../api/chat'
 import type { AttachmentMeta } from '../../api/chat'
 import type { SendMessageInput } from '../../hooks/useChat'
@@ -44,13 +44,28 @@ interface ChatInputProps {
   generating?: boolean
   /** Called when the user taps Stop (hub streaming feature). */
   onStop?: () => void
+  /**
+   * Edit-and-resend (hub message actions): when set, replaces the textarea
+   * content and focuses it. The nonce distinguishes repeat edits of the same
+   * text.
+   */
+  prefill?: { value: string; nonce: number } | null
 }
 
-export function ChatInput({ onSend, disabled = false, generating = false, onStop }: ChatInputProps) {
+export function ChatInput({ onSend, disabled = false, generating = false, onStop, prefill }: ChatInputProps) {
   const [value, setValue] = useState('')
   const [pending, setPending] = useState<PendingAttachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    if (prefill) {
+      setValue(prefill.value)
+      textareaRef.current?.focus()
+    }
+    // Keyed on the nonce so editing the same message twice re-applies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill?.nonce])
 
   function updatePending(localId: string, patch: Partial<PendingAttachment>) {
     setPending((prev) =>

@@ -679,3 +679,79 @@ def test_get_messages_no_draft_when_last_is_assistant():
     body = resp.json()
     assert body.get("draft") is None
     fake_stream_store.get_draft.assert_not_called()
+
+
+# ------------------------------------------------------------------ #
+# Hub regenerate — POST /api/chat/regenerate                          #
+# ------------------------------------------------------------------ #
+
+def test_post_regenerate_pops_and_reenqueues():
+    """Regenerate: drop the last Klaus reply, re-enqueue the preceding user
+    message with the regenerate flag (worker skips the duplicate user append)."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.pop_trailing_assistant.return_value = "the question"
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat/regenerate")
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    fake_store_cls.return_value.pop_trailing_assistant.assert_called_once_with(123456)
+    _args, kwargs = mock_enqueue.call_args
+    assert _args[0] == "the question"
+    assert _args[1] == 123456
+    assert kwargs.get("regenerate") is True
+
+
+def test_post_regenerate_conflict_when_nothing_to_pop():
+    """No trailing assistant message (empty history / turn in flight) → 409,
+    nothing enqueued."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        with patch.dict(os.environ, _ENV):
+            ws.app.dependency_overrides[ws.require_hub_session] = lambda: "amit.grupper@gmail.com"
+            fake_store_cls = MagicMock(name="FirestoreConversationStore")
+            fake_store_cls.return_value.pop_trailing_assistant.return_value = None
+            with patch("memory.firestore_conversation.FirestoreConversationStore", fake_store_cls), \
+                 patch.object(ws, "_resolve_hub_user_id", return_value=123456), \
+                 patch.object(ws, "enqueue_hub_message", return_value=True) as mock_enqueue:
+                client = TestClient(ws.app)
+                resp = client.post("/api/chat/regenerate")
+
+    assert resp.status_code == 409
+    mock_enqueue.assert_not_called()
+
+
+def test_internal_worker_regenerate_skips_user_append():
+    """The worker forwards the regenerate flag as persist_user_message=False."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+
+        fake_orch = MagicMock()
+        fake_orch.handle_message.return_value = "regenerated"
+        with patch.dict(os.environ, _ENV):
+            with patch.object(ws, "_orchestrator", fake_orch), \
+                 patch.object(ws, "_get_hub_stream_store", return_value=MagicMock()), \
+                 patch("core.scheduled_message.send_and_inject", new=MagicMock()):
+                client = TestClient(ws.app)
+                resp = client.post(
+                    "/internal/process-hub-message",
+                    json={"content": "the question", "user_id": 123456,
+                          "regenerate": True},
+                )
+
+    assert resp.status_code == 200, f"{resp.status_code}: {resp.text}"
+    assert fake_orch.handle_message.call_args.kwargs.get("persist_user_message") is False

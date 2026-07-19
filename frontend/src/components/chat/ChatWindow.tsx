@@ -32,7 +32,7 @@
  * Security note (T-26-08-01): All message content rendered via
  * MessageBubble which uses text nodes only, never dangerouslySetInnerHTML.
  */
-import { useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useEffect, useLayoutEffect, useRef, useCallback, useState } from 'react'
 import { useChat, latestKnownSeq } from '../../hooks/useChat'
 import { useUnread } from '../../hooks/useUnread'
 import { useAppBadge } from '../../hooks/useAppBadge'
@@ -61,12 +61,18 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
     isKlausThinking,
     streamingDraft,
     stopGeneration,
+    regenerate,
     sendMessage,
     isSending,
     loadOlder,
     hasMoreOlder,
     isLoadingOlder,
   } = useChat(isVisible)
+
+  // Edit-and-resend (hub message actions): tapping Edit on the last user
+  // message prefills the input; the nonce forces re-application even when
+  // the same text is edited twice in a row.
+  const [editPrefill, setEditPrefill] = useState<{ value: string; nonce: number } | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const lastMessageRef = useRef<HTMLDivElement>(null)
   const wasNearBottomRef = useRef(true) // start "at bottom" on mount
@@ -296,12 +302,30 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
         {/* Messages */}
         {messages.map((msg, idx) => {
           const isLast = idx === messages.length - 1
+          // Message actions: regenerate only on the final Klaus reply while
+          // idle; edit only on the most recent user message.
+          const isLastAssistant =
+            isLast && msg.role === 'assistant' && !isKlausThinking
+          const lastUserIdx = messages.reduce(
+            (acc, m, i) => (m.role === 'user' ? i : acc), -1,
+          )
+          const isLastUser = idx === lastUserIdx
           return (
             <div
               key={msg.id ?? (msg.seq !== undefined ? `seq-${msg.seq}` : `${msg.role}-${idx}`)}
               ref={isLast ? lastMessageRef : undefined}
             >
-              <MessageBubble message={msg} onRetry={handleRetry} />
+              <MessageBubble
+                message={msg}
+                onRetry={handleRetry}
+                onRegenerate={isLastAssistant ? regenerate : undefined}
+                onEdit={
+                  isLastUser
+                    ? (content) =>
+                        setEditPrefill((prev) => ({ value: content, nonce: (prev?.nonce ?? 0) + 1 }))
+                    : undefined
+                }
+              />
             </div>
           )
         })}
@@ -324,6 +348,7 @@ export function ChatWindow({ isVisible = true }: ChatWindowProps) {
         disabled={isSending}
         generating={isKlausThinking}
         onStop={stopGeneration}
+        prefill={editPrefill}
       />
     </div>
   )

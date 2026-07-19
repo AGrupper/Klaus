@@ -23,7 +23,12 @@
  */
 import { useCallback, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchMessages, postChatMessage, stopGeneration as apiStopGeneration } from '../api/chat'
+import {
+  fetchMessages,
+  postChatMessage,
+  regenerateReply as apiRegenerateReply,
+  stopGeneration as apiStopGeneration,
+} from '../api/chat'
 import type { AttachmentMeta, ChatMessage } from '../api/chat'
 
 export const CHAT_QUERY_KEY = ['chat', 'messages'] as const
@@ -218,6 +223,20 @@ export function useChat(isVisible: boolean = true) {
     })
   }, [])
 
+  const regenerate = useCallback(() => {
+    // Refetch immediately after the pop so the old reply disappears and the
+    // typing indicator returns (last message becomes the user's again); the
+    // regenerated reply then arrives via the fast poll like any other turn.
+    void Promise.resolve(apiRegenerateReply())
+      .catch(() => {
+        // 409 (nothing to regenerate — e.g. double-tap) or transient failure:
+        // non-fatal, the refetch below re-syncs whatever the truth is.
+      })
+      .finally(() => {
+        void queryClient.invalidateQueries({ queryKey: CHAT_QUERY_KEY })
+      })
+  }, [queryClient])
+
   // -------------------------------------------------------------------------
   // Optimistic send mutation (CHAT-03)
   // -------------------------------------------------------------------------
@@ -293,6 +312,7 @@ export function useChat(isVisible: boolean = true) {
     isKlausThinking,
     streamingDraft,
     stopGeneration,
+    regenerate,
     sendMessage,
     isSending: mutation.isPending,
     loadOlder,

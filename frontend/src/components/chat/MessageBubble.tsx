@@ -15,6 +15,7 @@
  * builds React elements from a Markdown AST and ignores embedded raw HTML by
  * default (no rehype-raw), so model/content HTML stays inert text.
  */
+import { useState } from 'react'
 import type { CSSProperties } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -36,6 +37,10 @@ import {
 interface MessageBubbleProps {
   message: ChatMessage
   onRetry?: (content: string) => void
+  /** Present only on the last Klaus message — regenerates the reply. */
+  onRegenerate?: () => void
+  /** Present only on the user's last message — prefills the input to resend. */
+  onEdit?: (content: string) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -327,10 +332,88 @@ function formatSize(bytes: number): string {
 }
 
 // ---------------------------------------------------------------------------
+// Message actions (hub message actions feature)
+// ---------------------------------------------------------------------------
+
+const actionButtonStyle: CSSProperties = {
+  background: 'none',
+  border: 'none',
+  cursor: 'pointer',
+  color: textSecondary,
+  fontSize: typography.label.fontSize,
+  fontWeight: typography.label.fontWeight,
+  fontFamily,
+  padding: '2px 4px',
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: '4px',
+}
+
+/**
+ * Small action row under a bubble: copy (always), plus regenerate/edit when
+ * the parent passes the callbacks (last Klaus / last user message only).
+ * Copies the RAW markdown for Klaus messages — pasteable anywhere.
+ */
+function MessageActions({ message, onRegenerate, onEdit }: {
+  message: ChatMessage
+  onRegenerate?: () => void
+  onEdit?: (content: string) => void
+}) {
+  const [copied, setCopied] = useState(false)
+
+  function handleCopy() {
+    void navigator.clipboard?.writeText(message.content).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    })
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: '8px',
+        marginTop: '2px',
+        justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+      }}
+    >
+      <button onClick={handleCopy} aria-label="Copy message" style={actionButtonStyle}>
+        {copied ? (
+          '✓ Copied'
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <rect x="4.5" y="4.5" width="8" height="8" rx="1.5" stroke="currentColor" />
+            <path d="M9.5 4.5V3a1.5 1.5 0 00-1.5-1.5H3A1.5 1.5 0 001.5 3v5A1.5 1.5 0 003 9.5h1.5" stroke="currentColor" />
+          </svg>
+        )}
+      </button>
+      {onRegenerate && (
+        <button onClick={onRegenerate} aria-label="Regenerate reply" style={actionButtonStyle}>
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M12.5 7A5.5 5.5 0 111.9 4.5M12.5 1.5v3h-3" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
+      {onEdit && (
+        <button
+          onClick={() => onEdit(message.content)}
+          aria-label="Edit message"
+          style={actionButtonStyle}
+        >
+          <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <path d="M9.8 1.7a1.5 1.5 0 012.1 2.1L4.5 11.2l-2.9.8.8-2.9 7.4-7.4z" stroke="currentColor" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
-export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
+export function MessageBubble({ message, onRetry, onRegenerate, onEdit }: MessageBubbleProps) {
   const isUser = message.role === 'user'
   const isError = message.status === 'error'
 
@@ -396,6 +479,12 @@ export function MessageBubble({ message, onRetry }: MessageBubbleProps) {
           </div>
         )}
       </div>
+
+      {/* Action row — copy always; regenerate/edit when wired by the parent.
+          Hidden on in-flight/error optimistic messages (status row owns those). */}
+      {message.status !== 'sending' && !isError && (
+        <MessageActions message={message} onRegenerate={onRegenerate} onEdit={onEdit} />
+      )}
 
       {/* Error retry — below the bubble (CHAT-03) */}
       {isUser && isError && (
