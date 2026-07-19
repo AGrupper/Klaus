@@ -679,3 +679,46 @@ def test_gemini_and_openai_backends_accept_and_ignore_callback():
         on_text_delta=lambda _s: None,
     )
     assert result["text"] == "ok"
+
+
+def test_anthropic_backend_mid_stream_transport_error_becomes_llmerror():
+    """A transport error raised WHILE consuming the SSE stream (httpx.ReadTimeout
+    etc.) must map to LLMError like any other Anthropic failure — the SDK does
+    not wrap mid-stream transport errors (anthropic/_streaming.py yields raw
+    from response.iter_bytes()), and a raw httpx exception bypasses the whole
+    Sonnet->Gemini->Haiku fallback chain in _run_smart_loop (CR-01)."""
+    import httpx
+    from core.llm_client import _AnthropicBackend, LLMError
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    stream = MagicMock()
+    stream.get_final_message.side_effect = httpx.ReadTimeout("mid-stream read timeout")
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=stream)
+    cm.__exit__ = MagicMock(return_value=False)
+    backend.client.messages.stream = MagicMock(return_value=cm)
+
+    with pytest.raises(LLMError):
+        backend.chat([{"role": "user", "content": "hi"}])
+
+
+def test_anthropic_backend_callback_exception_still_propagates_untouched():
+    """The hub TurnCancelled path: a NON-httpx exception raised by the delta
+    callback must still propagate as-is, never become LLMError (which would
+    re-run a cancelled turn through the fallback tiers)."""
+    class TurnCancelled(Exception):
+        pass
+
+    from core.llm_client import _AnthropicBackend, LLMError
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    stream = MagicMock()
+    stream.text_stream = iter(["chunk1", "chunk2"])
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=stream)
+    cm.__exit__ = MagicMock(return_value=False)
+    backend.client.messages.stream = MagicMock(return_value=cm)
+
+    def _cancel(_chunk):
+        raise TurnCancelled()
+
+    with pytest.raises(TurnCancelled):
+        backend.chat([{"role": "user", "content": "hi"}], on_text_delta=_cancel)

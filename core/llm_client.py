@@ -206,6 +206,7 @@ class _AnthropicBackend(_BaseBackend):
              temperature: float | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
         import anthropic
+        import httpx
 
         # Strip thought_signature from messages to prevent Anthropic validation errors on fallback
         clean_messages = []
@@ -275,6 +276,17 @@ class _AnthropicBackend(_BaseBackend):
         except anthropic.APIConnectionError as exc:
             raise LLMError(
                 f"Connection error to Anthropic API: {exc}", backend="anthropic"
+            ) from exc
+        except httpx.HTTPError as exc:
+            # The SDK only wraps transport errors on the initial request; a
+            # ReadTimeout/ReadError raised WHILE consuming the SSE stream
+            # propagates raw (anthropic/_streaming.py iterates response bytes
+            # unwrapped). Unmapped, it would bypass every LLMError-driven
+            # fallback tier. Callback exceptions (TurnCancelled) are not
+            # httpx errors and still propagate untouched.
+            raise LLMError(
+                f"Mid-stream transport error from Anthropic API: {exc}",
+                backend="anthropic",
             ) from exc
 
         text: str | None = None
