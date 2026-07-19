@@ -51,7 +51,11 @@ def _txn_append(
     # context is unchanged: get() still returns only the active session.
     if updated_at and datetime.now(timezone.utc) - updated_at > timedelta(hours=timeout_hours):
         session_start = len(messages)
-    messages.append({"role": role, "content": content})
+    messages.append({
+        "role": role,
+        "content": content,
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
     if len(messages) > max_messages:
         # WHY: keep the newest messages — they carry the most relevant context.
         drop = len(messages) - max_messages
@@ -197,6 +201,51 @@ class FirestoreConversationStore:
         if not snapshot.exists:
             return []
         return list((snapshot.to_dict() or {}).get("messages", []))
+
+    def get_recent_window(
+        self, user_id: int, hours: int = 24, max_messages: int = 60,
+    ) -> list[dict]:
+        """Return messages from the last `hours`, ignoring the session-idle timeout.
+
+        Built for the Phase 31 reflection learning-loop fix (the 6h-timeout-bounded
+        `get()` is empty at nightly reflection time on most nights). Also the shared
+        dependency for Phase 32's ambient-recall tail-prepend and conversation_tail
+        gather.
+
+        Legacy messages without a `ts` field (pre-Phase-31) are tolerated: kept by
+        array position (best-effort), not KeyError'd or dropped outright. A
+        malformed/unparseable `ts` is tolerated the same way.
+
+        Deliberately does NOT consult `session_start_index` or the idle timeout —
+        this method is timeout-independent by design.
+        """
+        doc_ref = self._col.document(str(user_id))
+        try:
+            snapshot = doc_ref.get()
+        except GoogleAPICallError:
+            logger.warning(
+                "FirestoreConversationStore.get_recent_window failed for user_id=%d",
+                user_id,
+            )
+            return []
+        if not snapshot.exists:
+            return []
+        messages = list((snapshot.to_dict() or {}).get("messages", []))
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        windowed = []
+        for m in messages:
+            ts_raw = m.get("ts")
+            if ts_raw is None:
+                windowed.append(m)  # legacy message — no ts, keep by position
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_raw)
+            except (ValueError, TypeError):
+                windowed.append(m)  # malformed ts — tolerate, keep by position
+                continue
+            if ts >= cutoff:
+                windowed.append(m)
+        return windowed[-max_messages:]
 
     def pop_trailing_assistant(self, user_id: int) -> str | None:
         """Remove the trailing assistant message (hub regenerate feature).
