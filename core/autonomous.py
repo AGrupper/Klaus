@@ -217,6 +217,13 @@ def _is_empty_signals(situation: dict) -> bool:
     # a recovery:<date> topic_key handle don't-repeat downstream.
     if (situation.get("recovery") or {}).get("flags"):
         return False
+    # Phase 31 (DIR-03) — standing_directives is CONTEXT only, deliberately
+    # excluded here, mirroring the training_status/acwr precedent above. An
+    # active directive (e.g. "stop nagging about training while I'm in
+    # France") must reach triage/compose as context so it can VETO whatever
+    # else wakes the tick — but its own presence must never wake the free
+    # tier. Adding a check here would let a directive spend money on its own,
+    # defeating the D-11/SC-3 cost gate that is Klaus's entire cost model.
     return True
 
 
@@ -325,6 +332,26 @@ def _gather_due_followups(now: datetime, project_id: str, database: str) -> list
         return fs.list_due(now.astimezone(timezone.utc).isoformat())
     except Exception:
         logger.warning("autonomous: followup gather failed", exc_info=True)
+        return []
+
+
+def _gather_standing_directives(project_id: str, database: str) -> list:
+    """(o) Phase 31 (DIR-03) — Amit's active standing directives, CONTEXT only.
+
+    Mirrors the ``_gather_due_followups`` try/except -> ``[]`` sentinel shape.
+    CRITICAL: this gather is deliberately excluded from ``_is_empty_signals``
+    (see the comment at that function's ``standing_directives`` note) — a
+    directive's mere presence must never wake the free tier on its own
+    (Pitfall 4). It reaches the triage prompt and both Layer-2 composes purely
+    as context so a directive like "stop nagging about training while I'm in
+    France" can veto (topic-scoped) whatever DOES wake the tick.
+    """
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        sds = StandingDirectiveStore(project_id=project_id, database=database)
+        return sds.list_active()
+    except Exception:
+        logger.warning("autonomous: standing_directives gather failed", exc_info=True)
         return []
 
 
@@ -611,6 +638,11 @@ def gather_situation(now: datetime) -> dict:
         # + training log) — CONTEXT only, not a trigger (see _is_empty_signals).
         "training_evidence": lambda: _gather_training_evidence(
             now, project_id, database
+        ),
+        # Phase 31 (DIR-03): Amit's active standing directives — CONTEXT only,
+        # never a trigger (see _is_empty_signals).
+        "standing_directives": lambda: _gather_standing_directives(
+            project_id, database
         ),
     }
 
