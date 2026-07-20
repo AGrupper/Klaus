@@ -906,3 +906,132 @@ def test_compose_review_passes_32k_max_tokens(monkeypatch):
 
     assert result == "Sonnet review."
     assert captured.get("max_tokens") == 32000
+
+
+# ====================================================================== #
+# Phase 31 Plan 05 — standing directive veto (DIR-03 / D-21 / D-22)      #
+# ====================================================================== #
+
+
+def test_gather_week_reads_standing_directives(patched_sources):
+    """DIR-03: _gather_week_data best-effort reads StandingDirectiveStore.list_active()."""
+    fake_directives = [{"id": "abc", "text": "Skip the weekly review while I'm traveling"}]
+    sds = MagicMock()
+    sds.return_value.list_active.return_value = fake_directives
+    with patch("memory.firestore_db.StandingDirectiveStore", sds):
+        data = wtr._gather_week_data("2026-06-07")
+    assert data["standing_directives"] == fake_directives
+
+
+def test_gather_week_standing_directives_fail_open(patched_sources):
+    """A StandingDirectiveStore failure must never block the weekly-review gather."""
+    sds = MagicMock(side_effect=RuntimeError("firestore down"))
+    with patch("memory.firestore_db.StandingDirectiveStore", sds):
+        data = wtr._gather_week_data("2026-06-07")
+    assert data["standing_directives"] == []
+
+
+def test_compose_review_injects_standing_directives(patched_sources_with_coaching, monkeypatch):
+    """DIR-03 / D-22: _compose_review injects {standing_directives} into the system prompt."""
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-haiku-4-5-20251001")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+
+    captured_prompts = []
+    mock_client = MagicMock()
+    mock_client.chat.side_effect = lambda messages, system, **kw: (
+        captured_prompts.append(system) or {"text": "Review text", "tool_calls": [], "stop_reason": "end_turn"}
+    )
+    mock_orchestrator = MagicMock()
+    mock_orchestrator._coaching_guide_content = ""
+
+    week_data = {"standing_directives": [{"text": "No reviews while traveling"}]}
+
+    with patch("core.llm_client.LLMClient", return_value=mock_client), \
+         patch("pathlib.Path.read_text", return_value="System prompt {standing_directives} end"), \
+         patch("pathlib.Path.exists", return_value=False), \
+         patch("core.autonomous._get_orchestrator", return_value=mock_orchestrator):
+        wtr._compose_review(week_data, "2026-06-07")
+
+    assert captured_prompts, "No system prompt captured — _compose_review did not call LLM"
+    assert "No reviews while traveling" in captured_prompts[0]
+
+
+class TestParseReviewSkip:
+    """_parse_review_skip mirrors the fenced-JSON-trailer convention exactly."""
+
+    def test_parses_skip_true_with_reason(self):
+        text = (
+            'Not writing a review this week.\n'
+            '```json\n{"skip": true, "reason": "Amit is traveling this week"}\n```'
+        )
+        skip, reason, polished = wtr._parse_review_skip(text)
+        assert skip is True
+        assert reason == "Amit is traveling this week"
+        assert polished == "Not writing a review this week."
+
+    def test_no_json_block_defaults_to_no_skip(self):
+        text = "Here's how your week shaped up."
+        skip, reason, polished = wtr._parse_review_skip(text)
+        assert skip is False
+        assert reason == ""
+        assert polished == text
+
+    def test_malformed_json_defaults_to_no_skip_and_strips_block(self):
+        text = 'Review body.\n```json\n{not valid json}\n```'
+        skip, reason, polished = wtr._parse_review_skip(text)
+        assert skip is False
+        assert reason == ""
+        assert polished == "Review body."
+
+    def test_empty_text(self):
+        assert wtr._parse_review_skip("") == (False, "", "")
+
+
+def test_run_weekly_review_directive_skip_no_send(monkeypatch):
+    """DIR-03 / D-21 / D-22: a covering directive skip must NOT call send_and_inject
+    and must log skipped_by_directive — the one exception to D-24 always-send."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = AsyncMock()
+    skip_text = (
+        'Skipping this week.\n'
+        '```json\n{"skip": true, "reason": "Standing directive: no reviews while traveling"}\n```'
+    )
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review", return_value=skip_text), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send:
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_not_called()
+
+
+def test_run_weekly_review_non_skip_sends_normally(monkeypatch):
+    """No covering directive → normal send path unchanged."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review", return_value="Here's your week."), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send:
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_called_once()
+    assert mock_send.call_args.args[1] == "Here's your week."
+
+
+def test_weekly_review_prompt_has_standing_directives_and_skip_instruction():
+    """DIR-03: the weekly review prompt must carry a directives block + skip instruction."""
+    content = open("prompts/weekly_training_review.md", encoding="utf-8").read()
+    assert "{standing_directives}" in content
+    assert '"skip"' in content or "'skip'" in content

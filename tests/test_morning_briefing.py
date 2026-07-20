@@ -837,3 +837,130 @@ def test_gather_data_recovery_deviation_failure_is_isolated():
                side_effect=RuntimeError("pg down")):
         data = _gather_data("2026-06-28")
     assert "recovery_deviation" not in data
+
+
+# ====================================================================== #
+# Phase 31 Plan 05 — standing directive veto (DIR-03 / D-21 / D-22)      #
+# ====================================================================== #
+
+
+def test_gather_data_reads_standing_directives():
+    """DIR-03: _gather_data best-effort reads StandingDirectiveStore.list_active()."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    fake_directives = [{"id": "abc", "text": "Skip morning briefings while I'm away"}]
+    sds = MagicMock()
+    sds.return_value.list_active.return_value = fake_directives
+    with _quiet_gather(bs), \
+         patch("memory.firestore_db.StandingDirectiveStore", sds):
+        data = _gather_data("2026-06-28")
+    assert data["standing_directives"] == fake_directives
+
+
+def test_gather_data_standing_directives_fail_open():
+    """A StandingDirectiveStore failure must never block the briefing gather."""
+    from core.morning_briefing import _gather_data
+    bs = MagicMock()
+    bs.return_value.get_current.return_value = None
+    sds = MagicMock(side_effect=RuntimeError("firestore down"))
+    with _quiet_gather(bs), \
+         patch("memory.firestore_db.StandingDirectiveStore", sds):
+        data = _gather_data("2026-06-28")
+    assert data["standing_directives"] == []
+
+
+class TestParseBriefingSkip:
+    """_parse_briefing_skip mirrors core.autonomous._parse_followup_action exactly."""
+
+    def test_parses_skip_true_with_reason(self):
+        from core.morning_briefing import _parse_briefing_skip
+        text = (
+            'Not writing a briefing this morning.\n'
+            '```json\n{"skip": true, "reason": "Amit asked for no morning notes this week"}\n```'
+        )
+        skip, reason, polished = _parse_briefing_skip(text)
+        assert skip is True
+        assert reason == "Amit asked for no morning notes this week"
+        assert polished == "Not writing a briefing this morning."
+
+    def test_no_json_block_defaults_to_no_skip(self):
+        from core.morning_briefing import _parse_briefing_skip
+        text = "Morning. Quiet one today."
+        skip, reason, polished = _parse_briefing_skip(text)
+        assert skip is False
+        assert reason == ""
+        assert polished == text
+
+    def test_malformed_json_defaults_to_no_skip_and_strips_block(self):
+        from core.morning_briefing import _parse_briefing_skip
+        text = 'Morning note here.\n```json\n{not valid json}\n```'
+        skip, reason, polished = _parse_briefing_skip(text)
+        assert skip is False
+        assert reason == ""
+        assert polished == "Morning note here."
+
+    def test_empty_text(self):
+        from core.morning_briefing import _parse_briefing_skip
+        assert _parse_briefing_skip("") == (False, "", "")
+
+    def test_skip_false_explicit(self):
+        from core.morning_briefing import _parse_briefing_skip
+        text = 'Morning note.\n```json\n{"skip": false}\n```'
+        skip, reason, polished = _parse_briefing_skip(text)
+        assert skip is False
+        assert reason == ""
+        assert polished == "Morning note."
+
+
+def test_run_morning_briefing_directive_skip_no_send_no_writes(bot):
+    """DIR-03 / D-21 / D-22: a covering directive skip must NOT call send_and_inject
+    and must NOT write structured/daily_note data (hub /api/today contract, T-31-09)."""
+    skip_text = (
+        'Skipping this morning.\n'
+        '```json\n{"skip": true, "reason": "Standing directive: no morning briefings this week"}\n```'
+    )
+    with patch("core.morning_briefing._get_state", return_value={}), \
+         patch("core.morning_briefing._set_state") as mock_set, \
+         patch("core.morning_briefing._gather_data", return_value={}), \
+         patch("core.morning_briefing._compose_briefing", return_value=skip_text), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.SelfStateStore") as sss_cls:
+        from core.morning_briefing import run_morning_briefing
+        result = asyncio.run(run_morning_briefing(bot, "2026-07-20", dedup=False))
+
+    assert result is True
+    mock_send.assert_not_called()
+    sss_cls.return_value.set.assert_not_called()
+
+    # status set distinctly — T-31-08: never conflated with "sent"/"failed"
+    status_calls = [c for c in mock_set.call_args_list if c.args and c.args[1].get("status")]
+    assert any(c.args[1]["status"] == "skipped_by_directive" for c in status_calls)
+
+    # No structured / daily_note write on a directive skip (T-31-09)
+    for c in mock_set.call_args_list:
+        fields = c.args[1]
+        assert "structured" not in fields
+        assert "daily_note" not in fields
+        assert "daily_note_date" not in fields
+
+
+def test_run_morning_briefing_non_skip_sends_and_writes_structured(bot):
+    """No covering directive → normal send + normal structured/daily_note write."""
+    today_data = {"calendar": [{"summary": "Standup"}], "tasks": {"today": [], "overdue": []}}
+    with patch("core.morning_briefing._get_state", return_value={}), \
+         patch("core.morning_briefing._set_state") as mock_set, \
+         patch("core.morning_briefing._gather_data", return_value=today_data), \
+         patch("core.morning_briefing._compose_briefing", return_value="Good morning."), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.SelfStateStore") as sss_cls:
+        from core.morning_briefing import run_morning_briefing
+        result = asyncio.run(run_morning_briefing(bot, "2026-07-20", dedup=False))
+
+    assert result is False
+    mock_send.assert_called_once()
+    structured_calls = [c for c in mock_set.call_args_list if "structured" in c.args[1]]
+    assert structured_calls
+    sss_cls.return_value.set.assert_called_once()
+    daily_note_fields = sss_cls.return_value.set.call_args.args[0]
+    assert daily_note_fields["daily_note"] == "Good morning."

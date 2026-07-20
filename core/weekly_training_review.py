@@ -9,7 +9,10 @@ Flow:
      UserProfileStore.athletic_goals.
   2. _compose_review — brain-composed (SMART_AGENT_* LLMClient) using
      prompts/weekly_training_review.md + prompts/meal_audit.md appended.
-  3. send_and_inject — always sends (D-24), injected into conversation.
+  3. send_and_inject — always sends (D-24), injected into conversation —
+     EXCEPT when an active standing directive's scope covers the weekly
+     review (Phase 31 DIR-03 / D-21 / D-22): the compose call's own skip
+     verdict then vetoes the send, logged as skipped_by_directive.
 """
 from __future__ import annotations
 
@@ -339,6 +342,20 @@ def _gather_week_data(today_iso: str) -> dict:
         logger.warning("weekly_review: structural topic derivation failed", exc_info=True)
         data["coaching_topics_included"] = []
 
+    # ------------------------------------------------------------------ #
+    # 9. StandingDirectiveStore — DIR-03 / D-21 / D-22 interim veto      #
+    #    power over the legacy weekly-review cron. Best-effort; fail-open #
+    #    to [] so the review still runs when the directive read fails.    #
+    # ------------------------------------------------------------------ #
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        data["standing_directives"] = StandingDirectiveStore(project_id, database).list_active()
+    except Exception:
+        logger.warning("weekly_review: standing directives fetch failed", exc_info=True)
+        data["standing_directives"] = []
+
     return data
 
 
@@ -395,10 +412,25 @@ def _compose_review(week_data: dict, today_iso: str) -> str:
     except Exception:
         logger.warning("weekly_review: coaching guide unavailable — proceeding without it")
         coaching_guide_content = ""
+
+    # PHASE 31 — DIR-03 / D-22: render the active standing-directives block
+    # (shared formatter, see core/tools.py) so the compose call can honor a
+    # covering directive's veto. Fail-open to "" — a formatter/import failure
+    # must never crash the weekly review.
+    try:
+        from core.tools import render_standing_directives_block
+        standing_directives_block = render_standing_directives_block(
+            week_data.get("standing_directives") or [], style="prose"
+        )
+    except Exception:
+        logger.warning("weekly_review: standing directives render failed", exc_info=True)
+        standing_directives_block = ""
+
     try:
         system_prompt = (
             prompt_path.read_text(encoding="utf-8")
             .replace("{coaching_guide}", coaching_guide_content)
+            .replace("{standing_directives}", standing_directives_block)
             .replace("{today_date}", today_iso)
         )
     except OSError:
@@ -484,12 +516,44 @@ def _compose_review(week_data: dict, today_iso: str) -> str:
     )
 
 
+def _parse_review_skip(text: str) -> tuple[bool, str, str]:
+    """Parse a trailing directive-skip verdict from a composed weekly review.
+
+    PHASE 31 — DIR-03 / D-21 / D-22: mirrors ``core.autonomous._parse_followup_action``'s
+    and ``core.morning_briefing._parse_briefing_skip``'s fenced-JSON-trailer convention
+    EXACTLY — looks for a trailing ``` ```json {"skip": true, "reason": "..."}``` ```
+    block. Returns ``(skip, reason, polished_text)`` where ``polished_text`` is the
+    message body BEFORE the JSON block (so malformed JSON internals never leak to Amit).
+
+    Defaults to ``(False, "", text.strip())`` when the block is absent or malformed —
+    a parse failure must never silently block the review (D-24 always-send spirit).
+    """
+    import re as _re
+    if not text:
+        return (False, "", "")
+    m = _re.search(r"```json\s*(\{.*?\})\s*```", text, _re.DOTALL)
+    if not m:
+        return (False, "", text.strip())
+    try:
+        obj = json.loads(m.group(1))
+        skip = bool(obj.get("skip", False))
+        reason = str(obj.get("reason", "")) if skip else ""
+    except (json.JSONDecodeError, ValueError):
+        skip = False
+        reason = ""
+    polished = text[:m.start()].strip()
+    return (skip, reason, polished)
+
+
 async def run_weekly_review(bot, today_iso: str) -> None:
     """Entry point called by the /cron/weekly-training-review route.
 
-    D-24: always sends even when the week is sparse or data is unavailable.
-    The message is injected into the conversation so the brain can reference
-    it in subsequent turns.
+    D-24: always sends even when the week is sparse or data is unavailable —
+    EXCEPT when an active standing directive's scope covers the weekly review
+    (DIR-03 / D-21 / D-22): the compose call's own skip verdict then vetoes
+    the send, logged distinctly as ``skipped_by_directive`` (never conflated
+    with an infra failure). The message is injected into the conversation so
+    the brain can reference it in subsequent turns.
 
     Args:
         bot:       Telegram bot instance (_application.bot).
@@ -505,6 +569,18 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     loop = asyncio.get_running_loop()
     week_data = await loop.run_in_executor(None, _gather_week_data, today_iso)
     message = await loop.run_in_executor(None, _compose_review, week_data, today_iso)
+
+    # PHASE 31 — DIR-03 / D-21 / D-22: an active standing directive whose scope
+    # covers the weekly review gives the brain's own compose call full veto
+    # power. Parse a trailing skip verdict; on skip, log distinctly from a send
+    # failure and return BEFORE send_and_inject — this is the one exception to
+    # D-24's "always send" rule.
+    skip, skip_reason, message = _parse_review_skip(message)
+    if skip:
+        logger.info(
+            "weekly_review: skipped_by_directive for %s (%s)", today_iso, skip_reason
+        )
+        return
 
     # D-24 always send. One retry on a transient Telegram TimedOut so a single
     # flake never silently costs Amit a whole week's review; a persistent failure
