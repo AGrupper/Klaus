@@ -89,9 +89,13 @@ async def handle_tick(bot: Bot) -> None:
         if (next_tick.hour, next_tick.minute) > (10, 15):
             # Fast-path: firing now because next tick would be past cutoff.
             logger.info("morning_briefing: fast-path fire for %s", today_iso)
-            await run_morning_briefing(bot, today_iso, dedup=False)
-            _set_state(today_iso, {"status": "sent", "trigger": "cron_fast_path",
-                                   "sent_at": now.isoformat()})
+            skipped_by_directive = await run_morning_briefing(bot, today_iso, dedup=False)
+            # PHASE 31 — DIR-03: don't clobber the "skipped_by_directive" status
+            # run_morning_briefing already wrote — only mark "sent" when it
+            # actually sent.
+            if not skipped_by_directive:
+                _set_state(today_iso, {"status": "sent", "trigger": "cron_fast_path",
+                                       "sent_at": now.isoformat()})
         else:
             logger.info("morning_briefing: Garmin sync detected for %s — will fire next tick", today_iso)
             _set_state(today_iso, {"status": "sync_detected",
@@ -106,9 +110,13 @@ async def handle_tick(bot: Bot) -> None:
             return
         try:
             logger.info("morning_briefing: firing briefing for %s (retry=%d)", today_iso, retry_count)
-            await run_morning_briefing(bot, today_iso, dedup=False)
-            _set_state(today_iso, {"status": "sent", "trigger": "cron",
-                                   "sent_at": datetime.now(_TZ).isoformat()})
+            skipped_by_directive = await run_morning_briefing(bot, today_iso, dedup=False)
+            # PHASE 31 — DIR-03: don't clobber the "skipped_by_directive" status
+            # run_morning_briefing already wrote — only mark "sent" when it
+            # actually sent.
+            if not skipped_by_directive:
+                _set_state(today_iso, {"status": "sent", "trigger": "cron",
+                                       "sent_at": datetime.now(_TZ).isoformat()})
         except Exception:
             logger.warning("morning_briefing: send failed for %s — will retry next tick",
                            today_iso, exc_info=True)
@@ -119,22 +127,42 @@ async def handle_tick(bot: Bot) -> None:
 # Main entry point (cron + manual tool)                              #
 # ------------------------------------------------------------------ #
 
-async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) -> None:
+async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) -> bool:
     """Compose and send the morning briefing for today_iso.
 
     Args:
         bot:       Telegram Bot instance.
         today_iso: YYYY-MM-DD date to compose the briefing for.
         dedup:     If True, skip if already sent. If False, always fire.
+
+    Returns:
+        True if an active standing directive vetoed this briefing (DIR-03 /
+        D-21 / D-22) — no send, no structured/daily_note write occurred.
+        False otherwise (normal send, or dedup short-circuit).
     """
     if dedup:
         state = _get_state(today_iso)
         if state.get("status") in {"sent", "manual"}:
             logger.info("morning_briefing: dedup — already sent for %s", today_iso)
-            return
+            return False
 
     today_data = _gather_data(today_iso)
     text = _compose_briefing(today_data, today_iso)
+
+    # PHASE 31 — DIR-03 / D-21 / D-22: an active standing directive whose scope
+    # covers the morning briefing gives the brain's own compose call full veto
+    # power. Parse a trailing skip verdict; on skip, log distinctly from a send
+    # failure and return BEFORE send_and_inject and BEFORE the structured/
+    # daily_note writes below (RESEARCH Open Questions #2 — keep the hub
+    # /api/today falling back to its existing placeholder rather than
+    # surfacing stale structured data).
+    skip, skip_reason, text = _parse_briefing_skip(text)
+    if skip:
+        logger.info(
+            "morning_briefing: skipped_by_directive for %s (%s)", today_iso, skip_reason
+        )
+        _set_state(today_iso, {"status": "skipped_by_directive", "skip_reason": skip_reason})
+        return True
 
     from core.scheduled_message import send_and_inject
     # WR-02 / D-07: briefings carry the "briefing" push class (24h TTL).
@@ -195,6 +223,8 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
             "briefing was already sent; this failure is non-fatal",
             exc_info=True,
         )
+
+    return False
 
 
 # ------------------------------------------------------------------ #
@@ -461,6 +491,21 @@ def _gather_data(today_iso: str) -> dict:
         data["coaching_topics_yesterday"] = []
         data["coaching_topics_included"] = []
 
+    # PHASE 31 — DIR-03 / D-21 / D-22: best-effort read of active standing
+    # directives so the compose call can veto this briefing when a covering
+    # directive is active (e.g. "skip morning briefings while I'm away").
+    # Fail-open to [] — a Firestore hiccup must never block the briefing.
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        _sds = StandingDirectiveStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        data["standing_directives"] = _sds.list_active()
+    except Exception:
+        logger.warning("morning_briefing: standing directives fetch failed", exc_info=True)
+        data["standing_directives"] = []
+
     return data
 
 
@@ -483,10 +528,25 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
     except Exception:
         logger.warning("morning_briefing: coaching guide unavailable — proceeding without it")
         coaching_guide_content = ""
+
+    # PHASE 31 — DIR-03 / D-22: render the active standing-directives block
+    # (shared formatter, see core/tools.py) so the compose call can honor a
+    # covering directive's veto. Fail-open to "" — a formatter/import failure
+    # must never crash the briefing.
+    try:
+        from core.tools import render_standing_directives_block
+        standing_directives_block = render_standing_directives_block(
+            today_data.get("standing_directives") or [], style="prose"
+        )
+    except Exception:
+        logger.warning("morning_briefing: standing directives render failed", exc_info=True)
+        standing_directives_block = ""
+
     try:
         system_prompt = (
             prompt_path.read_text(encoding="utf-8")
             .replace("{coaching_guide}", coaching_guide_content)
+            .replace("{standing_directives}", standing_directives_block)
             .replace("{today_date}", today_iso)
         )
     except OSError:
@@ -547,6 +607,35 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
         logger.warning("morning_briefing: LLM fallback composition failed", exc_info=True)
 
     return _plain_text_fallback(today_data, today_iso)
+
+
+def _parse_briefing_skip(text: str) -> tuple[bool, str, str]:
+    """Parse a trailing directive-skip verdict from a composed briefing.
+
+    PHASE 31 — DIR-03 / D-21 / D-22: mirrors ``core.autonomous._parse_followup_action``'s
+    fenced-JSON-trailer convention EXACTLY — looks for a trailing
+    ``` ```json {"skip": true, "reason": "..."}``` ``` block. Returns
+    ``(skip, reason, polished_text)`` where ``polished_text`` is the message body
+    BEFORE the JSON block (so malformed JSON internals never leak to Amit).
+
+    Defaults to ``(False, "", text.strip())`` when the block is absent or
+    malformed — a parse failure must never silently block the briefing.
+    """
+    import re as _re
+    if not text:
+        return (False, "", "")
+    m = _re.search(r"```json\s*(\{.*?\})\s*```", text, _re.DOTALL)
+    if not m:
+        return (False, "", text.strip())
+    try:
+        obj = json.loads(m.group(1))
+        skip = bool(obj.get("skip", False))
+        reason = str(obj.get("reason", "")) if skip else ""
+    except (json.JSONDecodeError, ValueError):
+        skip = False
+        reason = ""
+    polished = text[:m.start()].strip()
+    return (skip, reason, polished)
 
 
 def _plain_text_fallback(today_data: dict, today_iso: str) -> str:
