@@ -217,6 +217,13 @@ def _is_empty_signals(situation: dict) -> bool:
     # a recovery:<date> topic_key handle don't-repeat downstream.
     if (situation.get("recovery") or {}).get("flags"):
         return False
+    # Phase 31 (DIR-03) — standing_directives is CONTEXT only, deliberately
+    # excluded here, mirroring the training_status/acwr precedent above. An
+    # active directive (e.g. "stop nagging about training while I'm in
+    # France") must reach triage/compose as context so it can VETO whatever
+    # else wakes the tick — but its own presence must never wake the free
+    # tier. Adding a check here would let a directive spend money on its own,
+    # defeating the D-11/SC-3 cost gate that is Klaus's entire cost model.
     return True
 
 
@@ -325,6 +332,26 @@ def _gather_due_followups(now: datetime, project_id: str, database: str) -> list
         return fs.list_due(now.astimezone(timezone.utc).isoformat())
     except Exception:
         logger.warning("autonomous: followup gather failed", exc_info=True)
+        return []
+
+
+def _gather_standing_directives(project_id: str, database: str) -> list:
+    """(o) Phase 31 (DIR-03) — Amit's active standing directives, CONTEXT only.
+
+    Mirrors the ``_gather_due_followups`` try/except -> ``[]`` sentinel shape.
+    CRITICAL: this gather is deliberately excluded from ``_is_empty_signals``
+    (see the comment at that function's ``standing_directives`` note) — a
+    directive's mere presence must never wake the free tier on its own
+    (Pitfall 4). It reaches the triage prompt and both Layer-2 composes purely
+    as context so a directive like "stop nagging about training while I'm in
+    France" can veto (topic-scoped) whatever DOES wake the tick.
+    """
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        sds = StandingDirectiveStore(project_id=project_id, database=database)
+        return sds.list_active()
+    except Exception:
+        logger.warning("autonomous: standing_directives gather failed", exc_info=True)
         return []
 
 
@@ -612,6 +639,11 @@ def gather_situation(now: datetime) -> dict:
         "training_evidence": lambda: _gather_training_evidence(
             now, project_id, database
         ),
+        # Phase 31 (DIR-03): Amit's active standing directives — CONTEXT only,
+        # never a trigger (see _is_empty_signals).
+        "standing_directives": lambda: _gather_standing_directives(
+            project_id, database
+        ),
     }
 
     with ThreadPoolExecutor(max_workers=8, thread_name_prefix="gather") as pool:
@@ -694,6 +726,11 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     not ``"999.0"`` (which the LLM would interpret as "Sir vanished").
     """
     _ = triage_system  # reserved
+    # Lazy import (avoids an import cycle — core.tools imports core.autonomous
+    # indirectly via other call sites) — mirrors the Plan 03 convention.
+    from core.tools import render_standing_directives_block
+
+    standing_directives = situation.get("standing_directives") or []
     snap = {
         "calendar": situation.get("calendar", []),
         "ticktick_overdue": situation.get("ticktick_overdue", []),
@@ -712,6 +749,11 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         # Today's completed-training ground truth — never assume a planned
         # calendar session happened (or didn't) without checking this.
         "training_evidence": situation.get("training_evidence", {}),
+        # Phase 31 (DIR-03) — active standing directives, compact JSON for the
+        # snapshot; the Step-0 STANDING ORDERS veto reads this.
+        "standing_directives": json.loads(
+            render_standing_directives_block(standing_directives, style="json")
+        ),
     }
     hsc = situation.get("hours_since_contact")
     snap["hours_since_contact"] = "unknown" if hsc is None else hsc
@@ -727,13 +769,17 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     now_context_block = _format_now_block(situation)
     outreach_today = situation.get("today_outreach_log") or []
     outreach_block = ", ".join(outreach_today) if outreach_today else "(none yet)"
+    directives_block = render_standing_directives_block(
+        standing_directives, style="prose"
+    ) or "(none active)"
 
     return (
         f"Situation snapshot:\n{snap_json}\n\n"
         f"My self-state:\n{self_state_block}\n\n"
         f"My recent journal:\n{journal}\n\n"
         f"Time context:\n{now_context_block}\n\n"
-        f"Topics I have already raised today:\n{outreach_block}\n"
+        f"Topics I have already raised today:\n{outreach_block}\n\n"
+        f"Active standing directives:\n{directives_block}\n"
     )
 
 
@@ -850,6 +896,8 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
     it with the synthetic user message).
     """
     orchestrator = _get_orchestrator()
+    # Lazy import (avoids an import cycle) — Phase 31 (DIR-03) parity.
+    from core.tools import render_standing_directives_block
 
     # BLOCKER 5b — replicate handle_message's render step before _run_smart_loop.
     smart_system_template = _load_prompt("prompts/autonomous.md")
@@ -884,6 +932,14 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         "recovery": situation.get("recovery", {}),
         # Today's completed-training ground truth (parity with triage).
         "training_evidence": situation.get("training_evidence", {}),
+        # Phase 31 (DIR-03) — active standing directives (parity with triage);
+        # the system-prompt {standing_directives} injection (Plan 03) already
+        # covers the chat-persona voice — this is the situational snapshot copy.
+        "standing_directives": json.loads(
+            render_standing_directives_block(
+                situation.get("standing_directives") or [], style="json"
+            )
+        ),
     }, indent=2, ensure_ascii=False)
 
     synthetic_content = (
@@ -907,6 +963,9 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
     ``prompts/autonomous.md``.
     """
     orchestrator = _get_orchestrator()
+    # Lazy import (avoids an import cycle) — Phase 31 (DIR-03) parity.
+    from core.tools import render_standing_directives_block
+
     smart_system_template = _load_prompt("prompts/autonomous.md")
     # PHASE 19 — NUTR-08: same meal_audit append as _compose_layer2. The
     # follow-up compose path is a sibling brain-compose site and must carry
@@ -925,6 +984,13 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
         # Today's completed-training ground truth — a "how was the workout?"
         # follow-up must check this before assuming the session happened.
         "training_evidence": situation.get("training_evidence", {}),
+        # Phase 31 (DIR-03) — active standing directives (parity with triage
+        # and _compose_layer2).
+        "standing_directives": json.loads(
+            render_standing_directives_block(
+                situation.get("standing_directives") or [], style="json"
+            )
+        ),
     }, indent=2, ensure_ascii=False)
     synthetic = (
         f"Due follow-up:\n"

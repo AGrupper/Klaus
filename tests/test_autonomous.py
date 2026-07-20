@@ -1806,3 +1806,160 @@ class TestFollowupCancel:
 
         assert outcome == "failed"
         send.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 Plan 04 (DIR-03) — standing directives reach the autonomous tick:
+# context-only gather (never a trigger) + Step-0 triage veto + both composes.
+# ---------------------------------------------------------------------------
+
+
+class TestStandingDirectivesGather:
+    """_gather_standing_directives: sentinel-on-failure, context-only in the
+    empty gate, present in gather_situation's assembled dict."""
+
+    _DIRECTIVES = [
+        {
+            "id": "d1",
+            "text": "stop nagging about training while I'm in France",
+            "origin": "user_chat",
+            "expires_at": None,
+            "condition_text": "back from France",
+        },
+    ]
+
+    def _situation(self, standing_directives):
+        return {
+            "calendar": [],
+            "ticktick_overdue": [],
+            "unread_email_count": 0,
+            "due_followups": [],
+            "hours_since_contact": None,
+            "recent_journal_digest": "",
+            "self_state": {},
+            "today_outreach_log": [],
+            "now_context": {},
+            "meals_since_last_tick": [],
+            "training_status": {},
+            "acwr": {"ratio": None},
+            "habit_pending": [],
+            "recovery": {},
+            "standing_directives": standing_directives,
+        }
+
+    def test_gather_returns_active_directives(self):
+        sds_instance = MagicMock()
+        sds_instance.list_active.return_value = self._DIRECTIVES
+        with patch("memory.firestore_db.StandingDirectiveStore", return_value=sds_instance):
+            result = autonomous._gather_standing_directives("proj", "db")
+        assert result == self._DIRECTIVES
+
+    def test_gather_returns_empty_list_on_store_failure(self):
+        """The gather must never raise — sentinel [] on any Firestore error."""
+        with patch(
+            "memory.firestore_db.StandingDirectiveStore",
+            side_effect=RuntimeError("firestore down"),
+        ):
+            result = autonomous._gather_standing_directives("proj", "db")
+        assert result == []
+
+    def test_gather_job_key_appears_in_assembled_situation(self, fixed_now):
+        """The 'standing_directives' key must be present in gather_situation's output."""
+        with patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
+             patch("core.tools._get_gmail_tool") as get_gm, \
+             patch("memory.firestore_db.FollowupStore") as fs_cls, \
+             patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
+             patch("memory.firestore_db.JournalStore"), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.OutreachLogStore"), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls:
+            get_cal.return_value.list_events.return_value = []
+            get_gm.return_value.list_unread.return_value = []
+            fs_cls.return_value.list_due.return_value = []
+            conv_cls.return_value.get_last_user_timestamp.return_value = None
+            sds_cls.return_value.list_active.return_value = self._DIRECTIVES
+
+            out = autonomous.gather_situation(fixed_now)
+
+        assert "standing_directives" in out
+        assert out["standing_directives"] == self._DIRECTIVES
+
+    def test_is_empty_signals_true_with_only_active_directives(self):
+        """Pitfall 4 / T-31-04 — an otherwise-empty situation with active
+        directives but no other signal must still be empty=True. Directives
+        are context, never a Layer-0 trigger — they must NOT wake the free
+        tier on their own."""
+        situation = self._situation(self._DIRECTIVES)
+        assert autonomous._is_empty_signals(situation) is True, (
+            "_is_empty_signals must stay True when standing_directives is the "
+            "only non-empty signal (context-only, Pitfall 4)"
+        )
+
+    def test_is_empty_signals_true_with_no_directives(self):
+        situation = self._situation([])
+        assert autonomous._is_empty_signals(situation) is True
+
+
+class TestStandingDirectivesTriageAndCompose:
+    """Step-0 STANDING ORDERS veto reaches the triage prompt; parity keys
+    reach both Layer-2 composes (Plan 04, DIR-03)."""
+
+    _DIRECTIVES = [
+        {
+            "id": "d1",
+            "text": "stop nagging about training while I'm in France",
+            "origin": "user_chat",
+            "expires_at": None,
+            "condition_text": "back from France",
+        },
+    ]
+
+    def _situation(self, standing_directives):
+        return _live_situation(
+            datetime(2026, 5, 21, 10, 20, tzinfo=_TZ),
+            standing_directives=standing_directives,
+        )
+
+    def test_triage_prompt_includes_directive_text_when_active(self):
+        prompt = autonomous._build_triage_prompt(self._situation(self._DIRECTIVES), "")
+        assert "stop nagging about training while I'm in France" in prompt
+        assert "Active standing directives:" in prompt
+
+    def test_triage_prompt_omits_directive_block_when_none_active(self):
+        prompt = autonomous._build_triage_prompt(self._situation([]), "")
+        assert "(none active)" in prompt
+        assert "stop nagging" not in prompt
+
+    def test_compose_layer2_includes_standing_directives_key(self):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            autonomous._compose_layer2(self._situation(self._DIRECTIVES), "draft", "reason")
+
+        assert '"standing_directives"' in captured.get("content", "")
+        assert "stop nagging about training while I'm in France" in captured.get("content", "")
+
+    def test_compose_followup_layer2_includes_standing_directives_key(self):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        followup = {"id": "fu1", "due_at": "2026-05-21T07:20:00Z", "note": "check in", "defer_count": 0}
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            autonomous._compose_followup_layer2(followup, self._situation(self._DIRECTIVES))
+
+        assert '"standing_directives"' in captured.get("content", "")
+        assert "stop nagging about training while I'm in France" in captured.get("content", "")
