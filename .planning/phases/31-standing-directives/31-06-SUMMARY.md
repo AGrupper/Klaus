@@ -123,3 +123,16 @@ None — no external service configuration required. All directive reads/writes 
 ---
 *Phase: 31-standing-directives*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: core/reflection.py
+- FOUND: prompts/reflection.md
+- FOUND: core/nightly_review.py
+- FOUND: prompts/nightly_review.md
+- FOUND: tests/test_reflection.py
+- FOUND: tests/test_nightly_review.py
+- FOUND: .planning/phases/31-standing-directives/31-06-SUMMARY.md
+- FOUND commit: 82bee07 (feat, Tasks 1+2)
+- FOUND commit: 68aff6a (feat, Task 3)
+- FOUND commit: 238dd72 (docs, plan metadata)
