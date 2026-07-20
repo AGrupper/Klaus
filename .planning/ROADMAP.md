@@ -37,7 +37,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 ## Phases
 
 - [x] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt (completed 2026-07-19)
-- [ ] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop
+- [x] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop (completed 2026-07-20)
 - [ ] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate
 - [ ] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome
 - [ ] **Phase 34: Write-Backs** — Calendar workout actions and chat-reported training changes mechanically and idempotently update the single training-reality source of truth
@@ -78,9 +78,9 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 31-01-PLAN.md — StandingDirectiveStore (verbatim capture, expiry fields, superseded_by chain, read-cached, never hard-delete) (DIR-02/05)
 - [x] 31-02-PLAN.md — get_recent_window() + per-message ts on FirestoreConversationStore (fixes bug B3) (DIR-06)
 - [x] 31-03-PLAN.md — 3 brain-direct directive tools + shared render_standing_directives_block formatter + chat injection + capture rule (DIR-01/03/04/05)
-- [ ] 31-04-PLAN.md — Autonomous injection: Step-0 STANDING ORDERS veto + Layer-2/follow-up compose + context-only gather (DIR-03)
-- [ ] 31-05-PLAN.md — Legacy-cron veto (morning briefing + weekly review, D-21/D-22, skipped_by_directive) (DIR-03)
-- [ ] 31-06-PLAN.md — Reflection learning loop (reaction pairing, self-directives, judged expiry, prune-flags) + nightly weaving (DIR-02/06/07)
+- [x] 31-04-PLAN.md — Autonomous injection: Step-0 STANDING ORDERS veto + Layer-2/follow-up compose + context-only gather (DIR-03)
+- [x] 31-05-PLAN.md — Legacy-cron veto (morning briefing + weekly review, D-21/D-22, skipped_by_directive) (DIR-03)
+- [x] 31-06-PLAN.md — Reflection learning loop (reaction pairing, self-directives, judged expiry, prune-flags) + nightly weaving (DIR-02/06/07)
 
 ### Phase 32: Unified Situation (Ambient Memory)
 **Goal**: Klaus perceives his full situation on every reasoning path — relevant memories, conversation continuity, and reconciled training reality — without ever letting ordinary chat activity defeat the free-tier cost gate that is Klaus's entire cost model
@@ -139,7 +139,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
-| 31. Standing Directives | 3/6 | In Progress|  |
+| 31. Standing Directives | 6/6 | Complete   | 2026-07-20 |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
