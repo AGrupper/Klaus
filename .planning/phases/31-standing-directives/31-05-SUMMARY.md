@@ -120,3 +120,16 @@ The interim-cron site of DIR-03 is now fully live for the two legacy proactive c
 ---
 *Phase: 31-standing-directives*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: core/morning_briefing.py
+- FOUND: prompts/morning_briefing.md
+- FOUND: core/weekly_training_review.py
+- FOUND: prompts/weekly_training_review.md
+- FOUND: tests/test_morning_briefing.py
+- FOUND: tests/test_weekly_training_review.py
+- FOUND: .planning/phases/31-standing-directives/31-05-SUMMARY.md
+- FOUND commit: 1f2b471 (feat, Task 1)
+- FOUND commit: f0ff711 (feat, Task 2)
+- FOUND commit: c61e109 (docs, plan metadata)
