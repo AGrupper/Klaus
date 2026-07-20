@@ -113,3 +113,15 @@ The chat-path injection site (1 of 5 total per DIR-03) is complete and cache-saf
 ---
 *Phase: 31-standing-directives*
 *Completed: 2026-07-20*
+
+## Self-Check: PASSED
+
+- FOUND: core/tools.py
+- FOUND: core/main.py
+- FOUND: prompts/smart_agent.md
+- FOUND: tests/test_tools.py
+- FOUND: tests/test_main_render_smart_system.py
+- FOUND: .planning/phases/31-standing-directives/31-03-SUMMARY.md
+- FOUND commit: fee39c5 (feat, Task 1)
+- FOUND commit: 870a01e (feat, Task 2)
+- FOUND commit: a9a1c3a (docs, plan metadata)
