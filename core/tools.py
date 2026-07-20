@@ -2261,6 +2261,56 @@ def _handle_cancel_standing_directive(id: str) -> str:
     return json.dumps({"ok": bool(ok)})
 
 
+def render_standing_directives_block(directives: list[dict], *, style: str = "prose") -> str:
+    """One shared formatter for the standing-directives context block.
+
+    ``style="prose"`` — chat/compose system-prompt injection: a bulleted,
+    human-readable block headed "**Active standing directives:**".
+    ``style="json"``  — the triage snapshot: compact, machine-parseable JSON.
+
+    Callers own their own (cached) store read; this function only formats.
+    This is the ONE formatter consumed by all 5 injection sites (chat,
+    tick triage, Layer-2 compose, follow-up compose, interim legacy-cron
+    gathers) — mirrors ``_format_now_block`` in core/autonomous.py ("one
+    helper, N call sites, no drift").
+
+    Args:
+        directives: List of directive dicts (as returned by
+            ``StandingDirectiveStore.list_active()``/``list_all()``).
+        style: "prose" (default) or "json".
+
+    Returns:
+        "" for an empty list in prose style (empty-state-omits-block
+        discipline, matching self_state/journal_digest/training_profile);
+        "[]" for an empty list in json style.
+    """
+    if not directives:
+        return "" if style == "prose" else "[]"
+
+    if style == "json":
+        return json.dumps([
+            {
+                "text": d.get("text", ""),
+                "origin": d.get("origin", ""),
+                "expires_at": d.get("expires_at"),
+                "condition_text": d.get("condition_text"),
+            }
+            for d in directives
+        ], ensure_ascii=False)
+
+    lines = ["**Active standing directives:**"]
+    for d in directives:
+        line = f"- {d.get('text', '')}"
+        if d.get("expires_at"):
+            line += f" (until {d['expires_at']})"
+        elif d.get("condition_text"):
+            line += f" (until: {d['condition_text']})"
+        if d.get("origin") == "klaus_self":
+            line += " [self-proposed]"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 # ------------------------------------------------------------------ #
 # Phase 19 Plan 02 — training profile + Garmin live handlers         #
 # ------------------------------------------------------------------ #

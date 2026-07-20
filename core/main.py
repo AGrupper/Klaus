@@ -34,7 +34,7 @@ from dotenv import load_dotenv
 from core.llm_client import LLMClient, LLMError
 from core import prompt_loader
 from core import tools as tool_registry
-from memory.firestore_db import SelfStateStore, JournalStore, UserProfileStore
+from memory.firestore_db import SelfStateStore, JournalStore, UserProfileStore, StandingDirectiveStore
 
 load_dotenv(override=True)
 
@@ -337,6 +337,12 @@ class AgentOrchestrator:
 
         self._journal_store = _build_journal_store()
 
+        # Phase 31 — standing directives (DIR-01/DIR-03): best-effort store,
+        # read fresh via list_active() (which is itself _READ_CACHE-backed)
+        # on every render_smart_system call. No bootstrap needed — an empty
+        # collection is a valid, common state.
+        self._standing_directive_store = _build_standing_directive_store()
+
     def render_smart_system(self, template: str) -> str:
         """Render a smart_system template by substituting all standard placeholders.
 
@@ -515,6 +521,20 @@ class AgentOrchestrator:
 
                 training_profile_snippet = "\n".join(lines)
 
+        # PHASE 31 — standing directives block (DIR-03: chat injection site).
+        # Same guarded/best-effort/empty-state-omits-block discipline as
+        # training_profile_snippet above. list_active() itself never raises
+        # (it's _READ_CACHE-backed and catches its own Firestore errors), but
+        # the store attribute may be None (no GCP_PROJECT_ID) — guard on that.
+        standing_directives_snippet = ""
+        directive_store = getattr(self, "_standing_directive_store", None)
+        if directive_store is not None:
+            active_directives = directive_store.list_active()
+            if active_directives:
+                standing_directives_snippet = tool_registry.render_standing_directives_block(
+                    active_directives, style="prose",
+                )
+
         coaching_guide_content = getattr(self, "_coaching_guide_content", "")
         return (
             template
@@ -523,6 +543,7 @@ class AgentOrchestrator:
             .replace("{self_state}", self_state_snippet)                 # volatile — after stable
             .replace("{journal_digest}", journal_digest)                 # Phase 17 — smart-only (D-15)
             .replace("{training_profile}", training_profile_snippet)     # PHASE 19 — PROMPT-01
+            .replace("{standing_directives}", standing_directives_snippet)  # PHASE 31 — DIR-03, cache-safe position
             .replace("{today_date}", today_label)                        # dynamic — always last
             .replace("{current_time}", _current_time_israel())           # dynamic — per-minute; templates place it at the tail to preserve the cache prefix
         )
@@ -1100,6 +1121,25 @@ def _build_user_profile_store() -> UserProfileStore | None:
         return UserProfileStore(project_id=project_id, database=database)
     except Exception:
         logger.warning("Failed to build UserProfileStore", exc_info=True)
+        return None
+
+
+def _build_standing_directive_store() -> StandingDirectiveStore | None:
+    """Build a StandingDirectiveStore from environment variables (Phase 31).
+
+    Returns None if GCP_PROJECT_ID is not set (e.g. local dev without env)
+    or if construction fails for any reason — this is a best-effort read
+    path, never allowed to block AgentOrchestrator startup.
+    """
+    project_id = os.environ.get("GCP_PROJECT_ID")
+    if not project_id:
+        logger.warning("GCP_PROJECT_ID not set — StandingDirectiveStore disabled")
+        return None
+    try:
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        return StandingDirectiveStore(project_id=project_id, database=database)
+    except Exception:
+        logger.warning("Failed to build StandingDirectiveStore", exc_info=True)
         return None
 
 

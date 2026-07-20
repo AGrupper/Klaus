@@ -744,6 +744,79 @@ def test_alert_no_literal_placeholder():
     )
 
 
+class TestStandingDirectivesRendering:
+    """Phase 31 Plan 03 — render_smart_system substitutes {standing_directives}
+    at the cache-safe position (DIR-03 chat injection site)."""
+
+    def _make_orch(self, active_directives):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = None
+        orch._standing_directive_store = MagicMock()
+        orch._standing_directive_store.list_active.return_value = active_directives
+        return orch
+
+    def test_non_empty_directives_render_block_content(self):
+        orch = self._make_orch([
+            {"text": "no training nudges", "origin": "user_chat",
+             "expires_at": None, "condition_text": "while I'm in France"},
+        ])
+        result = orch.render_smart_system("PRE {standing_directives} POST")
+        assert "PRE" in result and "POST" in result
+        assert "**Active standing directives:**" in result
+        assert "no training nudges" in result
+        assert "(until: while I'm in France)" in result
+
+    def test_empty_directives_resolves_to_nothing(self):
+        orch = self._make_orch([])
+        result = orch.render_smart_system("X{standing_directives}Y")
+        assert result == "XY"
+        assert "{standing_directives}" not in result
+
+    def test_store_none_renders_empty(self):
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = None
+        orch._standing_directive_store = None
+        result = orch.render_smart_system("X{standing_directives}Y")
+        assert result == "XY"
+
+    def test_ordering_after_training_profile_before_today_date(self):
+        """Load-bearing cache-prefix ordering (Pitfall 3): directive content
+        must appear AFTER the resolved training-profile content and BEFORE
+        the resolved {today_date} value — assert index positions."""
+        from core.main import AgentOrchestrator
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch._self_md_content = ""
+        orch._self_state_store = None
+        orch._journal_store = None
+        orch._user_profile_store = MagicMock()
+        orch._user_profile_store.load.return_value = {
+            "athletic_goals": ["5k under 20:00"],
+            "schema_version": 1,
+        }
+        orch._standing_directive_store = MagicMock()
+        orch._standing_directive_store.list_active.return_value = [
+            {"text": "ordering-marker directive", "origin": "user_chat",
+             "expires_at": None, "condition_text": None},
+        ]
+        result = orch.render_smart_system(
+            "{training_profile} ... {standing_directives} ... today is {today_date}"
+        )
+        training_idx = result.index("5k under 20:00")
+        directive_idx = result.index("ordering-marker directive")
+        today_idx = result.index("today is")
+        assert training_idx < directive_idx < today_idx, (
+            f"Expected training({training_idx}) < directive({directive_idx}) < today({today_idx})"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Nutrition fueling-coach wiring into the CHAT path
 # ---------------------------------------------------------------------------
