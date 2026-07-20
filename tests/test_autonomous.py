@@ -1899,3 +1899,67 @@ class TestStandingDirectivesGather:
     def test_is_empty_signals_true_with_no_directives(self):
         situation = self._situation([])
         assert autonomous._is_empty_signals(situation) is True
+
+
+class TestStandingDirectivesTriageAndCompose:
+    """Step-0 STANDING ORDERS veto reaches the triage prompt; parity keys
+    reach both Layer-2 composes (Plan 04, DIR-03)."""
+
+    _DIRECTIVES = [
+        {
+            "id": "d1",
+            "text": "stop nagging about training while I'm in France",
+            "origin": "user_chat",
+            "expires_at": None,
+            "condition_text": "back from France",
+        },
+    ]
+
+    def _situation(self, standing_directives):
+        return _live_situation(
+            datetime(2026, 5, 21, 10, 20, tzinfo=_TZ),
+            standing_directives=standing_directives,
+        )
+
+    def test_triage_prompt_includes_directive_text_when_active(self):
+        prompt = autonomous._build_triage_prompt(self._situation(self._DIRECTIVES), "")
+        assert "stop nagging about training while I'm in France" in prompt
+        assert "Active standing directives:" in prompt
+
+    def test_triage_prompt_omits_directive_block_when_none_active(self):
+        prompt = autonomous._build_triage_prompt(self._situation([]), "")
+        assert "(none active)" in prompt
+        assert "stop nagging" not in prompt
+
+    def test_compose_layer2_includes_standing_directives_key(self):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            autonomous._compose_layer2(self._situation(self._DIRECTIVES), "draft", "reason")
+
+        assert '"standing_directives"' in captured.get("content", "")
+        assert "stop nagging about training while I'm in France" in captured.get("content", "")
+
+    def test_compose_followup_layer2_includes_standing_directives_key(self):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        followup = {"id": "fu1", "due_at": "2026-05-21T07:20:00Z", "note": "check in", "defer_count": 0}
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            autonomous._compose_followup_layer2(followup, self._situation(self._DIRECTIVES))
+
+        assert '"standing_directives"' in captured.get("content", "")
+        assert "stop nagging about training while I'm in France" in captured.get("content", "")
