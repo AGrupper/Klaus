@@ -436,6 +436,329 @@ def _default_gathered_day() -> dict:
     }
 
 
+def _reflection_env() -> dict:
+    """Shared env for tests that call run_reflection/_gather_day directly."""
+    return {
+        "GCP_PROJECT_ID": "test-project",
+        "FIRESTORE_DATABASE": "(default)",
+        "TELEGRAM_ALLOWED_USER_IDS": "123456",
+        "PINECONE_API_KEY": "test-pinecone-key",
+        "PINECONE_INDEX": "test-index",
+        "SMART_AGENT_BACKEND": "gemini",
+        "SMART_AGENT_MODEL": "gemini-3-flash",
+        "SMART_AGENT_API_KEY": "test-smart-key",
+        "SMART_AGENT_FALLBACK_BACKEND": "anthropic",
+        "SMART_AGENT_FALLBACK_MODEL": "claude-haiku",
+        "SMART_AGENT_FALLBACK_API_KEY": "test-fallback-key",
+        "WORKER_AGENT_BACKEND": "gemini",
+        "WORKER_AGENT_MODEL": "gemini-2.5-flash",
+        "WORKER_AGENT_API_KEY": "test-worker-key",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 (DIR-06) — bug "B3": _gather_day must use the 24h window, not the
+# stale 6h-session-idle get()
+# ---------------------------------------------------------------------------
+
+def test_gather_day_uses_recent_window_not_stale_get():
+    """_gather_day reads get_recent_window(24h); a >6h-stale session (get()==[])
+    with in-24h messages must still surface a non-empty conversation list."""
+    from core.reflection import _gather_day  # noqa: PLC0415
+
+    mock_conv_store = MagicMock()
+    # Simulates the OLD bug behavior: the 6h-session-idle get() is empty.
+    mock_conv_store.get.return_value = []
+    mock_conv_store.get_recent_window.return_value = [
+        {"role": "user", "content": "still up, running late tonight", "ts": "2026-07-19T20:00:00+00:00"},
+        {"role": "assistant", "content": "noted", "ts": "2026-07-19T20:00:05+00:00"},
+    ]
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("memory.firestore_conversation.FirestoreConversationStore", return_value=mock_conv_store):
+            with patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")):
+                with patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")):
+                    with patch("core.heartbeat._read_cron_ledger", side_effect=RuntimeError("skip")):
+                        with patch("memory.firestore_db.LLMUsageStore", side_effect=RuntimeError("skip")):
+                            gathered = _gather_day("2026-07-19")
+
+    assert gathered["conversation"] != [], (
+        "bug B3: _gather_day's conversation must be non-empty when get_recent_window "
+        "has in-24h messages, even though the stale get() would have returned []"
+    )
+    mock_conv_store.get_recent_window.assert_called_once_with(123456, hours=24)
+    mock_conv_store.get.assert_not_called()
+
+
+def test_run_reflection_reaction_pairing_brain_input_includes_conversation_and_outreach():
+    """run_reflection's brain_input carries BOTH the 24h windowed conversation
+    AND today's outreach entries, so one brain call can pair reactions (D-11)."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    captured: dict = {}
+
+    def _capture_brain_reflect(user_message, today_str):
+        captured["user_message"] = user_message
+        return {
+            "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+            "highlights": ["h"], "directive_proposals": [], "prune_flags": [], "expiry_notes": [],
+        }
+
+    windowed_conv = [{"role": "user", "content": "hi", "ts": "2026-07-19T10:00:00+00:00"}]
+    outreach_entries = [
+        {"topic_key": "training_nudge", "time": "14:00", "draft": "d", "final": "f", "tick_index": 22},
+    ]
+
+    gathered = _default_gathered_day()
+    gathered["conversation"] = windowed_conv
+
+    mock_outreach_store = MagicMock()
+    mock_outreach_store.get_today.return_value = outreach_entries
+
+    mock_directive_store = MagicMock()
+    mock_directive_store.list_active.return_value = []
+
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("core.reflection._gather_day", return_value=gathered):
+            with patch("core.reflection._summarize_conversation", return_value=gathered["conversation_summary"]):
+                with patch("core.reflection._brain_reflect", side_effect=_capture_brain_reflect):
+                    with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                        with patch("memory.firestore_db.OutreachLogStore", return_value=mock_outreach_store):
+                            with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                                with patch("memory.pinecone_db.MemoryStore"):
+                                    with patch("memory.firestore_db.SelfStateStore"):
+                                        run_reflection("2026-07-19")
+
+    payload = json.loads(captured["user_message"])
+    assert payload["conversation"] == windowed_conv
+    assert payload["outreach_today"] == outreach_entries
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 (DIR-06/07) — _parse_reflection_json 3 optional keys
+# ---------------------------------------------------------------------------
+
+def test_parse_reflection_json_optional_directive_keys_default_empty():
+    """The 3 new optional keys default to [] when absent; 5 required keys still returned."""
+    from core.reflection import _parse_reflection_json  # noqa: PLC0415
+
+    minimal = json.dumps({
+        "summary": "s", "mood": "m", "current_focus": "f",
+        "recent_context": "r", "highlights": ["h"],
+    })
+    result = _parse_reflection_json(minimal)
+    assert result is not None
+    assert result["directive_proposals"] == []
+    assert result["prune_flags"] == []
+    assert result["expiry_notes"] == []
+    # 5 required keys still present
+    for key in ("summary", "mood", "current_focus", "recent_context", "highlights"):
+        assert key in result
+
+
+def test_parse_reflection_json_optional_directive_keys_wrong_type_defaults_empty():
+    """A wrong-typed optional key (e.g. a string instead of a list) is defaulted, not rejected."""
+    from core.reflection import _parse_reflection_json  # noqa: PLC0415
+
+    payload = json.dumps({
+        "summary": "s", "mood": "m", "current_focus": "f",
+        "recent_context": "r", "highlights": ["h"],
+        "directive_proposals": "not a list",
+    })
+    result = _parse_reflection_json(payload)
+    assert result is not None
+    assert result["directive_proposals"] == []
+
+
+def test_parse_reflection_json_optional_directive_keys_pass_through():
+    """When present and well-typed, the 3 optional keys pass through unchanged."""
+    from core.reflection import _parse_reflection_json  # noqa: PLC0415
+
+    payload = json.dumps({
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [{"text": "ease off morning nudges", "rationale": "ignored 1x"}],
+        "prune_flags": [{"directive_id": "d1", "reason": "stale"}],
+        "expiry_notes": [{"directive_id": "d2", "reason": "trip over"}],
+    })
+    result = _parse_reflection_json(payload)
+    assert result["directive_proposals"] == [{"text": "ease off morning nudges", "rationale": "ignored 1x"}]
+    assert result["prune_flags"] == [{"directive_id": "d1", "reason": "stale"}]
+    assert result["expiry_notes"] == [{"directive_id": "d2", "reason": "trip over"}]
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 (DIR-07) — self-directive proposals / expiry / veto dedup
+# ---------------------------------------------------------------------------
+
+def _mock_stores_for_directive_test(*, active_directives=None, list_all_directives=None):
+    """Build a MagicMock StandingDirectiveStore + JournalStore for run_reflection tests."""
+    mock_directive_store = MagicMock()
+    mock_directive_store.list_active.return_value = active_directives or []
+    mock_directive_store.list_all.return_value = list_all_directives or []
+    mock_directive_store.add.return_value = {"id": "new-directive-id"}
+
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None
+
+    return mock_directive_store, mock_journal
+
+
+def test_reflection_single_ignored_outreach_grounds_directive_proposal():
+    """A single ignored-outreach signal in the brain's directive_proposals output
+    yields a StandingDirectiveStore.add(origin='klaus_self') call (D-09/D-10/D-11)."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [
+            {"text": "Ease off morning training nudges on weekends", "rationale": "ignored the 08:00 nudge"},
+        ],
+        "prune_flags": [], "expiry_notes": [],
+    }
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test()
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with _mock_gather_sources():
+            with patch("core.reflection._brain_reflect", return_value=llm_result):
+                with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                    with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                        mock_outreach_cls.return_value.get_today.return_value = []
+                        with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                            with patch("memory.pinecone_db.MemoryStore"):
+                                with patch("memory.firestore_db.SelfStateStore"):
+                                    run_reflection("2026-07-19")
+
+    mock_directive_store.add.assert_called_once()
+    add_kwargs = mock_directive_store.add.call_args.kwargs
+    assert add_kwargs.get("origin") == "klaus_self"
+    assert add_kwargs.get("text") == "Ease off morning training nudges on weekends"
+
+    # directive_items woven into the journal entry for the nightly handoff
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    assert any(item["type"] == "proposal" for item in directive_items)
+
+
+def test_reflection_vetoed_directive_is_not_re_proposed():
+    """A proposal matching an existing vetoed directive's text is NOT re-proposed (D-13)."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [
+            {"text": "No training nudges after 9pm", "rationale": "he said stop"},
+        ],
+        "prune_flags": [], "expiry_notes": [],
+    }
+    vetoed = [{"id": "old-1", "text": "No training nudges after 9pm", "status": "vetoed"}]
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test(list_all_directives=vetoed)
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with _mock_gather_sources():
+            with patch("core.reflection._brain_reflect", return_value=llm_result):
+                with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                    with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                        mock_outreach_cls.return_value.get_today.return_value = []
+                        with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                            with patch("memory.pinecone_db.MemoryStore"):
+                                with patch("memory.firestore_db.SelfStateStore"):
+                                    run_reflection("2026-07-19")
+
+    mock_directive_store.add.assert_not_called()
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    assert not any(item["type"] == "proposal" for item in directive_items), (
+        "A directive matching a vetoed one must not be re-proposed"
+    )
+
+
+def test_reflection_expiry_note_triggers_store_expire():
+    """An expiry_notes entry judged against an active event-based directive triggers
+    StandingDirectiveStore.expire (D-05/D-08)."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [],
+        "prune_flags": [],
+        "expiry_notes": [{"directive_id": "france-directive", "reason": "back from France per calendar"}],
+    }
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test(
+        active_directives=[{"id": "france-directive", "text": "no training nudges while in France",
+                             "condition_text": "while I'm in France"}],
+    )
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with _mock_gather_sources():
+            with patch("core.reflection._brain_reflect", return_value=llm_result):
+                with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                    with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                        mock_outreach_cls.return_value.get_today.return_value = []
+                        with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                            with patch("memory.pinecone_db.MemoryStore"):
+                                with patch("memory.firestore_db.SelfStateStore"):
+                                    run_reflection("2026-07-19")
+
+    mock_directive_store.expire.assert_called_once_with("france-directive")
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    assert any(item["type"] == "expiry" and item["directive_id"] == "france-directive" for item in directive_items)
+
+
+def test_reflection_prune_flag_carried_as_narrative_item_not_auto_actioned():
+    """A prune_flags entry is carried forward as a directive_item but never auto-actioned
+    (no store write beyond the item being recorded) — D-04."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [],
+        "prune_flags": [{"directive_id": "stale-1", "reason": "hasn't come up in weeks, contradicted today"}],
+        "expiry_notes": [],
+    }
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test()
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with _mock_gather_sources():
+            with patch("core.reflection._brain_reflect", return_value=llm_result):
+                with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                    with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                        mock_outreach_cls.return_value.get_today.return_value = []
+                        with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                            with patch("memory.pinecone_db.MemoryStore"):
+                                with patch("memory.firestore_db.SelfStateStore"):
+                                    run_reflection("2026-07-19")
+
+    # No auto-action: cancel/expire never called for a prune-flag
+    mock_directive_store.cancel.assert_not_called()
+    mock_directive_store.expire.assert_not_called()
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    assert any(
+        item["type"] == "prune_flag" and item["directive_id"] == "stale-1" for item in directive_items
+    )
+
+
 def _mock_gather_sources(
     *,
     llm_usage: dict | None = None,
