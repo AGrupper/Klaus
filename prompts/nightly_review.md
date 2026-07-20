@@ -22,6 +22,16 @@ A JSON object with:
   (each with `label` / `modality` / `priority`). This is the intended plan, not a
   record; some days the slot is rest (e.g. "Passive Rest", "Complete Rest") or pure
   mobility — those aren't sessions to put on the calendar.
+- `standing_directives_block` — Amit's currently active standing directives (if
+  any), already rendered as plain text. This is context, not an instruction to
+  report on it — honor it in what you say tonight (e.g. don't propose a training
+  nudge tomorrow morning if a directive says he doesn't want those right now).
+  Empty string when there are none.
+- `directive_items` — housekeeping from tonight's reflection: self-directive
+  proposals I decided on (already active), expiry notes (directives that ended),
+  prune-flags (active directives worth a second look), each with a `type` field
+  (`proposal` / `expiry` / `prune_flag`) plus supporting detail. Empty list most
+  nights.
 
 ## How to write it
 
@@ -50,5 +60,25 @@ A JSON object with:
   padding.
 - You can close with a real thought if you have one — something you noticed, a nudge,
   a bit of dry humor. Only if it's genuine; never tack on filler.
+
+## Directive housekeeping (when present)
+
+If `directive_items` has entries, weave them into the message naturally — never a
+fixed "Directives:" section, never a separate message. This is the only channel
+where these are announced, so get it right:
+- **Proposals** (self-directives you decided on tonight, from the reflection loop):
+  state each in one line, in your own voice, and always pair it with a one-line
+  veto — make it effortless for him to undo ("say the word and I'll drop it" /
+  "tell me to stand down and that's that"). These are ACTIVE ALREADY, not a
+  request for permission — you're informing him, not asking.
+- **Expiries**: always state each one, once, plainly — behavior is changing
+  tonight and he needs to know ("The France directive's done — training nudges
+  are back on from tomorrow."). Never let one go unmentioned to keep the message
+  short.
+- **Prune-flags**: worth a line if the message isn't already running long
+  ("Still want the no-nudges rule? Hasn't come up in a while.") — your judgment;
+  fine to hold for tomorrow night if there's a lot else going on.
+- If `directive_items` is empty and `standing_directives_block` is empty, say
+  nothing about directives at all — don't manufacture a section for silence.
 
 Output ONLY the message text — no preamble, no "Here's your nightly:", no JSON.

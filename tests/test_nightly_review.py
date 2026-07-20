@@ -5,6 +5,7 @@ route auth."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime
@@ -195,6 +196,181 @@ def test_gather_tomorrow_includes_planned_workouts():
          patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
         data = nr._gather_tomorrow("2026-06-15")
     assert data["planned_workouts"] == split_out
+
+
+# ---------------------------------------------------------------------------
+# Phase 31 (DIR-03/06/07) — standing directives woven into the nightly
+# narrative; nightly is EXEMPT from veto (D-21)
+# ---------------------------------------------------------------------------
+
+def test_gather_tomorrow_includes_standing_directives():
+    """_gather_tomorrow reads StandingDirectiveStore.list_active() into
+    data['standing_directives'] — the 5th render_standing_directives_block()
+    injection site (DIR-03), interim CONTEXT only (never a veto)."""
+    import core.nightly_review as nr
+    directives = [{"id": "d1", "text": "No training nudges after 9pm", "origin": "user_chat",
+                   "expires_at": None, "condition_text": None}]
+    mock_store = MagicMock()
+    mock_store.list_active.return_value = directives
+    with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_store), \
+         patch.object(nr, "_planned_workouts_for", return_value=None), \
+         patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")), \
+         patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
+        data = nr._gather_tomorrow("2026-06-15")
+    assert data["standing_directives"] == directives
+
+
+def test_gather_tomorrow_standing_directives_gather_failure_is_sentinel_empty():
+    """A StandingDirectiveStore failure is isolated — sentinel [] not a crash."""
+    import core.nightly_review as nr
+    with patch("memory.firestore_db.StandingDirectiveStore", side_effect=RuntimeError("firestore down")), \
+         patch.object(nr, "_planned_workouts_for", return_value=None), \
+         patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")), \
+         patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+         patch("mcp_tools.weather_tool.fetch_weather", side_effect=RuntimeError("skip")):
+        data = nr._gather_tomorrow("2026-06-15")
+    assert data["standing_directives"] == []
+
+
+def _compose_nightly_env(monkeypatch):
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+
+
+def _capture_compose_call(response_text: str):
+    """Return (client_factory, captured) — client_factory feeds LLMClient.chat and
+    captured['messages']/['system'] records what _compose_nightly sent."""
+    captured: dict = {}
+
+    def _client_factory(*args, **kwargs):
+        client = MagicMock()
+
+        def _chat(**chat_kwargs):
+            captured["messages"] = chat_kwargs.get("messages")
+            captured["system"] = chat_kwargs.get("system")
+            return {"text": response_text}
+
+        client.chat.side_effect = _chat
+        return client
+
+    return _client_factory, captured
+
+
+def test_compose_nightly_payload_includes_rendered_standing_directives_block(monkeypatch):
+    """An active directive produces a rendered standing_directives_block in the
+    compose payload, DISTINCT from directive_items."""
+    from core.nightly_review import _compose_nightly
+    _compose_nightly_env(monkeypatch)
+
+    journal = {"summary": "ok", "highlights": [], "directive_items": []}
+    tomorrow = {
+        "calendar": [],
+        "standing_directives": [{"text": "No pings after 10pm", "origin": "user_chat"}],
+    }
+
+    client_factory, captured = _capture_compose_call("Night text.")
+    with patch("core.llm_client.LLMClient", side_effect=client_factory), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    assert result == "Night text."
+    payload = json.loads(captured["messages"][0]["content"])
+    assert "standing_directives_block" in payload
+    assert "No pings after 10pm" in payload["standing_directives_block"]
+    assert payload["directive_items"] == []
+    assert payload["standing_directives_block"] != payload["directive_items"]
+
+
+def test_compose_nightly_payload_includes_directive_proposal_with_veto_context(monkeypatch):
+    """A proposal from tonight's reflection reaches the compose payload's
+    directive_items — the composed message (mocked) carries the veto option."""
+    from core.nightly_review import _compose_nightly
+    _compose_nightly_env(monkeypatch)
+
+    proposal_item = {
+        "type": "proposal", "text": "Ease off weekend morning pings", "id": "abc123",
+        "rationale": "ignored 2 outreach attempts",
+    }
+    journal = {"summary": "ok", "highlights": [], "directive_items": [proposal_item]}
+    tomorrow = {"calendar": []}
+
+    client_factory, captured = _capture_compose_call(
+        "Standing order noted, Sir — say the word and I'll drop it."
+    )
+    with patch("core.llm_client.LLMClient", side_effect=client_factory), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    payload = json.loads(captured["messages"][0]["content"])
+    assert payload["directive_items"] == [proposal_item]
+    assert "drop it" in result
+
+
+def test_compose_nightly_payload_always_carries_expiry_note(monkeypatch):
+    """An expiry note is always present in directive_items reaching the composer (D-07)."""
+    from core.nightly_review import _compose_nightly
+    _compose_nightly_env(monkeypatch)
+
+    expiry_item = {"type": "expiry", "directive_id": "france-1", "reason": "back from France"}
+    journal = {"summary": "ok", "highlights": [], "directive_items": [expiry_item]}
+    tomorrow = {"calendar": []}
+
+    client_factory, captured = _capture_compose_call("Night text with the expiry noted.")
+    with patch("core.llm_client.LLMClient", side_effect=client_factory), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    payload = json.loads(captured["messages"][0]["content"])
+    assert expiry_item in payload["directive_items"]
+
+
+def test_compose_nightly_no_directive_activity_payload_stays_empty(monkeypatch):
+    """No directive activity -> directive_items == [] and standing_directives_block
+    == '' — no clutter injected into an otherwise-unchanged narrative payload."""
+    from core.nightly_review import _compose_nightly
+    _compose_nightly_env(monkeypatch)
+
+    journal = {"summary": "ok", "highlights": []}  # no directive_items key at all
+    tomorrow = {"calendar": []}  # no standing_directives key at all
+
+    client_factory, captured = _capture_compose_call("Quiet night.")
+    with patch("core.llm_client.LLMClient", side_effect=client_factory), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    payload = json.loads(captured["messages"][0]["content"])
+    assert payload["directive_items"] == []
+    assert payload["standing_directives_block"] == ""
+
+
+def test_compose_nightly_never_emits_skip_verdict_even_with_covering_directive(monkeypatch):
+    """Nightly is EXEMPT from directive veto (D-21) — _compose_nightly always
+    returns composed text, never a skip signal, even when an active directive
+    plausibly covers the whole nightly content."""
+    from core.nightly_review import _compose_nightly
+    _compose_nightly_env(monkeypatch)
+
+    journal = {"summary": "ok", "highlights": [], "directive_items": []}
+    tomorrow = {
+        "calendar": [{"start": "2026-06-12T09:00:00+03:00", "summary": "Threshold run"}],
+        "standing_directives": [{"text": "Don't send me any messages at night", "origin": "user_chat"}],
+    }
+
+    client_factory, captured = _capture_compose_call("Tomorrow: Threshold run at 09:00.")
+    with patch("core.llm_client.LLMClient", side_effect=client_factory), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
+        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+
+    assert isinstance(result, str) and result, (
+        "_compose_nightly must always return composed text — no skip-verdict path exists for nightly"
+    )
 
 
 # ---------------------------------------------------------------------------

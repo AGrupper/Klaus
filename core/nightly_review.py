@@ -171,6 +171,22 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
     if planned:
         data["planned_workouts"] = planned
 
+    # Phase 31 (DIR-03) — active standing directives, interim CONTEXT for the
+    # nightly narrative (5th render_standing_directives_block() call site).
+    # The nightly is EXEMPT from directive veto (D-21) — this is context only,
+    # never a skip signal. Sentinel []: a gather failure must not remove the
+    # section, just leave it empty.
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        sds = StandingDirectiveStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        data["standing_directives"] = sds.list_active()
+    except Exception:
+        logger.warning("nightly_review: standing_directives gather failed", exc_info=True)
+        data["standing_directives"] = []
+
     # Tomorrow's calendar
     try:
         from core.tools import _get_calendar_tool
@@ -239,12 +255,28 @@ def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> 
         logger.warning("nightly_review: prompt file missing — using fallback")
         return _plain_text_fallback(journal, tomorrow)
 
+    # Phase 31 (DIR-03/DIR-06/DIR-07) — two distinct directive-related keys:
+    #   - standing_directives_block: the RAW active directives, rendered via
+    #     the shared formatter, as behavioral context (nightly consumer of
+    #     DIR-03's every-reasoning-path injection). Nightly is EXEMPT from
+    #     veto (D-21) — this never suppresses the message, only informs it.
+    #   - directive_items: the DERIVED housekeeping from tonight's reflection
+    #     (proposals/expiries/prune-flags — Task 2), reaching here through
+    #     `journal["directive_items"]` via the existing _ensure_reflection
+    #     handoff. D-19/D-20: woven into the narrative, not a fixed section.
+    from core.tools import render_standing_directives_block
+    standing_directives_block = render_standing_directives_block(
+        tomorrow.get("standing_directives") or [], style="prose",
+    )
+
     payload = {
         "today_recap": {
             "summary": (journal or {}).get("summary", ""),
             "highlights": (journal or {}).get("highlights", []),
         },
         "tomorrow": tomorrow,
+        "standing_directives_block": standing_directives_block,
+        "directive_items": (journal or {}).get("directive_items", []),
     }
     user_message = json.dumps(payload, ensure_ascii=False, default=str)
 
