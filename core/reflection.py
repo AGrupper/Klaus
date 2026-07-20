@@ -25,6 +25,13 @@ _REQUIRED_STR_KEYS = ("summary", "mood", "current_focus", "recent_context")
 _HIGHLIGHTS_KEY = "highlights"
 _HIGHLIGHTS_CAP = 5
 
+# Phase 31 (DIR-06/07) — 3 OPTIONAL keys the brain may emit alongside the 5
+# required ones: self-directive proposals (D-09/D-10/D-11/D-12/D-14), judged
+# event-based expiry notes (D-05/D-08), and accumulation-guard prune flags
+# (D-04). Each defaults to [] when missing/wrong-typed — same discipline as
+# `highlights` above; never raises.
+_OPTIONAL_LIST_KEYS = ("directive_proposals", "prune_flags", "expiry_notes")
+
 
 # ------------------------------------------------------------------ #
 # Small helpers                                                      #
@@ -113,6 +120,13 @@ def _parse_reflection_json(text: str) -> dict | None:
     highlights = [str(h) for h in highlights if h is not None][:_HIGHLIGHTS_CAP]
     result[_HIGHLIGHTS_KEY] = highlights
 
+    # Phase 31 (DIR-06/07) — 3 optional keys; default to [] on missing/wrong
+    # type, never reject the whole payload for an absent/malformed optional
+    # key (mirrors the highlights discipline above).
+    for key in _OPTIONAL_LIST_KEYS:
+        val = data.get(key)
+        result[key] = val if isinstance(val, list) else []
+
     return result
 
 
@@ -149,14 +163,19 @@ def _gather_day(target_date: str) -> dict:
     except Exception:
         logger.warning("reflection: LLM usage gather failed", exc_info=True)
 
-    # (b) Conversation history (best-effort; 6h session window may return [])
+    # (b) Conversation history — 24h window (Phase 31 / bug "B3" fix). The
+    # old 6h session-idle `get()` read was empty most nights by the time
+    # reflection ran at 22:00/01:00; `get_recent_window` is timeout-independent.
+    # Accepted once-per-night read-time limitation (RESEARCH Open Questions #3):
+    # a reply landing after the organic /trigger/nightly fire but before the
+    # 01:00 backstop is a rare edge case, not special-cased here.
     try:
         from memory.firestore_conversation import FirestoreConversationStore
         user_id = _telegram_user_id()
         project_id = os.environ["GCP_PROJECT_ID"]
         database = os.getenv("FIRESTORE_DATABASE", "(default)")
         conv_store = FirestoreConversationStore(project_id=project_id, database=database)
-        gathered["conversation"] = conv_store.get(user_id) or []
+        gathered["conversation"] = conv_store.get_recent_window(user_id, hours=24) or []
     except Exception:
         logger.warning("reflection: conversation history gather failed", exc_info=True)
 
@@ -389,12 +408,52 @@ def run_reflection(target_date: str) -> None:
     except Exception:
         logger.warning("reflection: could not load yesterday's journal entry", exc_info=True)
 
+    # --- Phase 31 (DIR-06/07): today's outreach log for reaction-pairing ---
+    # Each entry (OutreachLogStore.get_today, memory/firestore_db.py:1918-1936):
+    # {topic_key, time, draft, final, tick_index}. Append is send-gated (D-10
+    # invariant) so every entry here is an already-delivered outreach.
+    try:
+        from memory.firestore_db import OutreachLogStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        outreach_today = OutreachLogStore(project_id=project_id, database=database).get_today(target_date)
+    except Exception:
+        logger.warning("reflection: outreach log gather failed", exc_info=True)
+        outreach_today = []
+
+    # --- Phase 31 (DIR-02/06): active standing directives, for judged expiry
+    # (D-05/D-08) and prune-flag (D-04) judgment against the day's context.
+    try:
+        from memory.firestore_db import StandingDirectiveStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        active_directives = StandingDirectiveStore(project_id=project_id, database=database).list_active()
+    except Exception:
+        logger.warning("reflection: active standing directives gather failed", exc_info=True)
+        active_directives = []
+
     # Build the user message for the brain (gathered metrics + optional yesterday)
     brain_input: dict = {
         "date": target_date,
         "message_count": gathered["message_count"],
         "cost_usd": gathered["cost_usd"],
         "conversation_summary": conversation_summary,
+        # Phase 31 (DIR-06): the 24h windowed conversation (see _gather_day's
+        # get_recent_window fix above) + today's outreach entries, so the SAME
+        # brain call can pair each Klaus-initiated outreach with Amit's
+        # reaction (replied / ignored-topic / ignored — D-11) and propose
+        # self-directives (D-09/D-10/D-12/D-14) — no second LLM call.
+        "conversation": gathered.get("conversation", []),
+        "outreach_today": outreach_today,
+        "active_directives": [
+            {
+                "id": d.get("id"),
+                "text": d.get("text", ""),
+                "expires_at": d.get("expires_at"),
+                "condition_text": d.get("condition_text"),
+            }
+            for d in active_directives
+        ],
         "calendar_event_count": gathered["calendar_event_count"],
         "tasks_completed": gathered["tasks_completed"],
         "heartbeat_ok": gathered["heartbeat_ok"],
@@ -405,7 +464,7 @@ def run_reflection(target_date: str) -> None:
             "current_focus": prev_entry.get("current_focus", ""),
         }
 
-    user_message = json.dumps(brain_input, ensure_ascii=False, indent=2)
+    user_message = json.dumps(brain_input, ensure_ascii=False, indent=2, default=str)
 
     # --- Brain reflection call (D-02 / D-13) ---
     llm_result = _brain_reflect(user_message, target_date)
@@ -424,6 +483,95 @@ def run_reflection(target_date: str) -> None:
     else:
         logger.warning("reflection: both LLM calls failed — writing minimal fallback doc (D-13)")
         entry = _minimal_fallback_entry(gathered)
+
+    # --- Self-directive proposals / judged expiry / prune-flags (D-04/D-05/
+    # D-08/D-09..D-14) — applied only when the brain call succeeded. Each
+    # write is isolated (non-fatal to the journal write), mirroring the
+    # per-write-target discipline used below for JournalStore/Pinecone/
+    # SelfStateStore. `directive_items` (proposals + expiries + prune_flags)
+    # is stored on the journal entry itself so `_ensure_reflection`'s re-read
+    # in core/nightly_review.py naturally carries it through to the nightly
+    # compose (D-19/D-20 weave-into-narrative) with no extra plumbing.
+    directive_items: list[dict] = []
+    if llm_result is not None:
+        directive_proposals = [p for p in (llm_result.get("directive_proposals") or []) if isinstance(p, dict)]
+        expiry_notes = [n for n in (llm_result.get("expiry_notes") or []) if isinstance(n, dict)]
+        prune_flags = [f for f in (llm_result.get("prune_flags") or []) if isinstance(f, dict)]
+
+        directive_store = None
+        if directive_proposals or expiry_notes:
+            try:
+                from memory.firestore_db import StandingDirectiveStore
+                project_id = os.environ["GCP_PROJECT_ID"]
+                database = os.getenv("FIRESTORE_DATABASE", "(default)")
+                directive_store = StandingDirectiveStore(project_id=project_id, database=database)
+            except Exception:
+                logger.warning("reflection: could not build StandingDirectiveStore (non-fatal)", exc_info=True)
+
+        # D-13: durable anti-lesson — never re-propose a directive matching
+        # one that was previously vetoed (exact text match, case/whitespace
+        # insensitive; the brain is also instructed not to re-propose these).
+        vetoed_texts: set[str] = set()
+        if directive_proposals and directive_store is not None:
+            try:
+                vetoed_texts = {
+                    str(d.get("text", "")).strip().lower()
+                    for d in directive_store.list_all()
+                    if d.get("status") == "vetoed"
+                }
+            except Exception:
+                logger.warning("reflection: vetoed-directive lookup failed (non-fatal)", exc_info=True)
+
+        for proposal in directive_proposals:
+            text = str(proposal.get("text", "")).strip()
+            if not text:
+                continue
+            if text.lower() in vetoed_texts:
+                logger.info("reflection: skipping directive proposal matching a vetoed directive: %r", text)
+                continue
+            if directive_store is None:
+                continue
+            try:
+                added = directive_store.add(
+                    text=text,
+                    origin="klaus_self",  # D-09: active immediately, no pending state
+                    context_quote=str(proposal.get("rationale", "")) or text,
+                    expires_at=proposal.get("expires_at"),
+                    condition_text=proposal.get("condition_text"),
+                )
+                directive_items.append({
+                    "type": "proposal",
+                    "text": text,
+                    "id": added.get("id"),
+                    "rationale": proposal.get("rationale", ""),
+                })
+            except Exception:
+                logger.warning("reflection: StandingDirectiveStore.add(klaus_self) failed (non-fatal)", exc_info=True)
+
+        for note in expiry_notes:
+            did = note.get("directive_id")
+            if not did or directive_store is None:
+                continue
+            try:
+                directive_store.expire(did)
+                directive_items.append({
+                    "type": "expiry",
+                    "directive_id": did,
+                    "reason": note.get("reason", ""),
+                })
+            except Exception:
+                logger.warning("reflection: StandingDirectiveStore.expire(%r) failed (non-fatal)", did, exc_info=True)
+
+        # Prune-flags are NOT auto-actioned (D-04) — carried forward as
+        # narrative items only, surfaced in the woven nightly narrative.
+        for flag in prune_flags:
+            directive_items.append({
+                "type": "prune_flag",
+                "directive_id": flag.get("directive_id"),
+                "reason": flag.get("reason", ""),
+            })
+
+    entry["directive_items"] = directive_items
 
     # --- Write target 1: JournalStore (source of truth) ---
     try:
