@@ -77,7 +77,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 **Plans**: 6 plans (3 waves)
 - [x] 31-01-PLAN.md — StandingDirectiveStore (verbatim capture, expiry fields, superseded_by chain, read-cached, never hard-delete) (DIR-02/05)
 - [x] 31-02-PLAN.md — get_recent_window() + per-message ts on FirestoreConversationStore (fixes bug B3) (DIR-06)
-- [ ] 31-03-PLAN.md — 3 brain-direct directive tools + shared render_standing_directives_block formatter + chat injection + capture rule (DIR-01/03/04/05)
+- [x] 31-03-PLAN.md — 3 brain-direct directive tools + shared render_standing_directives_block formatter + chat injection + capture rule (DIR-01/03/04/05)
 - [ ] 31-04-PLAN.md — Autonomous injection: Step-0 STANDING ORDERS veto + Layer-2/follow-up compose + context-only gather (DIR-03)
 - [ ] 31-05-PLAN.md — Legacy-cron veto (morning briefing + weekly review, D-21/D-22, skipped_by_directive) (DIR-03)
 - [ ] 31-06-PLAN.md — Reflection learning loop (reaction pairing, self-directives, judged expiry, prune-flags) + nightly weaving (DIR-02/06/07)
@@ -139,7 +139,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
-| 31. Standing Directives | 2/6 | In Progress|  |
+| 31. Standing Directives | 3/6 | In Progress|  |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
