@@ -137,3 +137,10 @@ None - no external service configuration required. No new env var (per plan cons
 ---
 *Phase: 32-unified-situation-ambient-memory*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+All created/modified files verified present (`memory/firestore_db.py`, `core/tick_brain.py`,
+`core/heartbeat.py`, `tests/test_tick_brain.py`, `tests/test_heartbeat.py`,
+`prompts/groq_budget.md`). All 4 task commits verified in `git log`
+(`dbde885`, `46820f7`, `74a36cb`, plus this summary's `4cbb20a`).
