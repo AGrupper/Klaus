@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: planning
+status: executing
 stopped_at: Phase 32 context gathered
-last_updated: "2026-07-22T13:58:57.227Z"
-last_activity: 2026-07-22 -- executed 31-08-PLAN.md (StandingDirectiveStore.veto()+get(), origin-aware cancel routing, real reject->no-re-propose test)
+last_updated: "2026-07-22T15:38:03.195Z"
+last_activity: 2026-07-22 -- Phase 32 planning complete
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 14
+  total_plans: 22
   completed_plans: 14
   percent: 33
 ---
@@ -20,8 +20,8 @@ progress:
 
 Phase: 31 (standing-directives) — COMPLETE (all 8 plans, including 2 gap-closure plans 07/08 added post-verification)
 Plan: 8 of 8 — 31-08 executed (vetoed self-directive anti-lesson, DIR-07/D-13); both verification gaps closed
-Status: Ready for phase re-verification / v6.0 Phase 32 planning
-Last activity: 2026-07-22 -- executed 31-08-PLAN.md (StandingDirectiveStore.veto()+get(), origin-aware cancel routing, real reject->no-re-propose test)
+Status: Ready to execute
+Last activity: 2026-07-22 -- Phase 32 planning complete
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
