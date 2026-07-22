@@ -150,6 +150,18 @@ def check_cron_health() -> list[Signal]:
 
     now = datetime.now(timezone.utc)
     for job_id, max_hours in _CRON_MAX_STALENESS_HOURS.items():
+        if job_id == "healthkit-sync":
+            try:
+                from memory.firestore_db import UserProfileStore
+                proj = os.getenv("GCP_PROJECT_ID", "")
+                db = os.getenv("FIRESTORE_DATABASE", "(default)")
+                if proj:
+                    profile = UserProfileStore(project_id=proj, database=db).load()
+                    if profile.get("tracking_status", {}).get("calories") is False:
+                        continue
+            except Exception:
+                pass
+
         doc = ledger.get(job_id)
         if doc is None:
             signals.append(Signal(
