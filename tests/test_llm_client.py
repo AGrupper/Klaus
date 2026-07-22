@@ -681,6 +681,114 @@ def test_gemini_and_openai_backends_accept_and_ignore_callback():
     assert result["text"] == "ok"
 
 
+# --------------------------------------------------------------------------- #
+# str | tuple[str, str] system param — real two-block cache split (32-02)     #
+# --------------------------------------------------------------------------- #
+
+
+def test_anthropic_backend_tuple_system_two_blocks_cache_only_on_stable():
+    """A (stable, volatile) tuple on the Anthropic path must produce exactly
+    two system content blocks — cache_control on block 0 (stable) only."""
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
+    )
+
+    backend.chat(
+        [{"role": "user", "content": "hello"}],
+        system=("STABLE PERSONA BLOCK", "CURRENT TIME\nCurrent time: 14:20"),
+    )
+
+    _, kwargs = backend.client.messages.stream.call_args
+    system_kwarg = kwargs["system"]
+    assert isinstance(system_kwarg, list)
+    assert len(system_kwarg) == 2
+    assert system_kwarg[0]["type"] == "text"
+    assert system_kwarg[0]["text"] == "STABLE PERSONA BLOCK"
+    assert system_kwarg[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+    assert system_kwarg[1]["type"] == "text"
+    assert system_kwarg[1]["text"] == "CURRENT TIME\nCurrent time: 14:20"
+    assert "cache_control" not in system_kwarg[1]
+
+
+def test_anthropic_backend_tuple_system_empty_volatile_degrades_to_single_block():
+    """A template without the CURRENT TIME seam (autonomous.md, worker_agent.md)
+    renders volatile="" — must NOT send an empty Anthropic text block (400s on
+    empty content); degrades to the same single cached block as the str path."""
+    from core.llm_client import _AnthropicBackend
+    backend = _AnthropicBackend("claude-sonnet-5", "fake-api-key")
+    backend.client.messages.stream = MagicMock(
+        return_value=_make_anthropic_stream([], _make_anthropic_response())
+    )
+
+    backend.chat(
+        [{"role": "user", "content": "hello"}],
+        system=("STABLE ONLY", ""),
+    )
+
+    _, kwargs = backend.client.messages.stream.call_args
+    system_kwarg = kwargs["system"]
+    assert len(system_kwarg) == 1
+    assert system_kwarg[0]["text"] == "STABLE ONLY"
+    assert system_kwarg[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
+
+
+def test_gemini_backend_tuple_system_joined_with_double_newline():
+    """Gemini has no cache_control concept — a tuple is just joined into one
+    system_instruction string."""
+    backend = _GeminiBackend("gemini-3.5-flash", "fake-api-key")
+    fake_response = MagicMock()
+    fake_response.candidates = []
+    fake_response.usage_metadata = None
+    backend.client.models.generate_content = MagicMock(return_value=fake_response)
+
+    backend.chat(
+        [{"role": "user", "content": "hi"}],
+        system=("STABLE PART", "VOLATILE PART"),
+    )
+
+    _, kwargs = backend.client.models.generate_content.call_args
+    config = kwargs["config"]
+    assert config.system_instruction == "STABLE PART\n\nVOLATILE PART"
+
+
+def test_openai_backend_tuple_system_joined_with_double_newline():
+    """OpenAI-compat backends (worker, tick-brain, tertiary) join a tuple into
+    one system message — no cache_control concept there either."""
+    backend = _OpenAIBackend("deepseek-v4-flash", "fake-api-key")
+    fake_completion = MagicMock()
+    fake_completion.choices = [MagicMock()]
+    fake_completion.choices[0].message.content = "ok"
+    fake_completion.choices[0].message.tool_calls = None
+    fake_completion.choices[0].message.reasoning_content = None
+    fake_completion.usage.prompt_tokens = 1
+    fake_completion.usage.completion_tokens = 1
+    backend.client.chat.completions.create = MagicMock(return_value=fake_completion)
+
+    backend.chat(
+        [{"role": "user", "content": "hi"}],
+        system=("STABLE PART", "VOLATILE PART"),
+    )
+
+    _, kwargs = backend.client.chat.completions.create.call_args
+    openai_messages = kwargs["messages"]
+    assert openai_messages[0] == {
+        "role": "system", "content": "STABLE PART\n\nVOLATILE PART",
+    }
+
+
+def test_openai_backend_convert_messages_tuple_system_joined():
+    """_convert_messages itself (used directly by the worker path) must join a
+    tuple system before emitting the OpenAI system message."""
+    backend = _OpenAIBackend("gpt-4o", "fake-api-key")
+    openai_msgs = backend._convert_messages(
+        [{"role": "user", "content": "hello"}],
+        system=("STABLE", "VOLATILE"),
+    )
+    assert openai_msgs[0] == {"role": "system", "content": "STABLE\n\nVOLATILE"}
+
+
 def test_anthropic_backend_mid_stream_transport_error_becomes_llmerror():
     """A transport error raised WHILE consuming the SSE stream (httpx.ReadTimeout
     etc.) must map to LLMError like any other Anthropic failure — the SDK does
