@@ -343,8 +343,8 @@ class AgentOrchestrator:
         # collection is a valid, common state.
         self._standing_directive_store = _build_standing_directive_store()
 
-    def render_smart_system(self, template: str) -> str:
-        """Render a smart_system template by substituting all standard placeholders.
+    def render_smart_system(self, template: str) -> tuple[str, str]:
+        """Render a smart_system template and return it split as (stable, volatile).
 
         Resolves: ``{self_md}``, ``{self_state}``, ``{journal_digest}``,
         ``{today_date}``, ``{current_time}``.
@@ -352,10 +352,20 @@ class AgentOrchestrator:
 
         Used by:
           - ``handle_message`` (per-message chat path)
-          - ``core/autonomous.py:_compose_layer2`` (per-tick autonomous path) — Plan 18-06
+          - ``core/autonomous.py:_compose_layer2`` / ``_compose_followup_layer2``
+            (per-tick autonomous path) — Plan 18-06
 
-        Stable content (``self_md``) is placed before dynamic content for Gemini
-        prompt caching.
+        Stable content (``self_md``) is placed before dynamic content for cache
+        locality. The returned tuple is split at the existing CURRENT TIME
+        heading (Plan 32-02): ``stable`` holds everything up to and including
+        ``{today_date}`` (a once/day change, acceptable on the 1h cache TTL);
+        ``volatile`` holds the CURRENT TIME section (``{current_time}``,
+        per-minute) onward. A template without the heading (autonomous.md,
+        worker_agent.md, ad-hoc templates) returns ``(full_content, "")`` — see
+        ``_split_stable_volatile``. Callers pass the tuple straight through to
+        ``LLMClient.chat(system=...)``, which builds a real two-block Anthropic
+        system param (cache_control on the stable block only) instead of the
+        old single ever-rewriting block.
         """
         # Assemble the smart_system prompt with stable content first, then dynamic.
         # Stable-first ordering enables Gemini prompt caching on the shared prefix.
@@ -536,7 +546,7 @@ class AgentOrchestrator:
                 )
 
         coaching_guide_content = getattr(self, "_coaching_guide_content", "")
-        return (
+        rendered = (
             template
             .replace("{coaching_guide}", coaching_guide_content)         # PHASE 22 — stable, first
             .replace("{self_md}", self._self_md_content)                 # stable — benefits from cache
@@ -544,9 +554,14 @@ class AgentOrchestrator:
             .replace("{journal_digest}", journal_digest)                 # Phase 17 — smart-only (D-15)
             .replace("{training_profile}", training_profile_snippet)     # PHASE 19 — PROMPT-01
             .replace("{standing_directives}", standing_directives_snippet)  # PHASE 31 — DIR-03, cache-safe position
-            .replace("{today_date}", today_label)                        # dynamic — always last
-            .replace("{current_time}", _current_time_israel())           # dynamic — per-minute; templates place it at the tail to preserve the cache prefix
+            .replace("{today_date}", today_label)                        # dynamic — once/day; stays in the STABLE half (32-02)
+            .replace("{current_time}", _current_time_israel())           # dynamic — per-minute; lands in the VOLATILE half (32-02)
         )
+        # 32-02: split into (stable, volatile) at the CURRENT TIME heading so
+        # the Anthropic backend can cache the stable prefix as a real second
+        # content block instead of rewriting the whole system prompt every
+        # per-minute render.
+        return _split_stable_volatile(rendered)
 
     def handle_message(
         self,
@@ -581,13 +596,20 @@ class AgentOrchestrator:
         tool_registry.set_current_user_id(user_id)
 
         # Per D-03: SELF.md injected into smart_system only (not worker).
-        smart_system = self.render_smart_system(self._smart_prompt_template)
+        smart_system_stable, smart_system_volatile = self.render_smart_system(
+            self._smart_prompt_template
+        )
         # Append the nutrition fueling-coach guidance (chat path only — the
         # autonomous/morning-briefing paths append it to their own composed
         # prompts, so doing it here rather than inside render_smart_system avoids
         # a double-append on those paths). Mirrors the cron append pattern.
+        # 32-02: appended to the VOLATILE half — chat-only guidance, not the
+        # cached persona prefix, so the stable block stays untouched.
         if self._meal_audit_content:
-            smart_system = smart_system + "\n\n" + self._meal_audit_content
+            smart_system_volatile = (
+                smart_system_volatile + "\n\n" + self._meal_audit_content
+            )
+        smart_system = (smart_system_stable, smart_system_volatile)
         worker_system = (
             self._worker_prompt_template
             .replace("{today_date}", _today_israel())
@@ -643,8 +665,8 @@ class AgentOrchestrator:
     def _run_smart_loop(
         self,
         messages: list[dict],
-        smart_system: str,
-        worker_system: str,
+        smart_system: str | tuple[str, str],
+        worker_system: str | tuple[str, str],
         attachments: list[InboundAttachment] | None = None,
         stream_sink: StreamSink | None = None,
     ) -> str:
@@ -888,12 +910,15 @@ class AgentOrchestrator:
     # Worker Agent loop (Gemini Flash)                                   #
     # ------------------------------------------------------------------ #
 
-    def _run_worker_loop(self, task: str, worker_system: str) -> str:
+    def _run_worker_loop(self, task: str, worker_system: str | tuple[str, str]) -> str:
         """Run Gemini Flash on a delegated task, managing its own tool-use loop.
 
         Args:
             task: Natural language instruction from the Smart Agent.
             worker_system: Rendered worker system prompt with today's date.
+                      May be a (stable, volatile) tuple when the caller reused
+                      render_smart_system() for the worker template too (32-02)
+                      — the OpenAI-compat backend joins it into one string.
 
         Returns:
             Flash's final text response (fed back to the Smart Agent, or returned directly).
@@ -1158,3 +1183,29 @@ def _current_time_israel() -> str:
     Example: '14:20'
     """
     return datetime.now(tz=ISRAEL_TZ).strftime("%H:%M")
+
+
+# 32-02: the seam render_smart_system splits on to produce (stable, volatile).
+# This is the EXISTING "CURRENT TIME" heading already present in
+# prompts/smart_agent.md (~line 378) — no template edit required. Everything
+# from this heading onward (the per-minute {current_time} substitution) is
+# volatile; everything before it (including the once/day {today_date}) is
+# stable and eligible for the Anthropic cache_control block. Templates that
+# don't contain the seam (autonomous.md, worker_agent.md, ad-hoc test
+# templates) fall back to (full_content, "") — see _split_stable_volatile.
+_VOLATILE_SEAM_MARKER = "CURRENT TIME\nCurrent time:"
+
+
+def _split_stable_volatile(rendered: str) -> tuple[str, str]:
+    """Split a fully-rendered smart_system string into (stable, volatile).
+
+    The volatile half starts at the CURRENT TIME heading (inclusive) so the
+    per-minute {current_time} value never lands inside the cached stable
+    prefix. If the marker is absent, the whole string is stable and volatile
+    is "" — the Anthropic backend degrades this to a single cached block
+    (no empty second content block sent).
+    """
+    idx = rendered.find(_VOLATILE_SEAM_MARKER)
+    if idx == -1:
+        return rendered, ""
+    return rendered[:idx], rendered[idx:]

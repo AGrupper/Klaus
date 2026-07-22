@@ -908,11 +908,18 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
     meal_audit = _load_prompt("prompts/meal_audit.md")
     if meal_audit:
         smart_system_template = smart_system_template + "\n\n" + meal_audit
+    # 32-02: render_smart_system now returns (stable, volatile) — this is
+    # assigned straight through, unpacked nowhere here. autonomous.md has no
+    # CURRENT TIME heading, so this resolves to (full_content, "") and the
+    # Anthropic backend degrades to its existing single cached block; the
+    # tuple shape is still handled correctly end-to-end by chat().
     smart_system = orchestrator.render_smart_system(smart_system_template)
     worker_system_template = _load_prompt("prompts/worker_agent.md")
     # worker_system needs {today_date} + {current_time} resolved; reuse the
     # same render path so a future addition of new placeholders to
-    # worker_agent.md does not silently bypass them.
+    # worker_agent.md does not silently bypass them. Also now a (stable, "")
+    # tuple (32-02) — the OpenAI-compat worker backend joins it into one
+    # string; no cache_control concept there regardless.
     worker_system = orchestrator.render_smart_system(worker_system_template)
 
     snap_summary = json.dumps({
@@ -974,6 +981,8 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
     meal_audit = _load_prompt("prompts/meal_audit.md")
     if meal_audit:
         smart_system_template = smart_system_template + "\n\n" + meal_audit
+    # 32-02: render_smart_system now returns (stable, volatile) — passed
+    # through unchanged, same as _compose_layer2 above.
     smart_system = orchestrator.render_smart_system(smart_system_template)
     worker_system_template = _load_prompt("prompts/worker_agent.md")
     worker_system = orchestrator.render_smart_system(worker_system_template)
