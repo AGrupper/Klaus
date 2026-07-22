@@ -28,7 +28,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 - [ ] **DIR-04**: Amit can list and cancel standing directives from chat
 - [x] **DIR-05**: When a directive contradicts a baked-in persona routine, Klaus flags it and asks once which wins, recording the answer as a refined directive with a `superseded_by` link on the old one
 - [ ] **DIR-06**: Nightly reflection reads a 24h conversation window (`get_recent_window`, built this phase) and extracts behavioral feedback — frustration, appreciation, corrections — pairing each Klaus-initiated outreach with Amit's reaction (replied / ignored / pushback)
-- [ ] **DIR-07**: Reflection may propose self-directives (`origin="klaus_self"`), surfaced to Amit in the nightly message with a one-line veto option
+- [x] **DIR-07**: Reflection may propose self-directives (`origin="klaus_self"`), surfaced to Amit in the nightly message with a one-line veto option
 
 ### Ambient Memory & Unified Situation (Phase 32)
 
@@ -110,7 +110,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | DIR-04 | Phase 31 | Pending |
 | DIR-05 | Phase 31 | Complete |
 | DIR-06 | Phase 31 | Pending |
-| DIR-07 | Phase 31 | Pending |
+| DIR-07 | Phase 31 | Complete |
 | MEM-01 | Phase 32 | Pending |
 | MEM-02 | Phase 32 | Pending |
 | MEM-03 | Phase 32 | Pending |

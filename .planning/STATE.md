@@ -3,25 +3,25 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: executing
-stopped_at: 31-07-PLAN.md executed (gap closure); 31-08-PLAN.md (vetoed anti-lesson) remains
-last_updated: "2026-07-22T11:13:04.995Z"
-last_activity: 2026-07-22 -- executed 31-07-PLAN.md (supersedes param + persona-conflict prompt rewrite)
+stopped_at: 31-08-PLAN.md executed (gap closure) — Phase 31 all 8 plans complete
+last_updated: "2026-07-22T11:23:31.302Z"
+last_activity: 2026-07-22 -- executed 31-08-PLAN.md (vetoed self-directive anti-lesson, DIR-07/D-13); Phase 31 complete
 progress:
   total_phases: 6
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 14
-  completed_plans: 13
-  percent: 17
+  completed_plans: 14
+  percent: 33
 ---
 
 # State — Klaus
 
 ## Current Position
 
-Phase: 31 (standing-directives) — EXECUTING
-Plan: 07 of 8 (gap-closure; 06 core plans + 2 gap-closure plans 07/08 added post-verification)
-Status: 31-07 complete (DIR-05/SC-5/D-16 gap closed); 31-08 (vetoed anti-lesson) remains
-Last activity: 2026-07-22 -- executed 31-07-PLAN.md (supersedes param + persona-conflict prompt rewrite)
+Phase: 31 (standing-directives) — COMPLETE (all 8 plans, including 2 gap-closure plans 07/08 added post-verification)
+Plan: 8 of 8 — 31-08 executed (vetoed self-directive anti-lesson, DIR-07/D-13); both verification gaps closed
+Status: Ready for phase re-verification / v6.0 Phase 32 planning
+Last activity: 2026-07-22 -- executed 31-08-PLAN.md (StandingDirectiveStore.veto()+get(), origin-aware cancel routing, real reject->no-re-propose test)
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -129,11 +129,12 @@ See `.planning/ROADMAP.md` for full phase detail (goals, dependencies, success c
 - [28-03 D-17]: per-item dedup topic key = plain string habit-nudge:{habit_id}:{today_iso} (CoachingTopicStore, Pitfall 4)
 - [28-03 D-01]: SLOT_SUPPLEMENTS kept unchanged as fallback; _get_supplement_checkoffs overlays real HabitStore data when available
 - [28-03 D-18]: Bedtime/pre-bed supplements outside the 7-21 tick window — 21:30 alert covers that slot cleanly
+- [Phase 31]: veto() modeled exactly on cancel()/expire() (get-then-update, cache-invalidate, never hard-delete); get() added as a cheap never-raises single-doc read so the cancel handler can route on origin without a full-collection scan
 
 ### Pending Todos
 
 - Deploy the Groq tick-brain fix + tuned triage prompt (ready as of 2026-06-12) — ships together: `core/tick_brain.py` fixes, request-shape fixes (max_tokens 2048, temperature 0.6), tuned `prompts/autonomous_triage.md`. No Cloud Run env changes needed.
-- Start v6.0 Phase 30.5 planning: `/gsd:plan-phase 30.5`
+- Re-verify Phase 31 now that both `31-VERIFICATION.md` gaps (DIR-05/D-16 supersedes routing via 31-07; DIR-07/D-13 vetoed-directive writer via 31-08) are closed, then start v6.0 Phase 32 (Unified Situation / Ambient Memory) planning.
 
 ### Blockers/Concerns
 
@@ -175,10 +176,10 @@ Carried forward from v4.0 close (still open):
 
 ## Session Continuity
 
-Last session: 2026-07-22T11:13:04.991Z
-Stopped at: 31-07-PLAN.md executed (gap closure); 31-08-PLAN.md (vetoed anti-lesson) remains
-Resume file: .planning/phases/31-standing-directives/31-08-PLAN.md
+Last session: 2026-07-22T11:20:30.367Z
+Stopped at: 31-08-PLAN.md executed (gap closure) — Phase 31 all 8 plans complete
+Resume file: None
 
 ## Operator Next Steps
 
-- Execute `.planning/phases/31-standing-directives/31-08-PLAN.md` (gap-closure: vetoed self-directive anti-lesson, DIR-07/D-13) to close the second remaining gap from `31-VERIFICATION.md`, then re-verify Phase 31.
+- Both `31-VERIFICATION.md` gaps are closed (DIR-05/D-16 via 31-07, DIR-07/D-13 via 31-08). Re-verify Phase 31, then start v6.0 Phase 32 (Unified Situation / Ambient Memory) planning: `/gsd:plan-phase 32`.
