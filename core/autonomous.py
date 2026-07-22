@@ -60,6 +60,19 @@ _DEFER_FORCE_FIRE_THRESHOLD = 3
 # is actually worth a message belongs to tick-brain, not this threshold.
 _SILENCE_TRIGGER_HOURS = 8.0
 
+# Phase 32 (MEM-04) — conversation-tail windows. The gather fetches the widest
+# window any renderer needs (paid-compose); the triage-tight render re-trims
+# further from that single fetch (no extra Firestore read per render site).
+_COMPOSE_TAIL_MAX_HOURS = 48
+_COMPOSE_TAIL_MAX_MESSAGES = 40
+_TRIAGE_TAIL_MAX_HOURS = 24
+_TRIAGE_TAIL_MAX_MESSAGES = 15
+_TRIAGE_TAIL_MAX_CHARS = 240
+
+# Phase 32 (MEM-04) — training_reality reconciliation window: today-3d..tomorrow
+# inclusive (5 dates).
+_TRAINING_REALITY_WINDOW_DAYS = 5
+
 # BLOCKER 3 guard — ``_run_smart_loop`` RETURNS this sentinel string on total
 # LLM exhaustion. The full canned text lives in ``core.main.CONNECTIVITY_ERROR_TEXT``
 # (M-5 fix) — any edit to that constant is caught by
@@ -579,6 +592,119 @@ def _gather_training_evidence(now: datetime, project_id: str, database: str) -> 
         return {}
 
 
+def _gather_conversation_tail(now: datetime, project_id: str, database: str) -> list:
+    """(o2) Phase 32 (MEM-04) — recent conversation tail, CONTEXT only.
+
+    Fetches the WIDEST window any renderer needs (48h/<=40 msgs — the
+    paid-compose cap) once here; the triage-tight render (24h/<=15/240-char)
+    and the paid-compose-wide render each re-trim from this single fetch, so
+    one Firestore read serves both render sites (no duplicate reads).
+
+    User id resolution mirrors ``_gather_hours_since_contact``'s
+    ``TELEGRAM_ALLOWED_USER_IDS`` convention (first entry, single-user
+    deployment).
+
+    CONTEXT only, never a trigger (see ``_is_empty_signals``) — a
+    conversation existing is not itself a reason to wake the free tier,
+    mirroring the ``standing_directives`` precedent (Phase 31).
+
+    Sentinel ``[]`` on any failure (including an unset/unparseable user-id
+    env var) — never raises.
+    """
+    try:
+        from memory.firestore_conversation import FirestoreConversationStore
+        raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")[0].strip()
+        if not raw:
+            logger.warning(
+                "autonomous: TELEGRAM_ALLOWED_USER_IDS unset — "
+                "conversation_tail unknown"
+            )
+            return []
+        user_id = int(raw)
+        store = FirestoreConversationStore(project_id=project_id, database=database)
+        return store.get_recent_window(
+            user_id,
+            hours=_COMPOSE_TAIL_MAX_HOURS,
+            max_messages=_COMPOSE_TAIL_MAX_MESSAGES,
+        )
+    except Exception:
+        logger.warning("autonomous: conversation_tail gather failed", exc_info=True)
+        return []
+
+
+def _gather_training_reality(now: datetime, project_id: str, database: str) -> dict:
+    """(o3) Phase 32 (MEM-04) — reconciled per-date training reality, CONTEXT only.
+
+    Reconciliation window: today-3d..tomorrow (5 dates). Assembles the four
+    inputs ``core.training_checkin.build_training_reality`` (Plan 04) expects:
+
+      - **planned intent** — ``training_checkin.planned_sessions_for(date_iso)``
+        (the weekly_split recurring template).
+      - **calendar intent** — reuses ``_gather_calendar``'s TODAY events only.
+        A Training-calendar range query for the other 4 dates isn't wired
+        anywhere else in this codebase, so those dates fall back to
+        weekly_split-only planned intent; per D-01, calendar only OVERRIDES
+        the template when a same-day event exists, so this is still correct,
+        just narrower than it could be for non-today dates.
+      - **hard evidence + self-report** — loops the existing single-date
+        ``_gather_training_evidence(date, project_id, database)`` across the
+        window (Pattern 4 — reused verbatim, no new evidence-shape
+        derivation).
+
+    Calls the pure ``build_training_reality(...)`` reconciler (Plan 04) to
+    merge all four sources under the locked D-01/D-02 precedence.
+
+    CONTEXT only, never a trigger (see ``_is_empty_signals``) — mirrors the
+    ``training_status``/``acwr``/``standing_directives`` precedent: a
+    reconciled training picture must never wake the free tier on its own.
+
+    Sentinel ``{}`` on any failure — never raises.
+    """
+    try:
+        from core.training_checkin import build_training_reality, planned_sessions_for
+
+        today = now.astimezone(_TZ).date()
+        dates = [
+            (today + timedelta(days=offset - 3)).isoformat()
+            for offset in range(_TRAINING_REALITY_WINDOW_DAYS)
+        ]
+        today_iso = today.isoformat()
+
+        planned_by_date = {d: planned_sessions_for(d) for d in dates}
+
+        # Reuse the existing calendar gather for today's events — no second
+        # calendar API call is issued for the other 4 dates (see docstring).
+        today_calendar_events = _gather_calendar(now)
+        calendar_by_date = {
+            d: (today_calendar_events if d == today_iso else []) for d in dates
+        }
+
+        evidence_by_date: dict[str, dict] = {}
+        self_report_by_date: dict[str, dict] = {}
+        for d in dates:
+            d_dt = datetime.fromisoformat(d).replace(tzinfo=_TZ)
+            ev = _gather_training_evidence(d_dt, project_id, database)
+            evidence_by_date[d] = {
+                "strength_today": ev.get("strength_today", []),
+                "runs_today": ev.get("runs_today", []),
+            }
+            self_report_by_date[d] = {
+                "training_log_today": ev.get("training_log_today", []),
+            }
+
+        return build_training_reality(
+            dates,
+            planned_by_date,
+            calendar_by_date,
+            evidence_by_date,
+            self_report_by_date,
+            today_iso,
+        )
+    except Exception:
+        logger.warning("autonomous: training_reality gather failed", exc_info=True)
+        return {}
+
+
 def gather_situation(now: datetime) -> dict:
     """Layer 0 — aggregate situation snapshot from 14 sources, fanned out in parallel.
 
@@ -643,6 +769,16 @@ def gather_situation(now: datetime) -> dict:
         # never a trigger (see _is_empty_signals).
         "standing_directives": lambda: _gather_standing_directives(
             project_id, database
+        ),
+        # Phase 32 (MEM-04): recent conversation tail — CONTEXT only, never a
+        # trigger (see _is_empty_signals).
+        "conversation_tail": lambda: _gather_conversation_tail(
+            now, project_id, database
+        ),
+        # Phase 32 (MEM-04): reconciled training reality (today-3d..tomorrow)
+        # — CONTEXT only, never a trigger (see _is_empty_signals).
+        "training_reality": lambda: _gather_training_reality(
+            now, project_id, database
         ),
     }
 
