@@ -136,3 +136,14 @@ None — no external service configuration required. `forget_memory` uses the ex
 ---
 *Phase: 32-unified-situation-ambient-memory*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+All modified files verified present (mcp_tools/memory.py, core/tools.py,
+core/reflection.py, prompts/reflection.md, prompts/nightly_review.md,
+tests/test_tools.py, tests/test_reflection.py). All 3 task/summary commit
+hashes (`2adf519`, `b1ee67e`, `1c2910e`) verified present in `git log`.
+Full verification suite re-run clean: `pytest tests/test_tools.py -k
+forget_memory -x` (3 passed), `pytest tests/test_reflection.py -k
+contradiction -x` (3 passed), full `tests/test_tools.py` +
+`tests/test_reflection.py` + `tests/memory/` (146 passed).
