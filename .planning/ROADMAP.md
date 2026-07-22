@@ -74,13 +74,15 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
   4. Amit can list and cancel standing directives from chat
   5. When a directive contradicts a baked-in persona routine, Klaus flags it, asks once which wins, and records the answer as a refined directive with a `superseded_by` link on the old one
   6. Nightly reflection reads the full day's conversation (not an empty 6h window) via `get_recent_window`, pairs each Klaus-initiated outreach with Amit's reaction, and may propose self-directives surfaced in the nightly message with a one-line veto
-**Plans**: 6 plans (3 waves)
+**Plans**: 8 plans (6 base + 2 gap-closure; 5 waves)
 - [x] 31-01-PLAN.md — StandingDirectiveStore (verbatim capture, expiry fields, superseded_by chain, read-cached, never hard-delete) (DIR-02/05)
 - [x] 31-02-PLAN.md — get_recent_window() + per-message ts on FirestoreConversationStore (fixes bug B3) (DIR-06)
 - [x] 31-03-PLAN.md — 3 brain-direct directive tools + shared render_standing_directives_block formatter + chat injection + capture rule (DIR-01/03/04/05)
 - [x] 31-04-PLAN.md — Autonomous injection: Step-0 STANDING ORDERS veto + Layer-2/follow-up compose + context-only gather (DIR-03)
 - [x] 31-05-PLAN.md — Legacy-cron veto (morning briefing + weekly review, D-21/D-22, skipped_by_directive) (DIR-03)
 - [x] 31-06-PLAN.md — Reflection learning loop (reaction pairing, self-directives, judged expiry, prune-flags) + nightly weaving (DIR-02/06/07)
+- [ ] 31-07-PLAN.md — [gap] superseded_by reachable: `supersedes` param on set_standing_directive → store.supersede() + persona-conflict prompt rule (DIR-05)
+- [ ] 31-08-PLAN.md — [gap] vetoed anti-lesson reachable: StandingDirectiveStore.veto() writer + cancel routes klaus_self→veto + real no-re-propose test (DIR-07)
 
 ### Phase 32: Unified Situation (Ambient Memory)
 **Goal**: Klaus perceives his full situation on every reasoning path — relevant memories, conversation continuity, and reconciled training reality — without ever letting ordinary chat activity defeat the free-tier cost gate that is Klaus's entire cost model
@@ -139,7 +141,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
-| 31. Standing Directives | 6/6 | Gaps Found | 2026-07-20 |
+| 31. Standing Directives | 6/8 | Gap Closure Planned | 2026-07-20 |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
