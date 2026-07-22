@@ -45,5 +45,8 @@ psycopg2-binary>=2.9        # PostgreSQL database adapter
 # --- Web Push notifications (Phase 29) ---
 pywebpush>=2.3              # Web Push sends (VAPID-signed); py-vapid arrives transitively
 
+# --- Groq token-budget measurement (Phase 32) ---
+tiktoken==0.13.0            # o200k_harmony tokenizer for the MEM-05 Groq budget-guard test
+
 # --- Dev / testing ---
 pytest>=8.0
