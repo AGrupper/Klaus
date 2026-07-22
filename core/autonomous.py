@@ -864,6 +864,133 @@ def _format_now_block(situation: dict) -> str:
     )
 
 
+def _situation_now(situation: dict) -> datetime:
+    """Best-effort datetime reconstruction from ``situation['now_context']['now_iso']``.
+
+    The tail/training_reality renderers need a clock (for the 24h/48h cutoff
+    and "today"/"tomorrow" boundaries) but neither ``_build_triage_prompt``
+    nor the compose functions carry the original ``now`` datetime through —
+    only the already-rendered ``now_context`` dict. Falls back to the current
+    wall clock (Asia/Jerusalem) on any parse failure — never raises.
+    """
+    now_iso = (situation.get("now_context") or {}).get("now_iso", "")
+    try:
+        return datetime.fromisoformat(str(now_iso).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return datetime.now(_TZ)
+
+
+def _trim_conversation_tail(
+    tail: list[dict],
+    now: datetime,
+    *,
+    hours: float,
+    max_messages: int,
+    max_chars: int | None = None,
+) -> list[dict]:
+    """Re-trim the widest-window conversation_tail gather to a render-specific cap.
+
+    The gather (``_gather_conversation_tail``) already fetches the widest
+    window any renderer needs (48h/<=40 msgs, the paid-compose cap) in ONE
+    Firestore read; each render site re-trims from that single fetch here —
+    the triage-tight render (24h/<=15/240-char) and the paid-compose-wide
+    render (48h/<=40, uncapped char) both derive from the same list, no extra
+    read. Malformed/legacy ``ts`` values are tolerated (kept by position),
+    mirroring ``FirestoreConversationStore.get_recent_window``'s own leniency.
+    """
+    if not tail:
+        return []
+    cutoff = now.astimezone(timezone.utc) - timedelta(hours=hours)
+    trimmed: list[dict] = []
+    for m in tail:
+        ts_raw = m.get("ts")
+        if ts_raw:
+            try:
+                ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts < cutoff:
+                    continue
+            except (ValueError, TypeError):
+                pass  # malformed ts — tolerate, keep by position
+        content = str(m.get("content", ""))
+        if max_chars is not None and len(content) > max_chars:
+            content = content[:max_chars]
+        trimmed.append({"role": m.get("role", ""), "content": content})
+    return trimmed[-max_messages:]
+
+
+def _render_conversation_tail_tight(tail: list[dict], now: datetime) -> str:
+    """Triage-tight render (MEM-04): 24h / <=15 msgs / 240-char-per-message cap."""
+    trimmed = _trim_conversation_tail(
+        tail,
+        now,
+        hours=_TRIAGE_TAIL_MAX_HOURS,
+        max_messages=_TRIAGE_TAIL_MAX_MESSAGES,
+        max_chars=_TRIAGE_TAIL_MAX_CHARS,
+    )
+    if not trimmed:
+        return "(no recent messages)"
+    return "\n".join(f"{m['role']}: {m['content']}" for m in trimmed)
+
+
+def _render_conversation_tail_wide(tail: list[dict], now: datetime) -> str:
+    """Paid-compose-wide render (MEM-04): 48h / <=40 msgs, no char cap."""
+    trimmed = _trim_conversation_tail(
+        tail, now, hours=_COMPOSE_TAIL_MAX_HOURS, max_messages=_COMPOSE_TAIL_MAX_MESSAGES,
+    )
+    if not trimmed:
+        return "(no recent messages)"
+    return "\n".join(f"{m['role']}: {m['content']}" for m in trimmed)
+
+
+def _render_training_reality_tight(training_reality: dict, now: datetime) -> str:
+    """Triage-tight render (MEM-04, Research Open Question 2): today + tomorrow
+    only, terminal status strings per slot — NO evidence detail. The triage
+    layer's job is to know NOT to ask about something already resolved; a
+    status string alone accomplishes that within the triage char discipline.
+    """
+    if not training_reality:
+        return "(no training reality data)"
+    today = now.astimezone(_TZ).date()
+    dates = (today.isoformat(), (today + timedelta(days=1)).isoformat())
+    lines: list[str] = []
+    for date_iso in dates:
+        entry = training_reality.get(date_iso) or {}
+        slots = entry.get("slots") or {}
+        if not slots:
+            continue
+        slot_str = ", ".join(f"{slot}: {status}" for slot, status in slots.items())
+        lines.append(f"{date_iso}: {slot_str}")
+    return "\n".join(lines) if lines else "(no sessions planned today/tomorrow)"
+
+
+def _render_training_reality_wide(training_reality: dict) -> str:
+    """Paid-compose-wide render (MEM-04): full today-3d..tomorrow window with
+    evidence detail (session titles/volumes/pace) for coaching quality — the
+    version prompts/autonomous.md's Layer-2 compose consumes.
+    """
+    if not training_reality:
+        return "(no training reality data)"
+    lines: list[str] = []
+    for date_iso in sorted(training_reality.keys()):
+        entry = training_reality.get(date_iso) or {}
+        slots = entry.get("slots") or {}
+        slot_str = ", ".join(f"{slot}: {status}" for slot, status in slots.items()) or "(no sessions)"
+        evidence = entry.get("evidence") or {}
+        detail_parts: list[str] = []
+        for w in evidence.get("strength_today") or []:
+            vol = w.get("total_volume_kg", "")
+            detail_parts.append(f"strength: {w.get('title', '')} ({vol}kg)".strip())
+        for r in evidence.get("runs_today") or []:
+            pace = r.get("avg_pace_sec_per_km")
+            pace_str = f" @ {pace}s/km" if pace else ""
+            detail_parts.append(f"run: {r.get('distance_m', '')}m{pace_str}")
+        detail_str = f" [{'; '.join(detail_parts)}]" if detail_parts else ""
+        lines.append(f"{date_iso}: {slot_str}{detail_str}")
+    return "\n".join(lines)
+
+
 def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     """Build the user-message content for the triage call.
 
@@ -922,13 +1049,25 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         standing_directives, style="prose"
     ) or "(none active)"
 
+    # Phase 32 (MEM-04) — triage-tight renders: 24h/<=15/240-char tail;
+    # today+tomorrow-only terminal-status training_reality (no evidence detail).
+    now_for_render = _situation_now(situation)
+    conversation_tail_block = _render_conversation_tail_tight(
+        situation.get("conversation_tail") or [], now_for_render
+    )
+    training_reality_block = _render_training_reality_tight(
+        situation.get("training_reality") or {}, now_for_render
+    )
+
     return (
         f"Situation snapshot:\n{snap_json}\n\n"
         f"My self-state:\n{self_state_block}\n\n"
         f"My recent journal:\n{journal}\n\n"
         f"Time context:\n{now_context_block}\n\n"
         f"Topics I have already raised today:\n{outreach_block}\n\n"
-        f"Active standing directives:\n{directives_block}\n"
+        f"Active standing directives:\n{directives_block}\n\n"
+        f"Recent conversation with Amit (last 24h, up to 15 messages):\n{conversation_tail_block}\n\n"
+        f"Training reality (today + tomorrow, terminal status only):\n{training_reality_block}\n"
     )
 
 
@@ -1098,9 +1237,21 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         ),
     }, indent=2, ensure_ascii=False)
 
+    # Phase 32 (MEM-04) — paid-compose-wide renders: 48h/<=40-msg tail;
+    # full today-3d..tomorrow training_reality window with evidence detail.
+    now_for_render = _situation_now(situation)
+    conversation_tail_block = _render_conversation_tail_wide(
+        situation.get("conversation_tail") or [], now_for_render
+    )
+    training_reality_block = _render_training_reality_wide(
+        situation.get("training_reality") or {}
+    )
+
     synthetic_content = (
         f"Situation snapshot:\n{snap_summary}\n\n"
         f"Time context:\n{_format_now_block(situation)}\n\n"
+        f"Recent conversation with Amit (last 48h, up to 40 messages):\n{conversation_tail_block}\n\n"
+        f"Training reality (today-3d..tomorrow, with evidence detail):\n{training_reality_block}\n\n"
         f"Triage layer's draft:\n{draft}\n\n"
         f"Triage reasoning:\n{triage_reason}\n"
     )
@@ -1150,6 +1301,16 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
             )
         ),
     }, indent=2, ensure_ascii=False)
+
+    # Phase 32 (MEM-04) — paid-compose-wide renders (parity with _compose_layer2).
+    now_for_render = _situation_now(situation)
+    conversation_tail_block = _render_conversation_tail_wide(
+        situation.get("conversation_tail") or [], now_for_render
+    )
+    training_reality_block = _render_training_reality_wide(
+        situation.get("training_reality") or {}
+    )
+
     synthetic = (
         f"Due follow-up:\n"
         f"id: {followup.get('id', '')}\n"
@@ -1157,7 +1318,9 @@ def _compose_followup_layer2(followup: dict, situation: dict) -> str:
         f"note: {followup.get('note', '')}\n"
         f"defer_count: {followup.get('defer_count', 0)}\n\n"
         f"Current situation:\n{snap}\n\n"
-        f"Time context:\n{_format_now_block(situation)}\n"
+        f"Time context:\n{_format_now_block(situation)}\n\n"
+        f"Recent conversation with Amit (last 48h, up to 40 messages):\n{conversation_tail_block}\n\n"
+        f"Training reality (today-3d..tomorrow, with evidence detail):\n{training_reality_block}\n"
     )
     messages = [{"role": "user", "content": synthetic}]
     return orchestrator._run_smart_loop(messages, smart_system, worker_system)

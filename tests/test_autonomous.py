@@ -2137,3 +2137,160 @@ class TestGatherSituationIncludesPhase32Keys:
         assert "training_reality" in out
         assert isinstance(out["training_reality"], dict)
         assert len(out["training_reality"]) == 5
+
+
+class TestConversationTailAndTrainingRealityRenders:
+    """Task 3 (MEM-04/MEM-05): triage-tight vs paid-compose-wide renders for
+    conversation_tail and training_reality."""
+
+    def _tail(self, n, chars_each, now):
+        tail = []
+        for i in range(n):
+            role = "user" if i % 2 == 0 else "assistant"
+            content = f"msg{i} " * 100  # deliberately long, needs truncation
+            content = content[:chars_each]
+            ts = (now - timedelta(minutes=(n - i) * 30)).astimezone(timezone.utc).isoformat()
+            tail.append({"role": role, "content": content, "ts": ts})
+        return tail
+
+    def _training_reality(self, today_iso, tomorrow_iso, yesterday_iso):
+        return {
+            yesterday_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {
+                    "strength_today": [{"title": "Upper Body", "total_volume_kg": 3120}],
+                    "runs_today": [],
+                },
+                "slots": {"am": "done"},
+            },
+            today_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {"strength_today": [], "runs_today": [
+                    {"type": "run", "distance_m": 8000, "avg_pace_sec_per_km": 300},
+                ]},
+                "slots": {"am": "done", "pm": "planned"},
+            },
+            tomorrow_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {},
+                "slots": {"am": "planned"},
+            },
+        }
+
+    def test_triage_render_trims_conversation_tail_to_caps(self, fixed_now):
+        """Triage-tight render: <=15 msgs, <=240 chars each, only last 24h."""
+        # 20 raw messages (over the 15-msg cap), each far over 240 chars raw,
+        # plus one message older than 24h that must be dropped.
+        tail = self._tail(20, 400, fixed_now)
+        stale = {
+            "role": "user", "content": "ancient message",
+            "ts": (fixed_now - timedelta(hours=30)).astimezone(timezone.utc).isoformat(),
+        }
+        sit = _live_situation(fixed_now, conversation_tail=[stale] + tail)
+        prompt = autonomous._build_triage_prompt(sit, "")
+
+        assert "Recent conversation with Amit" in prompt
+        assert "ancient message" not in prompt, "messages older than 24h must be trimmed"
+        # No raw untruncated 400-char filler line should appear verbatim.
+        rendered_block = prompt.split("Recent conversation with Amit")[1].split("Training reality")[0]
+        for line in rendered_block.splitlines():
+            content_only = line.split(": ", 1)[-1]
+            assert len(content_only) <= 240, f"triage tail line exceeds 240 chars: {len(content_only)}"
+        # At most 15 rendered message lines (role: content).
+        message_lines = [
+            ln for ln in rendered_block.splitlines() if ln.startswith(("user:", "assistant:"))
+        ]
+        assert len(message_lines) <= 15
+
+    def test_triage_render_training_reality_today_tomorrow_only_no_evidence_detail(self, fixed_now):
+        """Triage-tight render: today+tomorrow only, terminal status strings,
+        NO evidence detail (Research Open Question 2)."""
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+
+        prompt = autonomous._build_triage_prompt(sit, "")
+
+        assert "Training reality (today + tomorrow" in prompt
+        assert today_iso in prompt
+        assert tomorrow_iso in prompt
+        # Yesterday must NOT appear in the tight render (today+tomorrow only).
+        tr_block = prompt.split("Training reality")[1]
+        assert yesterday_iso not in tr_block
+        # Terminal status strings only — no evidence detail (session titles/volumes/pace).
+        assert "Upper Body" not in tr_block
+        assert "3120" not in tr_block
+        assert "8000" not in tr_block
+        # Status strings ARE present.
+        assert "done" in tr_block
+        assert "planned" in tr_block
+
+    def test_triage_render_training_reality_empty_when_no_data(self, fixed_now):
+        sit = _live_situation(fixed_now, training_reality={})
+        prompt = autonomous._build_triage_prompt(sit, "")
+        assert "(no training reality data)" in prompt
+
+    def _capture_compose(self, fn, *args):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            fn(*args)
+        return captured.get("content", "")
+
+    def test_compose_layer2_renders_wide_training_reality_with_evidence_detail(self, fixed_now):
+        """Paid compose render: full today-3d..tomorrow window WITH evidence
+        detail (session titles/volumes/pace) — the opposite discipline from
+        triage."""
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+
+        content = self._capture_compose(autonomous._compose_layer2, sit, "draft", "reason")
+
+        assert "Training reality (today-3d..tomorrow" in content
+        # Wide render includes the earlier date (yesterday) too.
+        assert yesterday_iso in content
+        # Evidence detail is present (unlike the triage-tight render).
+        assert "Upper Body" in content
+        assert "3120" in content
+
+    def test_compose_layer2_renders_wide_conversation_tail(self, fixed_now):
+        """Paid compose render: 48h/<=40 msgs, no 240-char truncation."""
+        tail = self._tail(3, 400, fixed_now)  # each entry truncated to 400 (< no-cap concern)
+        sit = _live_situation(fixed_now, conversation_tail=tail)
+        content = self._capture_compose(autonomous._compose_layer2, sit, "draft", "reason")
+        assert "Recent conversation with Amit (last 48h, up to 40 messages)" in content
+        # None of the wide-render lines are hard-truncated at 240 chars — the
+        # fixture messages are 400 chars so this asserts no premature cut.
+        wide_block = content.split("Recent conversation with Amit")[1].split("Training reality")[0]
+        message_lines = [
+            ln for ln in wide_block.splitlines() if ln.startswith(("user:", "assistant:"))
+        ]
+        assert any(len(ln.split(": ", 1)[-1]) > 240 for ln in message_lines), (
+            "wide compose render must not truncate at the triage 240-char cap"
+        )
+
+    def test_compose_followup_layer2_renders_wide_training_reality(self, fixed_now):
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+        followup = {"id": "fu1", "due_at": "2026-05-21T07:20:00Z", "note": "check in", "defer_count": 0}
+
+        content = self._capture_compose(autonomous._compose_followup_layer2, followup, sit)
+
+        assert "Training reality (today-3d..tomorrow" in content
+        assert yesterday_iso in content
+        assert "Upper Body" in content
