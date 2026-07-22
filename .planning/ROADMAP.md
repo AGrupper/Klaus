@@ -95,7 +95,15 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
   4. Tick triage and paid Layer-2 compose both see a reconciled `training_reality` window (planned vs. logged vs. Garmin/Hevy vs. calendar) — a session completed or moved earlier is never re-asked about
   5. A token-budget guard test confirms the maximal rendered triage prompt plus `max_tokens` fits Groq's verified per-request ceiling, and none of the new gathers (`conversation_tail`, `standing_directives`, `training_reality`, `location`) flip an otherwise-empty tick to non-empty
   6. Weather and travel-time gathers use Klaus's derived `current_location` (from calendar travel events + standing directives) — no more Tel Aviv forecasts delivered to Paris — and a local Groq daily token ledger alerts via heartbeat as usage nears the 200K TPD cap
-**Plans**: TBD
+**Plans**: 8 plans (3 waves)
+- [ ] 32-01-PLAN.md — tiktoken dep + MEM-05 token-budget guard test (real o200k_harmony tokenizer, ≤8K Groq ceiling) (MEM-05)
+- [ ] 32-02-PLAN.md — Prompt-cache block split: render_smart_system → (stable, volatile), two real Anthropic content blocks (MEM-01/02 foundation)
+- [ ] 32-03-PLAN.md — forget_memory tool (Pinecone delete-by-id, validated) + reflection contradiction-flag, never auto-delete (MEM-03)
+- [ ] 32-04-PLAN.md — training_reality pure reconciler + planned_sessions_for moved to training_checkin; SC-4 done-idempotency (MEM-04)
+- [ ] 32-05-PLAN.md — GroqTokenLedgerStore + primary-only increment + at-cap Gemini fallback + heartbeat 80%/spike alert (MEM-06)
+- [ ] 32-06-PLAN.md — Ambient auto-recall (score-thresholded, timeout-guarded) + 6h-idle continuity tail + boundary marker (MEM-01/02)
+- [ ] 32-07-PLAN.md — conversation_tail + training_reality gathers, context-only invariant, triage/compose renders, tightened budget guard (MEM-04/05)
+- [ ] 32-08-PLAN.md — current_location derivation (calendar + directives, ask-when-ambiguous) + weather/routes repoint (MEM-07/05)
 
 ### Phase 33: Occasion Cascade
 **Goal**: Nightly review, morning briefing, and the Sunday weekly review stop being always-fire templates and become judgment-driven occasions through the same 3-layer cascade as the tick, with silence a valid, self-explainable outcome distinguishable from infra failure
@@ -142,7 +150,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
-| 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
+| 32. Unified Situation (Ambient Memory) | 0/8 | Planned | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
