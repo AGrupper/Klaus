@@ -87,6 +87,11 @@ _AMBIENT_RECALL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=4, thread_name_prefix="ambient-recall",
 )
 
+# Phase 32 (Plan 06, MEM-02): continuity tail window — matches
+# SESSION_TIMEOUT_HOURS (memory/firestore_conversation.py:135), the same idle
+# threshold ConversationStore.get() uses to decide a session has gone idle.
+CONTINUITY_TAIL_HOURS = 6
+
 
 def _ambient_recall_worker(user_message: str, user_id: int) -> list[dict]:
     """Runs inside the executor thread — may raise; the caller enforces the timeout."""
@@ -132,6 +137,60 @@ def _ambient_recall(user_message: str, user_id: int) -> str:
         )
         return ""
     return _format_things_you_remember(results)
+
+
+def _build_continuity_tail(
+    conversation_manager, user_id: int,
+) -> tuple[list[dict], dict | None]:
+    """Best-effort: return (tail_messages, boundary_marker) for an idle-fresh session.
+
+    Called only when the pre-turn session was empty (idle-expired or genuinely
+    new) — MEM-02. Never raises: a backend without a real `get_recent_window`
+    (e.g. InMemoryConversationStore, or any malformed/mocked collaborator), a
+    Firestore error, or an empty tail all yield ([], None), which is a no-op
+    fall-through to today's amnesiac-but-safe behaviour. The whole body is
+    wrapped in one broad try/except (rather than just the store call) so any
+    unexpected shape coming back from `get_recent_window` also degrades safely.
+    """
+    try:
+        get_recent_window = getattr(conversation_manager, "get_recent_window", None)
+        if not callable(get_recent_window):
+            return [], None
+        tail = get_recent_window(user_id, hours=CONTINUITY_TAIL_HOURS)
+        if not tail:
+            return [], None
+
+        marker_text = (
+            f"[~{_format_elapsed_hours(tail[-1].get('ts'))} elapsed since the "
+            "messages above — a new conversation begins here.]"
+        )
+        marker = {"role": "user", "content": marker_text}
+        # Plain {"role", "content"} history only — mirrors the shape
+        # core/autonomous.py::_compose_layer2 builds for its synthetic marker turn.
+        clean_tail = [{"role": m.get("role"), "content": m.get("content")} for m in tail]
+        return clean_tail, marker
+    except Exception:
+        logger.debug(
+            "Continuity tail fetch failed for user_id=%s", user_id, exc_info=True,
+        )
+        return [], None
+
+
+def _format_elapsed_hours(ts: str | None) -> str:
+    """Format elapsed time since ts as "Nh" for the D-05 boundary marker.
+
+    Falls back to a generic phrase (never raises) when ts is missing or
+    unparseable — legacy pre-ts messages are tolerated the same way
+    get_recent_window itself tolerates them.
+    """
+    if not ts:
+        return "some time"
+    try:
+        elapsed = datetime.now(timezone.utc) - datetime.fromisoformat(ts)
+    except (ValueError, TypeError):
+        return "some time"
+    hours = max(1, round(elapsed.total_seconds() / 3600))
+    return f"{hours}h"
 
 
 # ------------------------------------------------------------------ #
@@ -688,10 +747,27 @@ class AgentOrchestrator:
             .replace("{current_time}", _current_time_israel())
         )
 
+        # Phase 32 (Plan 06, MEM-02): capture the PRE-turn session state before
+        # persisting this message — an empty list here means the session was
+        # idle-expired (or genuinely new), the trigger for a continuity-tail
+        # rehydrate below. Must be read before append() opens a fresh session.
+        pre_turn_messages = self.conversation_manager.get(user_id)
+
         # Persist the incoming message and get the full history for this session.
         if persist_user_message:
             self.conversation_manager.append(user_id, "user", user_message)
         messages = self.conversation_manager.get(user_id)
+
+        # Idle-fresh session: rehydrate the recent stored tail as real history
+        # with a synthetic time-gap boundary marker, so the brain doesn't treat
+        # a returning Amit as the start of an amnesiac conversation (MEM-02).
+        # Best-effort — any failure silently no-ops (see _build_continuity_tail).
+        # The tail is inserted into the LOCAL list only; it is already stored,
+        # so it must not be re-persisted via conversation_manager.append().
+        if not pre_turn_messages:
+            tail, marker = _build_continuity_tail(self.conversation_manager, user_id)
+            if tail:
+                messages = tail + ([marker] if marker else []) + messages
 
         # Run the Smart Agent orchestration loop.
         try:

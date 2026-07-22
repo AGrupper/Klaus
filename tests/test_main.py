@@ -824,3 +824,93 @@ class TestAmbientRecall:
         _, volatile = orch._run_smart_loop.call_args.args[1]
         assert "Things you remember" not in volatile
         assert "{things_you_remember}" not in volatile
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 06 (MEM-02) — continuity tail + time-gap boundary marker
+# ---------------------------------------------------------------------------
+
+class TestContinuityTail:
+    """MEM-02: an idle-fresh session (empty pre-turn history, non-empty stored
+    tail) rehydrates the recent tail with a synthetic boundary marker."""
+
+    def test_continuity_tail_idle_fresh_session_prepends_tail_and_one_marker(self):
+        orch = _make_orchestrator_for_handle_message(loop_return="ok")
+        old_ts = (
+            __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+            - __import__("datetime").timedelta(hours=8)
+        ).isoformat()
+        stored_tail = [
+            {"role": "user", "content": "earlier question", "ts": old_ts},
+            {"role": "assistant", "content": "earlier answer", "ts": old_ts},
+        ]
+        # pre-turn get() is empty (idle-expired); post-append get() returns
+        # just the fresh turn — a real FirestoreConversationStore's shape.
+        orch.conversation_manager.get.side_effect = [
+            [],  # pre_turn_messages (before append)
+            [{"role": "user", "content": "new question"}],  # after append
+        ]
+        orch.conversation_manager.get_recent_window = MagicMock(return_value=stored_tail)
+
+        orch.handle_message("new question", user_id=1)
+
+        messages = orch._run_smart_loop.call_args.args[0]
+        # tail (2) + exactly one boundary marker (1) + the fresh turn (1) = 4
+        assert len(messages) == 4
+        assert messages[0] == {"role": "user", "content": "earlier question"}
+        assert messages[1] == {"role": "assistant", "content": "earlier answer"}
+        marker = messages[2]
+        assert marker["role"] == "user"
+        assert "elapsed since the messages above" in marker["content"]
+        assert "8h" in marker["content"]
+        assert messages[3] == {"role": "user", "content": "new question"}
+
+    def test_continuity_tail_active_session_gets_no_tail_prepend(self):
+        orch = _make_orchestrator_for_handle_message(loop_return="ok")
+        active_messages = [
+            {"role": "user", "content": "still going"},
+            {"role": "assistant", "content": "yep"},
+        ]
+        # Active (non-idle) session: pre-turn get() is already non-empty.
+        orch.conversation_manager.get.return_value = active_messages
+        orch.conversation_manager.get_recent_window = MagicMock(
+            return_value=[{"role": "user", "content": "should never appear", "ts": None}]
+        )
+
+        orch.handle_message("another message", user_id=1)
+
+        messages = orch._run_smart_loop.call_args.args[0]
+        assert messages == active_messages
+        orch.conversation_manager.get_recent_window.assert_not_called()
+
+    def test_continuity_tail_raising_get_recent_window_yields_no_tail_no_break(self):
+        orch = _make_orchestrator_for_handle_message(loop_return="ok")
+        orch.conversation_manager.get.side_effect = [
+            [],
+            [{"role": "user", "content": "hello again"}],
+        ]
+        orch.conversation_manager.get_recent_window = MagicMock(
+            side_effect=RuntimeError("firestore down")
+        )
+
+        result = orch.handle_message("hello again", user_id=1)  # must not raise
+
+        messages = orch._run_smart_loop.call_args.args[0]
+        assert messages == [{"role": "user", "content": "hello again"}]
+        assert result == "ok"
+
+    def test_continuity_tail_missing_get_recent_window_is_a_safe_noop(self):
+        """A conversation_manager without get_recent_window (e.g.
+        InMemoryConversationStore) must never raise — no tail, no marker."""
+        orch = _make_orchestrator_for_handle_message(loop_return="ok")
+        orch.conversation_manager = MagicMock(spec=["get", "append", "clear"])
+        orch.conversation_manager.get.side_effect = [
+            [],
+            [{"role": "user", "content": "hi"}],
+        ]
+
+        result = orch.handle_message("hi", user_id=1)
+
+        messages = orch._run_smart_loop.call_args.args[0]
+        assert messages == [{"role": "user", "content": "hi"}]
+        assert result == "ok"
