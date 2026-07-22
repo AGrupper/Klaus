@@ -2272,6 +2272,111 @@ class CostTripwireLogStore:
             raise
 
 
+class GroqTokenLedgerStore:
+    """Local daily-token ledger for the Groq free tier (MEM-06).
+
+    Firestore collection: groq_token_ledger (lowercase per project casing invariant).
+    Document ID: the date string (YYYY-MM-DD) — one doc per calendar day; a new
+    date IS the reset, no separate reset job (mirrors LLMUsageStore's/
+    CostTripwireLogStore's date-keyed-doc convention).
+
+    Groq exposes no daily-remaining header for its free tier (200K tokens/day
+    for gpt-oss-120b), so this ledger is the only local visibility into how
+    close a day is to the cap. Incremented ONLY from TickBrain.think()'s
+    PRIMARY (Groq) success path — never from the fallback path, which bills
+    Gemini and is already tracked separately by LLMUsageStore's existing
+    `*_fallback` per-purpose call counters (T-32-10).
+    """
+
+    _COLLECTION = "groq_token_ledger"
+    # The only two purposes TickBrain.think() ever bills to Groq (WARNING 1
+    # layering in core/tick_brain.py) — *_fallback purposes bill Gemini and
+    # must never be counted against the Groq TPD cap.
+    _PRIMARY_PURPOSES = frozenset({"tick", "tick_autonomous"})
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def increment(self, purpose: str, in_tokens: int, out_tokens: int) -> None:
+        """Bump today's total_tokens + the per-purpose bucket. Never raises.
+
+        Only `purpose in {"tick", "tick_autonomous"}` is counted — any other
+        purpose (including a `*_fallback` one) is silently ignored so
+        Gemini-billed fallback tokens never pollute the Groq TPD accounting.
+        """
+        if purpose not in self._PRIMARY_PURPOSES:
+            return
+        try:
+            from datetime import date
+            today = date.today().isoformat()
+            total = (in_tokens or 0) + (out_tokens or 0)
+            purpose_key = f"{purpose}_tokens"
+            self._col.document(today).set(
+                {
+                    "date": today,
+                    "total_tokens": firestore.Increment(total),
+                    purpose_key: firestore.Increment(total),
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.warning("GroqTokenLedgerStore.increment(%r) failed", purpose, exc_info=True)
+
+    def today(self) -> dict:
+        """Return today's doc as a dict. Never raises — {} on absent/error."""
+        try:
+            from datetime import date
+            today = date.today().isoformat()
+            snap = self._col.document(today).get()
+            if not snap.exists:
+                return {}
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("GroqTokenLedgerStore.today() failed", exc_info=True)
+            return {}
+
+    def already_alerted(self, date_str: str) -> bool:
+        """Return True if the 80%-budget alert already fired for date_str.
+
+        Never raises — returns False on any Firestore read error so a
+        transient outage does not permanently suppress (or spuriously
+        re-fire) the alert. Suppression is keyed off the `alerted_at` field
+        rather than doc existence, since `increment()` already creates the
+        day's doc well before the 80% threshold is crossed.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return False
+            data = snap.to_dict() or {}
+            return bool(data.get("alerted_at"))
+        except Exception:
+            logger.warning("GroqTokenLedgerStore.already_alerted(%r) failed", date_str, exc_info=True)
+            return False
+
+    def mark_alerted(self, date_str: str, summary: dict) -> None:
+        """Record that the 80%-budget alert fired for date_str, with a summary.
+
+        Merges onto the existing day's doc (never clobbers total_tokens).
+        Re-raises after logging on write failure, matching
+        CostTripwireLogStore.mark_fired's discipline — the caller decides
+        whether to abort the alert send.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "alerted_at": firestore.SERVER_TIMESTAMP,
+                    "alert_summary": summary,
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("GroqTokenLedgerStore.mark_alerted(%r) failed", date_str, exc_info=True)
+            raise
+
+
 class CoachingTopicStore:
     """Per-day coaching topic gate for cross-cron dedup (Phase 24 — COACH-05).
 

@@ -864,6 +864,133 @@ def check_daily_spend() -> dict | None:
         return None
 
 
+_GROQ_DAILY_TOKEN_CAP = 200_000
+_GROQ_BUDGET_WARN_FRACTION = 0.8  # D-07 — warn at 80% (160K of 200K TPD)
+# Fallback-purpose call-count spike threshold (D-07 second half). Mirrors the
+# magnitude of _FALLBACK_WARN_THRESHOLD (smart-brain Gemini->Haiku fallback,
+# line 334) — an occasional 1-2 fallback calls/day is expected background
+# noise (transient Groq errors), 10+ suggests the Groq primary is
+# systemically failing (rate limit, decommissioned model id, outage).
+_GROQ_FALLBACK_SPIKE_THRESHOLD = 10
+
+
+def _groq_budget_plain_text_fallback(payload: dict) -> str:
+    """Deterministic plain-text Groq-budget alert, used when the Sonnet
+    compose call fails. Mirrors _spend_plain_text_fallback's shape."""
+    lines = []
+    if payload.get("over_budget"):
+        lines.append(
+            f"Groq daily token budget alert: {payload['total_tokens']:,} of "
+            f"{payload['cap']:,} tokens used today ({payload['fraction']:.0%})."
+        )
+    if payload.get("spiking"):
+        lines.append(
+            f"Groq tick-brain fallback calls today: {payload['fallback_calls']} "
+            f"(threshold {payload['fallback_threshold']}) — routing to the "
+            "metered Gemini fallback more than usual."
+        )
+    return "\n".join(lines) or "Groq daily token budget alert."
+
+
+def _compose_groq_budget_alert(payload: dict) -> str:
+    """Compose the Klaus-voiced Groq-budget alert via Sonnet (SMART_AGENT_*),
+    with a deterministic plain-text fallback on any failure.
+
+    Mirrors _compose_spend_alert's shape but points at
+    prompts/groq_budget.md, and tags the call purpose="groq_budget_tripwire"
+    so its own cost is auditable (mirrors T-30.5-15).
+    """
+    prompt_path = Path(__file__).parent.parent / "prompts" / "groq_budget.md"
+    try:
+        system_prompt = prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        return _groq_budget_plain_text_fallback(payload)
+
+    body = json.dumps(payload, ensure_ascii=False, indent=2)
+    try:
+        from core.llm_client import LLMClient
+        client = LLMClient(
+            backend=os.environ["SMART_AGENT_BACKEND"],
+            model=os.environ["SMART_AGENT_MODEL"],
+            api_key=os.environ["SMART_AGENT_API_KEY"],
+            base_url=os.environ.get("SMART_AGENT_BASE_URL"),
+        )
+        response = client.chat(
+            messages=[{"role": "user", "content": body}],
+            system=system_prompt,
+            purpose="groq_budget_tripwire",
+        )
+        text = (response.get("text") or "").strip()
+        if text:
+            return text
+    except Exception:
+        logger.warning("heartbeat: groq-budget LLM composition failed", exc_info=True)
+
+    return _groq_budget_plain_text_fallback(payload)
+
+
+def check_groq_budget() -> dict | None:
+    """Once-daily, per-date-suppressed Groq token-budget tripwire (MEM-06, D-07).
+
+    Reads today's GroqTokenLedgerStore total_tokens; if it has crossed 80% of
+    the 200K TPD Groq free-tier cap, OR today's tick_fallback +
+    tick_autonomous_fallback call counts (existing LLMUsageStore per-purpose
+    counters) have spiked past _GROQ_FALLBACK_SPIKE_THRESHOLD, composes a
+    Klaus-voiced alert (Sonnet, with deterministic template fallback) and
+    returns it for the caller to send and mark alerted.
+
+    Returns {"date": today_iso, "text": alert_text, "summary": payload} when
+    an alert should be sent, or None if under threshold, no spike, already
+    alerted today, or on any internal error. Never raises into the cron —
+    the caller (run_tick) is responsible for sending the text and gating
+    GroqTokenLedgerStore.mark_alerted on a successful send (D-10 pattern,
+    mirrors check_daily_spend/CostTripwireLogStore).
+    """
+    try:
+        from datetime import date
+        from memory.firestore_db import GroqTokenLedgerStore, LLMUsageStore
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        today_iso = date.today().isoformat()
+
+        ledger_store = GroqTokenLedgerStore(project_id=project_id, database=database)
+        ledger_today = ledger_store.today()
+        total_tokens = int(ledger_today.get("total_tokens", 0) or 0)
+        fraction = total_tokens / _GROQ_DAILY_TOKEN_CAP
+
+        usage_store = LLMUsageStore(project_id=project_id, database=database)
+        usage_today = usage_store.summary(period="today")
+        fallback_calls = (
+            int(usage_today.get("tick_fallback_calls", 0) or 0)
+            + int(usage_today.get("tick_autonomous_fallback_calls", 0) or 0)
+        )
+
+        over_budget = fraction >= _GROQ_BUDGET_WARN_FRACTION
+        spiking = fallback_calls >= _GROQ_FALLBACK_SPIKE_THRESHOLD
+
+        if not over_budget and not spiking:
+            return None
+
+        if ledger_store.already_alerted(today_iso):
+            return None
+
+        payload = {
+            "date": today_iso,
+            "total_tokens": total_tokens,
+            "cap": _GROQ_DAILY_TOKEN_CAP,
+            "fraction": fraction,
+            "over_budget": over_budget,
+            "fallback_calls": fallback_calls,
+            "fallback_threshold": _GROQ_FALLBACK_SPIKE_THRESHOLD,
+            "spiking": spiking,
+        }
+        text = _compose_groq_budget_alert(payload)
+        return {"date": today_iso, "text": text, "summary": payload}
+    except Exception:
+        logger.warning("heartbeat: check_groq_budget failed", exc_info=True)
+        return None
+
+
 def _load_config() -> dict:
     """Load heartbeat config from Firestore. Returns defaults on error."""
     try:
@@ -1037,6 +1164,30 @@ async def _send_daily_spend_alert(bot) -> None:
         logger.warning("heartbeat: daily-spend tripwire send/mark_fired failed", exc_info=True)
 
 
+async def _send_groq_budget_alert(bot) -> None:
+    """Send the Groq daily-token-budget tripwire alert (MEM-06/D-07), if due.
+
+    Separate guarded action, mirroring _send_daily_spend_alert's shape and
+    D-10 gating: GroqTokenLedgerStore.mark_alerted is called ONLY after a
+    successful send, so a delivery failure retries on the next hourly tick
+    rather than being silently suppressed. Never raises into the cron.
+    """
+    try:
+        alert = check_groq_budget()
+        if not alert:
+            return
+        await send_and_inject(
+            bot, alert["text"], inject_into_conversation=True, message_class="alert",
+        )
+        from memory.firestore_db import GroqTokenLedgerStore
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        GroqTokenLedgerStore(project_id=project_id, database=database).mark_alerted(
+            alert["date"], alert["summary"])
+    except Exception:
+        logger.warning("heartbeat: groq-budget tripwire send/mark_alerted failed", exc_info=True)
+
+
 async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
     """Run one heartbeat tick. Returns the signals collected."""
     now = now or datetime.now(_TZ)
@@ -1047,6 +1198,7 @@ async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
 
     await _drain_quiet_queue(bot, now, config)
     await _send_daily_spend_alert(bot)
+    await _send_groq_budget_alert(bot)
 
     tiers = _tiers_for_now(config, now)
     signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
