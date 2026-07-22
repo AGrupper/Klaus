@@ -2294,3 +2294,175 @@ class TestConversationTailAndTrainingRealityRenders:
         assert "Training reality (today-3d..tomorrow" in content
         assert yesterday_iso in content
         assert "Upper Body" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 08 (MEM-07) — derive_current_location + _gather_location
+# (context-only) + the nightly/morning weather repointing + location_ask
+# wiring (Task 2's call-site changes live in core/nightly_review.py and
+# core/morning_briefing.py; this file only exercises the shared derivation
+# heuristic and the prompt-doc grep, per the plan's <files> list).
+# ---------------------------------------------------------------------------
+
+
+class TestDeriveCurrentLocationHeuristic:
+    """derive_current_location: pure Pattern 7 heuristic (D-06) — conservative
+    under-detect, home-silent default, never guesses on conflict or an
+    unclear trip-end."""
+
+    def test_derive_current_location_no_signal_returns_home_silently(self):
+        result = autonomous.derive_current_location([], [])
+        assert result == {"location": "Tel Aviv"}
+
+    def test_derive_current_location_calendar_signal_overrides_home(self):
+        events = [{"summary": "Client meeting", "location": "Paris, France"}]
+        result = autonomous.derive_current_location(events, [])
+        assert result == {"location": "Paris, France"}
+
+    def test_derive_current_location_tel_aviv_calendar_location_stays_home(self):
+        """A calendar event location that names Tel Aviv itself is NOT a
+        travel signal — must not be mistaken for an override."""
+        events = [{"summary": "Standup", "location": "Tel Aviv HQ"}]
+        result = autonomous.derive_current_location(events, [])
+        assert result == {"location": "Tel Aviv"}
+
+    def test_derive_current_location_directive_alone_is_ambiguous(self):
+        """No calendar corroboration — unclear trip-end, must ask not guess."""
+        directives = [{
+            "id": "d1",
+            "text": "stop nagging about training while I'm in France",
+            "condition_text": "back from France",
+        }]
+        result = autonomous.derive_current_location([], directives)
+        assert result == {"ambiguous": True, "candidate": "France"}
+
+    def test_derive_current_location_calendar_and_directive_agree_resolves(self):
+        events = [{"summary": "Dinner", "location": "Paris"}]
+        directives = [{"id": "d1", "text": "while I'm in Paris, keep it brief"}]
+        result = autonomous.derive_current_location(events, directives)
+        assert result == {"location": "Paris"}
+
+    def test_derive_current_location_calendar_and_directive_conflict_is_ambiguous(self):
+        events = [{"summary": "Meeting", "location": "London"}]
+        directives = [{"id": "d1", "text": "while I'm in Paris, keep it brief"}]
+        result = autonomous.derive_current_location(events, directives)
+        assert result == {"ambiguous": True, "candidate": "London"}
+
+    def test_derive_current_location_never_raises_on_malformed_input(self):
+        assert autonomous.derive_current_location(None, None) == {"location": "Tel Aviv"}
+        assert autonomous.derive_current_location(
+            [{"summary": "no location field"}], [{"not": "a directive text field"}]
+        ) == {"location": "Tel Aviv"}
+
+    def test_derive_current_location_directive_place_name_capped_at_three_words(self):
+        """Conservative over-capture guard — a longer sentence fragment after
+        the place name doesn't get treated as part of the literal city."""
+        directives = [{"id": "d1", "text": "while I'm in New York for a work trip"}]
+        result = autonomous.derive_current_location([], directives)
+        assert result["ambiguous"] is True
+        # The stop-word split on " for " must cut the capture before "for".
+        assert result["candidate"] == "New York"
+
+
+class TestGatherCurrentLocationContextOnly:
+    """_gather_location wraps the pure heuristic over already-gathered
+    situation values (no new API call), sentinel-on-failure, context-only in
+    the Layer-0 empty gate (T-32-17)."""
+
+    def test_gather_current_location_derives_from_situation(self):
+        situation = {
+            "calendar": [{"summary": "Client visit", "location": "Paris"}],
+            "standing_directives": [],
+        }
+        assert autonomous._gather_location(situation) == {"location": "Paris"}
+
+    def test_gather_current_location_home_default_when_situation_empty(self):
+        assert autonomous._gather_location({}) == {"location": "Tel Aviv"}
+
+    def test_gather_current_location_never_raises_returns_home_sentinel(self, monkeypatch):
+        def _boom(*a, **kw):
+            raise RuntimeError("heuristic exploded")
+        monkeypatch.setattr(autonomous, "derive_current_location", _boom)
+        result = autonomous._gather_location({"calendar": [], "standing_directives": []})
+        assert result == {"location": "Tel Aviv"}
+
+    def test_is_empty_signals_true_with_only_current_location(self):
+        """MEM-05/MEM-07 (T-32-17) — a resolved (non-home) current_location
+        alone must not wake the free tier; deriving it is context-only."""
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "due_followups": [],
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "now_context": {},
+            "location": {"location": "Paris"},
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+    def test_is_empty_signals_true_with_only_ambiguous_current_location(self):
+        """Even an AMBIGUOUS derivation must not trigger the free tier — the
+        ask itself only fires through the nightly compose payload."""
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "due_followups": [],
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "now_context": {},
+            "location": {"ambiguous": True, "candidate": "Paris"},
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+    def test_gather_situation_includes_current_location_key(self, fixed_now, monkeypatch):
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789")
+        with patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
+             patch("core.tools._get_gmail_tool") as get_gm, \
+             patch("memory.firestore_db.FollowupStore") as fs_cls, \
+             patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
+             patch("memory.firestore_db.JournalStore"), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.OutreachLogStore"), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls, \
+             patch("core.training_checkin.planned_sessions_for", return_value=None), \
+             patch("memory.firestore_db.TrainingLogStore", **{"return_value.get_by_date.return_value": []}), \
+             patch("memory.firestore_db.StrengthSessionStore", **{"return_value.get_range.return_value": []}), \
+             patch("memory.firestore_db.RunDetailStore", **{"return_value.get_range.return_value": []}):
+            get_cal.return_value.list_events.return_value = []
+            get_gm.return_value.list_unread.return_value = []
+            fs_cls.return_value.list_due.return_value = []
+            conv_cls.return_value.get_last_user_timestamp.return_value = None
+            sds_cls.return_value.list_active.return_value = []
+
+            out = autonomous.gather_situation(fixed_now)
+
+        assert "location" in out
+        assert out["location"] == {"location": "Tel Aviv"}
+
+    def test_gather_situation_current_location_reflects_calendar_travel_signal(self, fixed_now, monkeypatch):
+        """End-to-end through the real pool: a today calendar event with a
+        travel location resolves into gather_situation's assembled dict."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789")
+        with patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
+             patch("core.tools._get_gmail_tool") as get_gm, \
+             patch("memory.firestore_db.FollowupStore") as fs_cls, \
+             patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
+             patch("memory.firestore_db.JournalStore"), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.OutreachLogStore"), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls, \
+             patch("core.training_checkin.planned_sessions_for", return_value=None), \
+             patch("memory.firestore_db.TrainingLogStore", **{"return_value.get_by_date.return_value": []}), \
+             patch("memory.firestore_db.StrengthSessionStore", **{"return_value.get_range.return_value": []}), \
+             patch("memory.firestore_db.RunDetailStore", **{"return_value.get_range.return_value": []}):
+            get_cal.return_value.list_events.return_value = [
+                {"summary": "Conference", "location": "Berlin"}
+            ]
+            get_gm.return_value.list_unread.return_value = []
+            fs_cls.return_value.list_due.return_value = []
+            conv_cls.return_value.get_last_user_timestamp.return_value = None
+            sds_cls.return_value.list_active.return_value = []
+
+            out = autonomous.gather_situation(fixed_now)
+
+        assert out["location"] == {"location": "Berlin"}
+        # CONTEXT only — a resolved travel location alone must not flip empty.
+        assert out["empty"] is True
