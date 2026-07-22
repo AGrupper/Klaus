@@ -244,6 +244,235 @@ def compute_recovery_concern(
 
 
 # ------------------------------------------------------------------ #
+# Planned sessions (weekly_split intent) — MEM-04, Phase 32 Plan 04   #
+# ------------------------------------------------------------------ #
+
+def planned_sessions_for(date_iso: str) -> dict | None:
+    """A date's planned AM/PM sessions from the training program's weekly_split.
+
+    Moved here (Phase 32, MEM-04) from core/nightly_review.py's private
+    `_planned_workouts_for` so core/autonomous.py can consume planned training
+    intent without importing nightly_review (locked project decision:
+    core/autonomous.py must never import core/nightly_review.py). This module
+    is the neutral home already used by compute_recovery_concern for the same
+    acyclic-import reason (imported by both nightly_review and morning_briefing).
+
+    Reads the users/amit profile via the same store path as the get_plan tool
+    (core.tools._block_stores → UserProfileStore.load), keys into weekly_split by
+    the date's weekday name (case-insensitive). weekly_split is a recurring
+    weekly TEMPLATE keyed by weekday name, not a per-date store — the same
+    template applies to every occurrence of that weekday. Returns
+    {"weekday", "am": {...}, "pm": {...}} or None when there's no entry. The raw
+    AM/PM session data is passed through untouched — callers decide which slots
+    are real workouts vs. rest/mobility (generative-coaching philosophy).
+    """
+    try:
+        from core.tools import _block_stores
+        _blocks, _benchmarks, profiles = _block_stores()
+        weekly_split = (profiles.load() or {}).get("weekly_split") or {}
+        if not weekly_split:
+            return None
+        weekday = datetime.fromisoformat(date_iso).strftime("%A")  # e.g. "Monday"
+        slots = weekly_split.get(weekday)
+        if slots is None:  # case-insensitive fallback for lowercase/odd keys
+            slots = next(
+                (v for k, v in weekly_split.items() if str(k).lower() == weekday.lower()),
+                None,
+            )
+        if not isinstance(slots, dict):
+            return None
+        return {
+            "weekday": weekday,
+            "am": slots.get("am") or {},
+            "pm": slots.get("pm") or {},
+        }
+    except Exception:
+        logger.warning("training_checkin: planned-session lookup failed", exc_info=True)
+        return None
+
+
+# ------------------------------------------------------------------ #
+# training_reality reconciler — MEM-04, Phase 32 Plan 04              #
+# ------------------------------------------------------------------ #
+
+def _normalize_modality(value: str | None) -> str:
+    """Collapse a free-text modality/type/activity string to a canonical bucket.
+
+    D-02 matching is same-date + modality-only (no pace/distance/duration
+    comparison), so evidence sources that use different vocabularies
+    (weekly_split's "modality": "run"/"lift"/"strength"/"rest"/"mobility"/
+    "calisthenics"; Garmin raw activity types like "running"/"strength_training";
+    calendar event summaries like "Easy Run") all need to collapse onto the
+    same small bucket set before comparison. Unrecognised values pass through
+    lowercased/stripped unchanged (e.g. "mobility", "calisthenics", "bike") so
+    they can still self-match across sources that happen to agree verbatim.
+    """
+    if not value:
+        return ""
+    v = str(value).strip().lower()
+    if "run" in v:
+        return "run"
+    if "lift" in v or "strength" in v or "gym" in v or v == "fitness_equipment":
+        return "lift"
+    if v in ("rest", "off", "recovery"):
+        return "rest"
+    return v
+
+
+def _slot_modality(slot_name: str, planned_slot: dict | None, calendar_events: list[dict]) -> str:
+    """Effective planned modality for a slot (D-01: calendar intent > weekly_split intent).
+
+    A Training-calendar event whose start time falls in the slot's half of the
+    day (before noon = am, noon-or-after = pm) overrides the static weekly_split
+    template modality for that slot — the calendar reflects what was actually
+    scheduled for that specific date, which may differ from the recurring
+    template (e.g. a swapped rest day). Falls back to the weekly_split modality
+    when no matching calendar event is found or its start can't be parsed.
+    """
+    for event in calendar_events or []:
+        start = event.get("start") if isinstance(event, dict) else None
+        if not start:
+            continue
+        try:
+            hour = datetime.fromisoformat(start).hour
+        except (TypeError, ValueError):
+            continue
+        event_slot = "am" if hour < 12 else "pm"
+        if event_slot != slot_name:
+            continue
+        modality = _normalize_modality(event.get("summary"))
+        if modality:
+            return modality
+    return _normalize_modality((planned_slot or {}).get("modality"))
+
+
+def _reconcile_slot_status(
+    modality: str,
+    evidence_modalities: set[str],
+    self_report_by_modality: dict[str, dict],
+    is_past: bool,
+) -> str:
+    """D-01 precedence for one slot: evidence > self-report > intent-only.
+
+    SC-4 terminal-status invariant: evidence is checked FIRST, so once evidence
+    for this modality on this date exists, the result is always "done" —
+    regardless of any stale/conflicting self-report row (e.g. a self-reported
+    "skipped" logged before the Garmin/Hevy sync landed). A later re-read of
+    the same date+slot with the same evidence present therefore always returns
+    the same terminal "done", never a fresh "missed".
+    """
+    if not modality or modality == "rest":
+        return ""  # no real session planned for this slot — nothing to reconcile
+
+    if modality in evidence_modalities:
+        return "done"
+
+    self_row = self_report_by_modality.get(modality)
+    if self_row is not None:
+        if self_row.get("completed"):
+            return "done"
+        skipped_reason = self_row.get("skipped_reason")
+        if skipped_reason:
+            return f"skipped:{skipped_reason}"
+
+    return "missed" if is_past else "planned"
+
+
+def build_training_reality(
+    dates: list[str],
+    planned_by_date: dict[str, dict | None],
+    calendar_by_date: dict[str, list[dict]],
+    evidence_by_date: dict[str, dict],
+    self_report_by_date: dict[str, dict],
+    today_iso: str,
+) -> dict[str, dict]:
+    """Reconcile planned/calendar/evidence/self-report into per-date slot status.
+
+    PURE function (MEM-04) — mirrors compute_recovery_concern's shape: every
+    input is already-fetched data injected by the caller, no store I/O of its
+    own. The actual store reads (TrainingLogStore/StrengthSessionStore/
+    RunDetailStore/GoogleCalendarManager) happen in the Plan 07 autonomous
+    gather that calls this.
+
+    Precedence per slot (D-01): evidence (Hevy/Garmin) > self-report
+    (TrainingLogStore.completed) > calendar intent > weekly_split intent.
+    Matching (D-02): same calendar date + modality match only — a run
+    satisfies a run slot at any time of day, never a lift slot (no
+    pace/distance/duration comparison).
+
+    Args:
+        dates: YYYY-MM-DD dates to reconcile (typically today-3d..tomorrow).
+        planned_by_date: date -> planned_sessions_for(date)-shaped dict
+            ({"weekday", "am": {...}, "pm": {...}}) or None.
+        calendar_by_date: date -> list of Training-calendar event dicts
+            (each with at least "start"/"summary").
+        evidence_by_date: date -> hard evidence for that date, shaped like
+            {"strength_today": [...], "runs_today": [...]} (the Hevy/Garmin
+            halves of _gather_training_evidence's output — NOT training_log,
+            which is self-report).
+        self_report_by_date: date -> {"training_log_today": [...]} — the
+            TrainingLogStore-row half of _gather_training_evidence's output
+            (planned/completed/skipped_reason/type/source per row).
+        today_iso: YYYY-MM-DD reference date used to decide "missed" (past,
+            no evidence/self-report) vs "planned" (today or future). Passed
+            explicitly (mirrors compute_recovery_concern's today_iso param)
+            so the function stays pure — no wall-clock read inside it.
+
+    Returns:
+        dict[date] -> {"planned": {...}, "calendar": [...], "evidence": {...},
+        "slots": {"am": <status>, "pm": <status>}} where status is one of
+        "done" | "missed" | "skipped:<reason>" | "planned". A slot is omitted
+        from "slots" when there is no real session planned for it (empty or
+        "rest" modality).
+    """
+    result: dict[str, dict] = {}
+
+    for date_iso in dates:
+        planned = planned_by_date.get(date_iso) or {}
+        calendar_events = calendar_by_date.get(date_iso) or []
+        evidence = evidence_by_date.get(date_iso) or {}
+        self_report = self_report_by_date.get(date_iso) or {}
+
+        evidence_modalities: set[str] = set()
+        if evidence.get("strength_today"):
+            evidence_modalities.add("lift")
+        if evidence.get("runs_today"):
+            evidence_modalities.add("run")
+
+        self_report_by_modality: dict[str, dict] = {}
+        for row in self_report.get("training_log_today") or []:
+            modality = _normalize_modality(row.get("type"))
+            if not modality:
+                continue
+            existing = self_report_by_modality.get(modality)
+            # Prefer a completed row over a non-completed one for the same
+            # modality when both exist (e.g. a skip logged, then later done).
+            if existing is None or (row.get("completed") and not existing.get("completed")):
+                self_report_by_modality[modality] = row
+
+        is_past = date_iso < today_iso
+
+        slots_status: dict[str, str] = {}
+        for slot_name in ("am", "pm"):
+            planned_slot = planned.get(slot_name) if isinstance(planned, dict) else None
+            modality = _slot_modality(slot_name, planned_slot, calendar_events)
+            status = _reconcile_slot_status(
+                modality, evidence_modalities, self_report_by_modality, is_past
+            )
+            if status:
+                slots_status[slot_name] = status
+
+        result[date_iso] = {
+            "planned": planned,
+            "calendar": calendar_events,
+            "evidence": evidence,
+            "slots": slots_status,
+        }
+
+    return result
+
+
+# ------------------------------------------------------------------ #
 # Helpers — Firestore stores                                         #
 # ------------------------------------------------------------------ #
 

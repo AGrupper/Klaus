@@ -127,39 +127,14 @@ def _ensure_reflection(target_date: str) -> dict | None:
 # Tomorrow gather (schedule, tasks, weather, recovery)               #
 # ------------------------------------------------------------------ #
 
-def _planned_workouts_for(tomorrow_iso: str) -> dict | None:
-    """Tomorrow's planned AM/PM sessions from the training program's weekly_split.
-
-    Reads the users/amit profile via the same store path as the get_plan tool
-    (core.tools._block_stores → UserProfileStore.load), keys into weekly_split by
-    tomorrow's weekday name (case-insensitive). Returns
-    {"weekday", "am": {...}, "pm": {...}} or None when there's no entry. The raw
-    AM/PM session data is passed through untouched — the nightly prompt decides which
-    are real workouts vs. rest/mobility slots (generative-coaching philosophy).
-    """
-    try:
-        from core.tools import _block_stores
-        _blocks, _benchmarks, profiles = _block_stores()
-        weekly_split = (profiles.load() or {}).get("weekly_split") or {}
-        if not weekly_split:
-            return None
-        weekday = datetime.fromisoformat(tomorrow_iso).strftime("%A")  # e.g. "Monday"
-        slots = weekly_split.get(weekday)
-        if slots is None:  # case-insensitive fallback for lowercase/odd keys
-            slots = next(
-                (v for k, v in weekly_split.items() if str(k).lower() == weekday.lower()),
-                None,
-            )
-        if not isinstance(slots, dict):
-            return None
-        return {
-            "weekday": weekday,
-            "am": slots.get("am") or {},
-            "pm": slots.get("pm") or {},
-        }
-    except Exception:
-        logger.warning("nightly_review: planned-workout lookup failed", exc_info=True)
-        return None
+# MEM-04 (Phase 32, Plan 04): moved to core/training_checkin.py as the public
+# `planned_sessions_for(date_iso)` so core/autonomous.py can consume planned
+# training intent without importing this module (locked project decision:
+# core/autonomous.py must never import core/nightly_review.py). Re-imported
+# here under the original private name so every existing internal call site
+# and test (tests/test_nightly_review.py patches `nr._planned_workouts_for`
+# directly) keeps working unchanged.
+from core.training_checkin import planned_sessions_for as _planned_workouts_for
 
 
 def _gather_tomorrow(tomorrow_iso: str) -> dict:
