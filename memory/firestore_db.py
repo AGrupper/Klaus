@@ -1852,12 +1852,14 @@ class StandingDirectiveStore:
         condition_text: str | None # event-based expiry text (D-05, e.g. "while I'm in France")
         superseded_by: str | None  # id of the refined directive that replaced this one (D-16)
 
-    Reads (`list_active`, `list_all`) never raise — `list_active` returns `[]` on
-    Firestore error so every reasoning path (chat, tick triage, Layer-2 compose,
-    interim crons) can keep running even when Firestore is briefly unreachable.
-    Writes (`add`, `cancel`, `supersede`, `expire`) re-raise after logging so the
-    caller can decide. NEVER hard-delete — every mutation is a status transition,
-    auditable via Firestore doc history (matches FollowupStore discipline).
+    Reads (`list_active`, `list_all`, `get`) never raise — `list_active`/`list_all`
+    return `[]` and `get` returns `None` on Firestore error so every reasoning
+    path (chat, tick triage, Layer-2 compose, interim crons) can keep running
+    even when Firestore is briefly unreachable.
+    Writes (`add`, `cancel`, `supersede`, `expire`, `veto`) re-raise after logging
+    so the caller can decide. NEVER hard-delete — every mutation is a status
+    transition, auditable via Firestore doc history (matches FollowupStore
+    discipline).
 
     `list_active()` is served from the module `_READ_CACHE` (directives are read
     on every chat turn + every autonomous tick); every write method invalidates
@@ -2049,6 +2051,58 @@ class StandingDirectiveStore:
             raise
         _cache_invalidate_prefix(("standing_directives",))
         return True
+
+    def veto(self, did: str) -> bool:
+        """Mark a klaus_self directive vetoed — a durable anti-lesson (D-13).
+
+        Rejecting a self-proposed directive is training signal: the doc is
+        kept forever at status='vetoed' (NEVER hard-deleted) so
+        `core/reflection.py`'s ``status == "vetoed"`` guard can read it back
+        and refuse to re-propose the same or near-same directive.
+
+        Args:
+            did: Directive document ID.
+
+        Returns:
+            True if the doc exists and was updated; False if it does not exist.
+
+        Raises:
+            Exception: On any Firestore error other than non-existence (logged
+                + re-raised).
+        """
+        try:
+            snap = self._col.document(did).get()
+            if not snap.exists:
+                return False
+            self._col.document(did).update({"status": "vetoed"})
+        except Exception:
+            logger.error("StandingDirectiveStore.veto(%r) failed", did, exc_info=True)
+            raise
+        _cache_invalidate_prefix(("standing_directives",))
+        return True
+
+    def get(self, did: str) -> dict | None:
+        """Return one directive doc by id, or None if absent / on error. Never raises.
+
+        Cheap single-doc read used by the cancel handler to check `origin`
+        before deciding whether to route to `veto()` or `cancel()` — avoids a
+        full-collection scan for a routing decision.
+
+        Args:
+            did: Directive document ID.
+
+        Returns:
+            The jsonsafe doc dict, or None if the doc does not exist or
+            Firestore errors.
+        """
+        try:
+            snap = self._col.document(did).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("StandingDirectiveStore.get(%r) failed", did, exc_info=True)
+            return None
 
 
 class OutreachLogStore:

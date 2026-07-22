@@ -667,6 +667,99 @@ class TestStandingDirectiveStore:
             with pytest.raises(RuntimeError):
                 store.cancel("abc")
 
+    def test_veto_sets_vetoed_and_returns_true(self):
+        """veto(id) sets status='vetoed' and returns True; doc is NOT deleted (D-13)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.veto("abc") is True
+
+        doc_ref.update.assert_called_with({"status": "vetoed"})
+        doc_ref.delete.assert_not_called()
+
+    def test_veto_unknown_id_returns_false(self):
+        """veto(unknown_id) returns False when the doc does not exist (never raises)."""
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "ghost")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.veto("ghost") is False
+
+    def test_veto_invalidates_cache(self):
+        """veto() must invalidate the ("standing_directives",) cache prefix so a
+        subsequent list_active()/list_all() read reflects the new status."""
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
+        col.where.return_value.stream.return_value = iter([])
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            store.list_active()  # warm the cache
+            store.veto("abc")
+            store.list_active()
+
+        assert col.where.return_value.stream.call_count == 2, "veto must invalidate the cache"
+
+    def test_veto_raises_on_firestore_error(self):
+        """veto() must log and re-raise on a Firestore error (not a missing doc)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated get failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            with pytest.raises(RuntimeError):
+                store.veto("abc")
+
+    def test_vetoed_doc_still_present_via_list_all(self):
+        """A vetoed directive is a status transition, not a deletion — it must
+        still show up via list_all() so reflection's guard can read it (D-13)."""
+        client, col = _make_mock_client_with_collection()
+        snap = MagicMock()
+        snap.to_dict.return_value = {"id": "abc", "status": "vetoed"}
+        col.stream.return_value = iter([snap])
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            results = store.list_all()
+
+        assert results == [{"id": "abc", "status": "vetoed"}]
+
+    def test_get_returns_doc_dict_for_existing_id(self):
+        """get(id) returns the jsonsafe doc dict for an existing directive."""
+        client, col = _make_mock_client_with_collection()
+        _stub_existing_doc(col, "abc", {"id": "abc", "status": "active", "origin": "klaus_self"})
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            result = store.get("abc")
+
+        assert result == {"id": "abc", "status": "active", "origin": "klaus_self"}
+
+    def test_get_returns_none_for_missing_id(self):
+        """get(unknown_id) returns None (never raises)."""
+        client, col = _make_mock_client_with_collection()
+        _stub_missing_doc(col, "ghost")
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.get("ghost") is None
+
+    def test_get_returns_none_on_firestore_error(self):
+        """get() must return None (not raise) when Firestore errors."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.get.side_effect = RuntimeError("simulated get failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.StandingDirectiveStore("test-project")
+            assert store.get("abc") is None
+
 
 # =============================================================================
 # OutreachLogStore — AUTO-03, D-07/D-09/D-10/D-21
