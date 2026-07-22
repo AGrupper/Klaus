@@ -26,7 +26,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 - [ ] **DIR-02**: Directives with a stated or implied end condition ("while I'm in France") expire on it; otherwise they persist until cancelled — no automatic TTL. Klaus may ask "until when?" only when genuinely unsure
 - [ ] **DIR-03**: Active directives are injected verbatim into EVERY reasoning path (chat system prompt, tick triage as a Step-0 STANDING ORDERS veto above all other logic, Layer-2 compose, follow-up compose, interim cron gathers)
 - [ ] **DIR-04**: Amit can list and cancel standing directives from chat
-- [ ] **DIR-05**: When a directive contradicts a baked-in persona routine, Klaus flags it and asks once which wins, recording the answer as a refined directive with a `superseded_by` link on the old one
+- [x] **DIR-05**: When a directive contradicts a baked-in persona routine, Klaus flags it and asks once which wins, recording the answer as a refined directive with a `superseded_by` link on the old one
 - [ ] **DIR-06**: Nightly reflection reads a 24h conversation window (`get_recent_window`, built this phase) and extracts behavioral feedback — frustration, appreciation, corrections — pairing each Klaus-initiated outreach with Amit's reaction (replied / ignored / pushback)
 - [ ] **DIR-07**: Reflection may propose self-directives (`origin="klaus_self"`), surfaced to Amit in the nightly message with a one-line veto option
 
@@ -108,7 +108,7 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | DIR-02 | Phase 31 | Pending |
 | DIR-03 | Phase 31 | Pending |
 | DIR-04 | Phase 31 | Pending |
-| DIR-05 | Phase 31 | Pending |
+| DIR-05 | Phase 31 | Complete |
 | DIR-06 | Phase 31 | Pending |
 | DIR-07 | Phase 31 | Pending |
 | MEM-01 | Phase 32 | Pending |

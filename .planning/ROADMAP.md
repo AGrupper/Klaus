@@ -81,7 +81,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 31-04-PLAN.md — Autonomous injection: Step-0 STANDING ORDERS veto + Layer-2/follow-up compose + context-only gather (DIR-03)
 - [x] 31-05-PLAN.md — Legacy-cron veto (morning briefing + weekly review, D-21/D-22, skipped_by_directive) (DIR-03)
 - [x] 31-06-PLAN.md — Reflection learning loop (reaction pairing, self-directives, judged expiry, prune-flags) + nightly weaving (DIR-02/06/07)
-- [ ] 31-07-PLAN.md — [gap] superseded_by reachable: `supersedes` param on set_standing_directive → store.supersede() + persona-conflict prompt rule (DIR-05)
+- [x] 31-07-PLAN.md — [gap] superseded_by reachable: `supersedes` param on set_standing_directive → store.supersede() + persona-conflict prompt rule (DIR-05)
 - [ ] 31-08-PLAN.md — [gap] vetoed anti-lesson reachable: StandingDirectiveStore.veto() writer + cancel routes klaus_self→veto + real no-re-propose test (DIR-07)
 
 ### Phase 32: Unified Situation (Ambient Memory)
@@ -141,7 +141,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
-| 31. Standing Directives | 6/8 | Gap Closure Planned | 2026-07-20 |
+| 31. Standing Directives | 7/8 | In Progress|  |
 | 32. Unified Situation (Ambient Memory) | 0/? | Not started | - |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |

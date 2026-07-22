@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: executing
-stopped_at: Phase 31 context gathered
-last_updated: "2026-07-22T10:34:54.916Z"
-last_activity: 2026-07-22 -- Phase 31 planning complete
+stopped_at: 31-07-PLAN.md executed (gap closure); 31-08-PLAN.md (vetoed anti-lesson) remains
+last_updated: "2026-07-22T11:13:04.995Z"
+last_activity: 2026-07-22 -- executed 31-07-PLAN.md (supersedes param + persona-conflict prompt rewrite)
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 14
-  completed_plans: 12
+  completed_plans: 13
   percent: 17
 ---
 
@@ -19,9 +19,9 @@ progress:
 ## Current Position
 
 Phase: 31 (standing-directives) — EXECUTING
-Plan: 1 of 6
-Status: Ready to execute
-Last activity: 2026-07-22 -- Phase 31 planning complete
+Plan: 07 of 8 (gap-closure; 06 core plans + 2 gap-closure plans 07/08 added post-verification)
+Status: 31-07 complete (DIR-05/SC-5/D-16 gap closed); 31-08 (vetoed anti-lesson) remains
+Last activity: 2026-07-22 -- executed 31-07-PLAN.md (supersedes param + persona-conflict prompt rewrite)
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -175,10 +175,10 @@ Carried forward from v4.0 close (still open):
 
 ## Session Continuity
 
-Last session: 2026-07-18T21:23:26.779Z
-Stopped at: Phase 31 context gathered
-Resume file: .planning/phases/31-standing-directives/31-CONTEXT.md
+Last session: 2026-07-22T11:13:04.991Z
+Stopped at: 31-07-PLAN.md executed (gap closure); 31-08-PLAN.md (vetoed anti-lesson) remains
+Resume file: .planning/phases/31-standing-directives/31-08-PLAN.md
 
 ## Operator Next Steps
 
-- Review and approve the v6.0 roadmap, then run `/gsd:plan-phase 30.5` to begin Phase 30.5 (Brain Upgrade — Sonnet 5)
+- Execute `.planning/phases/31-standing-directives/31-08-PLAN.md` (gap-closure: vetoed self-directive anti-lesson, DIR-07/D-13) to close the second remaining gap from `31-VERIFICATION.md`, then re-verify Phase 31.

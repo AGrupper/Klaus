@@ -94,3 +94,10 @@ Gap 1 (DIR-05/SC-5/D-16) from `31-VERIFICATION.md` is closed: the audit link is 
 ---
 *Phase: 31-standing-directives*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: `.planning/phases/31-standing-directives/31-07-SUMMARY.md`
+- FOUND: `eedd3e4` (Task 1 commit)
+- FOUND: `1ea7f10` (Task 2 commit)
+- FOUND: `fea280d` (summary commit)
