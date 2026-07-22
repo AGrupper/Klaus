@@ -814,3 +814,321 @@ def test_run_tick_invokes_daily_spend_alert(monkeypatch):
 
     assert called["spend"] is True
 
+
+# ---------------------------------------------------------------------------
+# Plan 32-05 Task 3 — check_groq_budget() (MEM-06, D-07): 80% + fallback-spike
+# alert, once/day, mirrors check_daily_spend()'s shape.
+# ---------------------------------------------------------------------------
+
+def _mock_groq_budget_stores(monkeypatch, *, ledger_today, usage_today, already_alerted):
+    """Patch memory.firestore_db.GroqTokenLedgerStore/LLMUsageStore so
+    check_groq_budget() never reaches real Firestore."""
+    from unittest.mock import MagicMock, patch
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+    mock_ledger_store = MagicMock()
+    mock_ledger_store.today.return_value = ledger_today
+    mock_ledger_store.already_alerted.return_value = already_alerted
+    mock_usage_store = MagicMock()
+    mock_usage_store.summary.return_value = usage_today
+
+    return (
+        patch("memory.firestore_db.GroqTokenLedgerStore", return_value=mock_ledger_store),
+        patch("memory.firestore_db.LLMUsageStore", return_value=mock_usage_store),
+        mock_ledger_store,
+    )
+
+
+def test_check_groq_budget_under_threshold_no_spike_returns_none(monkeypatch):
+    """(b) Below 160K and no fallback spike -> no alert."""
+    from core import heartbeat
+    patch_ledger, patch_usage, mock_ledger = _mock_groq_budget_stores(
+        monkeypatch,
+        ledger_today={"total_tokens": 50_000},
+        usage_today={"tick_fallback_calls": 1, "tick_autonomous_fallback_calls": 0},
+        already_alerted=False,
+    )
+    with patch_ledger, patch_usage:
+        result = heartbeat.check_groq_budget()
+    assert result is None
+    mock_ledger.mark_alerted.assert_not_called()
+
+
+def test_check_groq_budget_over_threshold_composes_alert(monkeypatch):
+    """(a) At/over 160K -> fires exactly one alert (per call)."""
+    from core import heartbeat
+    patch_ledger, patch_usage, mock_ledger = _mock_groq_budget_stores(
+        monkeypatch,
+        ledger_today={"total_tokens": 160_000},
+        usage_today={"tick_fallback_calls": 1, "tick_autonomous_fallback_calls": 0},
+        already_alerted=False,
+    )
+    monkeypatch.setattr(heartbeat, "_compose_groq_budget_alert", lambda payload: "composed groq alert")
+    with patch_ledger, patch_usage:
+        result = heartbeat.check_groq_budget()
+    assert result is not None
+    assert result["text"] == "composed groq alert"
+    assert result["summary"]["total_tokens"] == 160_000
+    assert result["summary"]["over_budget"] is True
+    assert "date" in result
+    # mark_alerted must NOT be called here — the caller gates it on send.
+    mock_ledger.mark_alerted.assert_not_called()
+
+
+def test_check_groq_budget_already_alerted_returns_none(monkeypatch):
+    """(a) Suppressed on a second same-day call."""
+    from core import heartbeat
+    patch_ledger, patch_usage, mock_ledger = _mock_groq_budget_stores(
+        monkeypatch,
+        ledger_today={"total_tokens": 180_000},
+        usage_today={},
+        already_alerted=True,
+    )
+    with patch_ledger, patch_usage:
+        result = heartbeat.check_groq_budget()
+    assert result is None
+    mock_ledger.mark_alerted.assert_not_called()
+
+
+def test_check_groq_budget_fallback_spike_raises_alert(monkeypatch):
+    """(c) A fallback-purpose call-count spike raises an alert even when the
+    raw token total is well under 80%."""
+    from core import heartbeat
+    patch_ledger, patch_usage, mock_ledger = _mock_groq_budget_stores(
+        monkeypatch,
+        ledger_today={"total_tokens": 5_000},
+        usage_today={"tick_fallback_calls": 8, "tick_autonomous_fallback_calls": 5},
+        already_alerted=False,
+    )
+    monkeypatch.setattr(heartbeat, "_compose_groq_budget_alert", lambda payload: "spike alert")
+    with patch_ledger, patch_usage:
+        result = heartbeat.check_groq_budget()
+    assert result is not None
+    assert result["summary"]["spiking"] is True
+    assert result["summary"]["fallback_calls"] == 13
+    assert result["summary"]["over_budget"] is False
+
+
+def test_check_groq_budget_no_spike_below_threshold_no_alert(monkeypatch):
+    """Fallback calls under the spike threshold, and under 80% token budget
+    -> no alert."""
+    from core import heartbeat
+    patch_ledger, patch_usage, mock_ledger = _mock_groq_budget_stores(
+        monkeypatch,
+        ledger_today={"total_tokens": 10_000},
+        usage_today={"tick_fallback_calls": 3, "tick_autonomous_fallback_calls": 2},
+        already_alerted=False,
+    )
+    with patch_ledger, patch_usage:
+        result = heartbeat.check_groq_budget()
+    assert result is None
+
+
+def test_check_groq_budget_never_raises_on_store_error(monkeypatch):
+    """(d) A ledger read failure degrades to no-alert without raising."""
+    from core import heartbeat
+    from unittest.mock import patch
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    with patch("memory.firestore_db.GroqTokenLedgerStore", side_effect=RuntimeError("boom")):
+        result = heartbeat.check_groq_budget()
+    assert result is None
+
+
+def test_groq_budget_plain_text_fallback_contains_key_numbers():
+    from core.heartbeat import _groq_budget_plain_text_fallback
+    payload = {
+        "total_tokens": 165_000, "cap": 200_000, "fraction": 0.825,
+        "over_budget": True, "fallback_calls": 3, "fallback_threshold": 10,
+        "spiking": False,
+    }
+    msg = _groq_budget_plain_text_fallback(payload)
+    assert "165,000" in msg
+    assert "200,000" in msg
+    assert "82%" in msg
+
+
+def test_groq_budget_plain_text_fallback_mentions_spike():
+    from core.heartbeat import _groq_budget_plain_text_fallback
+    payload = {
+        "total_tokens": 5_000, "cap": 200_000, "fraction": 0.025,
+        "over_budget": False, "fallback_calls": 15, "fallback_threshold": 10,
+        "spiking": True,
+    }
+    msg = _groq_budget_plain_text_fallback(payload)
+    assert "15" in msg
+    assert "10" in msg
+
+
+def test_compose_groq_budget_alert_uses_purpose_groq_budget_tripwire(monkeypatch):
+    """The compose call must use purpose='groq_budget_tripwire' (auditable cost)."""
+    from core import heartbeat
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            captured["init"] = kwargs
+
+        def chat(self, *, messages, system, purpose):
+            captured["purpose"] = purpose
+            return {"text": "a real Klaus-composed groq budget alert"}
+
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+    monkeypatch.setattr("core.llm_client.LLMClient", _FakeClient)
+    payload = {
+        "date": "2026-07-22", "total_tokens": 165_000, "cap": 200_000,
+        "fraction": 0.825, "over_budget": True, "fallback_calls": 1,
+        "fallback_threshold": 10, "spiking": False,
+    }
+    result = heartbeat._compose_groq_budget_alert(payload)
+    assert result == "a real Klaus-composed groq budget alert"
+    assert captured["purpose"] == "groq_budget_tripwire"
+
+
+def test_compose_groq_budget_alert_falls_back_on_llm_failure(monkeypatch):
+    """If the Sonnet compose call fails, use the deterministic template."""
+    from core import heartbeat
+
+    class _RaisingClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, *, messages, system, purpose):
+            raise RuntimeError("Anthropic is down")
+
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-key")
+    monkeypatch.setattr("core.llm_client.LLMClient", _RaisingClient)
+    payload = {
+        "date": "2026-07-22", "total_tokens": 165_000, "cap": 200_000,
+        "fraction": 0.825, "over_budget": True, "fallback_calls": 1,
+        "fallback_threshold": 10, "spiking": False,
+    }
+    result = heartbeat._compose_groq_budget_alert(payload)
+    assert "165,000" in result
+    assert "200,000" in result
+
+
+def test_send_groq_budget_alert_sends_and_marks_alerted_on_success(monkeypatch):
+    """The tripwire is sent via send_and_inject, then mark_alerted is called
+    only after that send succeeds (D-10 gating)."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-22", "text": "groq budget alert text",
+              "summary": {"total_tokens": 165_000}}
+    monkeypatch.setattr(heartbeat, "check_groq_budget", lambda: alert)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append((text, kw))
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {}
+    class _FakeLedgerStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_alerted(self, date_str, summary):
+            marked["date"] = date_str
+            marked["summary"] = summary
+    monkeypatch.setattr("memory.firestore_db.GroqTokenLedgerStore", _FakeLedgerStore)
+
+    asyncio.run(heartbeat._send_groq_budget_alert(object()))
+
+    assert sent == [("groq budget alert text",
+                      {"inject_into_conversation": True, "message_class": "alert"})]
+    assert marked == {"date": "2026-07-22", "summary": {"total_tokens": 165_000}}
+
+
+def test_send_groq_budget_alert_no_alert_sends_nothing(monkeypatch):
+    """check_groq_budget returns None (below threshold / already alerted)
+    -> no send, no mark_alerted call."""
+    import asyncio
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "check_groq_budget", lambda: None)
+
+    sent = []
+    async def _send(bot, text, **kw):
+        sent.append(text)
+    monkeypatch.setattr(heartbeat, "send_and_inject", _send)
+
+    marked = {"called": False}
+    class _FakeLedgerStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_alerted(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.GroqTokenLedgerStore", _FakeLedgerStore)
+
+    asyncio.run(heartbeat._send_groq_budget_alert(object()))
+
+    assert sent == []
+    assert marked["called"] is False
+
+
+def test_send_groq_budget_alert_send_failure_leaves_not_alerted(monkeypatch):
+    """A simulated send failure must NOT call mark_alerted — retry-safe on
+    the next tick (mirrors OutreachLogStore/CostTripwireLogStore D-10 gating)."""
+    import asyncio
+    from core import heartbeat
+
+    alert = {"date": "2026-07-22", "text": "groq budget alert text",
+              "summary": {"total_tokens": 165_000}}
+    monkeypatch.setattr(heartbeat, "check_groq_budget", lambda: alert)
+
+    async def _failing_send(bot, text, **kw):
+        raise RuntimeError("Telegram send failed")
+    monkeypatch.setattr(heartbeat, "send_and_inject", _failing_send)
+
+    marked = {"called": False}
+    class _FakeLedgerStore:
+        def __init__(self, **kwargs):
+            pass
+        def mark_alerted(self, date_str, summary):
+            marked["called"] = True
+    monkeypatch.setattr("memory.firestore_db.GroqTokenLedgerStore", _FakeLedgerStore)
+
+    # Never raises into the caller (wrapped in try/except).
+    asyncio.run(heartbeat._send_groq_budget_alert(object()))
+
+    assert marked["called"] is False
+
+
+def test_run_tick_invokes_groq_budget_alert(monkeypatch):
+    """run_tick must call _send_groq_budget_alert as a separate guarded step,
+    alongside _send_daily_spend_alert."""
+    import asyncio
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from core import heartbeat
+
+    monkeypatch.setattr(heartbeat, "_load_config", lambda: {
+        "enabled": True, "quiet_start": "22:00", "quiet_end": "07:00",
+        "timezone": "Asia/Jerusalem", "digest_hour": 9,
+        "weekly_digest_day": 1, "reping_interval_hours": 24})
+    monkeypatch.setattr(heartbeat, "_collect_signals", lambda **k: [])
+    monkeypatch.setattr(heartbeat, "_register_incidents", lambda crits, cfg: [])
+    monkeypatch.setattr(heartbeat, "_resolve_absent", lambda fps: None)
+    monkeypatch.setattr(heartbeat, "_run_tick_brain_pass", lambda s, **k: None)
+
+    async def _noop_spend(bot):
+        pass
+    monkeypatch.setattr(heartbeat, "_send_daily_spend_alert", _noop_spend)
+
+    async def _noop_drain(bot, now, cfg):
+        pass
+    monkeypatch.setattr(heartbeat, "_drain_quiet_queue", _noop_drain)
+
+    called = {"groq_budget": False}
+    async def _spy_groq_budget(bot):
+        called["groq_budget"] = True
+    monkeypatch.setattr(heartbeat, "_send_groq_budget_alert", _spy_groq_budget)
+
+    noon = datetime(2026, 5, 19, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+    asyncio.run(heartbeat.run_tick(object(), now=noon))
+
+    assert called["groq_budget"] is True
+
