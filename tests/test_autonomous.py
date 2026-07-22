@@ -2466,3 +2466,161 @@ class TestGatherCurrentLocationContextOnly:
         assert out["location"] == {"location": "Berlin"}
         # CONTEXT only — a resolved travel location alone must not flip empty.
         assert out["empty"] is True
+
+
+class TestNightlyReviewPromptDocumentsCurrentLocationAsk:
+    """Task 2 (MEM-07/D-06) — prompts/nightly_review.md must document the
+    tomorrow.location_ask field AND contain the weaving instruction so the
+    compose LLM actually phrases the ask (VALIDATION MEM-07 row precondition)."""
+
+    def _prompt_text(self):
+        from pathlib import Path
+        return Path("prompts/nightly_review.md").read_text(encoding="utf-8")
+
+    def test_nightly_prompt_documents_current_location_ask_field(self):
+        text = self._prompt_text()
+        assert "location_ask" in text
+
+    def test_nightly_prompt_current_location_contains_still_in_city_sir_weaving(self):
+        text = self._prompt_text()
+        assert "still in" in text.lower()
+        assert "Sir?" in text
+
+
+class TestNightlyGatherTomorrowRepointsToCurrentLocation:
+    """Task 2 (MEM-07/D-06) — core/nightly_review.py::_gather_tomorrow consumes
+    the derived current_location instead of a hardcoded "Tel Aviv" literal."""
+
+    def test_gather_tomorrow_current_location_resolved_flows_into_fetch_weather(self, monkeypatch):
+        import core.nightly_review as nr
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        events = [{"summary": "Conference", "location": "Berlin"}]
+        weather_calls = []
+
+        def _fake_fetch_weather(location):
+            weather_calls.append(location)
+            return {"forecast": "clear"}
+
+        with patch.object(nr, "_planned_workouts_for", return_value=None), \
+             patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls, \
+             patch("mcp_tools.weather_tool.fetch_weather", side_effect=_fake_fetch_weather):
+            get_cal.return_value.list_events.return_value = events
+            sds_cls.return_value.list_active.return_value = []
+            data = nr._gather_tomorrow("2026-06-15")
+
+        assert weather_calls == ["Berlin"]
+        assert data["weather"] == {"forecast": "clear"}
+        assert "location_ask" not in data
+
+    def test_gather_tomorrow_current_location_home_case_unchanged_no_ask(self, monkeypatch):
+        """No travel signal anywhere -> byte-identical to the old hardcoded
+        "Tel Aviv" behavior, and no location_ask/chatter (D-06)."""
+        import core.nightly_review as nr
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        weather_calls = []
+
+        def _fake_fetch_weather(location):
+            weather_calls.append(location)
+            return {"forecast": "sunny"}
+
+        with patch.object(nr, "_planned_workouts_for", return_value=None), \
+             patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls, \
+             patch("mcp_tools.weather_tool.fetch_weather", side_effect=_fake_fetch_weather):
+            get_cal.return_value.list_events.return_value = []
+            sds_cls.return_value.list_active.return_value = []
+            data = nr._gather_tomorrow("2026-06-15")
+
+        assert weather_calls == ["Tel Aviv"]
+        assert data["weather"] == {"forecast": "sunny"}
+        assert "location_ask" not in data
+
+    def test_gather_tomorrow_current_location_ambiguous_sets_ask_and_suppresses_weather(self, monkeypatch):
+        """A directive-alone travel signal (unclear trip-end, D-06) must
+        suppress the weather entirely and set location_ask — never guess."""
+        import core.nightly_review as nr
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        directives = [{"id": "d1", "text": "while I'm in Paris, keep it brief", "condition_text": None}]
+        weather_calls = []
+
+        def _fake_fetch_weather(location):
+            weather_calls.append(location)
+            return {"forecast": "n/a"}
+
+        with patch.object(nr, "_planned_workouts_for", return_value=None), \
+             patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls, \
+             patch("mcp_tools.weather_tool.fetch_weather", side_effect=_fake_fetch_weather):
+            get_cal.return_value.list_events.return_value = []
+            sds_cls.return_value.list_active.return_value = directives
+            data = nr._gather_tomorrow("2026-06-15")
+
+        assert weather_calls == [], "an ambiguous derivation must never guess a forecast"
+        assert "weather" not in data
+        assert data["location_ask"] == {"candidate": "Paris"}
+
+
+class TestMorningBriefingWeatherRepointedToCurrentLocation:
+    """Task 2 (MEM-07) — core/morning_briefing.py::_gather_data also consumes
+    the derived current_location (resolved -> that city; ambiguous ->
+    suppress). The ASK itself is nightly-only per D-06 — morning just goes
+    quiet on weather rather than asking."""
+
+    def test_gather_data_current_location_resolved_travel_flows_into_fetch_weather(self, monkeypatch):
+        import core.morning_briefing as mb
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        weather_calls = []
+
+        def _fake_fetch_weather(location):
+            weather_calls.append(location)
+            return {"forecast": "clear"}
+
+        with patch("mcp_tools.weather_tool.fetch_weather", side_effect=_fake_fetch_weather), \
+             patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("core.tools._get_gmail_tool"), \
+             patch("memory.firestore_db.TaskStore", **{
+                 "return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}
+             }), \
+             patch("memory.firestore_db.MealStore") as ms_cls, \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls:
+            get_cal.return_value.list_events.return_value = [
+                {"summary": "Trip", "location": "Rome"}
+            ]
+            ms_cls.return_value.get_day_aggregate.return_value = {}
+            sds_cls.return_value.list_active.return_value = []
+            data = mb._gather_data("2026-06-15")
+
+        assert weather_calls == ["Rome"]
+        assert data["weather"] == {"forecast": "clear"}
+
+    def test_gather_data_current_location_ambiguous_suppresses_weather(self, monkeypatch):
+        import core.morning_briefing as mb
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        directives = [{"id": "d1", "text": "while I'm in Rome, keep it brief"}]
+        weather_calls = []
+
+        def _fake_fetch_weather(location):
+            weather_calls.append(location)
+            return {"forecast": "n/a"}
+
+        with patch("mcp_tools.weather_tool.fetch_weather", side_effect=_fake_fetch_weather), \
+             patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("core.tools._get_gmail_tool"), \
+             patch("memory.firestore_db.TaskStore", **{
+                 "return_value.get_today_and_overdue.return_value": {"overdue": [], "today": []}
+             }), \
+             patch("memory.firestore_db.MealStore") as ms_cls, \
+             patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=None), \
+             patch("memory.firestore_db.StandingDirectiveStore") as sds_cls:
+            get_cal.return_value.list_events.return_value = []
+            ms_cls.return_value.get_day_aggregate.return_value = {}
+            sds_cls.return_value.list_active.return_value = directives
+            data = mb._gather_data("2026-06-15")
+
+        assert weather_calls == [], "an ambiguous derivation must never guess a forecast"
+        assert data["weather"] is None

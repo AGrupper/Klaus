@@ -296,14 +296,6 @@ def _gather_data(today_iso: str) -> dict:
     """Fetch all data sources; each catches its own errors."""
     data: dict = {"today_date": today_iso}
 
-    # Weather
-    try:
-        from mcp_tools.weather_tool import fetch_weather
-        data["weather"] = fetch_weather("Tel Aviv")
-    except Exception:
-        logger.warning("morning_briefing: weather fetch failed", exc_info=True)
-        data["weather"] = None
-
     # Calendar — _get_calendar_tool() is a module-level function in core/tools.py
     try:
         from core.tools import _get_calendar_tool
@@ -505,6 +497,31 @@ def _gather_data(today_iso: str) -> dict:
     except Exception:
         logger.warning("morning_briefing: standing directives fetch failed", exc_info=True)
         data["standing_directives"] = []
+
+    # Weather. Phase 32 Plan 08 (MEM-07): consumes the derived current_location
+    # instead of the hardcoded "Tel Aviv" literal — closes the felt bug of a
+    # Paris trip getting a Tel Aviv forecast. Deliberately gathered LAST (after
+    # calendar + standing_directives above) so the derivation can reuse their
+    # already-gathered values — no extra Calendar/Firestore call. RESOLVED
+    # (home or a confidently-overriding travel signal) -> that city's
+    # forecast; the home case is byte-identical to before (the heuristic
+    # defaults "Tel Aviv" silently). AMBIGUOUS (conflicting signals or a
+    # directive-alone unclear trip-end, D-06) -> suppress the weather (never
+    # serve a possibly-wrong forecast); the nightly-only ask (D-06) is not
+    # repeated here — the morning briefing just goes quiet on weather.
+    try:
+        from core.autonomous import derive_current_location
+        from mcp_tools.weather_tool import fetch_weather
+        location = derive_current_location(
+            data.get("calendar") or [], data.get("standing_directives") or [],
+        )
+        if location.get("ambiguous"):
+            data["weather"] = None
+        else:
+            data["weather"] = fetch_weather(location.get("location", "Tel Aviv"))
+    except Exception:
+        logger.warning("morning_briefing: weather fetch failed", exc_info=True)
+        data["weather"] = None
 
     return data
 
