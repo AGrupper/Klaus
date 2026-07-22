@@ -100,3 +100,12 @@ None - no external service configuration required. `tiktoken` is a pure Python-l
 ---
 *Phase: 32-unified-situation-ambient-memory*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+- FOUND: requirements.txt
+- FOUND: tests/test_token_budget.py
+- FOUND: .planning/phases/32-unified-situation-ambient-memory/32-01-SUMMARY.md
+- FOUND commit: f2dc334 (chore(32-01): pin tiktoken==0.13.0)
+- FOUND commit: 52e2e29 (test(32-01): add MEM-05 guard test)
+- FOUND commit: 464a800 (docs(32-01): complete plan)
