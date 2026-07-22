@@ -511,6 +511,135 @@ def test_handle_message_uses_render_smart_system():
 
 
 # ---------------------------------------------------------------------------
+# Plan 32-02 — render_smart_system returns (stable, volatile); the split
+# happens at the existing CURRENT TIME heading in prompts/smart_agent.md so
+# the Anthropic cache prefix stops rewriting on every per-minute render.
+# ---------------------------------------------------------------------------
+
+
+class TestPlan3202StableVolatileSplit:
+
+    def test_returns_tuple_of_two_strings(self):
+        orch = _make_orchestrator()
+        result = orch.render_smart_system("Header\n{self_md}\nFooter")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        stable, volatile = result
+        assert isinstance(stable, str)
+        assert isinstance(volatile, str)
+
+    def test_template_without_current_time_heading_is_entirely_stable(self):
+        """A template with no CURRENT TIME seam (e.g. a synthetic test
+        template, or real autonomous.md/worker_agent.md which lack the
+        heading) degrades to (full_content, '') — the same fallback the
+        Anthropic backend relies on to avoid an empty second content block."""
+        orch = _make_orchestrator()
+        stable, volatile = orch.render_smart_system("Header\n{self_md}\nFooter")
+        assert volatile == ""
+        assert "Header" in stable and "Footer" in stable
+
+    def test_real_template_splits_at_current_time_heading(self):
+        """Rendering the actual prompts/smart_agent.md: {today_date} (line 15)
+        stays in the stable half by design; the CURRENT TIME section
+        ({current_time}, line 378) is the volatile half."""
+        from pathlib import Path
+        template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
+        orch = _make_orchestrator()
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:20"):
+            stable, volatile = orch.render_smart_system(template)
+        assert "Saturday, May 23, 2026" in stable
+        assert "14:20" not in stable
+        assert "CURRENT TIME" in volatile
+        assert "14:20" in volatile
+
+    def test_stable_half_byte_identical_across_renders_one_minute_apart(self):
+        """Holding stores + today_date constant, two renders ~1 minute apart
+        (different current_time) must yield a byte-identical stable half and
+        a differing volatile half — the core cache-correctness guarantee."""
+        from pathlib import Path
+        template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
+        orch = _make_orchestrator()
+
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:20"):
+            stable_1, volatile_1 = orch.render_smart_system(template)
+
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:21"):
+            stable_2, volatile_2 = orch.render_smart_system(template)
+
+        assert stable_1 == stable_2, "stable half must be byte-identical across per-minute renders"
+        assert volatile_1 != volatile_2, "volatile half must change with current_time"
+
+    def test_handle_message_passes_tuple_through_to_run_smart_loop(self):
+        """handle_message must pass the (stable, volatile) tuple straight to
+        _run_smart_loop's system param — no re-flattening into one string."""
+        from core.main import AgentOrchestrator
+
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch.smart_agent = MagicMock()
+        orch.smart_agent_fallback = None
+        orch.worker_agent = MagicMock()
+        orch._smart_prompt_template = "smart"
+        orch._worker_prompt_template = "worker {today_date}"
+        orch._meal_audit_content = ""
+        orch.conversation_manager = MagicMock()
+        orch.conversation_manager.get.return_value = []
+        orch.render_smart_system = MagicMock(return_value=("STABLE-X", "VOLATILE-X"))
+        captured = {}
+
+        def _capture(messages, smart_system, worker_system, **kwargs):
+            captured["smart_system"] = smart_system
+            return "ok"
+
+        orch._run_smart_loop = MagicMock(side_effect=_capture)
+
+        orch.handle_message("hi", user_id=1)
+
+        assert captured["smart_system"] == ("STABLE-X", "VOLATILE-X")
+
+    def test_meal_audit_appended_to_volatile_half_only(self):
+        """The chat-path meal_audit append targets the VOLATILE half — the
+        stable half must stay untouched so the cache prefix is unaffected."""
+        from core.main import AgentOrchestrator
+
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch.smart_agent = MagicMock()
+        orch.smart_agent_fallback = None
+        orch.worker_agent = MagicMock()
+        orch._smart_prompt_template = "smart"
+        orch._worker_prompt_template = "worker {today_date}"
+        orch._meal_audit_content = "MEAL-AUDIT-GUIDANCE"
+        orch.conversation_manager = MagicMock()
+        orch.conversation_manager.get.return_value = []
+        orch.render_smart_system = MagicMock(
+            return_value=("STABLE-CONTENT", "VOLATILE-CONTENT")
+        )
+        captured = {}
+
+        def _capture(messages, smart_system, worker_system, **kwargs):
+            captured["smart_system"] = smart_system
+            return "ok"
+
+        orch._run_smart_loop = MagicMock(side_effect=_capture)
+
+        orch.handle_message("hi", user_id=1)
+
+        stable, volatile = captured["smart_system"]
+        assert stable == "STABLE-CONTENT", "meal_audit must not touch the stable half"
+        assert volatile == "VOLATILE-CONTENT\n\nMEAL-AUDIT-GUIDANCE"
+
+    def test_autonomous_compose_sites_never_string_concat_smart_system(self):
+        """Source-level guard: neither compose site may treat the
+        render_smart_system() result as a plain string (str-concat semantics
+        would raise TypeError on a tuple) — both must pass it through as-is."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        assert "smart_system = smart_system +" not in src
+        assert "smart_system +=" not in src
+
+
+# ---------------------------------------------------------------------------
 # Phase 22 Plan 02 — coaching guide slim-core injection (COACH-01)
 # ---------------------------------------------------------------------------
 
