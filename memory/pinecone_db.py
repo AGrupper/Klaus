@@ -61,6 +61,16 @@ _EMBED_BATCH_SIZE = 100
 _RECENCY_HALF_LIFE_DAYS = 90
 _RECENCY_WEIGHT = 0.3
 
+# Phase 32 (Plan 06, MEM-01): ambient auto-recall score floor. A candidate
+# whose BLENDED (post-recency-decay) score falls below this is excluded from
+# the involuntary "Things you remember" surface — a marginal cosine match
+# auto-injected into every turn is noisier than useful. The deliberate
+# `recall()` tool call stays unthresholded (D-03): a marginal match is still
+# useful when Amit/Klaus explicitly asks to search memory.
+# [ASSUMED] tunable — re-tune from the raw (score, was_injected) debug log
+# once real production score distributions are available (first weeks live).
+AMBIENT_MIN_SCORE = 0.5
+
 
 class MemoryStore:
     """Pinecone-backed vector memory with Gemini embeddings.
@@ -140,9 +150,60 @@ class MemoryStore:
         Returns:
             List of dicts: [{"kind", "content", "score", "ts"}, ...]
             sorted by descending blended score (cosine similarity scaled by a
-            mild recency decay — see _blend_recency).
+            mild recency decay — see _blend_recency). UNTHRESHOLDED (D-03) —
+            a deliberate tool call can still surface a marginal match; see
+            `recall_ambient` for the score-floored auto-inject path.
         """
         k = min(k, 10)
+        ranked = self._rank_candidates(user_id, query, k, kinds)
+        return ranked[:k]
+
+    def recall_ambient(
+        self, user_id: int, query: str, k: int = 5,
+        min_score: float = AMBIENT_MIN_SCORE, kinds: list[str] | None = None,
+    ) -> list[dict]:
+        """Score-thresholded recall for involuntary, every-turn auto-inject (MEM-01).
+
+        Identical ranking to `recall()`, but candidates whose BLENDED score
+        falls below `min_score` are excluded before slicing to `k` — a weak
+        match auto-surfaced into every chat turn is noise, not memory. The
+        deliberate `recall()` tool call is intentionally left unthresholded
+        (D-03: two different needs) so this is a separate method, not a
+        `recall(..., min_score=...)` param that would change tool behavior.
+
+        Args:
+            user_id:   Only return memories belonging to this user.
+            query:     Natural language search query (the live user message).
+            k:         Max number of results to return (clamped to 10).
+            min_score: Blended-score floor — see `AMBIENT_MIN_SCORE`.
+            kinds:     Same as `recall()`.
+
+        Returns:
+            List of dicts (same shape as `recall()`), score >= min_score only,
+            sorted by descending blended score, at most k entries.
+        """
+        k = min(k, 10)
+        ranked = self._rank_candidates(user_id, query, k, kinds)
+        # Debug-log the raw (score, was_injected) pairs so the min_score floor
+        # can be re-tuned from real production data (research recommendation).
+        for r in ranked:
+            logger.debug(
+                "ambient recall candidate: score=%.4f min_score=%.2f was_injected=%s",
+                r["score"], min_score, r["score"] >= min_score,
+            )
+        return [r for r in ranked if r["score"] >= min_score][:k]
+
+    def _rank_candidates(
+        self, user_id: int, query: str, k: int, kinds: list[str] | None,
+    ) -> list[dict]:
+        """Shared over-fetch + recency-blend ranking used by recall/recall_ambient.
+
+        Returns ALL ranked candidates (not sliced to k) so callers can apply
+        their own post-filter (e.g. recall_ambient's score floor) before
+        truncating — filtering after slicing would silently return fewer
+        than k results even when qualifying candidates exist further down
+        the over-fetched list.
+        """
         _kinds = kinds if kinds is not None else ["fact", "chunk"]
         vector = self._embed(query)
         result = self._get_index().query(
@@ -165,7 +226,7 @@ class MemoryStore:
             for m in result.matches
         ]
         ranked.sort(key=lambda r: r["score"], reverse=True)
-        return ranked[:k]
+        return ranked
 
     def remember_self(self, user_id: int, date_str: str, content: str) -> str:
         """Upsert a journal entry with a deterministic vector ID (self-{date}).

@@ -382,3 +382,4 @@ Current time: {current_time} (Asia/Jerusalem).
 - Conversation history carries no timestamps. An earlier message — including your own proactive ones — may be minutes or hours old. Anchor time reasoning on the clock above, never on conversational flow.
 - Never assume "later today" or "this morning" from vibes; check the clock.
 
+{things_you_remember}
