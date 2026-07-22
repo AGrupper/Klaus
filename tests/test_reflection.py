@@ -1177,7 +1177,10 @@ def test_journal_digest_assembly():
                 orch.handle_message("hello", 123456)
 
     assert "smart_system" in captured, "handle_message must call _run_smart_loop"
-    smart_sys = captured["smart_system"]
+    # Plan 32-02: render_smart_system returns (stable, volatile) — journal_digest
+    # is stable content (before the CURRENT TIME heading), but join both halves
+    # so these content assertions don't need to know the split point.
+    smart_sys = "".join(captured["smart_system"])
     worker_sys = captured["worker_system"]
 
     # 1. smart_system must contain each journal line
@@ -1202,11 +1205,12 @@ def test_journal_digest_assembly():
             with patch.object(orch.conversation_manager, "get", return_value=[]):
                 orch.handle_message("hello", 123456)
 
-    assert "**Recent journal:**" not in captured.get("smart_system", ""), (
+    smart_sys_2 = "".join(captured.get("smart_system", ("", "")))
+    assert "**Recent journal:**" not in smart_sys_2, (
         "Empty journal must omit the digest block entirely"
     )
     # The {journal_digest} placeholder must be replaced (not left as literal text)
-    assert "{journal_digest}" not in captured.get("smart_system", ""), (
+    assert "{journal_digest}" not in smart_sys_2, (
         "{journal_digest} placeholder must be replaced, not left as literal text"
     )
 

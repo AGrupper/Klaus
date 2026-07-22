@@ -266,8 +266,9 @@ def _make_orchestrator_for_handle_message(loop_return: str):
     orch._meal_audit_content = ""
     orch.conversation_manager = MagicMock()
     orch.conversation_manager.get.return_value = []
-    # Avoid touching real SELF.md / self_state rendering.
-    orch.render_smart_system = lambda template: "rendered-system"
+    # Avoid touching real SELF.md / self_state rendering. Plan 32-02:
+    # render_smart_system returns a (stable, volatile) tuple.
+    orch.render_smart_system = lambda template: ("rendered-system", "")
     # The unit under test is the empty-reply guard, not the loop itself.
     orch._run_smart_loop = MagicMock(return_value=loop_return)
     return orch

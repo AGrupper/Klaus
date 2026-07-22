@@ -8,6 +8,15 @@ It is invoked by:
   - handle_message (per-message chat path) — extracted from inline render
   - core/autonomous.py:_compose_layer2 (per-tick autonomous path) — Plan 18-06
 
+Plan 32-02: render_smart_system now returns a (stable, volatile) tuple
+split at the existing CURRENT TIME heading in prompts/smart_agent.md, so
+the Anthropic backend can cache the stable prefix as a real second content
+block. Tests that only care about substituted CONTENT (not the split point
+itself) use the `_rendered()` helper below, which concatenates the tuple
+back into one string — every synthetic template in this file lacks the
+CURRENT TIME heading, so `_rendered()` is equivalent to the pre-32-02
+plain-string return for all of them (volatile is always "").
+
 Test strategy
 -------------
 Firestore + google.* are mocked at the sys.modules level using the same
@@ -133,6 +142,16 @@ def _make_orchestrator(
     return orchestrator
 
 
+def _rendered(orch, template: str) -> str:
+    """Call render_smart_system and concatenate the (stable, volatile) tuple
+    back into one string (Plan 32-02). Every synthetic template in this file
+    lacks the CURRENT TIME heading, so volatile is always "" here — this is
+    equivalent to the pre-32-02 plain-string return for content assertions
+    that don't care about the split point itself."""
+    stable, volatile = orch.render_smart_system(template)
+    return stable + volatile
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -140,7 +159,7 @@ def _make_orchestrator(
 def test_render_substitutes_self_md():
     """{self_md} is replaced with the orchestrator's _self_md_content."""
     orch = _make_orchestrator(self_md="Klaus-identity-block")
-    out = orch.render_smart_system("Header\n{self_md}\nFooter")
+    out = _rendered(orch, "Header\n{self_md}\nFooter")
     assert "Klaus-identity-block" in out
     assert "{self_md}" not in out
 
@@ -148,7 +167,7 @@ def test_render_substitutes_self_md():
 def test_render_self_state_none_substitutes_empty_string():
     """When _self_state_store is None, {self_state} -> '' (not literal placeholder)."""
     orch = _make_orchestrator(self_state_store=None)
-    out = orch.render_smart_system("A\n{self_state}\nB")
+    out = _rendered(orch, "A\n{self_state}\nB")
     assert "{self_state}" not in out
     # The placeholder line collapsed to an empty replacement, not the literal token.
     assert "A\n\nB" in out
@@ -157,7 +176,7 @@ def test_render_self_state_none_substitutes_empty_string():
 def test_render_journal_none_substitutes_empty_string():
     """When _journal_store is None, {journal_digest} -> '' (not literal placeholder)."""
     orch = _make_orchestrator(journal_store=None)
-    out = orch.render_smart_system("X\n{journal_digest}\nY")
+    out = _rendered(orch, "X\n{journal_digest}\nY")
     assert "{journal_digest}" not in out
     assert "X\n\nY" in out
 
@@ -166,7 +185,7 @@ def test_render_today_date_substituted():
     """{today_date} is replaced with the result of _today_israel()."""
     orch = _make_orchestrator()
     with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"):
-        out = orch.render_smart_system("Date: {today_date}")
+        out = _rendered(orch, "Date: {today_date}")
     assert "Saturday, May 23, 2026" in out
     assert "{today_date}" not in out
 
@@ -175,7 +194,7 @@ def test_render_current_time_substituted():
     """{current_time} is replaced with the result of _current_time_israel()."""
     orch = _make_orchestrator()
     with patch("core.main._current_time_israel", return_value="14:20"):
-        out = orch.render_smart_system("Now: {current_time}")
+        out = _rendered(orch, "Now: {current_time}")
     assert "14:20" in out
     assert "{current_time}" not in out
 
@@ -187,7 +206,7 @@ def test_render_no_unresolved_placeholders():
         "{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n{current_time}\n"
         "{self_md}\n{today_date}"  # repeated tokens still replaced
     )
-    out = orch.render_smart_system(template)
+    out = _rendered(orch, template)
     for token in ("{self_md}", "{self_state}", "{journal_digest}", "{today_date}",
                   "{current_time}"):
         assert token not in out, f"placeholder {token} survived render"
@@ -204,7 +223,7 @@ def test_render_self_state_populated_block():
         "empty_field": "",  # blank values are filtered out per D-05
     }
     orch = _make_orchestrator(self_state_store=fake_store)
-    out = orch.render_smart_system("{self_state}")
+    out = _rendered(orch, "{self_state}")
     assert "current_focus: phase 18 wave 2" in out
     assert "mood: focused" in out
     # Bookkeeping fields are filtered
@@ -233,7 +252,7 @@ def test_render_journal_digest_populated_block():
         },
     ]
     orch = _make_orchestrator(journal_store=fake_store)
-    out = orch.render_smart_system("{journal_digest}")
+    out = _rendered(orch, "{journal_digest}")
     assert "**Recent journal:**" in out
     assert "2026-05-21" in out
     assert "shipped plan 05" in out
@@ -255,7 +274,7 @@ class TestPhase19TrainingProfile:
             "athletic_goals": ["5k under 20:00"],
             "schema_version": 1,
         }
-        result = orch.render_smart_system("PRE {training_profile} POST")
+        result = _rendered(orch, "PRE {training_profile} POST")
         assert "PRE" in result and "POST" in result
         # Phase 21 Plan 04: header changed from "Training profile:" to coaching-reference header
         assert "**Coaching reference — Amit's training plan:**" in result
@@ -270,7 +289,7 @@ class TestPhase19TrainingProfile:
         orch._journal_store = None
         orch._user_profile_store = MagicMock()
         orch._user_profile_store.load.return_value = {}
-        result = orch.render_smart_system("X{training_profile}Y")
+        result = _rendered(orch, "X{training_profile}Y")
         assert result.startswith("X") and result.endswith("Y")
         assert "{training_profile}" not in result  # literal placeholder GONE
         assert "Training profile" not in result
@@ -288,7 +307,7 @@ class TestPhase19TrainingProfile:
             "bootstrapped_at": "ts",
             "updated_at": "ts",
         }
-        result = orch.render_smart_system("X{training_profile}Y")
+        result = _rendered(orch, "X{training_profile}Y")
         assert "schema_version" not in result
         assert "bootstrapped_at" not in result
         assert "updated_at" not in result
@@ -302,7 +321,7 @@ class TestPhase19TrainingProfile:
         orch._self_state_store = None
         orch._journal_store = None
         orch._user_profile_store = None
-        result = orch.render_smart_system("X{training_profile}Y")
+        result = _rendered(orch, "X{training_profile}Y")
         assert result == "XY"
 
 
@@ -326,7 +345,7 @@ class TestPhase21CoachingReferenceRendering:
                 {"goal_label": "Oct peak", "target_date": "2026-10-01", "metrics": ["100kg bench", "120kg squat"]}
             ],
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "**Coaching reference — Amit's training plan:**" in result
         assert "**Training profile:**" not in result
 
@@ -338,7 +357,7 @@ class TestPhase21CoachingReferenceRendering:
                 {"goal_label": "Nov peak", "target_date": "2026-11-01", "metrics": ["125 push-ups", "35 pull-ups"]},
             ],
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "100kg bench" in result
         assert "120kg squat" in result
         assert "125 push-ups" in result
@@ -357,7 +376,7 @@ class TestPhase21CoachingReferenceRendering:
                 },
             ],
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         # The numeric target value MUST survive into the prompt, not just the key.
         assert "100" in result
         assert "1:25:00" in result
@@ -369,7 +388,7 @@ class TestPhase21CoachingReferenceRendering:
         This is the cross-plan check that the per-plan fixtures missed."""
         from scripts.ingest_blueprint import build_profile_dict
         orch = self._make_orch_with_profile(build_profile_dict())
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         # October peak numeric targets from the blueprint.
         assert "100" in result          # bench_press_kg
         assert "120" in result          # squat_kg
@@ -392,7 +411,7 @@ class TestPhase21CoachingReferenceRendering:
         template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
         orch = self._make_orch_with_profile(build_profile_dict())
         orch._coaching_guide_content = "COACHING_GUIDE_SENTINEL"
-        result = orch.render_smart_system(template)
+        result = _rendered(orch, template)
 
         # The rendered Tier A coaching-reference header must appear exactly once.
         assert result.count("**Coaching reference — Amit's training plan:**") == 1
@@ -417,7 +436,7 @@ class TestPhase21CoachingReferenceRendering:
                 },
             },
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "Monday" in result
         assert "lift" in result
         assert "run" in result
@@ -433,7 +452,7 @@ class TestPhase21CoachingReferenceRendering:
                 },
             },
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         for forbidden in ("attendance", "completed", "missed"):
             assert forbidden not in result, f"'{forbidden}' should not appear in weekly_split rendering"
 
@@ -442,7 +461,7 @@ class TestPhase21CoachingReferenceRendering:
         orch = self._make_orch_with_profile({
             "plan_start_date": "2026-06-21",
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "Block anchor: 2026-06-21 (Block Week 1)" in result
 
     def test_nutrition_targets_renders_macros(self):
@@ -454,7 +473,7 @@ class TestPhase21CoachingReferenceRendering:
                 "fueling_slots": ["pre-workout", "post-workout"],
             },
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "150" in result
         assert "350" in result
 
@@ -463,7 +482,7 @@ class TestPhase21CoachingReferenceRendering:
         orch = self._make_orch_with_profile({
             "future_experimental_key": "some value",
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "- future_experimental_key:" in result
         assert "some value" in result
 
@@ -475,7 +494,7 @@ class TestPhase21CoachingReferenceRendering:
             "updated_at": "some-timestamp",
             "bootstrapped_at": "some-timestamp",
         })
-        result = orch.render_smart_system("{training_profile}")
+        result = _rendered(orch, "{training_profile}")
         assert "schema_version" not in result
         assert "updated_at" not in result
         assert "bootstrapped_at" not in result
@@ -489,7 +508,7 @@ class TestPhase21CoachingReferenceRendering:
             "updated_at": "ts",
             "dated_goals": [],
         })
-        result = orch.render_smart_system("A{training_profile}B")
+        result = _rendered(orch, "A{training_profile}B")
         assert result == "AB"
 
 
@@ -511,13 +530,142 @@ def test_handle_message_uses_render_smart_system():
 
 
 # ---------------------------------------------------------------------------
+# Plan 32-02 — render_smart_system returns (stable, volatile); the split
+# happens at the existing CURRENT TIME heading in prompts/smart_agent.md so
+# the Anthropic cache prefix stops rewriting on every per-minute render.
+# ---------------------------------------------------------------------------
+
+
+class TestPlan3202StableVolatileSplit:
+
+    def test_returns_tuple_of_two_strings(self):
+        orch = _make_orchestrator()
+        result = orch.render_smart_system("Header\n{self_md}\nFooter")
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+        stable, volatile = result
+        assert isinstance(stable, str)
+        assert isinstance(volatile, str)
+
+    def test_template_without_current_time_heading_is_entirely_stable(self):
+        """A template with no CURRENT TIME seam (e.g. a synthetic test
+        template, or real autonomous.md/worker_agent.md which lack the
+        heading) degrades to (full_content, '') — the same fallback the
+        Anthropic backend relies on to avoid an empty second content block."""
+        orch = _make_orchestrator()
+        stable, volatile = orch.render_smart_system("Header\n{self_md}\nFooter")
+        assert volatile == ""
+        assert "Header" in stable and "Footer" in stable
+
+    def test_real_template_splits_at_current_time_heading(self):
+        """Rendering the actual prompts/smart_agent.md: {today_date} (line 15)
+        stays in the stable half by design; the CURRENT TIME section
+        ({current_time}, line 378) is the volatile half."""
+        from pathlib import Path
+        template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
+        orch = _make_orchestrator()
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:20"):
+            stable, volatile = orch.render_smart_system(template)
+        assert "Saturday, May 23, 2026" in stable
+        assert "14:20" not in stable
+        assert "CURRENT TIME" in volatile
+        assert "14:20" in volatile
+
+    def test_stable_half_byte_identical_across_renders_one_minute_apart(self):
+        """Holding stores + today_date constant, two renders ~1 minute apart
+        (different current_time) must yield a byte-identical stable half and
+        a differing volatile half — the core cache-correctness guarantee."""
+        from pathlib import Path
+        template = Path("prompts/smart_agent.md").read_text(encoding="utf-8")
+        orch = _make_orchestrator()
+
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:20"):
+            stable_1, volatile_1 = orch.render_smart_system(template)
+
+        with patch("core.main._today_israel", return_value="Saturday, May 23, 2026"), \
+             patch("core.main._current_time_israel", return_value="14:21"):
+            stable_2, volatile_2 = orch.render_smart_system(template)
+
+        assert stable_1 == stable_2, "stable half must be byte-identical across per-minute renders"
+        assert volatile_1 != volatile_2, "volatile half must change with current_time"
+
+    def test_handle_message_passes_tuple_through_to_run_smart_loop(self):
+        """handle_message must pass the (stable, volatile) tuple straight to
+        _run_smart_loop's system param — no re-flattening into one string."""
+        from core.main import AgentOrchestrator
+
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch.smart_agent = MagicMock()
+        orch.smart_agent_fallback = None
+        orch.worker_agent = MagicMock()
+        orch._smart_prompt_template = "smart"
+        orch._worker_prompt_template = "worker {today_date}"
+        orch._meal_audit_content = ""
+        orch.conversation_manager = MagicMock()
+        orch.conversation_manager.get.return_value = []
+        orch.render_smart_system = MagicMock(return_value=("STABLE-X", "VOLATILE-X"))
+        captured = {}
+
+        def _capture(messages, smart_system, worker_system, **kwargs):
+            captured["smart_system"] = smart_system
+            return "ok"
+
+        orch._run_smart_loop = MagicMock(side_effect=_capture)
+
+        orch.handle_message("hi", user_id=1)
+
+        assert captured["smart_system"] == ("STABLE-X", "VOLATILE-X")
+
+    def test_meal_audit_appended_to_volatile_half_only(self):
+        """The chat-path meal_audit append targets the VOLATILE half — the
+        stable half must stay untouched so the cache prefix is unaffected."""
+        from core.main import AgentOrchestrator
+
+        orch = AgentOrchestrator.__new__(AgentOrchestrator)
+        orch.smart_agent = MagicMock()
+        orch.smart_agent_fallback = None
+        orch.worker_agent = MagicMock()
+        orch._smart_prompt_template = "smart"
+        orch._worker_prompt_template = "worker {today_date}"
+        orch._meal_audit_content = "MEAL-AUDIT-GUIDANCE"
+        orch.conversation_manager = MagicMock()
+        orch.conversation_manager.get.return_value = []
+        orch.render_smart_system = MagicMock(
+            return_value=("STABLE-CONTENT", "VOLATILE-CONTENT")
+        )
+        captured = {}
+
+        def _capture(messages, smart_system, worker_system, **kwargs):
+            captured["smart_system"] = smart_system
+            return "ok"
+
+        orch._run_smart_loop = MagicMock(side_effect=_capture)
+
+        orch.handle_message("hi", user_id=1)
+
+        stable, volatile = captured["smart_system"]
+        assert stable == "STABLE-CONTENT", "meal_audit must not touch the stable half"
+        assert volatile == "VOLATILE-CONTENT\n\nMEAL-AUDIT-GUIDANCE"
+
+    def test_autonomous_compose_sites_never_string_concat_smart_system(self):
+        """Source-level guard: neither compose site may treat the
+        render_smart_system() result as a plain string (str-concat semantics
+        would raise TypeError on a tuple) — both must pass it through as-is."""
+        src = open("core/autonomous.py", encoding="utf-8").read()
+        assert "smart_system = smart_system +" not in src
+        assert "smart_system +=" not in src
+
+
+# ---------------------------------------------------------------------------
 # Phase 22 Plan 02 — coaching guide slim-core injection (COACH-01)
 # ---------------------------------------------------------------------------
 
 def test_render_substitutes_coaching_guide():
     """{coaching_guide} is replaced with the orchestrator's _coaching_guide_content."""
     orch = _make_orchestrator(coaching_guide_content="COACHING-SLIM-BLOCK")
-    out = orch.render_smart_system("Header\n{coaching_guide}\nFooter")
+    out = _rendered(orch, "Header\n{coaching_guide}\nFooter")
     assert "COACHING-SLIM-BLOCK" in out
     assert "{coaching_guide}" not in out
 
@@ -525,7 +673,7 @@ def test_render_substitutes_coaching_guide():
 def test_render_coaching_guide_empty_no_literal_placeholder():
     """When _coaching_guide_content is '', {coaching_guide} resolves to '' not literal."""
     orch = _make_orchestrator(coaching_guide_content="")
-    out = orch.render_smart_system("A\n{coaching_guide}\nB")
+    out = _rendered(orch, "A\n{coaching_guide}\nB")
     assert "{coaching_guide}" not in out
 
 
@@ -536,7 +684,7 @@ def test_render_no_unresolved_placeholders_includes_coaching_guide():
         "{coaching_guide}\n{self_md}\n{self_state}\n{journal_digest}\n{today_date}\n"
         "{current_time}\n"
     )
-    out = orch.render_smart_system(template)
+    out = _rendered(orch, template)
     for token in ("{coaching_guide}", "{self_md}", "{self_state}", "{journal_digest}",
                   "{today_date}", "{current_time}"):
         assert token not in out, f"placeholder {token} survived render"
@@ -764,7 +912,7 @@ class TestStandingDirectivesRendering:
             {"text": "no training nudges", "origin": "user_chat",
              "expires_at": None, "condition_text": "while I'm in France"},
         ])
-        result = orch.render_smart_system("PRE {standing_directives} POST")
+        result = _rendered(orch, "PRE {standing_directives} POST")
         assert "PRE" in result and "POST" in result
         assert "**Active standing directives:**" in result
         assert "no training nudges" in result
@@ -772,7 +920,7 @@ class TestStandingDirectivesRendering:
 
     def test_empty_directives_resolves_to_nothing(self):
         orch = self._make_orch([])
-        result = orch.render_smart_system("X{standing_directives}Y")
+        result = _rendered(orch, "X{standing_directives}Y")
         assert result == "XY"
         assert "{standing_directives}" not in result
 
@@ -784,7 +932,7 @@ class TestStandingDirectivesRendering:
         orch._journal_store = None
         orch._user_profile_store = None
         orch._standing_directive_store = None
-        result = orch.render_smart_system("X{standing_directives}Y")
+        result = _rendered(orch, "X{standing_directives}Y")
         assert result == "XY"
 
     def test_ordering_after_training_profile_before_today_date(self):
@@ -806,8 +954,9 @@ class TestStandingDirectivesRendering:
             {"text": "ordering-marker directive", "origin": "user_chat",
              "expires_at": None, "condition_text": None},
         ]
-        result = orch.render_smart_system(
-            "{training_profile} ... {standing_directives} ... today is {today_date}"
+        result = _rendered(
+            orch,
+            "{training_profile} ... {standing_directives} ... today is {today_date}",
         )
         training_idx = result.index("5k under 20:00")
         directive_idx = result.index("ordering-marker directive")
