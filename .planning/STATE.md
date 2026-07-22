@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: executing
-stopped_at: 31-08-PLAN.md executed (gap closure) — Phase 31 all 8 plans complete
-last_updated: "2026-07-22T11:23:31.302Z"
-last_activity: 2026-07-22 -- executed 31-08-PLAN.md (vetoed self-directive anti-lesson, DIR-07/D-13); Phase 31 complete
+status: planning
+stopped_at: Phase 32 context gathered
+last_updated: "2026-07-22T13:58:57.227Z"
+last_activity: 2026-07-22 -- executed 31-08-PLAN.md (StandingDirectiveStore.veto()+get(), origin-aware cancel routing, real reject->no-re-propose test)
 progress:
   total_phases: 6
   completed_phases: 2
@@ -176,9 +176,9 @@ Carried forward from v4.0 close (still open):
 
 ## Session Continuity
 
-Last session: 2026-07-22T11:20:30.367Z
-Stopped at: 31-08-PLAN.md executed (gap closure) — Phase 31 all 8 plans complete
-Resume file: None
+Last session: 2026-07-22T13:58:57.223Z
+Stopped at: Phase 32 context gathered
+Resume file: .planning/phases/32-unified-situation-ambient-memory/32-CONTEXT.md
 
 ## Operator Next Steps
 
