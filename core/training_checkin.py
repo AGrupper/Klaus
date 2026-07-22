@@ -244,6 +244,54 @@ def compute_recovery_concern(
 
 
 # ------------------------------------------------------------------ #
+# Planned sessions (weekly_split intent) — MEM-04, Phase 32 Plan 04   #
+# ------------------------------------------------------------------ #
+
+def planned_sessions_for(date_iso: str) -> dict | None:
+    """A date's planned AM/PM sessions from the training program's weekly_split.
+
+    Moved here (Phase 32, MEM-04) from core/nightly_review.py's private
+    `_planned_workouts_for` so core/autonomous.py can consume planned training
+    intent without importing nightly_review (locked project decision:
+    core/autonomous.py must never import core/nightly_review.py). This module
+    is the neutral home already used by compute_recovery_concern for the same
+    acyclic-import reason (imported by both nightly_review and morning_briefing).
+
+    Reads the users/amit profile via the same store path as the get_plan tool
+    (core.tools._block_stores → UserProfileStore.load), keys into weekly_split by
+    the date's weekday name (case-insensitive). weekly_split is a recurring
+    weekly TEMPLATE keyed by weekday name, not a per-date store — the same
+    template applies to every occurrence of that weekday. Returns
+    {"weekday", "am": {...}, "pm": {...}} or None when there's no entry. The raw
+    AM/PM session data is passed through untouched — callers decide which slots
+    are real workouts vs. rest/mobility (generative-coaching philosophy).
+    """
+    try:
+        from core.tools import _block_stores
+        _blocks, _benchmarks, profiles = _block_stores()
+        weekly_split = (profiles.load() or {}).get("weekly_split") or {}
+        if not weekly_split:
+            return None
+        weekday = datetime.fromisoformat(date_iso).strftime("%A")  # e.g. "Monday"
+        slots = weekly_split.get(weekday)
+        if slots is None:  # case-insensitive fallback for lowercase/odd keys
+            slots = next(
+                (v for k, v in weekly_split.items() if str(k).lower() == weekday.lower()),
+                None,
+            )
+        if not isinstance(slots, dict):
+            return None
+        return {
+            "weekday": weekday,
+            "am": slots.get("am") or {},
+            "pm": slots.get("pm") or {},
+        }
+    except Exception:
+        logger.warning("training_checkin: planned-session lookup failed", exc_info=True)
+        return None
+
+
+# ------------------------------------------------------------------ #
 # Helpers — Firestore stores                                         #
 # ------------------------------------------------------------------ #
 
