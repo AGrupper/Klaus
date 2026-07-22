@@ -728,3 +728,99 @@ class TestPersistUserMessageFlag:
         orch.handle_message("hello", user_id=123456)
         roles = [c.args[1] for c in orch.conversation_manager.append.call_args_list]
         assert roles == ["user", "assistant"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 06 (MEM-01) — ambient "Things you remember" auto-recall
+# ---------------------------------------------------------------------------
+
+def _orch_with_volatile_placeholder(loop_return: str = "ok"):
+    """Like _make_orchestrator_for_handle_message, but render_smart_system
+    returns a volatile half carrying the real {things_you_remember} seam so
+    the substitution can be asserted end to end."""
+    orch = _make_orchestrator_for_handle_message(loop_return=loop_return)
+    orch.render_smart_system = lambda template: (
+        "STABLE-HALF",
+        "VOLATILE-HALF {things_you_remember} END",
+    )
+    return orch
+
+
+class TestAmbientRecall:
+    """MEM-01: best-effort, timeout-guarded ambient recall injected into the
+    volatile half only. See threat T-32-11 (DoS via a slow/hung recall)."""
+
+    def test_ambient_recall_injects_nonempty_block_into_volatile_half(self, monkeypatch):
+        store = MagicMock()
+        store.recall_ambient.return_value = [
+            {"kind": "fact", "content": "Amit trains Mon/Wed/Fri", "score": 0.7, "ts": None},
+        ]
+        monkeypatch.setattr("core.main.tool_registry._get_memory_store", lambda: store)
+
+        orch = _orch_with_volatile_placeholder()
+        orch.handle_message("what's my schedule?", user_id=1)
+
+        stable, volatile = orch._run_smart_loop.call_args.args[1]
+        assert "Amit trains Mon/Wed/Fri" in volatile
+        assert "Things you remember" in volatile
+        assert "{things_you_remember}" not in volatile  # placeholder substituted
+        assert "Amit trains Mon/Wed/Fri" not in stable   # never in the stable half
+
+    def test_ambient_recall_forced_raise_yields_empty_block_no_exception(self, monkeypatch):
+        store = MagicMock()
+        store.recall_ambient.side_effect = RuntimeError("pinecone down")
+        monkeypatch.setattr("core.main.tool_registry._get_memory_store", lambda: store)
+
+        orch = _orch_with_volatile_placeholder()
+        result = orch.handle_message("hello", user_id=1)  # must not raise
+
+        _, volatile = orch._run_smart_loop.call_args.args[1]
+        assert "Things you remember" not in volatile
+        assert result == "ok"
+
+    def test_ambient_recall_forced_hang_times_out_without_blocking_turn(self, monkeypatch):
+        import time
+
+        store = MagicMock()
+
+        def _hang(*args, **kwargs):
+            time.sleep(0.3)
+            return []
+
+        store.recall_ambient.side_effect = _hang
+        monkeypatch.setattr("core.main.tool_registry._get_memory_store", lambda: store)
+        monkeypatch.setattr("core.main.AMBIENT_RECALL_TIMEOUT_SECONDS", 0.02)
+
+        orch = _orch_with_volatile_placeholder()
+        start = time.monotonic()
+        result = orch.handle_message("hello", user_id=1)
+        elapsed = time.monotonic() - start
+
+        assert elapsed < 0.25, f"handle_message waited on the hung recall: {elapsed}s"
+        assert result == "ok"
+
+    def test_ambient_recall_renders_after_cache_seam_never_in_stable(self, monkeypatch):
+        store = MagicMock()
+        store.recall_ambient.return_value = [
+            {"kind": "fact", "content": "cache-boundary-marker-xyz", "score": 0.9, "ts": None},
+        ]
+        monkeypatch.setattr("core.main.tool_registry._get_memory_store", lambda: store)
+
+        orch = _orch_with_volatile_placeholder()
+        orch.handle_message("hi", user_id=1)
+
+        stable, volatile = orch._run_smart_loop.call_args.args[1]
+        assert "cache-boundary-marker-xyz" not in stable
+        assert "cache-boundary-marker-xyz" in volatile
+
+    def test_ambient_recall_empty_result_yields_empty_placeholder(self, monkeypatch):
+        store = MagicMock()
+        store.recall_ambient.return_value = []
+        monkeypatch.setattr("core.main.tool_registry._get_memory_store", lambda: store)
+
+        orch = _orch_with_volatile_placeholder()
+        orch.handle_message("hi", user_id=1)
+
+        _, volatile = orch._run_smart_loop.call_args.args[1]
+        assert "Things you remember" not in volatile
+        assert "{things_you_remember}" not in volatile

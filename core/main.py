@@ -20,6 +20,7 @@ Select the backend with CONVERSATION_STORE=memory|firestore (default: memory).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import os
@@ -69,6 +70,68 @@ CONNECTIVITY_ERROR_TEXT = (
 FALLBACK_DISCLOSURE_TEXT = (
     "\n\n_(Running on backup reasoning at the moment, Sir — primary's stepped out.)_"
 )
+
+# Phase 32 (Plan 06, MEM-01): ambient "Things you remember" auto-recall — best
+# effort, timeout-guarded, run on the LIVE user message before every smart-loop
+# turn. ANY exception or timeout yields an empty block; recall NEVER raises
+# into handle_message and never delays the turn beyond this budget (Pitfall 4).
+AMBIENT_RECALL_TIMEOUT_SECONDS = 2.5
+AMBIENT_RECALL_K = 5
+
+# Shared executor for the ambient-recall timeout guard — reused across calls
+# instead of building/tearing down a ThreadPoolExecutor per turn. Deliberately
+# NOT used as a context manager: `with executor:` calls shutdown(wait=True) on
+# exit, which blocks waiting for every submitted thread to finish — exactly
+# what the timeout guard exists to avoid on a hung embed/Pinecone call.
+_AMBIENT_RECALL_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="ambient-recall",
+)
+
+
+def _ambient_recall_worker(user_message: str, user_id: int) -> list[dict]:
+    """Runs inside the executor thread — may raise; the caller enforces the timeout."""
+    store = tool_registry._get_memory_store()
+    return store.recall_ambient(user_id=user_id, query=user_message, k=AMBIENT_RECALL_K)
+
+
+def _format_things_you_remember(memories: list[dict]) -> str:
+    """Render ambient recall results into the "Things you remember" prompt block.
+
+    Returns "" for an empty list — the {things_you_remember} placeholder then
+    substitutes to nothing, leaving the volatile half unchanged in shape.
+    """
+    if not memories:
+        return ""
+    lines = ["**Things you remember:**"]
+    for m in memories:
+        content = m.get("content", "")
+        if content:
+            lines.append(f"- {content}")
+    return "\n".join(lines)
+
+
+def _ambient_recall(user_message: str, user_id: int) -> str:
+    """Best-effort, timeout-guarded ambient recall — NEVER raises.
+
+    Submits the recall to a background thread and waits at most
+    AMBIENT_RECALL_TIMEOUT_SECONDS for it. Any exception (embed/network error,
+    missing PINECONE_API_KEY, malformed store, etc.) OR a timeout yields an
+    empty block — handle_message must never stall or fail because ambient
+    memory recall did (Pitfall 4). A timed-out worker thread is not cancelled
+    (Python threads can't be force-killed) — it finishes in the background and
+    its result is discarded; the turn itself is never held up waiting for it.
+    """
+    try:
+        future = _AMBIENT_RECALL_EXECUTOR.submit(
+            _ambient_recall_worker, user_message, user_id,
+        )
+        results = future.result(timeout=AMBIENT_RECALL_TIMEOUT_SECONDS)
+    except Exception:
+        logger.debug(
+            "Ambient recall failed or timed out for user_id=%s", user_id, exc_info=True,
+        )
+        return ""
+    return _format_things_you_remember(results)
 
 
 # ------------------------------------------------------------------ #
@@ -598,6 +661,15 @@ class AgentOrchestrator:
         # Per D-03: SELF.md injected into smart_system only (not worker).
         smart_system_stable, smart_system_volatile = self.render_smart_system(
             self._smart_prompt_template
+        )
+        # Phase 32 (Plan 06, MEM-01): ambient "Things you remember" auto-recall
+        # on the LIVE user message — best-effort, timeout-guarded (never raises,
+        # never blocks the turn beyond AMBIENT_RECALL_TIMEOUT_SECONDS). Injected
+        # into the {things_you_remember} placeholder in the VOLATILE half only —
+        # the cached stable prefix (Plan 02's cache seam) is never touched.
+        things_you_remember_block = _ambient_recall(user_message, user_id)
+        smart_system_volatile = smart_system_volatile.replace(
+            "{things_you_remember}", things_you_remember_block
         )
         # Append the nutrition fueling-coach guidance (chat path only — the
         # autonomous/morning-briefing paths append it to their own composed
