@@ -237,6 +237,19 @@ def _is_empty_signals(situation: dict) -> bool:
     # else wakes the tick — but its own presence must never wake the free
     # tier. Adding a check here would let a directive spend money on its own,
     # defeating the D-11/SC-3 cost gate that is Klaus's entire cost model.
+    #
+    # Phase 32 (MEM-04/MEM-05) — conversation_tail and training_reality are
+    # BOTH deliberately excluded here, same rationale as standing_directives
+    # above:
+    #   - conversation_tail: a recent conversation existing (nearly always
+    #     true within 24-48h) is NOT itself a reason to speak up — it reaches
+    #     triage/compose purely so continuity/tone can be judged, never as a
+    #     trigger. Referencing it here would flip almost every tick to
+    #     non-empty (Pitfall 3), defeating the D-11/SC-3 cost gate.
+    #   - training_reality: a reconciled per-date training picture is CONTEXT
+    #     for judging OTHER signals (e.g. "don't re-ask about a session
+    #     already marked done") — never a reason to wake the free tier on its
+    #     own, mirroring training_status/acwr/training_evidence above.
     return True
 
 
