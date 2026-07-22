@@ -1638,3 +1638,106 @@ class TestStandingDirectiveTools:
         cancd = schemas_by_name["cancel_standing_directive"]
         assert set(cancd["input_schema"]["required"]) == {"id"}
         assert "Call this directly — do NOT delegate to the worker." in cancd["description"]
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 03 — forget_memory (MEM-03/D-04 deliberate-only forgetting)
+# ---------------------------------------------------------------------------
+
+class TestForgetMemory:
+    """MEM-03: forget_memory hard-deletes a Pinecone vector by id.
+
+    Covers:
+      - a valid vector_id triggers index.delete(ids=[<id>]) on the
+        MemoryStore-constructed index (mocked)
+      - a non-string / empty vector_id returns an error dict, never calls
+        delete, and never raises (ASVS V5, T-32-04)
+      - forget_memory resolves through core/tools.py dispatch by name
+      - registration: SMART_AGENT_DIRECT_TOOLS, excluded from
+        WORKER_TOOL_SCHEMAS, present in TOOL_SCHEMAS + _HANDLERS
+    """
+
+    def test_valid_vector_id_calls_index_delete(self, monkeypatch):
+        mock_index = MagicMock()
+        mock_store = MagicMock()
+        mock_store._get_index.return_value = mock_index
+        mock_tool = tools_module_memory_tool(mock_store)
+
+        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+
+        result_str = tools._handle_forget_memory(vector_id="abc-123")
+        result = json.loads(result_str)
+
+        mock_index.delete.assert_called_once_with(ids=["abc-123"])
+        assert result == {"ok": True, "vector_id": "abc-123"}
+
+    def test_empty_vector_id_returns_error_no_delete_no_raise(self, monkeypatch):
+        mock_index = MagicMock()
+        mock_store = MagicMock()
+        mock_store._get_index.return_value = mock_index
+        mock_tool = tools_module_memory_tool(mock_store)
+
+        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+
+        result_str = tools._handle_forget_memory(vector_id="")
+        result = json.loads(result_str)
+
+        mock_index.delete.assert_not_called()
+        assert result["ok"] is False
+        assert "error" in result
+
+    def test_non_string_vector_id_returns_error_no_delete_no_raise(self, monkeypatch):
+        mock_index = MagicMock()
+        mock_store = MagicMock()
+        mock_store._get_index.return_value = mock_index
+        mock_tool = tools_module_memory_tool(mock_store)
+
+        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+
+        # Handler dispatch always passes JSON-decoded args, so a malformed
+        # call site could pass a non-string (e.g. None or an int). Exercise
+        # the underlying MemoryTool method directly for the non-string case.
+        result = mock_tool.forget_memory(None)
+
+        mock_index.delete.assert_not_called()
+        assert result["ok"] is False
+        assert "error" in result
+
+    def test_resolves_through_handlers_dispatch_by_name(self, monkeypatch):
+        mock_index = MagicMock()
+        mock_store = MagicMock()
+        mock_store._get_index.return_value = mock_index
+        mock_tool = tools_module_memory_tool(mock_store)
+
+        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+
+        assert "forget_memory" in tools._HANDLERS
+        result_str = tools._HANDLERS["forget_memory"]({"vector_id": "xyz-789"})
+        result = json.loads(result_str)
+
+        mock_index.delete.assert_called_once_with(ids=["xyz-789"])
+        assert result == {"ok": True, "vector_id": "xyz-789"}
+
+    # ----- Registration tests ----- #
+
+    def test_forget_memory_in_smart_agent_direct_tools(self):
+        assert "forget_memory" in tools.SMART_AGENT_DIRECT_TOOLS
+
+    def test_forget_memory_excluded_from_worker_schemas(self):
+        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
+        assert "forget_memory" not in worker_names, (
+            "forget_memory must NOT appear in WORKER_TOOL_SCHEMAS — brain-only deletion"
+        )
+
+    def test_forget_memory_has_schema_with_vector_id_required(self):
+        schemas_by_name = {s["name"]: s for s in tools.TOOL_SCHEMAS}
+        assert "forget_memory" in schemas_by_name
+        schema = schemas_by_name["forget_memory"]
+        assert schema["input_schema"]["required"] == ["vector_id"]
+        assert "Call this directly — do NOT delegate to the worker." in schema["description"]
+
+
+def tools_module_memory_tool(store):
+    """Build a real MemoryTool wired to a fake store for handler-level tests."""
+    from mcp_tools.memory import MemoryTool
+    return MemoryTool(memory_store=store)

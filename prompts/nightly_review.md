@@ -29,9 +29,10 @@ A JSON object with:
   Empty string when there are none.
 - `directive_items` — housekeeping from tonight's reflection: self-directive
   proposals I decided on (already active), expiry notes (directives that ended),
-  prune-flags (active directives worth a second look), each with a `type` field
-  (`proposal` / `expiry` / `prune_flag`) plus supporting detail. Empty list most
-  nights.
+  prune-flags (active directives worth a second look), memory contradictions
+  (a stored memory that looks contradicted by something newer), each with a
+  `type` field (`proposal` / `expiry` / `prune_flag` / `memory_contradiction`)
+  plus supporting detail. Empty list most nights.
 
 ## How to write it
 
@@ -78,6 +79,12 @@ where these are announced, so get it right:
 - **Prune-flags**: worth a line if the message isn't already running long
   ("Still want the no-nudges rule? Hasn't come up in a while.") — your judgment;
   fine to hold for tomorrow night if there's a lot else going on.
+- **Memory contradictions** (D-04/MEM-03): I never delete a memory myself —
+  each one is a plain question, once, in my own voice ("I still have you down
+  as marathon-training — drop that?" / "Still got you logged as vegetarian,
+  that still right?"). If he confirms, I call `forget_memory` with that
+  memory's `vector_id` next turn. If he says it's still accurate, I leave it
+  alone and don't ask again this cycle.
 - If `directive_items` is empty and `standing_directives_block` is empty, say
   nothing about directives at all — don't manufacture a section for silence.
 

@@ -433,6 +433,7 @@ def _default_gathered_day() -> dict:
         "calendar_event_count": 2,
         "tasks_completed": 2,
         "heartbeat_ok": True,
+        "candidate_memories": [],
     }
 
 
@@ -480,7 +481,8 @@ def test_gather_day_uses_recent_window_not_stale_get():
                 with patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")):
                     with patch("core.heartbeat._read_cron_ledger", side_effect=RuntimeError("skip")):
                         with patch("memory.firestore_db.LLMUsageStore", side_effect=RuntimeError("skip")):
-                            gathered = _gather_day("2026-07-19")
+                            with patch("memory.pinecone_db.MemoryStore", side_effect=RuntimeError("skip")):
+                                gathered = _gather_day("2026-07-19")
 
     assert gathered["conversation"] != [], (
         "bug B3: _gather_day's conversation must be non-empty when get_recent_window "
@@ -850,6 +852,165 @@ def test_reflection_prune_flag_carried_as_narrative_item_not_auto_actioned():
     assert any(
         item["type"] == "prune_flag" and item["directive_id"] == "stale-1" for item in directive_items
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 03 (MEM-03/D-04) — brain-judged memory contradiction detection
+# ---------------------------------------------------------------------------
+
+def test_gather_day_includes_candidate_memories():
+    """_gather_day recalls a bounded candidate-memory set with {id, text} via a
+    direct Pinecone index query (not MemoryStore.recall(), whose public shape
+    omits vector ids — see test_pinecone_recall.py::test_result_shape_unchanged)."""
+    from core.reflection import _gather_day  # noqa: PLC0415
+
+    fake_vector = [0.1] * 768
+    store = pinecone_db.MemoryStore(api_key="fake", index_name="fake-index")
+    store._embed = MagicMock(return_value=fake_vector)
+
+    match_1 = MagicMock()
+    match_1.id = "vec-1"
+    match_1.metadata = {"content": "Amit is marathon-training for October."}
+    mock_index = MagicMock()
+    mock_index.query.return_value = MagicMock(matches=[match_1])
+    store._get_index = MagicMock(return_value=mock_index)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("memory.firestore_conversation.FirestoreConversationStore", side_effect=RuntimeError("skip")):
+            with patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")):
+                with patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")):
+                    with patch("core.heartbeat._read_cron_ledger", side_effect=RuntimeError("skip")):
+                        with patch("memory.firestore_db.LLMUsageStore", side_effect=RuntimeError("skip")):
+                            with patch("memory.pinecone_db.MemoryStore", return_value=store):
+                                gathered = _gather_day("2026-07-19")
+
+    assert gathered["candidate_memories"] == [
+        {"id": "vec-1", "text": "Amit is marathon-training for October."}
+    ]
+
+
+def test_gather_day_candidate_memories_failure_is_isolated():
+    """A failing candidate-memory recall (e.g. Pinecone unreachable) yields an
+    empty list — never aborts the gather (best-effort, D-01 discipline)."""
+    from core.reflection import _gather_day  # noqa: PLC0415
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("memory.firestore_conversation.FirestoreConversationStore", side_effect=RuntimeError("skip")):
+            with patch("core.tools._get_calendar_tool", side_effect=RuntimeError("skip")):
+                with patch("memory.firestore_db.TaskStore", side_effect=RuntimeError("skip")):
+                    with patch("core.heartbeat._read_cron_ledger", side_effect=RuntimeError("skip")):
+                        with patch("memory.firestore_db.LLMUsageStore", side_effect=RuntimeError("skip")):
+                            with patch("memory.pinecone_db.MemoryStore", side_effect=RuntimeError("Pinecone down")):
+                                gathered = _gather_day("2026-07-19")
+
+    assert gathered["candidate_memories"] == []
+
+
+def test_reflection_memory_contradiction_mapped_to_directive_item():
+    """DETECTION: a candidate memory + a brain-flagged memory_contradictions entry
+    maps to exactly one type='memory_contradiction' directive_items entry carrying
+    the memory's vector_id — and reflection never calls any delete path (D-04:
+    narrative-only; deletion is the separate forget_memory tool, confirmed by Amit)."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [], "prune_flags": [], "expiry_notes": [],
+        "memory_contradictions": [
+            {"memory_id": "vec-1", "reason": "he said today the marathon plan is off"},
+        ],
+    }
+
+    gathered = _default_gathered_day()
+    gathered["candidate_memories"] = [
+        {"id": "vec-1", "text": "Amit is marathon-training for October."},
+    ]
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test()
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    mock_mem = MagicMock()
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("core.reflection._gather_day", return_value=gathered):
+            with patch("core.reflection._summarize_conversation", return_value=gathered["conversation_summary"]):
+                with patch("core.reflection._brain_reflect", return_value=llm_result):
+                    with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                        with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                            mock_outreach_cls.return_value.get_today.return_value = []
+                            with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                                with patch("memory.pinecone_db.MemoryStore", return_value=mock_mem):
+                                    with patch("memory.firestore_db.SelfStateStore"):
+                                        run_reflection("2026-07-19")
+
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    contradiction_items = [item for item in directive_items if item["type"] == "memory_contradiction"]
+    assert len(contradiction_items) == 1
+    item = contradiction_items[0]
+    assert item["vector_id"] == "vec-1"
+    assert item["memory"] == "Amit is marathon-training for October."
+    assert item["reason"] == "he said today the marathon plan is off"
+
+    # Reflection never deletes — only remember_self may be called on the
+    # MemoryStore mock; no delete/forget-shaped call is ever made.
+    called_method_names = {call[0] for call in mock_mem.method_calls}
+    assert not called_method_names & {"delete", "forget_memory", "_get_index"}
+
+
+def test_reflection_no_memory_contradiction_produces_no_directive_item():
+    """An empty (or absent) memory_contradictions list produces no
+    memory_contradiction directive_items entry — empty-state discipline."""
+    from core.reflection import run_reflection  # noqa: PLC0415
+
+    llm_result = {
+        "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
+        "highlights": ["h"],
+        "directive_proposals": [], "prune_flags": [], "expiry_notes": [],
+        "memory_contradictions": [],
+    }
+
+    gathered = _default_gathered_day()
+    gathered["candidate_memories"] = [
+        {"id": "vec-1", "text": "Amit is marathon-training for October."},
+    ]
+
+    mock_directive_store, mock_journal = _mock_stores_for_directive_test()
+    written_entries: list = []
+    mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
+
+    with patch.dict("os.environ", _reflection_env()):
+        with patch("core.reflection._gather_day", return_value=gathered):
+            with patch("core.reflection._summarize_conversation", return_value=gathered["conversation_summary"]):
+                with patch("core.reflection._brain_reflect", return_value=llm_result):
+                    with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                        with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                            mock_outreach_cls.return_value.get_today.return_value = []
+                            with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+                                with patch("memory.pinecone_db.MemoryStore"):
+                                    with patch("memory.firestore_db.SelfStateStore"):
+                                        run_reflection("2026-07-19")
+
+    assert len(written_entries) == 1
+    directive_items = written_entries[0].get("directive_items", [])
+    assert not any(item["type"] == "memory_contradiction" for item in directive_items)
+
+
+def test_prompts_document_memory_contradiction_input_and_output():
+    """grep-equivalent regression: prompts/reflection.md documents both the
+    candidate-memory INPUT and memory_contradictions OUTPUT field; prompts/
+    nightly_review.md retains the memory_contradiction weaving instruction."""
+    from pathlib import Path  # noqa: PLC0415
+
+    prompts_dir = Path(__file__).parent.parent / "prompts"
+    reflection_prompt = (prompts_dir / "reflection.md").read_text(encoding="utf-8")
+    nightly_prompt = (prompts_dir / "nightly_review.md").read_text(encoding="utf-8")
+
+    assert "candidate_memories" in reflection_prompt
+    assert "memory_contradictions" in reflection_prompt
+    assert "memory_contradiction" in nightly_prompt
 
 
 def _mock_gather_sources(

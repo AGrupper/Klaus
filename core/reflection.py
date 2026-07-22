@@ -30,7 +30,15 @@ _HIGHLIGHTS_CAP = 5
 # event-based expiry notes (D-05/D-08), and accumulation-guard prune flags
 # (D-04). Each defaults to [] when missing/wrong-typed — same discipline as
 # `highlights` above; never raises.
-_OPTIONAL_LIST_KEYS = ("directive_proposals", "prune_flags", "expiry_notes")
+# Phase 32 Plan 03 (MEM-03/D-04) — a 4th optional key: brain-judged memory
+# contradictions, flagged against the candidate_memories gathered below.
+# Narrative-only, same discipline — never auto-deletes.
+_OPTIONAL_LIST_KEYS = ("directive_proposals", "prune_flags", "expiry_notes", "memory_contradictions")
+
+# Phase 32 Plan 03 (MEM-03) — bounded candidate-memory recall size for the
+# reflection contradiction-detection input. Small on purpose: this is a
+# best-effort judgment aid, not a full recall surface.
+_CANDIDATE_MEMORY_K = 5
 
 
 # ------------------------------------------------------------------ #
@@ -150,6 +158,7 @@ def _gather_day(target_date: str) -> dict:
         "calendar_event_count": 0,
         "tasks_completed": 0,
         "heartbeat_ok": False,
+        "candidate_memories": [],
     }
 
     # (a) LLM usage: message count + cost
@@ -212,6 +221,41 @@ def _gather_day(target_date: str) -> dict:
         gathered["heartbeat_ok"] = bool(ledger)
     except Exception:
         logger.warning("reflection: heartbeat ledger gather failed", exc_info=True)
+
+    # (f) Candidate memories (Phase 32 Plan 03 / MEM-03) — bounded, best-effort
+    # recall keyed on today's conversation content, feeding the reflection LLM
+    # a small candidate set so it can judge whether any of them is contradicted
+    # by a newer day-fact (D-04: narrative-only flag, never auto-deleted — see
+    # memory_contradictions handling in run_reflection). Queries the Pinecone
+    # index directly rather than MemoryStore.recall() because recall()'s public
+    # result shape deliberately omits vector ids (locked by
+    # tests/memory/test_pinecone_recall.py::test_result_shape_unchanged), and a
+    # contradiction flag must carry a vector_id back for Amit's eventual
+    # forget_memory confirmation (mirrors the index-accessor reuse already
+    # established by MemoryTool.forget_memory in mcp_tools/memory.py).
+    try:
+        from memory.pinecone_db import MemoryStore
+        pinecone_api_key = os.environ["PINECONE_API_KEY"]
+        pinecone_index = os.environ.get("PINECONE_INDEX_NAME", "klaus-memory")
+        mem_store = MemoryStore(api_key=pinecone_api_key, index_name=pinecone_index)
+        conv_texts = [
+            str(m.get("content", "")) for m in gathered.get("conversation", [])
+            if isinstance(m, dict) and m.get("content")
+        ]
+        query_text = " ".join(conv_texts).strip()[:2000] or f"key facts about Amit as of {target_date}"
+        vector = mem_store._embed(query_text)
+        result = mem_store._get_index().query(
+            vector=vector,
+            top_k=_CANDIDATE_MEMORY_K,
+            filter={"user_id": {"$eq": str(_telegram_user_id())}, "kind": {"$in": ["fact", "chunk"]}},
+            include_metadata=True,
+        )
+        gathered["candidate_memories"] = [
+            {"id": m.id, "text": (m.metadata or {}).get("content", "")}
+            for m in result.matches
+        ]
+    except Exception:
+        logger.warning("reflection: candidate-memory gather failed", exc_info=True)
 
     return gathered
 
@@ -457,6 +501,9 @@ def run_reflection(target_date: str) -> None:
         "calendar_event_count": gathered["calendar_event_count"],
         "tasks_completed": gathered["tasks_completed"],
         "heartbeat_ok": gathered["heartbeat_ok"],
+        # Phase 32 Plan 03 (MEM-03) — bounded candidate-memory set for
+        # brain-judged contradiction detection (see _gather_day step (f)).
+        "candidate_memories": gathered.get("candidate_memories", []),
     }
     if prev_entry is not None:
         brain_input["yesterday"] = {
@@ -497,6 +544,9 @@ def run_reflection(target_date: str) -> None:
         directive_proposals = [p for p in (llm_result.get("directive_proposals") or []) if isinstance(p, dict)]
         expiry_notes = [n for n in (llm_result.get("expiry_notes") or []) if isinstance(n, dict)]
         prune_flags = [f for f in (llm_result.get("prune_flags") or []) if isinstance(f, dict)]
+        memory_contradictions = [
+            c for c in (llm_result.get("memory_contradictions") or []) if isinstance(c, dict)
+        ]
 
         directive_store = None
         if directive_proposals or expiry_notes:
@@ -569,6 +619,27 @@ def run_reflection(target_date: str) -> None:
                 "type": "prune_flag",
                 "directive_id": flag.get("directive_id"),
                 "reason": flag.get("reason", ""),
+            })
+
+        # Memory contradictions (Phase 32 Plan 03 / MEM-03/D-04) — mirrors the
+        # prune_flags discipline exactly: brain-judged, narrative-only, NEVER
+        # auto-deleted here. Amit's explicit forget_memory call (core/tools.py,
+        # Task 1) is the only deletion path; this only surfaces the flag for
+        # the nightly to phrase as a question.
+        candidate_by_id = {
+            c.get("id"): c.get("text", "")
+            for c in gathered.get("candidate_memories", [])
+            if isinstance(c, dict) and c.get("id")
+        }
+        for contradiction in memory_contradictions:
+            memory_id = contradiction.get("memory_id")
+            if not memory_id:
+                continue
+            directive_items.append({
+                "type": "memory_contradiction",
+                "vector_id": memory_id,
+                "memory": candidate_by_id.get(memory_id, ""),
+                "reason": contradiction.get("reason", ""),
             })
 
     entry["directive_items"] = directive_items
