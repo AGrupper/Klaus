@@ -95,7 +95,7 @@ class LLMClient:
                 f"Choose from: {self.SUPPORTED_BACKENDS}"
             )
 
-    def chat(self, messages: list[dict], *, system: str | None = None,
+    def chat(self, messages: list[dict], *, system: str | tuple[str, str] | None = None,
              tools: list[dict] | None = None,
              purpose: str = "",
              max_tokens: int | None = None,
@@ -105,7 +105,14 @@ class LLMClient:
 
         Args:
             messages: Conversation history in canonical Anthropic format.
-            system:   System prompt string (injected by each backend as appropriate).
+            system:   System prompt — either a plain string (single block on
+                      every backend) or a ``(stable, volatile)`` tuple. On the
+                      Anthropic backend a tuple becomes two real content
+                      blocks (cache_control ephemeral 1h on the stable block
+                      only, so a same-day turn is a genuine cache READ, not a
+                      full rewrite every per-minute render — 32-02). Gemini
+                      and OpenAI-compat backends have no cache_control
+                      concept — a tuple is simply joined with "\\n\\n".
             tools:    Tool schemas in Anthropic tool_use format. Each backend
                       converts internally to its own wire format.
             purpose:  Caller label for usage metering (e.g. "smart", "worker", "tick").
@@ -176,7 +183,7 @@ class LLMClient:
 class _BaseBackend:
     """Marker base class for type-checking."""
 
-    def chat(self, messages: list[dict], *, system: str | None,
+    def chat(self, messages: list[dict], *, system: str | tuple[str, str] | None,
              tools: list[dict] | None,
              max_tokens: int | None = None,
              temperature: float | None = None,
@@ -200,7 +207,7 @@ class _AnthropicBackend(_BaseBackend):
             api_key=api_key, timeout=_llm_timeout_seconds(), max_retries=1,
         )
 
-    def chat(self, messages: list[dict], *, system: str | None = None,
+    def chat(self, messages: list[dict], *, system: str | tuple[str, str] | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
@@ -235,13 +242,36 @@ class _AnthropicBackend(_BaseBackend):
             # temperature/top_p/top_k/manual `thinking` is ever added here —
             # Sonnet 5 hard-400s on those params; `temperature` above is the
             # sole param-gate pattern any future addition must mirror.
-            kwargs["system"] = [
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral", "ttl": "1h"},
-                },
-            ]
+            #
+            # 32-02: system may be a (stable, volatile) tuple — a REAL second
+            # content block, not positional ordering within one block (Anthropic
+            # hashes cache_control blocks cumulatively; per-minute content inside
+            # the single cached block turned nearly every chat turn into a full
+            # cache WRITE with zero READ). cache_control lands on the stable
+            # block only; volatile is uncached. An empty volatile half (a
+            # template with no CURRENT TIME seam, e.g. autonomous.md/
+            # worker_agent.md) degrades to the same single cached block as the
+            # str path — Anthropic rejects empty text content blocks.
+            if isinstance(system, tuple):
+                stable, volatile = system
+                blocks: list[dict] = [
+                    {
+                        "type": "text",
+                        "text": stable,
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                    },
+                ]
+                if volatile:
+                    blocks.append({"type": "text", "text": volatile})
+                kwargs["system"] = blocks
+            else:
+                kwargs["system"] = [
+                    {
+                        "type": "text",
+                        "text": system,
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"},
+                    },
+                ]
         if tools:
             # Anthropic tool format is our canonical format — pass through directly.
             kwargs["tools"] = tools
@@ -348,7 +378,7 @@ class _GeminiBackend(_BaseBackend):
             ),
         )
 
-    def chat(self, messages: list[dict], *, system: str | None = None,
+    def chat(self, messages: list[dict], *, system: str | tuple[str, str] | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
@@ -366,7 +396,11 @@ class _GeminiBackend(_BaseBackend):
         if temperature is not None:
             config_kwargs["temperature"] = temperature
         if system:
-            config_kwargs["system_instruction"] = system
+            # 32-02: Gemini has no cache_control concept — a (stable, volatile)
+            # tuple is simply joined into one system_instruction string.
+            config_kwargs["system_instruction"] = (
+                "\n\n".join(system) if isinstance(system, tuple) else system
+            )
         if gemini_tools:
             config_kwargs["tools"] = gemini_tools
 
@@ -594,7 +628,7 @@ class _OpenAIBackend(_BaseBackend):
             timeout=_llm_timeout_seconds(), max_retries=1,
         )
 
-    def chat(self, messages: list[dict], *, system: str | None = None,
+    def chat(self, messages: list[dict], *, system: str | tuple[str, str] | None = None,
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
@@ -655,12 +689,15 @@ class _OpenAIBackend(_BaseBackend):
         }
 
     def _convert_messages(self, messages: list[dict], *,
-                          system: str | None) -> list[dict]:
+                          system: str | tuple[str, str] | None) -> list[dict]:
         """Convert canonical Anthropic-format messages to OpenAI message list."""
         openai_msgs: list[dict] = []
 
         if system:
-            openai_msgs.append({"role": "system", "content": system})
+            # 32-02: OpenAI-compat has no cache_control concept — a
+            # (stable, volatile) tuple is simply joined into one system message.
+            content = "\n\n".join(system) if isinstance(system, tuple) else system
+            openai_msgs.append({"role": "system", "content": content})
 
         for msg in messages:
             role = msg["role"]
