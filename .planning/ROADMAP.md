@@ -101,8 +101,8 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 32-03-PLAN.md — forget_memory tool (Pinecone delete-by-id, validated) + reflection contradiction-flag, never auto-delete (MEM-03)
 - [x] 32-04-PLAN.md — training_reality pure reconciler + planned_sessions_for moved to training_checkin; SC-4 done-idempotency (MEM-04)
 - [x] 32-05-PLAN.md — GroqTokenLedgerStore + primary-only increment + at-cap Gemini fallback + heartbeat 80%/spike alert (MEM-06)
-- [ ] 32-06-PLAN.md — Ambient auto-recall (score-thresholded, timeout-guarded) + 6h-idle continuity tail + boundary marker (MEM-01/02)
-- [ ] 32-07-PLAN.md — conversation_tail + training_reality gathers, context-only invariant, triage/compose renders, tightened budget guard (MEM-04/05)
+- [x] 32-06-PLAN.md — Ambient auto-recall (score-thresholded, timeout-guarded) + 6h-idle continuity tail + boundary marker (MEM-01/02)
+- [x] 32-07-PLAN.md — conversation_tail + training_reality gathers, context-only invariant, triage/compose renders, tightened budget guard (MEM-04/05)
 - [ ] 32-08-PLAN.md — current_location derivation (calendar + directives, ask-when-ambiguous) + weather/routes repoint (MEM-07/05)
 
 ### Phase 33: Occasion Cascade
@@ -150,7 +150,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
-| 32. Unified Situation (Ambient Memory) | 5/8 | In Progress|  |
+| 32. Unified Situation (Ambient Memory) | 7/8 | In Progress|  |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
