@@ -83,6 +83,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "set_standing_directive",
     "list_standing_directives",
     "cancel_standing_directive",
+    # Phase 32 Plan 03 — deliberate memory hygiene (MEM-03/D-04): brain-direct only
+    "forget_memory",
 })
 
 # ------------------------------------------------------------------ #
@@ -490,6 +492,32 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "forget_memory",
+        "description": (
+            "Deliberately and permanently delete one stored memory by its vector id — "
+            "Amit's explicit 'forget that' trigger (MEM-03). Call this directly — do NOT "
+            "delegate to the worker. This is a hard delete with no undo. Only call when "
+            "Amit has clearly asked to forget or correct a specific stored fact — e.g. "
+            "after a `recall` surfaced it and Amit disputes it, or the nightly review "
+            "flagged a `memory_contradiction` and Amit confirmed the drop. Never call "
+            "speculatively or without an explicit trigger."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "vector_id": {
+                    "type": "string",
+                    "description": (
+                        "The Pinecone vector id of the memory to delete — returned by a "
+                        "prior `remember`/`recall` call, or surfaced as `vector_id` in a "
+                        "nightly memory_contradiction flag."
+                    ),
+                },
+            },
+            "required": ["vector_id"],
         },
     },
     {
@@ -1485,6 +1513,7 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
         "delegate_to_worker",
         "remember",
         "recall",
+        "forget_memory",
         "search_chat_history",
         "list_own_files",
         "read_own_source",
@@ -1845,6 +1874,12 @@ def _handle_recall(query: str, k: int = 5, kind: str | None = None) -> str:
 def _handle_search_chat_history(query: str, k: int = 5, project: str | None = None) -> str:
     """Delegate to MemoryTool.search_chat_history and serialise the result."""
     result = _get_memory_tool().search_chat_history(_get_current_user_id(), query, k, project)
+    return json.dumps(result)
+
+
+def _handle_forget_memory(vector_id: str) -> str:
+    """Delegate to MemoryTool.forget_memory and serialise the result."""
+    result = _get_memory_tool().forget_memory(vector_id)
     return json.dumps(result)
 
 
@@ -3116,6 +3151,7 @@ _HANDLERS: dict[str, object] = {
     "task_delete":           lambda args: _handle_task_delete(**args),
     "remember":              lambda args: _handle_remember(**args),
     "recall":                lambda args: _handle_recall(**args),
+    "forget_memory":         lambda args: _handle_forget_memory(**args),
     "search_chat_history":   lambda args: _handle_search_chat_history(**args),
     "list_own_files":          lambda args: _handle_list_own_files(**args),
     "read_own_source":         lambda args: _handle_read_own_source(**args),

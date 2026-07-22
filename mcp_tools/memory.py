@@ -68,6 +68,32 @@ class MemoryTool:
 
         return {"matches": matches, "count": len(matches)}
 
+    def forget_memory(self, vector_id: str) -> dict:
+        """Deliberately hard-delete one stored memory by its Pinecone vector id.
+
+        Amit's explicit "forget that" trigger (MEM-03, D-04) — the ONLY way a
+        memory is removed. There is no auto-decay and no soft-delete/tombstone
+        scheme; Pinecone's native `index.delete(ids=[...])` is the deliberate
+        deletion mechanism (Don't Hand-Roll).
+
+        Args:
+            vector_id: The Pinecone vector id of the memory to delete.
+
+        Returns:
+            Success: {"ok": True, "vector_id": vector_id}
+            Failure: {"ok": False, "error": ...} — never raises (ASVS V5).
+        """
+        if not isinstance(vector_id, str) or not vector_id.strip():
+            return {"ok": False, "error": "vector_id must be a non-empty string."}
+
+        try:
+            self._store._get_index().delete(ids=[vector_id])
+        except Exception as exc:
+            logger.error("MemoryTool.forget_memory failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        return {"ok": True, "vector_id": vector_id}
+
     def search_chat_history(self, user_id: int, query: str, k: int = 5, project: str | None = None) -> dict:
         """Search ingested Claude Code chat history via semantic similarity.
 
