@@ -1245,12 +1245,18 @@ class _FakeStandingDirectiveStore:
         self.added: list[dict] = []
         self.cancelled: list[str] = []
         self.superseded: list[tuple[str, str]] = []
+        self.vetoed: list[str] = []
         self.list_active_return: list[dict] = []
         self.list_all_return: list[dict] = []
         # Configurable behaviours
         self.add_return: dict | None = None
         self.cancel_return: bool = True
         self.supersede_return: bool = True
+        self.veto_return: bool = True
+        # get() default: an existing user_chat directive, so the default
+        # fixture's routing behaviour (→ cancel()) is unchanged for tests
+        # that don't care about origin-routing.
+        self.get_return: dict | None = {"id": "fake-directive-123", "origin": "user_chat"}
         _FakeStandingDirectiveStore.instances.append(self)
 
     def add(
@@ -1289,6 +1295,13 @@ class _FakeStandingDirectiveStore:
     def supersede(self, old_id: str, new_directive_id: str) -> bool:
         self.superseded.append((old_id, new_directive_id))
         return self.supersede_return
+
+    def veto(self, did: str) -> bool:
+        self.vetoed.append(did)
+        return self.veto_return
+
+    def get(self, did: str) -> dict | None:
+        return self.get_return
 
 
 @pytest.fixture
@@ -1520,6 +1533,60 @@ class TestStandingDirectiveTools:
 
         result = json.loads(result_str)
         assert result == {"ok": False}
+
+    def test_cancel_standing_directive_klaus_self_routes_to_veto(self, fake_directive_store):
+        """Rejecting a klaus_self directive calls store.veto(id), NOT store.cancel(id)
+        (DIR-07/D-13 — durable anti-lesson, not a plain cancellation)."""
+        class _KlausSelfStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.get_return = {"id": "s1", "origin": "klaus_self"}
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _KlausSelfStore):
+            result_str = tools._handle_cancel_standing_directive(id="s1")
+
+        result = json.loads(result_str)
+        assert result == {"ok": True}
+        store = _KlausSelfStore.instances[-1]
+        assert store.vetoed == ["s1"]
+        assert store.cancelled == []
+
+    def test_cancel_standing_directive_user_chat_routes_to_cancel(self, fake_directive_store):
+        """Rejecting a user_chat directive still calls store.cancel(id) — Amit cancelling
+        his own directive is not an anti-lesson."""
+        class _UserChatStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.get_return = {"id": "u1", "origin": "user_chat"}
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _UserChatStore):
+            result_str = tools._handle_cancel_standing_directive(id="u1")
+
+        result = json.loads(result_str)
+        assert result == {"ok": True}
+        store = _UserChatStore.instances[-1]
+        assert store.cancelled == ["u1"]
+        assert store.vetoed == []
+
+    def test_cancel_standing_directive_get_returns_none_is_ok_false(self, fake_directive_store):
+        """A non-existent id (store.get returns None) returns {ok: False} without
+        raising and without calling cancel() or veto()."""
+        class _MissingStore(_FakeStandingDirectiveStore):
+            def __init__(self, project_id: str, database: str = "(default)") -> None:
+                super().__init__(project_id, database)
+                self.get_return = None
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _MissingStore):
+            result_str = tools._handle_cancel_standing_directive(id="ghost")
+
+        result = json.loads(result_str)
+        assert result == {"ok": False}
+        store = _MissingStore.instances[-1]
+        assert store.cancelled == []
+        assert store.vetoed == []
 
     # ----- Registration tests ----- #
 

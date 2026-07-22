@@ -925,8 +925,11 @@ TOOL_SCHEMAS: list[dict] = [
             "Cancel a standing directive by id. Idempotent — calling on an already-cancelled "
             "directive is safe. Resolve the id from a prior list_standing_directives call — Amit "
             "may refer to it by number or by natural-language description ('drop the France one'); "
-            "no confirmation gate needed. Returns {ok: bool}. Call this directly — do NOT delegate "
-            "to the worker."
+            "no confirmation gate needed. Rejecting a directive Klaus proposed himself (origin "
+            "'klaus_self') durably vetoes it (status='vetoed', never deleted) so reflection will "
+            "not propose the same or near-same directive again — the veto is itself training "
+            "signal (D-13). Amit cancelling his own directive still writes 'cancelled'. Returns "
+            "{ok: bool}. Call this directly — do NOT delegate to the worker."
         ),
         "input_schema": {
             "type": "object",
@@ -2271,15 +2274,30 @@ def _handle_cancel_standing_directive(id: str) -> str:
     resolves a number or natural-language description to an id from a
     prior list_standing_directives call; no command syntax required here).
 
+    Origin-aware routing (DIR-07/D-13, verification gap 2): a directive
+    Klaus proposed himself (``origin == "klaus_self"``) is durably VETOED
+    (status='vetoed', never hard-deleted) rather than merely cancelled —
+    rejecting a self-proposal is training signal that feeds
+    `core/reflection.py`'s vetoed_texts guard so the same or near-same
+    directive is never re-proposed. A directive Amit stated himself
+    (``origin == "user_chat"``) still cancels normally — cancelling one's
+    own wish is not an anti-lesson.
+
     Returns ``{"ok": True}`` whenever the doc exists (even if already
-    cancelled). Returns ``{"ok": False}`` only when the id does not exist.
+    cancelled/vetoed). Returns ``{"ok": False}`` when the id does not exist.
     """
     from memory.firestore_db import StandingDirectiveStore
     store = StandingDirectiveStore(
         project_id=os.environ["GCP_PROJECT_ID"],
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    ok = store.cancel(id)
+    directive = store.get(id)
+    if directive is None:
+        return json.dumps({"ok": False})
+    if directive.get("origin") == "klaus_self":
+        ok = store.veto(id)
+    else:
+        ok = store.cancel(id)
     return json.dumps({"ok": bool(ok)})
 
 
