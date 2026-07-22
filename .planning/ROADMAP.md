@@ -38,7 +38,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 
 - [x] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt (completed 2026-07-19)
 - [x] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop (2 verification gaps closed 2026-07-22 — DIR-05 supersede link via 31-07 + DIR-07 vetoed anti-lesson via 31-08; re-verified 7/7) (completed 2026-07-22)
-- [ ] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate
+- [x] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate (completed 2026-07-22)
 - [ ] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome
 - [ ] **Phase 34: Write-Backs** — Calendar workout actions and chat-reported training changes mechanically and idempotently update the single training-reality source of truth
 - [ ] **Phase 35: Hardening & Subtraction** — New judgment eval fixtures, a token-budget guard test, dead-code deletion, and updated invariants close the milestone
@@ -103,7 +103,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 32-05-PLAN.md — GroqTokenLedgerStore + primary-only increment + at-cap Gemini fallback + heartbeat 80%/spike alert (MEM-06)
 - [x] 32-06-PLAN.md — Ambient auto-recall (score-thresholded, timeout-guarded) + 6h-idle continuity tail + boundary marker (MEM-01/02)
 - [x] 32-07-PLAN.md — conversation_tail + training_reality gathers, context-only invariant, triage/compose renders, tightened budget guard (MEM-04/05)
-- [ ] 32-08-PLAN.md — current_location derivation (calendar + directives, ask-when-ambiguous) + weather/routes repoint (MEM-07/05)
+- [x] 32-08-PLAN.md — current_location derivation (calendar + directives, ask-when-ambiguous) + weather/routes repoint (MEM-07/05)
 
 ### Phase 33: Occasion Cascade
 **Goal**: Nightly review, morning briefing, and the Sunday weekly review stop being always-fire templates and become judgment-driven occasions through the same 3-layer cascade as the tick, with silence a valid, self-explainable outcome distinguishable from infra failure
@@ -150,7 +150,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 |-------|----------------|--------|-----------|
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
-| 32. Unified Situation (Ambient Memory) | 7/8 | In Progress|  |
+| 32. Unified Situation (Ambient Memory) | 8/8 | Complete   | 2026-07-22 |
 | 33. Occasion Cascade | 0/? | Not started | - |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
