@@ -117,3 +117,10 @@ None - no external service configuration required.
 ---
 *Phase: 32-unified-situation-ambient-memory*
 *Completed: 2026-07-22*
+
+## Self-Check: PASSED
+
+All files created/modified verified present: `core/training_checkin.py`,
+`core/nightly_review.py`, `tests/test_training_checkin.py`,
+`.planning/phases/32-unified-situation-ambient-memory/32-04-SUMMARY.md`.
+All commits verified in `git log`: `8609ec0`, `6779bbd`, `8a382ed`, `879fec8`.
