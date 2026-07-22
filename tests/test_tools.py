@@ -1244,11 +1244,13 @@ class _FakeStandingDirectiveStore:
         self.database = database
         self.added: list[dict] = []
         self.cancelled: list[str] = []
+        self.superseded: list[tuple[str, str]] = []
         self.list_active_return: list[dict] = []
         self.list_all_return: list[dict] = []
         # Configurable behaviours
         self.add_return: dict | None = None
         self.cancel_return: bool = True
+        self.supersede_return: bool = True
         _FakeStandingDirectiveStore.instances.append(self)
 
     def add(
@@ -1283,6 +1285,10 @@ class _FakeStandingDirectiveStore:
     def cancel(self, did: str) -> bool:
         self.cancelled.append(did)
         return self.cancel_return
+
+    def supersede(self, old_id: str, new_directive_id: str) -> bool:
+        self.superseded.append((old_id, new_directive_id))
+        return self.supersede_return
 
 
 @pytest.fixture
@@ -1351,6 +1357,50 @@ class TestStandingDirectiveTools:
         added = fake_directive_store.instances[0].added[0]
         assert added["expires_at"] is None
         assert added["condition_text"] is None
+
+    def test_set_standing_directive_with_supersedes_writes_link(self, fake_directive_store):
+        """supersedes=<old_id> adds the new directive AND calls store.supersede(old_id,
+        new_id) once — the old doc gets status='superseded' + superseded_by, not
+        'cancelled' (DIR-05/D-16, gap 1 fix)."""
+        result_str = tools._handle_set_standing_directive(
+            text="new refined wish",
+            supersedes="OLD_ID",
+        )
+        result = json.loads(result_str)
+        store = fake_directive_store.instances[0]
+
+        assert len(store.added) == 1
+        assert len(store.superseded) == 1
+        old_id, new_id = store.superseded[0]
+        assert old_id == "OLD_ID"
+        assert new_id == result["id"] == "fake-directive-123"
+        assert result["superseded"] is True
+
+    def test_set_standing_directive_without_supersedes_never_calls_supersede(self, fake_directive_store):
+        """Omitting supersedes is backward-compatible — add() only, supersede() never
+        called (existing capture path unchanged)."""
+        tools._handle_set_standing_directive(text="plain wish")
+        store = fake_directive_store.instances[0]
+        assert len(store.added) == 1
+        assert store.superseded == []
+
+    def test_set_standing_directive_supersedes_nonexistent_id_does_not_raise(self, fake_directive_store):
+        """supersedes pointing at a non-existent id (store.supersede returns False) does
+        not raise — the new directive is still added; handler returns without error."""
+        class _StoreSupersedeReturnsFalse(_FakeStandingDirectiveStore):
+            def supersede(self, old_id: str, new_directive_id: str) -> bool:
+                self.superseded.append((old_id, new_directive_id))
+                return False
+
+        import memory.firestore_db as firestore_db
+        with patch.object(firestore_db, "StandingDirectiveStore", _StoreSupersedeReturnsFalse):
+            result_str = tools._handle_set_standing_directive(
+                text="new refined wish",
+                supersedes="MISSING_ID",
+            )
+        result = json.loads(result_str)
+        assert result["superseded"] is False
+        assert result["text"] == "new refined wish"
 
     # ----- _handle_list_standing_directives ----- #
 

@@ -887,6 +887,15 @@ TOOL_SCHEMAS: list[dict] = [
                     "type": "string",
                     "description": "Optional event-based expiry description (e.g. 'while I'm in France').",
                 },
+                "supersedes": {
+                    "type": "string",
+                    "description": (
+                        "Optional id of an existing directive this refined directive replaces when "
+                        "resolving a persona conflict (D-16) — the old directive is marked "
+                        "superseded_by this new one. Get the id from a prior list_standing_directives "
+                        "call."
+                    ),
+                },
             },
             "required": ["text"],
         },
@@ -2159,6 +2168,7 @@ def _handle_set_standing_directive(
     text: str,
     expires_at: str | None = None,
     condition_text: str | None = None,
+    supersedes: str | None = None,
 ) -> str:
     """Capture a standing directive verbatim (DIR-01). Origin defaults to
     'user_chat' — capture is user-initiated, unlike self-scheduled follow-ups
@@ -2170,13 +2180,22 @@ def _handle_set_standing_directive(
     field is stored as-received if it isn't parseable as either, since
     `condition_text` is the intended path for non-dated expiries anyway.
 
+    `supersedes` (D-16 persona-conflict resolution): when set to an existing
+    directive's id, the new directive is added first, then the old directive
+    is flipped to `status="superseded"` + `superseded_by=<new id>` via
+    `StandingDirectiveStore.supersede()` — a durable audit link, distinct
+    from a plain cancel. Backward compatible: omitting `supersedes` never
+    calls `supersede()` (unchanged capture behavior).
+
     Args:
         text: The wish, captured verbatim.
         expires_at: Optional ISO 8601 or natural-language hard-date expiry.
         condition_text: Optional event-based expiry description.
+        supersedes: Optional id of an existing directive this one replaces.
 
     Returns:
-        JSON string of the persisted directive doc.
+        JSON string of the persisted directive doc, plus a `"superseded"`
+        bool key when `supersedes` was provided.
     """
     from datetime import datetime, timezone as _tz
 
@@ -2207,6 +2226,9 @@ def _handle_set_standing_directive(
         expires_at=normalized_expiry,
         condition_text=condition_text,
     )
+    if supersedes:
+        result = dict(result)
+        result["superseded"] = bool(store.supersede(old_id=supersedes, new_directive_id=result["id"]))
     return json.dumps(result)
 
 
