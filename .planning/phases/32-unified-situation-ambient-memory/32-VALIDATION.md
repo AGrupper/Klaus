@@ -2,8 +2,8 @@
 phase: 32
 slug: unified-situation-ambient-memory
 status: draft
-nyquist_compliant: false
-wave_0_complete: false
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-22
 ---
 
@@ -56,6 +56,8 @@ created: 2026-07-22
 
 ## Wave 0 Requirements
 
+> **Wave 0 is not a separate plan.** All "W0" files below are created INLINE by the TDD tasks of their owning plan: `tests/test_token_budget.py` + `tiktoken==0.13.0` by Plan 32-01; `tests/test_training_checkin.py` cases by Plan 32-04; the extended `tests/test_autonomous.py` / `test_main.py` / `test_pinecone_db.py` / `test_reflection.py` / `test_heartbeat.py` / `test_tick_brain.py` / `test_tools.py` cases by Plans 32-03/05/06/07/08. Every task carries a concrete automated verify command.
+
 - [ ] `tests/test_token_budget.py` — new file, MEM-05 budget-guard test (real `tiktoken.get_encoding("o200k_harmony")` count, not a char estimate)
 - [ ] `pip install tiktoken==0.13.0` added to `requirements.txt` + CI/test env before `test_token_budget.py` can run
 - [ ] `tests/test_training_checkin.py` — verify exact filename via `ls tests/ | grep -i training`; may be new
@@ -76,11 +78,11 @@ created: 2026-07-22
 
 ## Validation Sign-Off
 
-- [ ] All tasks have automated verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (`test_token_budget.py`, tiktoken install)
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 4s (targeted per-file)
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have automated verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (`test_token_budget.py`, tiktoken install) — created inline by Plan 32-01
+- [x] No watch-mode flags
+- [x] Feedback latency < 4s (targeted per-file)
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-22 (planning)

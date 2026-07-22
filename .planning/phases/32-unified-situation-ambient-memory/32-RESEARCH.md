@@ -874,9 +874,10 @@ re-adding volatile content to the wrong (single, stable) block.
 | A4 | `tiktoken`'s `o200k_harmony` encoding is loadable in this project's Python 3.11/3.13 environment without requiring network egress at test/CI time | Standard Stack, Pitfall 2 | If the encoding's merge-ranks file requires a first-run download from an OpenAI-hosted URL and CI has no egress, the guard test would need a vendored/cached copy of the encoding file, or fall back to `cl100k_base` as a documented (slightly less accurate but same-family BPE) over-estimate. Verify this in a Wave 0 spike before relying on it. |
 | A5 | Groq's "8K TPM" per-request admission control rejects a single oversized request outright (413) rather than only accumulating toward a rolling 60s window | Validation Architecture | This is inferred from the codebase's own documented 2026-06-12 incident (`max_tokens=4096` caused 413s), not from official Groq documentation (which does not describe the exact admission-control mechanism per this session's fetch). If wrong, the guard test's "≤8000 tokens per single request" framing is still a safe, conservative check (it can only be MORE conservative than the true behavior, never less), so the risk is low. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `LLMUsageStore` gain per-purpose token fields instead of a dedicated Groq ledger?**
+   - **RESOLVED (Plan 32-05):** dedicated `GroqTokenLedgerStore` chosen; the `LLMUsageStore` per-purpose-token unification is logged as a Phase 35 housekeeping candidate.
    - What we know: `LLMUsageStore.record()` already tracks `{purpose}_calls` and
      `{purpose}_cost_usd` per purpose, but `total_in_tokens`/`total_out_tokens` are
      day-wide sums across ALL purposes, not per-purpose.
@@ -890,6 +891,7 @@ re-adding volatile content to the wrong (single, stable) block.
      Amit wants a single source of truth for all token accounting later.
 
 2. **Does `training_reality`'s triage rendering need per-slot detail, or just a status summary?**
+   - **RESOLVED (Plan 32-07 Task 3):** triage renders terminal-status strings only (no evidence detail); the rich per-slot detail is reserved for the paid Layer-2 compose render.
    - What we know: the char-cap discipline (240 chars/message-equivalent) is locked for
      the conversation tail; MEM-04 doesn't specify an equivalent cap for `training_reality`'s
      triage rendering.
