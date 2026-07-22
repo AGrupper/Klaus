@@ -4,8 +4,8 @@ milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: executing
 stopped_at: Phase 32 context gathered
-last_updated: "2026-07-22T15:38:03.195Z"
-last_activity: 2026-07-22 -- Phase 32 planning complete
+last_updated: "2026-07-22T19:21:29.468Z"
+last_activity: 2026-07-22 -- Phase 32 execution started
 progress:
   total_phases: 6
   completed_phases: 2
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 31 (standing-directives) — COMPLETE (all 8 plans, including 2 gap-closure plans 07/08 added post-verification)
-Plan: 8 of 8 — 31-08 executed (vetoed self-directive anti-lesson, DIR-07/D-13); both verification gaps closed
-Status: Ready to execute
-Last activity: 2026-07-22 -- Phase 32 planning complete
+Phase: 32 (unified-situation-ambient-memory) — EXECUTING
+Plan: 1 of 8
+Status: Executing Phase 32
+Last activity: 2026-07-22 -- Phase 32 execution started
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -71,7 +71,7 @@ Last activity: 2026-07-22 -- Phase 32 planning complete
 See: `.planning/PROJECT.md` (updated 2026-07-17 for v6.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 31 — standing-directives
+**Current focus:** Phase 32 — unified-situation-ambient-memory
 
 ## Architecture (current)
 
