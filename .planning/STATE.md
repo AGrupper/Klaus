@@ -4,13 +4,13 @@ milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: executing
 stopped_at: Phase 31 context gathered
-last_updated: "2026-07-19T20:06:48.445Z"
-last_activity: 2026-07-19 -- Phase 31 execution started
+last_updated: "2026-07-22T10:34:54.916Z"
+last_activity: 2026-07-22 -- Phase 31 planning complete
 progress:
   total_phases: 6
   completed_phases: 1
-  total_plans: 12
-  completed_plans: 6
+  total_plans: 14
+  completed_plans: 12
   percent: 17
 ---
 
@@ -20,8 +20,8 @@ progress:
 
 Phase: 31 (standing-directives) — EXECUTING
 Plan: 1 of 6
-Status: Executing Phase 31
-Last activity: 2026-07-19 -- Phase 31 execution started
+Status: Ready to execute
+Last activity: 2026-07-22 -- Phase 31 planning complete
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
