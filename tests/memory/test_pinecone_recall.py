@@ -103,3 +103,72 @@ class TestRecallReRanking:
         assert set(out[0].keys()) == {"kind", "content", "score", "ts"}
         assert out[0]["ts"] == ts
         assert isinstance(out[0]["score"], float)
+
+
+class TestRecallAmbientScoreThreshold:
+    """Phase 32 (Plan 06, MEM-01): recall_ambient applies a blended-score floor
+    (AMBIENT_MIN_SCORE) on the auto-inject path; recall() stays unthresholded
+    (D-03: deliberate tool calls can still see a marginal match).
+
+    Test names carry the ``score_threshold`` keyword so
+    ``pytest -k score_threshold`` selects this whole class."""
+
+    def test_score_threshold_below_floor_excluded_from_ambient(self):
+        """(a) a candidate with blended score below min_score is excluded."""
+        store, _ = _store_with_matches([
+            _match(0.3, "weak match", _iso_days_ago(0)),
+        ])
+        out = store.recall_ambient(user_id=1, query="q", k=5)
+        assert out == []
+
+    def test_score_threshold_at_or_above_floor_included_in_ambient(self):
+        """(b) a candidate at/above the floor is included."""
+        store, _ = _store_with_matches([
+            _match(0.6, "strong match", _iso_days_ago(0)),
+        ])
+        out = store.recall_ambient(user_id=1, query="q", k=5)
+        assert [r["content"] for r in out] == ["strong match"]
+
+    def test_score_threshold_floor_is_inclusive_at_exact_boundary(self):
+        """A blended score exactly at AMBIENT_MIN_SCORE is included (>=, not >)."""
+        from memory.pinecone_db import AMBIENT_MIN_SCORE
+        store, _ = _store_with_matches([
+            _match(AMBIENT_MIN_SCORE, "boundary match", None),
+        ])
+        out = store.recall_ambient(user_id=1, query="q", k=5)
+        assert [r["content"] for r in out] == ["boundary match"]
+
+    def test_score_threshold_mixed_batch_only_qualifying_candidates_returned(self):
+        store, _ = _store_with_matches([
+            _match(0.9, "strong", _iso_days_ago(0)),
+            _match(0.2, "weak", _iso_days_ago(0)),
+            _match(0.55, "borderline-ok", _iso_days_ago(0)),
+        ])
+        out = store.recall_ambient(user_id=1, query="q", k=5)
+        assert {r["content"] for r in out} == {"strong", "borderline-ok"}
+
+    def test_score_threshold_recall_stays_unthresholded_for_marginal_match(self):
+        """(c) the unthresholded recall() still returns a marginal match."""
+        store, _ = _store_with_matches([
+            _match(0.3, "marginal match", _iso_days_ago(0)),
+        ])
+        out = store.recall(user_id=1, query="q", k=5)
+        assert [r["content"] for r in out] == ["marginal match"]
+
+    def test_score_threshold_ambient_preserves_user_id_scoping(self):
+        """(d) user_id scoping preserved on the ambient path."""
+        store, index = _store_with_matches([])
+        store.recall_ambient(user_id=42, query="q", k=5)
+
+        kwargs = index.query.call_args.kwargs
+        assert kwargs["filter"]["user_id"] == {"$eq": "42"}
+        assert kwargs["include_metadata"] is True
+
+    def test_score_threshold_ambient_respects_custom_min_score_param(self):
+        store, _ = _store_with_matches([
+            _match(0.4, "just below custom floor", None),
+        ])
+        out = store.recall_ambient(user_id=1, query="q", k=5, min_score=0.45)
+        assert out == []
+        out2 = store.recall_ambient(user_id=1, query="q", k=5, min_score=0.35)
+        assert [r["content"] for r in out2] == ["just below custom floor"]
