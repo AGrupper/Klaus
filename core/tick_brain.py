@@ -59,6 +59,30 @@ _DEFAULT_TEMPERATURE = 0.6   # tames verdict flapping vs the ~1.0 provider defau
 _DEFAULT_FALLBACK_BACKEND = "gemini"
 _DEFAULT_FALLBACK_MODEL   = "gemini-3.5-flash"
 
+# MEM-06 — Groq's free tier for gpt-oss-120b caps at 200K tokens/day with no
+# vendor-provided remaining-budget header. GroqTokenLedgerStore is the local
+# substitute; once today's total reaches this cap, think() routes straight to
+# the Gemini fallback (D-08) instead of attempting (and 4xx-ing on) the
+# primary. 80%-warning threshold lives in core/heartbeat.py::check_groq_budget.
+_GROQ_DAILY_TOKEN_CAP = 200_000
+
+
+def _get_groq_ledger():
+    """Construct a GroqTokenLedgerStore for this call. Returns None on any
+    failure (missing GCP_PROJECT_ID, import error, etc.) — ledger access is
+    best-effort and must never block a tick. Constructed fresh per call,
+    mirroring the rest of this codebase's Firestore store usage (e.g.
+    core/heartbeat.py's check_daily_spend(), which builds LLMUsageStore /
+    CostTripwireLogStore fresh on every invocation rather than caching)."""
+    try:
+        from memory.firestore_db import GroqTokenLedgerStore
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        return GroqTokenLedgerStore(project_id=project_id, database=database)
+    except Exception as exc:
+        logger.debug("tick-brain: groq ledger unavailable: %s", exc)
+        return None
+
 _TICK_SYSTEM_PROMPT = """\
 You are Klaus's judgment layer. You receive raw health signals or situation data.
 Your job: decide whether the situation warrants action and, if so, draft a short message.
@@ -167,6 +191,16 @@ class TickBrain:
             override=None  -> primary 'tick',            fallback 'tick_fallback'
             override=...   -> primary 'tick_autonomous', fallback 'tick_autonomous_fallback'
 
+        MEM-06 — Groq daily-token ledger: after a successful primary call,
+        increments GroqTokenLedgerStore from the response's usage envelope
+        (never on the fallback path — that bills Gemini). Before attempting
+        the primary, checks GroqTokenLedgerStore().today(); at/over the 200K
+        TPD cap, the primary is skipped entirely and this call routes
+        straight to the existing Gemini fallback client (D-08) — ticks keep
+        judging, just metered. All ledger I/O is wrapped so a Firestore
+        failure degrades to "assume under cap" / "skip the increment" and
+        never blocks the tick.
+
         Returns:
             A dict with:
                 should_act (bool):  Whether the situation warrants action.
@@ -183,25 +217,55 @@ class TickBrain:
         primary_purpose = "tick_autonomous" if system_override is not None else "tick"
         fallback_purpose = primary_purpose + "_fallback"
 
-        # Try primary (Groq).
-        response = None
-        try:
-            response = self._client.chat(
-                messages,
-                system=active_system,
-                tools=tools,
-                purpose=primary_purpose,
-                max_tokens=self._max_tokens,
-                temperature=self._temperature,
-            )
-        except LLMError as exc:
-            logger.warning(
-                "tick-brain: primary LLMError (%s) — trying fallback", exc, exc_info=False
-            )
-        except Exception as exc:
-            logger.warning("tick-brain: unexpected primary error: %s", exc, exc_info=True)
+        # MEM-06/D-08 — at-cap check: skip the primary entirely once today's
+        # Groq usage has reached the 200K TPD free-tier cap. A ledger read
+        # failure degrades to "assume under cap" (at_cap stays False) so a
+        # transient Firestore outage never blocks the primary attempt.
+        ledger = _get_groq_ledger()
+        at_cap = False
+        if ledger is not None:
+            try:
+                total_tokens = ledger.today().get("total_tokens", 0) or 0
+                at_cap = total_tokens >= _GROQ_DAILY_TOKEN_CAP
+            except Exception:
+                logger.warning("tick-brain: groq ledger cap check failed", exc_info=True)
 
-        # Try fallback (Gemini brain) if primary failed.
+        # Try primary (Groq) — unless the daily Groq TPD cap has already
+        # been reached, in which case go straight to the fallback below.
+        response = None
+        if at_cap:
+            logger.info("tick-brain: Groq daily token cap reached — routing to fallback")
+        else:
+            try:
+                response = self._client.chat(
+                    messages,
+                    system=active_system,
+                    tools=tools,
+                    purpose=primary_purpose,
+                    max_tokens=self._max_tokens,
+                    temperature=self._temperature,
+                )
+            except LLMError as exc:
+                logger.warning(
+                    "tick-brain: primary LLMError (%s) — trying fallback", exc, exc_info=False
+                )
+            except Exception as exc:
+                logger.warning("tick-brain: unexpected primary error: %s", exc, exc_info=True)
+            else:
+                # Primary succeeded — increment the ledger from the response's
+                # usage envelope. Never on the fallback path (bills Gemini).
+                if ledger is not None:
+                    try:
+                        usage = response.get("usage") or {}
+                        ledger.increment(
+                            primary_purpose,
+                            usage.get("in_tokens", 0) or 0,
+                            usage.get("out_tokens", 0) or 0,
+                        )
+                    except Exception:
+                        logger.warning("tick-brain: groq ledger increment failed", exc_info=True)
+
+        # Try fallback (Gemini brain) if primary failed or was skipped (at cap).
         if response is None:
             if self._fallback_client is None:
                 logger.warning("tick-brain: no fallback configured — safe mode")

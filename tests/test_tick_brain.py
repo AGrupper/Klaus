@@ -420,6 +420,152 @@ class TestTickBrainThink(unittest.TestCase):
         self.assertEqual(result["draft"], "2 tasks overdue!")
 
 
+class TestTickBrainGroqLedgerWiring(unittest.TestCase):
+    """Plan 32-05 Task 2 — think() wiring to GroqTokenLedgerStore (MEM-06/D-08):
+    primary-only increment, at-cap Gemini routing, ledger failures non-fatal."""
+
+    def _make_brain(self, primary_response=None, primary_raises=None,
+                    fallback_response=None, fallback_raises=None,
+                    has_fallback=True):
+        """Same shape as TestTickBrainThink._make_brain."""
+        from core.tick_brain import TickBrain
+
+        brain = object.__new__(TickBrain)
+
+        primary = MagicMock()
+        if primary_raises:
+            primary.chat.side_effect = primary_raises
+        else:
+            primary.chat.return_value = primary_response or {
+                "text": '{"should_act": false, "reason": "ok"}',
+                "tool_calls": [],
+                "stop_reason": "end_turn",
+                "usage": {"in_tokens": 10, "out_tokens": 5},
+            }
+        brain._client = primary
+
+        if has_fallback:
+            fallback = MagicMock()
+            if fallback_raises:
+                fallback.chat.side_effect = fallback_raises
+            else:
+                fallback.chat.return_value = fallback_response or {
+                    "text": '{"should_act": false, "reason": "fallback_ok"}',
+                    "tool_calls": [],
+                    "stop_reason": "end_turn",
+                    "usage": {"in_tokens": 10, "out_tokens": 5},
+                }
+            brain._fallback_client = fallback
+            brain._fallback_model = "gemini-3-flash"
+        else:
+            brain._fallback_client = None
+            brain._fallback_model = None
+
+        brain._model = "qwen3-32b"
+        brain._max_tokens = 2048
+        brain._temperature = 0.6
+        return brain
+
+    def test_ledger_increment_called_on_primary_success(self):
+        """(a) A successful primary call increments the ledger with the
+        response's usage tokens, tagged with the primary purpose."""
+        brain = self._make_brain(primary_response={
+            "text": '{"should_act": false, "reason": "ok"}',
+            "tool_calls": [], "stop_reason": "end_turn",
+            "usage": {"in_tokens": 42, "out_tokens": 8},
+        })
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {}
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            brain.think("test prompt")
+        mock_ledger.increment.assert_called_once_with("tick", 42, 8)
+
+    def test_ledger_increment_not_called_on_fallback_path(self):
+        """(b) A fallback call must NOT increment the Groq ledger."""
+        from core.llm_client import LLMError
+        brain = self._make_brain(
+            primary_raises=LLMError("groq error", backend="openai"),
+        )
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {}
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            result = brain.think("test prompt")
+        mock_ledger.increment.assert_not_called()
+        self.assertEqual(result["reason"], "fallback_ok")
+
+    def test_at_cap_skips_primary_and_uses_fallback(self):
+        """(c) When today() reports >=200K, think() skips the primary
+        entirely and routes straight to the fallback client."""
+        brain = self._make_brain()
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {"total_tokens": 200_000}
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            result = brain.think("test prompt")
+        brain._client.chat.assert_not_called()
+        brain._fallback_client.chat.assert_called_once()
+        mock_ledger.increment.assert_not_called()
+        self.assertEqual(result["reason"], "fallback_ok")
+
+    def test_under_cap_still_attempts_primary(self):
+        """Sibling to (c): below the cap, the primary is attempted normally."""
+        brain = self._make_brain()
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {"total_tokens": 199_999}
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            brain.think("test prompt")
+        brain._client.chat.assert_called_once()
+
+    def test_ledger_cap_check_failure_does_not_break_think(self):
+        """(d) A raising ledger.today() call does not break think() — the
+        primary is still attempted (fail-open on the cap check)."""
+        brain = self._make_brain()
+        mock_ledger = MagicMock()
+        mock_ledger.today.side_effect = RuntimeError("simulated firestore failure")
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            result = brain.think("test prompt")
+        brain._client.chat.assert_called_once()
+        self.assertFalse(result["should_act"])
+
+    def test_ledger_increment_failure_does_not_break_think(self):
+        """(d) A raising ledger.increment() call does not break think() —
+        the parsed result is still returned."""
+        brain = self._make_brain(primary_response={
+            "text": '{"should_act": true, "reason": "ok", "draft": "hello"}',
+            "tool_calls": [], "stop_reason": "end_turn",
+            "usage": {"in_tokens": 10, "out_tokens": 5},
+        })
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {}
+        mock_ledger.increment.side_effect = RuntimeError("simulated firestore failure")
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            result = brain.think("test prompt")
+        self.assertTrue(result["should_act"])
+        self.assertEqual(result["draft"], "hello")
+
+    def test_ledger_unavailable_does_not_break_think(self):
+        """When _get_groq_ledger() itself returns None (no GCP_PROJECT_ID,
+        import failure, etc.), think() proceeds normally."""
+        brain = self._make_brain()
+        with patch("core.tick_brain._get_groq_ledger", return_value=None):
+            result = brain.think("test prompt")
+        brain._client.chat.assert_called_once()
+        self.assertFalse(result["should_act"])
+
+    def test_ledger_increment_uses_autonomous_purpose_with_override(self):
+        """Primary purpose layering (WARNING 1) must carry through to the
+        ledger increment call when system_override is set."""
+        brain = self._make_brain(primary_response={
+            "text": '{"should_act": false, "reason": "ok"}',
+            "tool_calls": [], "stop_reason": "end_turn",
+            "usage": {"in_tokens": 20, "out_tokens": 10},
+        })
+        mock_ledger = MagicMock()
+        mock_ledger.today.return_value = {}
+        with patch("core.tick_brain._get_groq_ledger", return_value=mock_ledger):
+            brain.think("test prompt", system_override="custom triage prompt")
+        mock_ledger.increment.assert_called_once_with("tick_autonomous", 20, 10)
+
+
 class TestSystemOverrideAndTopicKey(unittest.TestCase):
     """Plan 18-05 — system_override kwarg + topic_key passthrough + layered purpose strings.
 
