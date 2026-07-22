@@ -186,10 +186,28 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
     except Exception:
         logger.warning("nightly_review: task fetch failed", exc_info=True)
 
-    # Weather (folds in the old 21:30 proactive weather signal)
+    # Weather (folds in the old 21:30 proactive weather signal). Phase 32
+    # Plan 08 (MEM-07): consumes the derived current_location instead of the
+    # hardcoded "Tel Aviv" literal — closes the felt bug of a Paris trip
+    # getting a Tel Aviv forecast. RESOLVED (home or a confidently-overriding
+    # calendar/directive travel signal) -> fetch that city's forecast; the
+    # home case is byte-identical to before (derive_current_location defaults
+    # "Tel Aviv" silently). AMBIGUOUS (conflicting signals or a directive-
+    # alone unclear trip-end, D-06) -> suppress the weather entirely (never
+    # serve a possibly-wrong forecast) and set location_ask so the compose
+    # prompt below can ask "still in <city>, Sir?" before saying anything
+    # location-dependent. Reuses data["calendar"]/data["standing_directives"]
+    # gathered just above — no extra Calendar/Firestore call for this.
     try:
+        from core.autonomous import derive_current_location
         from mcp_tools.weather_tool import fetch_weather
-        data["weather"] = fetch_weather("Tel Aviv")
+        location = derive_current_location(
+            data.get("calendar") or [], data.get("standing_directives") or [],
+        )
+        if location.get("ambiguous"):
+            data["location_ask"] = {"candidate": location.get("candidate")}
+        else:
+            data["weather"] = fetch_weather(location.get("location", "Tel Aviv"))
     except Exception:
         logger.warning("nightly_review: weather fetch failed", exc_info=True)
 

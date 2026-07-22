@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -72,6 +73,32 @@ _TRIAGE_TAIL_MAX_CHARS = 240
 # Phase 32 (MEM-04) — training_reality reconciliation window: today-3d..tomorrow
 # inclusive (5 dates).
 _TRAINING_REALITY_WINDOW_DAYS = 5
+
+# Phase 32 Plan 08 (MEM-07) — home default for current_location derivation.
+# Silent: the 99% case (Amit is in Tel Aviv) never produces any chatter or ask.
+_HOME_LOCATION = "Tel Aviv"
+
+# Conservative place-name extraction from directive free text (D-06 §Pattern
+# 7, research [ASSUMED]). Deliberately narrow — only the two phrasings the
+# research called out ("while I'm in X", "back from X") — under-detect rather
+# than over-detect travel intent from prose that was never meant to encode a
+# location. `text`/`condition_text` are both free-form (StandingDirectiveStore
+# has no structured location field), so a false negative here just means the
+# directive-alone case never resolves and the derivation falls through to
+# either the calendar signal or the silent home default — never a wrong guess.
+_DIRECTIVE_LOCATION_PATTERNS = (
+    re.compile(r"while\s+i'?m\s+in\s+([A-Za-z][\w\s]{0,40})", re.IGNORECASE),
+    re.compile(r"back\s+from\s+([A-Za-z][\w\s]{0,40})", re.IGNORECASE),
+)
+# A captured place-name phrase is cut at the first of these boundaries so a
+# longer sentence fragment ("France for work this week") doesn't get treated
+# as the literal place name — and capped at 3 words as a second conservative
+# guard against over-capture.
+_DIRECTIVE_LOCATION_STOP_RE = re.compile(
+    r"[.,;!?]| for | during | until | because | so | while | and "
+    r"| but | when | since ",
+    re.IGNORECASE,
+)
 
 # BLOCKER 3 guard — ``_run_smart_loop`` RETURNS this sentinel string on total
 # LLM exhaustion. The full canned text lives in ``core.main.CONNECTIVITY_ERROR_TEXT``
@@ -250,6 +277,14 @@ def _is_empty_signals(situation: dict) -> bool:
     #     for judging OTHER signals (e.g. "don't re-ask about a session
     #     already marked done") — never a reason to wake the free tier on its
     #     own, mirroring training_status/acwr/training_evidence above.
+    #
+    # Phase 32 Plan 08 (MEM-07) — location is deliberately excluded here too,
+    # same rationale: a derived current_location (home OR a resolved/ambiguous
+    # travel signal) is CONTEXT for weather/travel-time and the nightly
+    # location-ask — never a reason to wake the free tier on its own. Even an
+    # AMBIGUOUS derivation must not trigger here; the "still in <city>, Sir?"
+    # ask only ever fires through the nightly review's own compose payload
+    # (core/nightly_review.py), never through this Layer-0 gate.
     return True
 
 
@@ -718,6 +753,131 @@ def _gather_training_reality(now: datetime, project_id: str, database: str) -> d
         return {}
 
 
+def _location_from_calendar(calendar_events: list) -> str | None:
+    """First today-event location that isn't home — the calendar travel signal.
+
+    A same-day event with a real ``location`` field not naming Tel Aviv is
+    treated as a confident travel candidate: unlike a directive, a calendar
+    event is dated and scoped to today, so it needs no corroboration to
+    override the home default (D-06 §Pattern 7).
+    """
+    for event in calendar_events or []:
+        try:
+            loc = (event.get("location") or "").strip()
+        except AttributeError:
+            continue
+        if loc and _HOME_LOCATION.lower() not in loc.lower():
+            return loc
+    return None
+
+
+def _location_from_directives(active_directives: list) -> str | None:
+    """First place-name matched out of active directive free text.
+
+    Deliberately narrow regex (see ``_DIRECTIVE_LOCATION_PATTERNS``) — a
+    directive alone is never enough to resolve current_location (see
+    ``derive_current_location``'s "unclear trip-end" ambiguity path); this
+    only supplies the ask's ``candidate`` city.
+    """
+    for directive in active_directives or []:
+        if not isinstance(directive, dict):
+            continue
+        for field in ("text", "condition_text"):
+            value = directive.get(field) or ""
+            for pattern in _DIRECTIVE_LOCATION_PATTERNS:
+                match = pattern.search(value)
+                if not match:
+                    continue
+                candidate = _DIRECTIVE_LOCATION_STOP_RE.split(match.group(1))[0].strip()
+                candidate = " ".join(candidate.split()[:3])
+                if candidate:
+                    return candidate
+    return None
+
+
+def _same_place(a: str, b: str) -> bool:
+    """Conservative place-name equality — exact match or substring containment
+    (e.g. calendar "Charles de Gaulle Airport, Paris" vs directive "Paris")."""
+    a_norm, b_norm = a.strip().lower(), b.strip().lower()
+    return bool(a_norm) and bool(b_norm) and (
+        a_norm == b_norm or a_norm in b_norm or b_norm in a_norm
+    )
+
+
+def derive_current_location(calendar_events: list, active_directives: list) -> dict:
+    """Pure Pattern 7 heuristic (D-06, research [ASSUMED]) — never guesses.
+
+    Reads only already-Amit-scoped sources (today's calendar events, active
+    standing directives) — no raw tool output, no new spoofing surface
+    (T-32-16). Conservative, under-detect rather than over-detect:
+
+    - No travel signal anywhere               -> home, silently.
+    - Calendar signal alone                   -> that location overrides home
+      (a same-day dated event needs no corroboration).
+    - Calendar + directive AGREE               -> that location (resolved).
+    - Calendar + directive CONFLICT            -> ambiguous (never guess which).
+    - Directive signal alone, no calendar      -> ambiguous ("unclear trip-end"
+      corroboration — the directive's own presence doesn't confirm Amit is
+      still there today, or that he hasn't quietly come home).
+
+    Never raises — malformed input (``None``, non-list) degrades to "no
+    signal" rather than propagating.
+
+    Returns:
+        ``{"location": <str>}`` when resolved (may be the home default).
+        ``{"ambiguous": True, "candidate": <str|None>}`` when the caller must
+        ask rather than guess (D-06) — ``candidate`` is the best-guess city
+        for phrasing the ask, never served as a location itself.
+    """
+    try:
+        calendar_candidate = _location_from_calendar(calendar_events)
+    except Exception:
+        calendar_candidate = None
+    try:
+        directive_candidate = _location_from_directives(active_directives)
+    except Exception:
+        directive_candidate = None
+
+    if not calendar_candidate and not directive_candidate:
+        return {"location": _HOME_LOCATION}
+
+    if calendar_candidate and directive_candidate:
+        if _same_place(calendar_candidate, directive_candidate):
+            return {"location": calendar_candidate}
+        return {"ambiguous": True, "candidate": calendar_candidate}
+
+    if calendar_candidate:
+        return {"location": calendar_candidate}
+
+    # Directive signal alone — unclear trip-end, never guess.
+    return {"ambiguous": True, "candidate": directive_candidate}
+
+
+def _gather_location(situation: dict) -> dict:
+    """(o4) Phase 32 Plan 08 (MEM-07) — derived current_location, CONTEXT only.
+
+    Wraps ``derive_current_location`` over the already-gathered ``calendar``
+    (today's events) and ``standing_directives`` values on ``situation`` — no
+    new Calendar API call or Firestore read. Deliberately called AFTER
+    ``gather_situation``'s thread pool completes (not submitted as one of its
+    concurrent jobs) so it can safely read those two sources' now-finished
+    results without a race against their own in-flight gathers.
+
+    CONTEXT only, never a trigger (see ``_is_empty_signals``) — deriving a
+    location must never wake the free tier on its own (T-32-17).
+
+    Sentinel — the home default dict — on any failure. Never raises.
+    """
+    try:
+        return derive_current_location(
+            situation.get("calendar") or [],
+            situation.get("standing_directives") or [],
+        )
+    except Exception:
+        logger.warning("autonomous: location derivation failed", exc_info=True)
+        return {"location": _HOME_LOCATION}
+
+
 def gather_situation(now: datetime) -> dict:
     """Layer 0 — aggregate situation snapshot from 14 sources, fanned out in parallel.
 
@@ -802,6 +962,16 @@ def gather_situation(now: datetime) -> dict:
             # fut.result() is safe; a raise here would indicate a programming
             # error and should surface loudly.
             gathered[futures[fut]] = fut.result()
+
+    # Phase 32 Plan 08 (MEM-07): current_location derived from the calendar +
+    # standing_directives results the pool just finished above. Deliberately
+    # NOT one of the jobs dict entries — the pool's as_completed loop gives no
+    # ordering guarantee, so a concurrent "location" job could read either
+    # source before its own gather finished (a real race, not a hypothetical
+    # one). Running it here, sequentially, after the pool closes reads their
+    # completed values safely with zero extra Calendar/Firestore calls.
+    # CONTEXT only, never a trigger (see _is_empty_signals).
+    gathered["location"] = _gather_location(gathered)
 
     # D-11 Layer-0 gate (BLOCKER 2 — narrow calendar detection).
     gathered["empty"] = _is_empty_signals(gathered)
