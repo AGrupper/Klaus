@@ -1301,5 +1301,202 @@ class TestHandleRpeCallbackQuality(unittest.IsolatedAsyncioTestCase):
         )
 
 
+# ============================================================================
+# Phase 32 Plan 04 (MEM-04): build_training_reality reconciler
+# ============================================================================
+
+
+class TestBuildTrainingReality(unittest.TestCase):
+    """build_training_reality(dates, planned_by_date, calendar_by_date,
+    evidence_by_date, self_report_by_date, today_iso) — pure D-01/D-02
+    reconciler with the SC-4 terminal-status ("done" never reverts to
+    "missed") invariant."""
+
+    def _planned(self, am_modality="run", pm_modality="lift"):
+        return {
+            "weekday": "Monday",
+            "am": {"label": "Easy Run", "modality": am_modality, "priority": "medium"},
+            "pm": {"label": "Upper strength", "modality": pm_modality, "priority": "high"},
+        }
+
+    def test_training_reality_evidence_wins_run_slot_done_with_no_training_log(self):
+        """(a) A Garmin run with no matching training_log entry still marks
+        the run slot 'done' — evidence alone is sufficient (D-01 top precedence)."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned()},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {"runs_today": [{"type": "running", "distance_m": 8000}]}},
+            self_report_by_date={date: {"training_log_today": []}},
+            today_iso=date,
+        )
+        assert out[date]["slots"]["am"] == "done"
+
+    def test_training_reality_modality_match_run_does_not_satisfy_lift_slot(self):
+        """(b) Run evidence must not flip a lift-modality slot to 'done'."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned(am_modality="run", pm_modality="lift")},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {"runs_today": [{"type": "running"}]}},
+            self_report_by_date={date: {"training_log_today": []}},
+            today_iso=date,
+        )
+        assert out[date]["slots"]["am"] == "done"
+        # pm is a future/today "lift" slot with no lift evidence → not done.
+        assert out[date]["slots"]["pm"] != "done"
+
+    def test_training_reality_time_of_day_irrelevance_evening_run_satisfies_morning_slot(self):
+        """(c) An evening-logged run still satisfies a morning-planned run slot —
+        matching is date + modality only, never time-of-day."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned(am_modality="run")},
+            calendar_by_date={date: []},
+            evidence_by_date={
+                date: {"runs_today": [{"type": "running", "start_time": "2026-06-01T20:00:00+03:00"}]}
+            },
+            self_report_by_date={date: {"training_log_today": []}},
+            today_iso=date,
+        )
+        assert out[date]["slots"]["am"] == "done"
+
+    def test_training_reality_stale_fact_idempotency_evidence_overrides_conflicting_self_report(self):
+        """(d) SC-4: once evidence lands for a slot's modality, status is
+        terminal 'done' — even a stale/conflicting self-report (e.g. an
+        earlier 'skipped' entry logged before the sync landed) must never
+        re-derive the slot as 'missed'. A repeated call with the same inputs
+        must return the same 'done' every time (pure-function determinism)."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        kwargs = dict(
+            dates=[date],
+            planned_by_date={date: self._planned(am_modality="run")},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {"runs_today": [{"type": "running"}]}},
+            self_report_by_date={
+                date: {
+                    "training_log_today": [
+                        {"type": "run", "completed": False, "skipped_reason": "too_busy"}
+                    ]
+                }
+            },
+            today_iso=date,
+        )
+        first = build_training_reality(**kwargs)
+        second = build_training_reality(**kwargs)
+        assert first[date]["slots"]["am"] == "done"
+        assert second[date]["slots"]["am"] == "done"
+
+    def test_training_reality_empty_evidence_past_date_is_missed(self):
+        """(e) No evidence, no self-report, date in the past → 'missed'."""
+        from core.training_checkin import build_training_reality
+
+        out = build_training_reality(
+            dates=["2026-05-30"],
+            planned_by_date={"2026-05-30": self._planned(am_modality="run")},
+            calendar_by_date={"2026-05-30": []},
+            evidence_by_date={"2026-05-30": {}},
+            self_report_by_date={"2026-05-30": {}},
+            today_iso="2026-06-01",
+        )
+        assert out["2026-05-30"]["slots"]["am"] == "missed"
+
+    def test_training_reality_empty_evidence_future_date_is_planned(self):
+        """(e) No evidence, no self-report, date is today/future → 'planned'."""
+        from core.training_checkin import build_training_reality
+
+        out = build_training_reality(
+            dates=["2026-06-02"],
+            planned_by_date={"2026-06-02": self._planned(am_modality="run")},
+            calendar_by_date={"2026-06-02": []},
+            evidence_by_date={"2026-06-02": {}},
+            self_report_by_date={"2026-06-02": {}},
+            today_iso="2026-06-01",
+        )
+        assert out["2026-06-02"]["slots"]["am"] == "planned"
+
+    def test_training_reality_self_report_completed_marks_slot_done_without_evidence(self):
+        """A completed self-report (no hard evidence) still resolves to 'done'
+        — second-tier precedence per D-01."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned(pm_modality="lift")},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {}},
+            self_report_by_date={
+                date: {"training_log_today": [{"type": "lift", "completed": True}]}
+            },
+            today_iso=date,
+        )
+        assert out[date]["slots"]["pm"] == "done"
+
+    def test_training_reality_self_report_skipped_reason_surfaces_as_skipped_status(self):
+        """A skipped self-report with no evidence surfaces as 'skipped:<reason>'."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-05-30"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned(pm_modality="lift")},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {}},
+            self_report_by_date={
+                date: {
+                    "training_log_today": [
+                        {"type": "lift", "completed": False, "skipped_reason": "sick_injured"}
+                    ]
+                }
+            },
+            today_iso="2026-06-01",
+        )
+        assert out[date]["slots"]["pm"] == "skipped:sick_injured"
+
+    def test_training_reality_rest_slot_omitted_from_slots(self):
+        """A weekly_split 'rest' modality slot carries no real session and is
+        omitted from the returned slots dict entirely."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned(am_modality="rest", pm_modality="lift")},
+            calendar_by_date={date: []},
+            evidence_by_date={date: {}},
+            self_report_by_date={date: {}},
+            today_iso=date,
+        )
+        assert "am" not in out[date]["slots"]
+
+    def test_training_reality_returns_planned_calendar_evidence_keys_per_date(self):
+        """Each date's entry always carries planned/calendar/evidence/slots keys."""
+        from core.training_checkin import build_training_reality
+
+        date = "2026-06-01"
+        out = build_training_reality(
+            dates=[date],
+            planned_by_date={date: self._planned()},
+            calendar_by_date={date: [{"summary": "Easy Run", "start": "2026-06-01T07:00:00+03:00"}]},
+            evidence_by_date={date: {}},
+            self_report_by_date={date: {}},
+            today_iso=date,
+        )
+        assert set(out[date].keys()) == {"planned", "calendar", "evidence", "slots"}
+        assert out[date]["calendar"][0]["summary"] == "Easy Run"
+
+
 if __name__ == "__main__":
     unittest.main()
