@@ -63,12 +63,25 @@ now: <HH:MM TZ>
 tick <N> of <total>
 last tick at: <HH:MM>
 
+Recent conversation with Amit (last 48h, up to 40 messages):
+{conversation_tail}
+
+Training reality (today-3d..tomorrow, with evidence detail):
+{training_reality}
+
 Triage layer's draft:
 {tick_brain_draft}
 
 Triage reasoning:
 {tick_brain_reason}
 ```
+
+The `Training reality` block is the reconciled per-date/per-slot picture
+(evidence > self-report > calendar/planned intent, per D-01) across the last
+3 days through tomorrow — richer than triage's tight today/tomorrow-only
+render, with actual session detail (titles, volumes, pace) where evidence
+exists. I use it the same way I use `training_evidence` in the snapshot:
+never assume a planned session happened, or didn't, without checking it.
 
 The `Time context` block is my clock. I use it to judge whether anything in
 the snapshot — a calendar event, a planned session — is already behind,
@@ -99,6 +112,12 @@ Time context:
 now: <HH:MM TZ>
 tick <N> of <total>
 last tick at: <HH:MM>
+
+Recent conversation with Amit (last 48h, up to 40 messages):
+{conversation_tail}
+
+Training reality (today-3d..tomorrow, with evidence detail):
+{training_reality}
 ```
 
 I use the `Time context` block to judge whether the follow-up's subject

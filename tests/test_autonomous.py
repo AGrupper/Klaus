@@ -1963,3 +1963,334 @@ class TestStandingDirectivesTriageAndCompose:
 
         assert '"standing_directives"' in captured.get("content", "")
         assert "stop nagging about training while I'm in France" in captured.get("content", "")
+
+
+# ---------------------------------------------------------------------------
+# Phase 32 Plan 07 (MEM-04/MEM-05) — conversation_tail + training_reality
+# gathers, context-only invariant, and triage/compose renders.
+# ---------------------------------------------------------------------------
+
+
+class TestConversationTailGather:
+    """_gather_conversation_tail: sentinel-on-failure, widest window fetched
+    once (48h/<=40 msgs), context-only in the empty gate."""
+
+    _TAIL = [
+        {"role": "user", "content": "how's the training block looking", "ts": "2026-05-21T06:00:00+00:00"},
+        {"role": "assistant", "content": "on track, easy run this morning", "ts": "2026-05-21T06:01:00+00:00"},
+    ]
+
+    def test_gather_conversation_tail_returns_recent_window(self, fixed_now, monkeypatch):
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789")
+        store = MagicMock()
+        store.get_recent_window.return_value = self._TAIL
+        with patch(
+            "memory.firestore_conversation.FirestoreConversationStore",
+            return_value=store,
+        ):
+            result = autonomous._gather_conversation_tail(fixed_now, "proj", "db")
+        store.get_recent_window.assert_called_once_with(
+            123456789, hours=48, max_messages=40,
+        )
+        assert result == self._TAIL
+
+    def test_gather_conversation_tail_returns_empty_list_on_store_failure(self, fixed_now, monkeypatch):
+        """The gather must never raise — sentinel [] on any Firestore error."""
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789")
+        with patch(
+            "memory.firestore_conversation.FirestoreConversationStore",
+            side_effect=RuntimeError("firestore down"),
+        ):
+            result = autonomous._gather_conversation_tail(fixed_now, "proj", "db")
+        assert result == []
+
+    def test_gather_conversation_tail_env_unset_returns_empty_without_querying(self, fixed_now, monkeypatch):
+        monkeypatch.delenv("TELEGRAM_ALLOWED_USER_IDS", raising=False)
+        with patch(
+            "memory.firestore_conversation.FirestoreConversationStore",
+        ) as store_cls:
+            result = autonomous._gather_conversation_tail(fixed_now, "proj", "db")
+        assert result == []
+        store_cls.return_value.get_recent_window.assert_not_called()
+
+    def test_is_empty_signals_true_with_only_conversation_tail(self):
+        """MEM-05 (T-32-14) — a non-trivial conversation_tail alone must not
+        wake the free tier."""
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "due_followups": [],
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "now_context": {},
+            "conversation_tail": self._TAIL,
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+
+class TestTrainingRealityGather:
+    """_gather_training_reality: sentinel-on-failure, reconciled per-date
+    dict via build_training_reality, context-only in the empty gate."""
+
+    def test_gather_training_reality_produces_reconciled_dict(self, fixed_now, monkeypatch):
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        planned = {"weekday": "Thursday", "am": {"modality": "run"}, "pm": {}}
+        tls = MagicMock()
+        tls.get_by_date.return_value = [{
+            "slot": "am", "type": "run", "planned": True, "completed": True,
+            "skipped_reason": None, "source": "garmin",
+        }]
+        sss = MagicMock()
+        sss.get_range.return_value = []
+        rds = MagicMock()
+        rds.get_range.return_value = [{
+            "type": "running", "distance_m": 8000, "duration_sec": 2400,
+            "avg_pace_sec_per_km": 300.0,
+        }]
+        cal = MagicMock()
+        cal.list_events.return_value = []
+
+        with patch("core.training_checkin.planned_sessions_for", return_value=planned), \
+             patch("memory.firestore_db.TrainingLogStore", return_value=tls), \
+             patch("memory.firestore_db.StrengthSessionStore", return_value=sss), \
+             patch("memory.firestore_db.RunDetailStore", return_value=rds), \
+             patch("core.tools._get_calendar_tool", return_value=cal):
+            out = autonomous._gather_training_reality(fixed_now, "test-project", "(default)")
+
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        assert set(out.keys()) == {
+            (fixed_now.astimezone(_TZ).date() + timedelta(days=off - 3)).isoformat()
+            for off in range(5)
+        }
+        assert out[today_iso]["slots"].get("am") == "done"
+        assert out[today_iso]["planned"] == planned
+
+    def test_gather_training_reality_returns_empty_dict_on_failure(self, fixed_now):
+        """Sentinel pattern — a store blowing up must never break the tick."""
+        with patch(
+            "core.training_checkin.planned_sessions_for",
+            side_effect=RuntimeError("firestore down"),
+        ):
+            out = autonomous._gather_training_reality(fixed_now, "proj", "(default)")
+        assert out == {}
+
+    def test_gather_training_reality_no_second_calendar_call_for_non_today_dates(self, fixed_now, monkeypatch):
+        """Reuses _gather_calendar's TODAY events only — no per-date calendar
+        API calls for the other 4 reconciliation-window dates."""
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        cal = MagicMock()
+        cal.list_events.return_value = [{
+            "id": "evt1", "summary": "Easy Run",
+            "start": fixed_now.replace(hour=7).isoformat(),
+            "end": fixed_now.replace(hour=8).isoformat(),
+        }]
+        with patch("core.training_checkin.planned_sessions_for", return_value=None), \
+             patch("memory.firestore_db.TrainingLogStore", **{"return_value.get_by_date.return_value": []}), \
+             patch("memory.firestore_db.StrengthSessionStore", **{"return_value.get_range.return_value": []}), \
+             patch("memory.firestore_db.RunDetailStore", **{"return_value.get_range.return_value": []}), \
+             patch("core.tools._get_calendar_tool", return_value=cal):
+            out = autonomous._gather_training_reality(fixed_now, "test-project", "(default)")
+        # Exactly one calendar fetch (for today), reused verbatim.
+        assert cal.list_events.call_count == 1
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        assert out[today_iso]["calendar"] == cal.list_events.return_value
+
+    def test_is_empty_signals_true_with_only_training_reality(self):
+        """MEM-05 (T-32-14) — a non-trivial training_reality alone must not
+        wake the free tier."""
+        situation = {
+            "calendar": [], "ticktick_overdue": [], "due_followups": [],
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "now_context": {},
+            "training_reality": {
+                "2026-05-21": {"slots": {"am": "done"}},
+            },
+        }
+        assert autonomous._is_empty_signals(situation) is True
+
+
+class TestGatherSituationIncludesPhase32Keys:
+    """gather_situation's assembled dict must carry both new Phase 32 keys."""
+
+    def test_conversation_tail_and_training_reality_keys_present(self, fixed_now, monkeypatch):
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+        monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456789")
+        with patch("core.tools._get_calendar_tool") as get_cal, \
+             patch("memory.firestore_db.TaskStore", **{"return_value.get_overdue.return_value": []}), \
+             patch("core.tools._get_gmail_tool") as get_gm, \
+             patch("memory.firestore_db.FollowupStore") as fs_cls, \
+             patch("memory.firestore_conversation.FirestoreConversationStore") as conv_cls, \
+             patch("memory.firestore_db.JournalStore"), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.OutreachLogStore"), \
+             patch("core.training_checkin.planned_sessions_for", return_value=None), \
+             patch("memory.firestore_db.TrainingLogStore", **{"return_value.get_by_date.return_value": []}), \
+             patch("memory.firestore_db.StrengthSessionStore", **{"return_value.get_range.return_value": []}), \
+             patch("memory.firestore_db.RunDetailStore", **{"return_value.get_range.return_value": []}):
+            get_cal.return_value.list_events.return_value = []
+            get_gm.return_value.list_unread.return_value = []
+            fs_cls.return_value.list_due.return_value = []
+            conv_cls.return_value.get_last_user_timestamp.return_value = None
+            conv_cls.return_value.get_recent_window.return_value = TestConversationTailGather._TAIL
+
+            out = autonomous.gather_situation(fixed_now)
+
+        assert "conversation_tail" in out
+        assert out["conversation_tail"] == TestConversationTailGather._TAIL
+        assert "training_reality" in out
+        assert isinstance(out["training_reality"], dict)
+        assert len(out["training_reality"]) == 5
+
+
+class TestConversationTailAndTrainingRealityRenders:
+    """Task 3 (MEM-04/MEM-05): triage-tight vs paid-compose-wide renders for
+    conversation_tail and training_reality."""
+
+    def _tail(self, n, chars_each, now):
+        tail = []
+        for i in range(n):
+            role = "user" if i % 2 == 0 else "assistant"
+            content = f"msg{i} " * 100  # deliberately long, needs truncation
+            content = content[:chars_each]
+            ts = (now - timedelta(minutes=(n - i) * 30)).astimezone(timezone.utc).isoformat()
+            tail.append({"role": role, "content": content, "ts": ts})
+        return tail
+
+    def _training_reality(self, today_iso, tomorrow_iso, yesterday_iso):
+        return {
+            yesterday_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {
+                    "strength_today": [{"title": "Upper Body", "total_volume_kg": 3120}],
+                    "runs_today": [],
+                },
+                "slots": {"am": "done"},
+            },
+            today_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {"strength_today": [], "runs_today": [
+                    {"type": "run", "distance_m": 8000, "avg_pace_sec_per_km": 300},
+                ]},
+                "slots": {"am": "done", "pm": "planned"},
+            },
+            tomorrow_iso: {
+                "planned": {}, "calendar": [],
+                "evidence": {},
+                "slots": {"am": "planned"},
+            },
+        }
+
+    def test_triage_render_trims_conversation_tail_to_caps(self, fixed_now):
+        """Triage-tight render: <=15 msgs, <=240 chars each, only last 24h."""
+        # 20 raw messages (over the 15-msg cap), each far over 240 chars raw,
+        # plus one message older than 24h that must be dropped.
+        tail = self._tail(20, 400, fixed_now)
+        stale = {
+            "role": "user", "content": "ancient message",
+            "ts": (fixed_now - timedelta(hours=30)).astimezone(timezone.utc).isoformat(),
+        }
+        sit = _live_situation(fixed_now, conversation_tail=[stale] + tail)
+        prompt = autonomous._build_triage_prompt(sit, "")
+
+        assert "Recent conversation with Amit" in prompt
+        assert "ancient message" not in prompt, "messages older than 24h must be trimmed"
+        # No raw untruncated 400-char filler line should appear verbatim.
+        rendered_block = prompt.split("Recent conversation with Amit")[1].split("Training reality")[0]
+        for line in rendered_block.splitlines():
+            content_only = line.split(": ", 1)[-1]
+            assert len(content_only) <= 240, f"triage tail line exceeds 240 chars: {len(content_only)}"
+        # At most 15 rendered message lines (role: content).
+        message_lines = [
+            ln for ln in rendered_block.splitlines() if ln.startswith(("user:", "assistant:"))
+        ]
+        assert len(message_lines) <= 15
+
+    def test_triage_render_training_reality_today_tomorrow_only_no_evidence_detail(self, fixed_now):
+        """Triage-tight render: today+tomorrow only, terminal status strings,
+        NO evidence detail (Research Open Question 2)."""
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+
+        prompt = autonomous._build_triage_prompt(sit, "")
+
+        assert "Training reality (today + tomorrow" in prompt
+        assert today_iso in prompt
+        assert tomorrow_iso in prompt
+        # Yesterday must NOT appear in the tight render (today+tomorrow only).
+        tr_block = prompt.split("Training reality")[1]
+        assert yesterday_iso not in tr_block
+        # Terminal status strings only — no evidence detail (session titles/volumes/pace).
+        assert "Upper Body" not in tr_block
+        assert "3120" not in tr_block
+        assert "8000" not in tr_block
+        # Status strings ARE present.
+        assert "done" in tr_block
+        assert "planned" in tr_block
+
+    def test_triage_render_training_reality_empty_when_no_data(self, fixed_now):
+        sit = _live_situation(fixed_now, training_reality={})
+        prompt = autonomous._build_triage_prompt(sit, "")
+        assert "(no training reality data)" in prompt
+
+    def _capture_compose(self, fn, *args):
+        fake_orchestrator = MagicMock()
+        fake_orchestrator.render_smart_system.side_effect = lambda t: t
+        captured = {}
+
+        def _capture(messages, smart_sys, worker_sys):
+            captured["content"] = messages[0]["content"]
+            return "ok"
+
+        fake_orchestrator._run_smart_loop.side_effect = _capture
+        with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator):
+            fn(*args)
+        return captured.get("content", "")
+
+    def test_compose_layer2_renders_wide_training_reality_with_evidence_detail(self, fixed_now):
+        """Paid compose render: full today-3d..tomorrow window WITH evidence
+        detail (session titles/volumes/pace) — the opposite discipline from
+        triage."""
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+
+        content = self._capture_compose(autonomous._compose_layer2, sit, "draft", "reason")
+
+        assert "Training reality (today-3d..tomorrow" in content
+        # Wide render includes the earlier date (yesterday) too.
+        assert yesterday_iso in content
+        # Evidence detail is present (unlike the triage-tight render).
+        assert "Upper Body" in content
+        assert "3120" in content
+
+    def test_compose_layer2_renders_wide_conversation_tail(self, fixed_now):
+        """Paid compose render: 48h/<=40 msgs, no 240-char truncation."""
+        tail = self._tail(3, 400, fixed_now)  # each entry truncated to 400 (< no-cap concern)
+        sit = _live_situation(fixed_now, conversation_tail=tail)
+        content = self._capture_compose(autonomous._compose_layer2, sit, "draft", "reason")
+        assert "Recent conversation with Amit (last 48h, up to 40 messages)" in content
+        # None of the wide-render lines are hard-truncated at 240 chars — the
+        # fixture messages are 400 chars so this asserts no premature cut.
+        wide_block = content.split("Recent conversation with Amit")[1].split("Training reality")[0]
+        message_lines = [
+            ln for ln in wide_block.splitlines() if ln.startswith(("user:", "assistant:"))
+        ]
+        assert any(len(ln.split(": ", 1)[-1]) > 240 for ln in message_lines), (
+            "wide compose render must not truncate at the triage 240-char cap"
+        )
+
+    def test_compose_followup_layer2_renders_wide_training_reality(self, fixed_now):
+        today_iso = fixed_now.astimezone(_TZ).date().isoformat()
+        tomorrow_iso = (fixed_now.astimezone(_TZ).date() + timedelta(days=1)).isoformat()
+        yesterday_iso = (fixed_now.astimezone(_TZ).date() - timedelta(days=1)).isoformat()
+        reality = self._training_reality(today_iso, tomorrow_iso, yesterday_iso)
+        sit = _live_situation(fixed_now, training_reality=reality)
+        followup = {"id": "fu1", "due_at": "2026-05-21T07:20:00Z", "note": "check in", "defer_count": 0}
+
+        content = self._capture_compose(autonomous._compose_followup_layer2, followup, sit)
+
+        assert "Training reality (today-3d..tomorrow" in content
+        assert yesterday_iso in content
+        assert "Upper Body" in content

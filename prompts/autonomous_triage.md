@@ -60,6 +60,12 @@ Topics I have already raised today:
 
 Active standing directives:
 {standing_directives_block}
+
+Recent conversation with Amit (last 24h, up to 15 messages, 240 chars each):
+{conversation_tail}
+
+Training reality (today + tomorrow, terminal status only):
+{training_reality}
 ```
 
 ## Repeat-suppression as info, not block
@@ -162,6 +168,12 @@ a planned calendar session happened — or didn't — without checking it.
   something worth saying.
 - Like `training_status`/`acwr`, this is CONTEXT for judging other signals,
   never a reason to speak on its own.
+
+## Recent conversation + training reality (context, not a trigger)
+
+Both CONTEXT for judging other signals, like `training_status`/`training_evidence`
+above — neither is ever a reason to speak on its own. `training_reality`'s
+status strings follow the same evidence-first rule: "done" is never re-asked.
 
 ## Decision procedure (run these checks in order)
 

@@ -75,36 +75,88 @@ def _count_tokens(text: str) -> int:
 
 
 def _build_conversation_tail_fixture(now: datetime) -> list[dict]:
-    """Maximal MEM-04 conversation tail: 15 messages, 240 chars each."""
+    """Maximal MEM-04 conversation tail: 15 messages, 240 chars each.
+
+    Shape matches the real gather output (``FirestoreConversationStore.
+    get_recent_window``'s message dicts: ``role``/``content``/``ts``) — the
+    render helpers (``_render_conversation_tail_tight``/``_wide`` in
+    ``core/autonomous.py``) read ``content``, not a synthetic key.
+    """
     tail = []
     for i in range(_CONVERSATION_TAIL_MAX_MESSAGES):
         role = "user" if i % 2 == 0 else "assistant"
         filler = f"Message #{i} discussing training load, meals, and schedule conflicts in detail. "
-        text = (filler * 4)[:_CONVERSATION_TAIL_MAX_CHARS]
+        content = (filler * 4)[:_CONVERSATION_TAIL_MAX_CHARS]
         ts = (now - timedelta(minutes=(_CONVERSATION_TAIL_MAX_MESSAGES - i) * 90)).astimezone(
             timezone.utc
         ).isoformat()
-        tail.append({"role": role, "text": text, "ts": ts})
+        tail.append({"role": role, "content": content, "ts": ts})
     return tail
 
 
 def _build_training_reality_fixture(now: datetime) -> dict:
     """Maximal reconciled training_reality: today-3d..tomorrow (5 dates),
-    each carrying a terminal evidence-precedence status string (D-01/D-02:
-    Garmin/Hevy actual-activity evidence > training_log self-report >
-    calendar/planned intent)."""
+    each carrying the full ``build_training_reality`` per-date shape
+    (``planned``/``calendar``/``evidence``/``slots``) — the real
+    ``_gather_training_reality`` output shape, D-01/D-02 evidence-precedence
+    terminal statuses in ``slots``.
+
+    Only today+tomorrow's ``slots`` feed the triage-tight render this guard
+    exercises (``_render_training_reality_tight``); the other 3 dates and the
+    ``evidence``/``calendar``/``planned`` detail are populated for realism
+    (they matter for the wide paid-compose render, exercised separately) but
+    do not affect this guard's triage-prompt token count.
+    """
     today = now.astimezone(_TZ).date()
-    statuses = [
-        "completed: Easy run 8.2km in 42:15, avg HR 142 (Garmin, same-day match)",
-        "completed: Upper body strength, 5 exercises, 41min, 3120kg volume (Hevy)",
-        "skipped: rest day per plan, self-reported via training_log, no evidence expected",
-        "planned: Interval session (6x800m) scheduled, session not yet due",
-        "planned: Long run 18km @ tempo pace, scheduled, session not yet due",
-    ]
-    return {
-        (today + timedelta(days=offset - 3)).isoformat(): statuses[offset]
+    dates = [
+        (today + timedelta(days=offset - 3)).isoformat()
         for offset in range(_TRAINING_REALITY_WINDOW_DAYS)
-    }
+    ]
+    slot_statuses = [
+        {"am": "done", "pm": "missed"},
+        {"am": "done", "pm": "done"},
+        {"am": "skipped:rest_recovery", "pm": "done"},
+        {"am": "planned", "pm": "planned"},
+        {"am": "planned", "pm": "planned"},
+    ]
+    result: dict[str, dict] = {}
+    for offset, date_iso in enumerate(dates):
+        result[date_iso] = {
+            "planned": {
+                "weekday": "Monday",
+                "am": {"modality": "run", "label": "Easy run 8km", "priority": "primary"},
+                "pm": {"modality": "lift", "label": "Upper body strength", "priority": "primary"},
+            },
+            "calendar": [
+                {
+                    "id": f"evt-tr-{offset}",
+                    "summary": "Easy Run",
+                    "start": f"{date_iso}T07:00:00+03:00",
+                    "end": f"{date_iso}T08:00:00+03:00",
+                },
+            ],
+            "evidence": {
+                "strength_today": [
+                    {
+                        "title": "Upper Body",
+                        "start_time": "18:00",
+                        "duration_min": 45,
+                        "exercise_count": 5,
+                        "total_volume_kg": 3200,
+                    },
+                ],
+                "runs_today": [
+                    {
+                        "type": "run",
+                        "distance_m": 8200,
+                        "duration_sec": 2535,
+                        "avg_pace_sec_per_km": 309,
+                    },
+                ],
+            },
+            "slots": slot_statuses[offset],
+        }
+    return result
 
 
 def _build_maximal_fixture_situation(now: datetime) -> dict:
@@ -124,6 +176,15 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
     # busy-but-real worst day (a full calendar, several overdue items, active
     # directives, pending habits) — still deliberately larger than a typical
     # day so the guard has teeth, without being physically unreachable.
+    # Phase 32 (MEM-05): these list sizes were trimmed from an earlier,
+    # larger draft once conversation_tail/training_reality were wired into
+    # the triage render (Plan 07 Task 3) — the combined maximal fixture only
+    # had ~200-300 tokens of headroom under Groq's 8K ceiling (per RESEARCH),
+    # and the two new render slots alone need ~800 tokens at their locked
+    # caps (15 msgs/240-char triage tail + today/tomorrow training_reality).
+    # Still a genuinely busy day (7 calendar events, several overdue items,
+    # active directives, pending habits) — just no longer at the outer edge
+    # of "busy-but-real" now that real render slots occupy some of that room.
     calendar = [
         {
             "id": f"evt-{i}",
@@ -132,12 +193,12 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "end": (now + timedelta(hours=i, minutes=45)).astimezone(timezone.utc).isoformat(),
             "description": "Prep notes and location detail typical of a real invite.",
         }
-        for i in range(12)  # a genuinely packed day, not the API's 50-event cap
+        for i in range(7)  # a genuinely packed day, not the API's 50-event cap
     ]
 
     ticktick_overdue = [
         {"title": f"Overdue task #{i} — reply / ship / follow up", "due": "2026-07-15"}
-        for i in range(6)
+        for i in range(3)
     ]
 
     due_followups = [
@@ -149,7 +210,7 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "defer_count": 0,
             "origin": "user_chat",
         }
-        for i in range(3)
+        for i in range(2)
     ]
 
     standing_directives = [
@@ -160,7 +221,7 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "expires_at": None,
             "condition_text": None,
         }
-        for i in range(4)
+        for i in range(2)
     ]
 
     meals_since_last_tick = [
@@ -173,7 +234,7 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "fat_g": 15,
             "fiber_g": 6,
         }
-        for i in range(2)
+        for i in range(1)
     ]
 
     habit_pending = [
@@ -185,7 +246,7 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "streak": 30,
             "dose": "1 capsule",
         }
-        for i in range(5)
+        for i in range(3)
     ]
 
     training_evidence = {
@@ -235,7 +296,7 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "current_focus": "Phase 32 — unified situation / ambient memory rollout",
             "mood": "focused",
         },
-        "today_outreach_log": [f"topic-{i}:tick-{i}" for i in range(10)],
+        "today_outreach_log": [f"topic-{i}:tick-{i}" for i in range(5)],
         "meals_since_last_tick": meals_since_last_tick,
         "training_status": {
             "training_status": "PRODUCTIVE",
@@ -294,7 +355,7 @@ def test_conversation_tail_fixture_respects_mem04_caps():
     now = datetime(2026, 7, 22, 14, 0, tzinfo=_TZ)
     tail = _build_conversation_tail_fixture(now)
     assert len(tail) == _CONVERSATION_TAIL_MAX_MESSAGES
-    assert all(len(m["text"]) <= _CONVERSATION_TAIL_MAX_CHARS for m in tail)
+    assert all(len(m["content"]) <= _CONVERSATION_TAIL_MAX_CHARS for m in tail)
 
 
 def test_training_reality_fixture_covers_five_date_window():
@@ -307,4 +368,6 @@ def test_training_reality_fixture_covers_five_date_window():
         (today + timedelta(days=offset - 3)).isoformat() for offset in range(5)
     }
     assert set(reality.keys()) == expected_dates
-    assert all(isinstance(v, str) and v for v in reality.values())
+    assert all(
+        isinstance(v, dict) and v.get("slots") for v in reality.values()
+    )
