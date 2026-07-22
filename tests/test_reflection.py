@@ -647,9 +647,77 @@ def test_reflection_single_ignored_outreach_grounds_directive_proposal():
     assert any(item["type"] == "proposal" for item in directive_items)
 
 
+class _RealVetoStandingDirectiveStore:
+    """In-memory fake with REAL status-transition semantics (add/get/veto/cancel/
+    expire/list_active/list_all) — lets `test_reflection_vetoed_directive_is_not_re_proposed`
+    exercise the ACTUAL reject-through-veto production path
+    (`core.tools._handle_cancel_standing_directive` -> `StandingDirectiveStore.veto`,
+    origin-routed per Task 2 of 31-08) rather than hand-seeding an unreachable
+    `status='vetoed'` doc (D-13, verification gap 2 fix).
+
+    `_docs` is a class attribute shared across every instance constructed from a
+    given subclass — mirroring how `core.tools` and `core.reflection` each build
+    their own `StandingDirectiveStore(...)` instance but must observe the same
+    underlying Firestore collection. Each test defines its own throwaway subclass
+    (`_docs: dict = {}`) for isolation.
+    """
+
+    _docs: dict = {}
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        pass
+
+    def add(self, text, origin="user_chat", context_quote="", expires_at=None, condition_text=None):
+        import uuid
+        did = uuid.uuid4().hex
+        doc = {
+            "id": did, "text": text, "origin": origin, "context_quote": context_quote,
+            "status": "active", "expires_at": expires_at, "condition_text": condition_text,
+            "superseded_by": None,
+        }
+        self._docs[did] = doc
+        return dict(doc)
+
+    def get(self, did):
+        doc = self._docs.get(did)
+        return dict(doc) if doc else None
+
+    def veto(self, did):
+        if did not in self._docs:
+            return False
+        self._docs[did]["status"] = "vetoed"
+        return True
+
+    def cancel(self, did):
+        if did not in self._docs:
+            return False
+        self._docs[did]["status"] = "cancelled"
+        return True
+
+    def expire(self, did):
+        if did not in self._docs:
+            return False
+        self._docs[did]["status"] = "expired"
+        return True
+
+    def list_active(self):
+        return [dict(d) for d in self._docs.values() if d["status"] == "active"]
+
+    def list_all(self):
+        return [dict(d) for d in self._docs.values()]
+
+
 def test_reflection_vetoed_directive_is_not_re_proposed():
-    """A proposal matching an existing vetoed directive's text is NOT re-proposed (D-13)."""
+    """A self-directive rejected through the REAL reject path (core.tools.
+    _handle_cancel_standing_directive -> StandingDirectiveStore.veto, origin-routed
+    to a klaus_self directive per Task 2) is not re-proposed on the next reflection
+    run (D-13). Exercises the actual production path end to end — the vetoed state
+    is produced by rejecting the directive, not by hand-seeding status='vetoed'."""
     from core.reflection import run_reflection  # noqa: PLC0415
+    from core.tools import _handle_cancel_standing_directive  # noqa: PLC0415
+
+    class _Store(_RealVetoStandingDirectiveStore):
+        _docs: dict = {}
 
     llm_result = {
         "summary": "s", "mood": "m", "current_focus": "f", "recent_context": "r",
@@ -659,24 +727,49 @@ def test_reflection_vetoed_directive_is_not_re_proposed():
         ],
         "prune_flags": [], "expiry_notes": [],
     }
-    vetoed = [{"id": "old-1", "text": "No training nudges after 9pm", "status": "vetoed"}]
 
-    mock_directive_store, mock_journal = _mock_stores_for_directive_test(list_all_directives=vetoed)
     written_entries: list = []
+    mock_journal = MagicMock()
+    mock_journal.get.return_value = None
     mock_journal.set.side_effect = lambda d, e: written_entries.append(e)
 
     with patch.dict("os.environ", _reflection_env()):
-        with _mock_gather_sources():
-            with patch("core.reflection._brain_reflect", return_value=llm_result):
-                with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
-                    with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
-                        mock_outreach_cls.return_value.get_today.return_value = []
-                        with patch("memory.firestore_db.StandingDirectiveStore", return_value=mock_directive_store):
+        with patch("memory.firestore_db.StandingDirectiveStore", _Store):
+            # 1. Klaus proposed a self-directive on a prior night (real add() path).
+            seed_store = _Store("test-project")
+            created = seed_store.add(
+                text="No training nudges after 9pm",
+                origin="klaus_self",
+                context_quote="he said stop",
+            )
+            directive_id = created["id"]
+
+            # 2. Amit rejects it through the REAL reject surface — the chat tool
+            #    handler, which origin-routes klaus_self directives to veto().
+            reject_result = json.loads(_handle_cancel_standing_directive(id=directive_id))
+            assert reject_result == {"ok": True}
+            assert seed_store.get(directive_id)["status"] == "vetoed", (
+                "the real reject path must persist status='vetoed', not 'cancelled'"
+            )
+
+            # 3. Next reflection run proposes the same text again.
+            with _mock_gather_sources():
+                with patch("core.reflection._brain_reflect", return_value=llm_result):
+                    with patch("memory.firestore_db.JournalStore", return_value=mock_journal):
+                        with patch("memory.firestore_db.OutreachLogStore") as mock_outreach_cls:
+                            mock_outreach_cls.return_value.get_today.return_value = []
                             with patch("memory.pinecone_db.MemoryStore"):
                                 with patch("memory.firestore_db.SelfStateStore"):
                                     run_reflection("2026-07-19")
 
-    mock_directive_store.add.assert_not_called()
+    # 4. The matching proposal is skipped — no NEW klaus_self directive is added,
+    #    and the vetoed doc itself is never resurrected to 'active'.
+    active_klaus_self = [
+        d for d in seed_store.list_all()
+        if d["origin"] == "klaus_self" and d["status"] == "active"
+    ]
+    assert active_klaus_self == [], "a vetoed directive's text must not be re-proposed/re-added"
+
     assert len(written_entries) == 1
     directive_items = written_entries[0].get("directive_items", [])
     assert not any(item["type"] == "proposal" for item in directive_items), (
