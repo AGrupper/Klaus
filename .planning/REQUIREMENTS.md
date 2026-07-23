@@ -32,13 +32,13 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 
 ### Ambient Memory & Unified Situation (Phase 32)
 
-- [ ] **MEM-01**: Relevant Pinecone memories are auto-injected into every chat turn (score-thresholded, recency-weighted, k≈5) as a "Things you remember" block — best-effort with a short timeout; failure yields an empty block, never blocks the turn
-- [ ] **MEM-02**: When the active session is fresh/empty, the recent conversation tail is prepended so a morning "hey" after 6h idle doesn't meet an amnesiac
-- [ ] **MEM-03**: `forget_memory` tool (Pinecone delete by id) exists, and reflection flags memories contradicted by newer facts — deliberate-only forgetting, no auto-decay
-- [ ] **MEM-04**: The cascade sees the conversation tail (triage: 24h / ≤15 msgs / hard char cap; paid compose: 48h / ≤40 msgs) and a reconciled `training_reality` window (planned-from-split vs training_log vs Hevy/Garmin evidence vs calendar, today-3d..tomorrow) — a session completed or moved earlier satisfies its split slot, never re-asked
-- [ ] **MEM-05**: Every new gather (conversation_tail, standing_directives, training_reality, location) is context-only in `_is_empty_signals` — the free-tier empty gate is untouched; a token-budget guard test asserts the maximal rendered triage prompt + max_tokens fits the verified Groq per-request budget
-- [ ] **MEM-06**: A local Groq daily token ledger (Firestore counter — Groq exposes no daily-remaining header) alerts via heartbeat when approaching the 200K TPD cap or when `tick_fallback` purposes spike
-- [ ] **MEM-07**: The situation assembler derives `current_location` from calendar travel events + standing directives; weather and travel-time gathers use it — no more Tel Aviv forecasts delivered to Paris
+- [x] **MEM-01**: Relevant Pinecone memories are auto-injected into every chat turn (score-thresholded, recency-weighted, k≈5) as a "Things you remember" block — best-effort with a short timeout; failure yields an empty block, never blocks the turn
+- [x] **MEM-02**: When the active session is fresh/empty, the recent conversation tail is prepended so a morning "hey" after 6h idle doesn't meet an amnesiac
+- [x] **MEM-03**: `forget_memory` tool (Pinecone delete by id) exists, and reflection flags memories contradicted by newer facts — deliberate-only forgetting, no auto-decay
+- [x] **MEM-04**: The cascade sees the conversation tail (triage: 24h / ≤15 msgs / hard char cap; paid compose: 48h / ≤40 msgs) and a reconciled `training_reality` window (planned-from-split vs training_log vs Hevy/Garmin evidence vs calendar, today-3d..tomorrow) — a session completed or moved earlier satisfies its split slot, never re-asked
+- [x] **MEM-05**: Every new gather (conversation_tail, standing_directives, training_reality, location) is context-only in `_is_empty_signals` — the free-tier empty gate is untouched; a token-budget guard test asserts the maximal rendered triage prompt + max_tokens fits the verified Groq per-request budget
+- [x] **MEM-06**: A local Groq daily token ledger (Firestore counter — Groq exposes no daily-remaining header) alerts via heartbeat when approaching the 200K TPD cap or when `tick_fallback` purposes spike
+- [x] **MEM-07**: The situation assembler derives `current_location` from calendar travel events + standing directives; weather and travel-time gathers use it — no more Tel Aviv forecasts delivered to Paris
 
 ### Occasion Cascade (Phase 33)
 
@@ -111,13 +111,13 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | DIR-05 | Phase 31 | Complete |
 | DIR-06 | Phase 31 | Pending |
 | DIR-07 | Phase 31 | Complete |
-| MEM-01 | Phase 32 | Pending |
-| MEM-02 | Phase 32 | Pending |
-| MEM-03 | Phase 32 | Pending |
-| MEM-04 | Phase 32 | Pending |
-| MEM-05 | Phase 32 | Pending |
-| MEM-06 | Phase 32 | Pending |
-| MEM-07 | Phase 32 | Pending |
+| MEM-01 | Phase 32 | Complete |
+| MEM-02 | Phase 32 | Complete |
+| MEM-03 | Phase 32 | Complete |
+| MEM-04 | Phase 32 | Complete |
+| MEM-05 | Phase 32 | Complete |
+| MEM-06 | Phase 32 | Complete |
+| MEM-07 | Phase 32 | Complete |
 | OCC-01 | Phase 33 | Pending |
 | OCC-02 | Phase 33 | Pending |
 | OCC-03 | Phase 33 | Pending |
