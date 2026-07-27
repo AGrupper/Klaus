@@ -1641,4 +1641,10 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 ```
 Expect `200 OK` on autonomous ticks and no `413 ... TPM: Limit 8000`. Confirm `llm_usage/<today>.tick_autonomous_calls` rises (Groq primary succeeding) while `tick_autonomous_fallback_calls` stops climbing.
 
+Also check for a truncated verdict — a response cut off by `TICK_BRAIN_MAX_TOKENS=1024` still returns `200 OK` and increments the Groq-success ledger, but yields `should_act=False` (silent), so the `200 OK` grep above alone would read a mute-but-truncating tick as "green":
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="klaus-agent" AND textPayload:"truncated at max_tokens"' --project klaus-agent --freshness=1d --limit=5 --format="value(textPayload)"
+```
+Expect **no results**; any hit means `TICK_BRAIN_MAX_TOKENS=1024` is too small and must be raised.
+
 **Deferred (spec fast-follows):** the adaptive budget controller (spread the 200K TPD across the day); and staggering the heartbeat tick-brain pass off the `:00` boundary if same-minute heartbeat+autonomous TPM collisions appear.
