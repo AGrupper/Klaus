@@ -1686,6 +1686,49 @@ async def _write_tick_log(now: datetime, situation: dict, decision: dict) -> Non
 # --------------------------------------------------------------------------- #
 
 
+def _tick_signature_store():
+    """Lazy accessor for TickSignatureStore (mirrors the other store accessors)."""
+    from memory.firestore_db import TickSignatureStore
+    return TickSignatureStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _compute_signal_signature(situation: dict) -> str:
+    """Stable hash over ONLY the salient TRIGGER signals (the exact set
+    ``_is_empty_signals`` keys on). Context-only signals (conversation_tail,
+    training_reality, standing_directives, location) are deliberately EXCLUDED
+    (MEM-05 invariant): a change in them alone must not force a paid re-eval.
+    ``hours_since_contact`` is reduced to its silence BUCKET (bool over the
+    trigger threshold), never the raw float — otherwise it changes every tick
+    and the change-detection gate never fires.
+    """
+    import hashlib
+
+    hsc = situation.get("hours_since_contact")
+    silence_bucket = bool(
+        isinstance(hsc, (int, float)) and hsc >= _SILENCE_TRIGGER_HOURS
+    )
+    salient = {
+        "ticktick_overdue": situation.get("ticktick_overdue") or [],
+        "due_followups": [
+            f.get("id") for f in (situation.get("due_followups") or [])
+        ],
+        "calendar_trigger": _calendar_has_gap_or_overload(
+            situation.get("calendar") or [], situation.get("now_context") or {}
+        ),
+        "meals_since_last_tick": len(situation.get("meals_since_last_tick") or []),
+        "habit_pending": [
+            h.get("id") for h in (situation.get("habit_pending") or [])
+        ],
+        "recovery_flags": sorted((situation.get("recovery") or {}).get("flags") or []),
+        "silence_bucket": silence_bucket,
+    }
+    blob = json.dumps(salient, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     """Top-level autonomous tick orchestrator.
 
@@ -1738,6 +1781,24 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
         # follow-up path skipped tick-brain for ITS send (Layer-2 only); Layer 1
         # still runs below so an overdue/silence escalation can also fire on
         # this tick. Per-day D-06 dedup prevents repeats across ticks.
+
+    # Layer 0.5 — change-detection gate (MEM-05 efficiency). If the salient
+    # trigger signals are byte-identical to the last tick's, there is nothing
+    # new to judge: skip the (costly, TPM-limited) Groq call and stay silent.
+    # Fail-open: any store error -> proceed with the normal triage call.
+    try:
+        _sig_store = _tick_signature_store()
+        _signature = _compute_signal_signature(situation)
+        _last_signature = _sig_store.get()
+        if _last_signature is not None and _signature == _last_signature:
+            decision["trail"].append("signals_unchanged_since_last_tick")
+            await _write_tick_log(now, situation, decision)
+            return decision
+        _sig_store.set(_signature)
+    except Exception:
+        logger.warning(
+            "autonomous: change-detection gate errored; proceeding", exc_info=True
+        )
 
     # Layer 1 — triage. tick_brain.think wraps both purpose='tick_autonomous'
     # (primary) and 'tick_autonomous_fallback' (fallback) internally (Plan 05).

@@ -2691,3 +2691,68 @@ def test_triage_prompt_treats_rest_only_reality_as_no_session():
     situ["training_reality"] = {today: {"slots": {"am": "rest", "pm": None}}}
     prompt = _A._build_triage_prompt(situ, sys_)
     assert "Training reality" not in prompt
+
+
+# --- Groq tick-efficiency (Task 6): signature + change-detection gate ---
+
+def test_signature_stable_and_excludes_context_only_fields():
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    base = {"ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+            "due_followups": [], "calendar": [], "now_context": _nc,
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "hours_since_contact": 5.0}
+    sig1 = _A._compute_signal_signature(base)
+    # Changing ONLY context-only fields must NOT change the signature.
+    ctx = dict(base,
+               training_reality={"2026-07-27": {"slots": {"am": "done"}}},
+               conversation_tail=[{"role": "user", "content": "hi"}],
+               standing_directives=[{"id": "d1"}],
+               location={"city": "Paris"})
+    assert _A._compute_signal_signature(ctx) == sig1
+    # Changing a trigger field MUST change it.
+    assert _A._compute_signal_signature(dict(base, ticktick_overdue=[])) != sig1
+
+
+def test_signature_silence_bucket_not_raw_hours():
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    a = {"ticktick_overdue": [], "due_followups": [], "calendar": [],
+         "now_context": _nc, "meals_since_last_tick": [], "habit_pending": [],
+         "recovery": {}, "hours_since_contact": 3.0}
+    b = dict(a, hours_since_contact=3.5)   # same silence bucket (both below threshold)
+    assert _A._compute_signal_signature(a) == _A._compute_signal_signature(b)
+
+
+def test_tick_skips_groq_when_signature_unchanged():
+    import asyncio
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    situation = {"empty": False, "due_followups": [],
+                 "ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+                 "calendar": [], "now_context": _A._now_context(now),
+                 "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+                 "hours_since_contact": 5.0}
+    seen_sig = _A._compute_signal_signature(situation)
+
+    class _Sig:
+        def get(self): return seen_sig      # already seen -> unchanged
+        def set(self, s): pass
+
+    async def _noop_log(*a, **k): return None
+
+    with patch.object(_A, "gather_situation", return_value=situation), \
+         patch.object(_A, "_tick_signature_store", return_value=_Sig()), \
+         patch.object(_A, "_write_tick_log", _noop_log), \
+         patch("core.tick_brain.TickBrain",
+               side_effect=AssertionError("tick-brain must not run when unchanged")):
+        decision = asyncio.run(_A.run_autonomous_tick(bot=None, now=now))
+
+    assert any("signals_unchanged" in str(t) for t in decision["trail"])
+    assert decision["sent"] is False
