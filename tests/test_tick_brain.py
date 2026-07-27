@@ -147,10 +147,10 @@ class TestTickBrainConstructor(unittest.TestCase):
                 self.assertEqual(primary_call["backend"], "openai")
                 self.assertEqual(primary_call["model"], "openai/gpt-oss-120b")
                 self.assertEqual(primary_call["base_url"], "https://api.groq.com/openai/v1")
-                self.assertEqual(brain._max_tokens, 2048)
+                self.assertEqual(brain._max_tokens, 1024)
 
     def test_max_tokens_env_override(self):
-        """TICK_BRAIN_MAX_TOKENS env var overrides the 2048 default; a
+        """TICK_BRAIN_MAX_TOKENS env var overrides the 1024 default; a
         non-numeric value falls back to the default instead of raising."""
         class StubLLMClient:
             def __init__(self, backend, model, api_key, base_url=None):
@@ -165,7 +165,7 @@ class TestTickBrainConstructor(unittest.TestCase):
         env["TICK_BRAIN_MAX_TOKENS"] = "not-a-number"
         with patch.dict(os.environ, env, clear=True):
             with patch.object(tb, "LLMClient", StubLLMClient):
-                self.assertEqual(tb.TickBrain()._max_tokens, 2048)
+                self.assertEqual(tb.TickBrain()._max_tokens, 1024)
 
     # ---- BRAIN-03: fallback decoupled onto TICK_BRAIN_FALLBACK_* ----
 
@@ -900,6 +900,44 @@ class TestGroqTokenLedgerStore(unittest.TestCase):
     def test_ledger_collection_name_is_lowercase(self):
         from memory import firestore_db
         self.assertEqual(firestore_db.GroqTokenLedgerStore._COLLECTION, "groq_token_ledger")
+
+
+class TestReasoningEffortPrimaryOnly(unittest.TestCase):
+    """Groq tick-efficiency Task 2: primary Groq triage call carries
+    extra_params={'reasoning_effort': 'low'}; the fallback (Gemini) call
+    must not — Gemini ignores it anyway, kept clean."""
+
+    def test_think_sends_reasoning_effort_low_on_primary_not_fallback(self):
+        """Primary Groq call carries reasoning_effort=low; fallback does not."""
+        from core.tick_brain import TickBrain
+        calls = []
+
+        class _Client:
+            def __init__(self, primary):
+                self.primary = primary
+
+            def chat(self, messages, **kw):
+                calls.append(("primary" if self.primary else "fallback", kw.get("extra_params")))
+                if self.primary:
+                    from core.llm_client import LLMError
+                    raise LLMError("boom", backend="openai", status_code=413)
+                return {"text": '{"should_act": false, "reason": "x"}',
+                        "usage": {"in_tokens": 1, "out_tokens": 1}, "stop_reason": "end_turn"}
+
+        tb = TickBrain.__new__(TickBrain)
+        tb._client = _Client(primary=True)
+        tb._fallback_client = _Client(primary=False)
+        tb._max_tokens = 1024
+        tb._temperature = 0.6
+        tb._model = "openai/gpt-oss-120b"
+        tb._fallback_model = "gemini-3.5-flash"
+
+        tb.think("situation")
+
+        primary = next(c for c in calls if c[0] == "primary")
+        fallback = next(c for c in calls if c[0] == "fallback")
+        self.assertEqual(primary[1], {"reasoning_effort": "low"})
+        self.assertFalse(fallback[1])  # None or {}
 
 
 if __name__ == "__main__":

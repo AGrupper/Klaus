@@ -13,14 +13,19 @@ Env vars:
                            namespaced — a bare model name returns 404 model_not_found)
     TICK_BRAIN_API_KEY   — Groq API key (required; stored in GCP Secret Manager)
     TICK_BRAIN_BASE_URL  — Groq base URL (default: https://api.groq.com/openai/v1)
-    TICK_BRAIN_MAX_TOKENS — completion budget per call (default 2048). Groq's
-                           free tier counts input + max_tokens against the
-                           per-request TPM limit (8K for gpt-oss-120b); the
-                           global MAX_TOKENS of 4096 leaves too little input
-                           headroom, which 413s and silently re-routes every
-                           call to the fallback. NOTE: gpt-oss-120b's free
-                           tier also caps 200K tokens/DAY — watch for
-                           late-day fallback spikes if triage inputs grow.
+    TICK_BRAIN_MAX_TOKENS — completion budget per call (default 1024, lowered
+                           from 2048 on 2026-07-27). Groq's free tier counts
+                           input + max_tokens against the per-request 8K-token
+                           ceiling for gpt-oss-120b; with triage input at
+                           ~6,100 tokens, 2048 pushed every call over the
+                           limit and 413'd, silently re-routing to the
+                           fallback. 1024 keeps input+max_tokens ~7,124 <
+                           8,000 (chosen via documented fallback — no local
+                           TICK_BRAIN_API_KEY to measure gpt-oss's actual
+                           completion size; confirm live at rollout). NOTE:
+                           gpt-oss-120b's free tier also caps 200K tokens/DAY
+                           — watch for late-day fallback spikes if triage
+                           inputs grow.
     TICK_BRAIN_TEMPERATURE — sampling temperature (default 0.6; the provider
                            default ~1.0 makes the judgment gate flip on
                            borderline cases run-to-run).
@@ -50,7 +55,14 @@ logger = logging.getLogger(__name__)
 _DEFAULT_BACKEND     = "openai"
 _DEFAULT_MODEL       = "openai/gpt-oss-120b"
 _DEFAULT_BASE_URL    = "https://api.groq.com/openai/v1"
-_DEFAULT_MAX_TOKENS  = 2048  # ample for reasoning + the JSON verdict
+_DEFAULT_MAX_TOKENS  = 1024  # was 2048 — keeps input(~6.1K)+max_tokens under Groq's
+                              # 8K-tokens/request ceiling. Chosen via the brief's
+                              # documented fallback (2026-07-27): live gpt-oss
+                              # measurement isn't runnable locally (no
+                              # TICK_BRAIN_API_KEY outside Cloud Run Secret
+                              # Manager) — the truncation warning below plus the
+                              # MEM-05 guard (tests/test_token_budget.py) catch
+                              # under-sizing; see task-2-report.md for detail.
 _DEFAULT_TEMPERATURE = 0.6   # tames verdict flapping vs the ~1.0 provider default
 
 # Decoupled fallback defaults (BRAIN-03) — a forced Groq failure must always
@@ -244,6 +256,7 @@ class TickBrain:
                     purpose=primary_purpose,
                     max_tokens=self._max_tokens,
                     temperature=self._temperature,
+                    extra_params={"reasoning_effort": "low"},
                 )
             except LLMError as exc:
                 logger.warning(
@@ -264,6 +277,13 @@ class TickBrain:
                         )
                     except Exception:
                         logger.warning("tick-brain: groq ledger increment failed", exc_info=True)
+
+                if response.get("stop_reason") == "max_tokens":
+                    logger.warning(
+                        "tick-brain: triage truncated at max_tokens=%d — verdict may "
+                        "be degraded; consider raising TICK_BRAIN_MAX_TOKENS",
+                        self._max_tokens,
+                    )
 
         # Try fallback (Gemini brain) if primary failed or was skipped (at cap).
         if response is None:
