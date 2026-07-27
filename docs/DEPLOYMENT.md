@@ -252,10 +252,30 @@ gcloud secrets versions add klaus-google-oauth-token \
   --project=${PROJECT_ID}
 ```
 
-**Why is this a one-time step?** The consent screen is configured as
-*Internal* (Google Workspace), which means the refresh token never expires.
-Every subsequent token refresh is handled silently in the background by
-`SecretManagerTokenStorage.save()` in `core/auth_google.py`.
+**Why is this usually a one-time step?** Access-token refreshes happen
+silently in the background via `SecretManagerTokenStorage.save()` in
+`core/auth_google.py` — you don't need to re-run this for routine hourly
+refreshes.
+
+> **Exception — this is NOT one-time-forever:** Google forcibly revokes the
+> refresh token whenever **the account password changes**, because the grant
+> includes Gmail scopes (`gmail.modify`). This is a hardcoded Google security
+> policy that applies regardless of OAuth consent screen publishing status
+> (Testing/Production) or audience type (Internal/External) — there is no
+> config on Klaus's side that can prevent it. `amit.grupper@gmail.com` is a
+> personal Gmail account, not a Workspace org, so "Internal" audience type
+> isn't even selectable here.
+>
+> When this happens, Cloud Run logs `google.auth.exceptions.RefreshError:
+> invalid_grant: Token has been expired or revoked.` on every Calendar/Gmail
+> call. Fix it with one command:
+>
+> ```bash
+> ./scripts/reauth_google.sh
+> ```
+>
+> This backs up the stale `config/token.json`, re-runs the browser consent
+> flow, and pushes the new token to Secret Manager in one step.
 
 ---
 
