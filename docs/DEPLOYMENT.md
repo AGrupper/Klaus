@@ -1626,3 +1626,19 @@ private key is compromised:
 3. Existing subscriptions will start failing (403/400) — the send path prunes
    dead subscriptions, and clients re-subscribe on next hub open (D-19
    re-validation). Expect a push outage per device until each re-opens the hub.
+
+## Groq tick-efficiency (2026-07-27)
+
+Phase 32 (32-07) grew the autonomous triage prompt past Groq's **8,000-tokens/request** free-tier ceiling, so every tick 413'd (`Request too large ... TPM: Limit 8000`) and silently ran on the metered Gemini fallback. Fix (branch `groq-tick-efficiency`):
+
+- `reasoning_effort=low` on the primary Groq triage call + `TICK_BRAIN_MAX_TOKENS` **2048 → 1024** (set in `deploy.yml --set-env-vars`; the deploy clobbers out-of-band Cloud Run env, so the value lives there).
+- Heavy Phase-32 blocks (`training_reality`, `conversation_tail`) render only when salient; a change-detection gate skips the Groq call when salient signals are unchanged.
+- `tests/test_token_budget.py` recalibrated to real production maxima, asserting `input + max_tokens ≤ 7,200` (margin below the 8K hard ceiling) — it fails CI before a prompt-bloat regression can 413 in prod.
+
+**Live-verify after deploy** (within one ~20-min tick cycle):
+```bash
+gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="klaus-agent" AND textPayload:"api.groq.com"' --project klaus-agent --freshness=1h --limit=10 --format="value(textPayload)"
+```
+Expect `200 OK` on autonomous ticks and no `413 ... TPM: Limit 8000`. Confirm `llm_usage/<today>.tick_autonomous_calls` rises (Groq primary succeeding) while `tick_autonomous_fallback_calls` stops climbing.
+
+**Deferred (spec fast-follows):** the adaptive budget controller (spread the 200K TPD across the day); and staggering the heartbeat tick-brain pass off the `:00` boundary if same-minute heartbeat+autonomous TPM collisions appear.

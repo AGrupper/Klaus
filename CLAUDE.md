@@ -37,7 +37,7 @@ Before writing any code, read and adhere to these:
 | Brain (smart agent) | `gemini-3.5-flash` | Gemini AI Studio | Orchestration, judgment, every conversation turn |
 | Worker (hands) | `deepseek-v4-flash` | OpenAI-compat (DeepSeek API) | Tool execution, structured JSON, data gathering — $0.11/$0.22 per 1M tokens |
 | Brain fallback | `claude-haiku-4-5` | Anthropic | Inline fallback on LLMError — diversity hedge |
-| Tick-brain | `openai/gpt-oss-120b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare model names 404. qwen/qwen3-32b decommissioned by Groq 2026-07-17. Free tier: 8K TPM/request, 200K tokens/day |
+| Tick-brain | `openai/gpt-oss-120b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare model names 404. qwen/qwen3-32b decommissioned by Groq 2026-07-17. Free tier: 8K tokens/request (TPM), 200K tokens/day (TPD). Every tick-brain request is admission-controlled to `input + max_tokens ≤ 7,200` (margin below the hard 8K ceiling; guarded by `tests/test_token_budget.py`) via `reasoning_effort=low` + `TICK_BRAIN_MAX_TOKENS=1024` — never raise the guard target to mask a prompt-bloat regression. A change-detection gate skips the Groq call when salient signals are unchanged since the last tick |
 | Tick-brain fallback | `gemini-3.5-flash` | Gemini AI Studio | Used if Groq fails |
 | Embeddings | `gemini-embedding-2` | Gemini AI Studio (**NOT Vertex**) | 768-dim, Pinecone cosine |
 
