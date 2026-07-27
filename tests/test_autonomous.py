@@ -2227,10 +2227,14 @@ class TestConversationTailAndTrainingRealityRenders:
         assert "done" in tr_block
         assert "planned" in tr_block
 
-    def test_triage_render_training_reality_empty_when_no_data(self, fixed_now):
+    def test_triage_render_training_reality_omitted_when_no_data(self, fixed_now):
+        # Groq tick-efficiency (Task 4, MEM-05): empty training_reality is not
+        # salient — the whole block AND its header are omitted, not rendered
+        # with an empty "(no training reality data)" body.
         sit = _live_situation(fixed_now, training_reality={})
         prompt = autonomous._build_triage_prompt(sit, "")
-        assert "(no training reality data)" in prompt
+        assert "Training reality" not in prompt
+        assert "(no training reality data)" not in prompt
 
     def _capture_compose(self, fn, *args):
         fake_orchestrator = MagicMock()
@@ -2624,3 +2628,66 @@ class TestMorningBriefingWeatherRepointedToCurrentLocation:
 
         assert weather_calls == [], "an ambiguous derivation must never guess a forecast"
         assert data["weather"] is None
+
+
+# --- Groq tick-efficiency (Task 4, MEM-05): conditional heavy-context render ---
+
+def _tick_eff_base_situation(now):
+    """Minimal-but-complete situation for _build_triage_prompt render tests."""
+    import core.autonomous as _A
+    return {
+        "now_context": _A._now_context(now),
+        "standing_directives": [],
+        "calendar": [], "ticktick_overdue": [], "due_followups": [],
+        "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+        "training_evidence": {}, "training_status": {}, "acwr": {"ratio": None},
+        "hours_since_contact": 5.0, "recent_journal_digest": "", "self_state": {},
+        "today_outreach_log": [], "unread_email_count": 0,
+        "conversation_tail": [], "training_reality": {},
+    }
+
+
+def test_triage_prompt_omits_heavy_blocks_when_not_salient():
+    """Rest day, no recent exchange → neither heavy block (nor its header) renders."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)  # conversation_tail=[], training_reality={}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Recent conversation with Amit" not in prompt
+    assert "Training reality" not in prompt
+
+
+def test_triage_prompt_includes_heavy_blocks_when_salient():
+    """Recent exchange + a real session → both heavy blocks render with headers."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["conversation_tail"] = [
+        {"role": "user", "content": "morning",
+         "ts": (now - _td(hours=1)).astimezone(_tz.utc).isoformat()},
+    ]
+    situ["training_reality"] = {today: {"slots": {"am": "done", "pm": "planned"}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Recent conversation with Amit" in prompt
+    assert "Training reality" in prompt
+
+
+def test_triage_prompt_treats_rest_only_reality_as_no_session():
+    """A training_reality with only rest/None slots is NOT a session → block omitted."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {today: {"slots": {"am": "rest", "pm": None}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" not in prompt

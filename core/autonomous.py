@@ -1221,12 +1221,36 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
 
     # Phase 32 (MEM-04) — triage-tight renders: 24h/<=15/240-char tail;
     # today+tomorrow-only terminal-status training_reality (no evidence detail).
+    # Groq tick-efficiency (Task 4, MEM-05): render these two heavy blocks only
+    # when salient, so an ordinary/quiet tick sends a lean prompt — a rest day
+    # with nothing planned/logged and no genuinely recent exchange contributes
+    # NEITHER block (the label/heading line is dropped entirely, not just an
+    # empty/"(no data)" body). A busy day (session present + recent exchange)
+    # still renders both blocks exactly as before — this is average-case
+    # relief, not a cap on the worst case (see test_token_budget.py MEM-05).
     now_for_render = _situation_now(situation)
-    conversation_tail_block = _render_conversation_tail_tight(
-        situation.get("conversation_tail") or [], now_for_render
+    conversation_tail = situation.get("conversation_tail") or []
+    training_reality = situation.get("training_reality") or {}
+
+    conversation_tail_block = (
+        f"Recent conversation with Amit (last 24h, up to 15 messages):\n"
+        f"{_render_conversation_tail_tight(conversation_tail, now_for_render)}\n\n"
+        if conversation_tail
+        else ""
     )
-    training_reality_block = _render_training_reality_tight(
-        situation.get("training_reality") or {}, now_for_render
+
+    _has_training_session = any(
+        any(
+            status not in (None, "", "rest")
+            for status in ((entry or {}).get("slots") or {}).values()
+        )
+        for entry in training_reality.values()
+    )
+    training_reality_block = (
+        f"Training reality (today + tomorrow, terminal status only):\n"
+        f"{_render_training_reality_tight(training_reality, now_for_render)}\n"
+        if _has_training_session
+        else ""
     )
 
     return (
@@ -1236,8 +1260,7 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         f"Time context:\n{now_context_block}\n\n"
         f"Topics I have already raised today:\n{outreach_block}\n\n"
         f"Active standing directives:\n{directives_block}\n\n"
-        f"Recent conversation with Amit (last 24h, up to 15 messages):\n{conversation_tail_block}\n\n"
-        f"Training reality (today + tomorrow, terminal status only):\n{training_reality_block}\n"
+        f"{conversation_tail_block}{training_reality_block}"
     )
 
 
