@@ -14,9 +14,14 @@ reroute every autonomous tick to a billed fallback.
 
 Tokenizer: the real ``o200k_harmony`` encoding (officially open-sourced by
 OpenAI for the gpt-oss model family, and the actual tokenizer Groq uses
-server-side for ``openai/gpt-oss-120b``) — not a char-count estimate. The
-research notes ~300 tokens of headroom once Phase 32's slots are wired, which
-is inside the margin an approximation could false-pass or false-fail.
+server-side for ``openai/gpt-oss-120b``) — not a char-count estimate. After
+the Groq tick-efficiency recalibration (2026-07-27), the maximal fixture
+measures 7,146 tokens against the 7,200-token design target — a ~54-token
+margin, not the ~300 tokens once estimated pre-recalibration. The hard Groq
+ceiling remains 8,000 tokens; the 7,200 target is the deliberately-tighter
+design budget this guard enforces. That margin is inside the range an
+approximation could false-pass or false-fail, which is why this guard uses
+the real tokenizer rather than a char-count estimate.
 
 The fixture below populates EVERY key ``gather_situation`` (core/autonomous.py)
 produces, plus the two Phase-32 keys Plan 07 will wire into
