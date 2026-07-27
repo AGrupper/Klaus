@@ -1359,3 +1359,18 @@ def test_tick_signature_store_get_fails_open():
         # Force the doc read to raise; get() must swallow and return None.
         store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
         assert store.get() is None
+
+
+def test_tick_signature_store_set_fails_open():
+    """Finding 4 — a write error in set() must be swallowed, never raised
+    (fail-open by construction, mirroring test_tick_signature_store_get_fails_open).
+    The next tick simply re-evaluates rather than the whole tick crashing on a
+    transient Firestore write failure."""
+    from memory import firestore_db
+    from memory.firestore_db import TickSignatureStore
+    client = _TickSigFakeClient()
+    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        store = TickSignatureStore("klaus-agent", "klaus-firestore")
+        # Force the doc write to raise; set() must swallow and return None.
+        store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
+        assert store.set("some-signature") is None
