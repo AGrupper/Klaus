@@ -830,3 +830,82 @@ def test_anthropic_backend_callback_exception_still_propagates_untouched():
 
     with pytest.raises(TurnCancelled):
         backend.chat([{"role": "user", "content": "hi"}], on_text_delta=_cancel)
+
+
+# --------------------------------------------------------------------------- #
+# extra_params passthrough (Groq tick-efficiency: reasoning_effort knob) +    #
+# OpenAI "length" finish_reason -> stop_reason "max_tokens" mapping           #
+# --------------------------------------------------------------------------- #
+
+
+def test_extra_params_forwarded_on_openai_backend(monkeypatch):
+    """extra_params (e.g. reasoning_effort) reach the OpenAI create() call."""
+    from core.llm_client import LLMClient
+    captured = {}
+
+    class _FakeUsage:
+        prompt_tokens = 10
+        completion_tokens = 5
+
+    class _FakeMsg:
+        content = '{"should_act": false, "reason": "quiet"}'
+        tool_calls = None
+        reasoning_content = None
+
+    class _FakeChoice:
+        message = _FakeMsg()
+        finish_reason = "stop"
+
+    class _FakeResp:
+        choices = [_FakeChoice()]
+        usage = _FakeUsage()
+
+    client = LLMClient(backend="openai", model="openai/gpt-oss-120b",
+                       api_key="k", base_url="https://api.groq.com/openai/v1")
+
+    def _fake_create(**kwargs):
+        captured.update(kwargs)
+        return _FakeResp()
+
+    monkeypatch.setattr(client._impl.client.chat.completions, "create", _fake_create)
+
+    client.chat([{"role": "user", "content": "hi"}],
+                extra_params={"reasoning_effort": "low"})
+
+    assert captured.get("reasoning_effort") == "low"
+
+
+def test_extra_params_ignored_on_gemini_backend(monkeypatch):
+    """Non-openai backends accept extra_params without passing it through / erroring."""
+    from core.llm_client import LLMClient
+
+    client = LLMClient(backend="gemini", model="gemini-3.5-flash", api_key="k")
+    fake_response = MagicMock()
+    fake_response.candidates = []
+    fake_response.usage_metadata = None
+    monkeypatch.setattr(
+        client._impl.client.models, "generate_content",
+        MagicMock(return_value=fake_response),
+    )
+
+    result = client.chat([{"role": "user", "content": "hi"}],
+                         extra_params={"reasoning_effort": "low"})
+
+    assert isinstance(result, dict)
+    assert result["stop_reason"] == "end_turn"
+
+
+def test_openai_length_finish_maps_to_max_tokens_stop(monkeypatch):
+    from core.llm_client import LLMClient
+
+    class _U: prompt_tokens = 10; completion_tokens = 2048
+    class _M: content = "<think>..."; tool_calls = None; reasoning_content = None
+    class _C: message = _M(); finish_reason = "length"
+    class _R: choices = [_C()]; usage = _U()
+
+    client = LLMClient(backend="openai", model="openai/gpt-oss-120b",
+                       api_key="k", base_url="https://api.groq.com/openai/v1")
+    monkeypatch.setattr(client._impl.client.chat.completions, "create",
+                        lambda **kw: _R())
+    out = client.chat([{"role": "user", "content": "hi"}])
+    assert out["stop_reason"] == "max_tokens"

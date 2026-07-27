@@ -100,6 +100,7 @@ class LLMClient:
              purpose: str = "",
              max_tokens: int | None = None,
              temperature: float | None = None,
+             extra_params: dict | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
         """Send a multi-turn conversation and return a unified response.
 
@@ -131,6 +132,11 @@ class LLMClient:
                       fallback tiers degrade to arrive-at-once replies. An
                       exception raised by the callback (TurnCancelled) unwinds
                       the stream and propagates to the caller unchanged.
+            extra_params: Backend-specific request knobs merged into the wire
+                      call. Only the OpenAI-compat backend uses this (e.g.
+                      Groq's ``{"reasoning_effort": "low"}``) — Anthropic and
+                      Gemini accept and ignore it (their APIs 400 on unknown
+                      params, so those backends must never forward it).
 
         Returns:
             Unified envelope: {"text", "tool_calls", "stop_reason", "usage"}
@@ -141,6 +147,7 @@ class LLMClient:
         )
         result = self._impl.chat(messages, system=system, tools=tools,
                                  max_tokens=max_tokens, temperature=temperature,
+                                 extra_params=extra_params,
                                  on_text_delta=on_text_delta)
 
         # --- Cost metering (never raises) ---
@@ -187,6 +194,7 @@ class _BaseBackend:
              tools: list[dict] | None,
              max_tokens: int | None = None,
              temperature: float | None = None,
+             extra_params: dict | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
         raise NotImplementedError
 
@@ -211,7 +219,10 @@ class _AnthropicBackend(_BaseBackend):
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
+             extra_params: dict | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
+        # extra_params is accepted but ignored — Anthropic has no equivalent
+        # of Groq's reasoning_effort; forwarding an unknown param 400s.
         import anthropic
         import httpx
 
@@ -382,9 +393,12 @@ class _GeminiBackend(_BaseBackend):
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
+             extra_params: dict | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
         # on_text_delta is accepted but ignored — the Gemini fallback tier
         # doesn't stream; its reply arrives at once (hub streaming degrades).
+        # extra_params is accepted but ignored — Gemini has no equivalent of
+        # Groq's reasoning_effort; forwarding an unknown param 400s.
         from google import genai
         from google.genai import types
 
@@ -632,6 +646,7 @@ class _OpenAIBackend(_BaseBackend):
              tools: list[dict] | None = None,
              max_tokens: int | None = None,
              temperature: float | None = None,
+             extra_params: dict | None = None,
              on_text_delta: Callable[[str], None] | None = None) -> dict:
         # on_text_delta is accepted but ignored — OpenAI-compat callers (worker,
         # tick-brain, tertiary fallback) don't stream to the hub.
@@ -649,6 +664,12 @@ class _OpenAIBackend(_BaseBackend):
             kwargs["temperature"] = temperature
         if openai_tools:
             kwargs["tools"] = openai_tools
+        if extra_params:
+            # Backend-specific knobs (e.g. Groq's reasoning_effort). Merged
+            # last but never allowed to clobber the core call shape.
+            for k, v in extra_params.items():
+                if k not in ("model", "messages", "max_tokens", "tools"):
+                    kwargs[k] = v
 
         try:
             response = self.client.chat.completions.create(**kwargs)
@@ -675,7 +696,16 @@ class _OpenAIBackend(_BaseBackend):
                     "input": json.loads(tc.function.arguments),
                 })
 
-        stop_reason = "tool_use" if tool_calls else "end_turn"
+        finish_reason = getattr(choice, "finish_reason", None)
+        if tool_calls:
+            stop_reason = "tool_use"
+        elif finish_reason == "length":
+            # Groq/OpenAI truncated the completion mid-generation (e.g. the
+            # 8K-TPM tick-brain ceiling) — surface this distinctly so callers
+            # can detect truncated JSON rather than silently parsing garbage.
+            stop_reason = "max_tokens"
+        else:
+            stop_reason = "end_turn"
         usage = response.usage
         return {
             "text": text,
