@@ -2377,6 +2377,50 @@ class GroqTokenLedgerStore:
             raise
 
 
+class TickSignatureStore:
+    """Last salient-signal signature for the autonomous tick (change-detection).
+
+    Firestore collection: tick_signature (lowercase per project casing invariant).
+    Single document per user ("amit") holding the hash of the last tick's salient
+    trigger signals. Used to skip the Groq triage call when nothing material has
+    changed since the previous tick — a $0 pre-Groq gate. Never raises: a read
+    error returns None (-> proceed with the call), a write error is swallowed
+    (-> next tick simply re-evaluates). Fail-open by construction.
+    """
+
+    _COLLECTION = "tick_signature"
+    _DOC_ID = "amit"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def get(self) -> str | None:
+        """Return the last stored signature, or None if absent/error (fail-open)."""
+        try:
+            snap = self._col.document(self._DOC_ID).get()
+            if not snap.exists:
+                return None
+            return (snap.to_dict() or {}).get("signature")
+        except Exception:
+            logger.warning("TickSignatureStore.get() failed", exc_info=True)
+            return None
+
+    def set(self, signature: str) -> None:
+        """Persist the current signature. Never raises (fail-open)."""
+        try:
+            from datetime import datetime, timezone
+            self._col.document(self._DOC_ID).set(
+                {
+                    "signature": signature,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.warning("TickSignatureStore.set() failed", exc_info=True)
+
+
 class CoachingTopicStore:
     """Per-day coaching topic gate for cross-cron dedup (Phase 24 — COACH-05).
 
