@@ -1307,3 +1307,70 @@ class TestCostTripwireLogStore:
 
     def test_collection_name_is_lowercase(self):
         assert firestore_db.CostTripwireLogStore._COLLECTION == "cost_tripwire_log"
+
+
+# --- Groq tick-efficiency (Task 5): TickSignatureStore ---
+
+class _TickSigFakeSnap:
+    def __init__(self, data): self._data = data
+    @property
+    def exists(self): return self._data is not None
+    def to_dict(self): return dict(self._data) if self._data else {}
+
+
+class _TickSigFakeDoc:
+    def __init__(self, store, key): self._store = store; self._key = key
+    def get(self): return _TickSigFakeSnap(self._store.get(self._key))
+    def set(self, data, merge=False):
+        cur = dict(self._store.get(self._key) or {})
+        if merge:
+            cur.update(data); self._store[self._key] = cur
+        else:
+            self._store[self._key] = dict(data)
+
+
+class _TickSigFakeCol:
+    def __init__(self, store): self._store = store
+    def document(self, key): return _TickSigFakeDoc(self._store, key)
+
+
+class _TickSigFakeClient:
+    def __init__(self): self._data = {}
+    def collection(self, name): return _TickSigFakeCol(self._data.setdefault(name, {}))
+
+
+def test_tick_signature_store_roundtrip():
+    from memory import firestore_db
+    from memory.firestore_db import TickSignatureStore
+    client = _TickSigFakeClient()
+    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        store = TickSignatureStore("klaus-agent", "klaus-firestore")
+        assert store.get() is None            # absent -> None
+        store.set("abc123")
+        assert store.get() == "abc123"         # persisted + read back
+
+
+def test_tick_signature_store_get_fails_open():
+    from memory import firestore_db
+    from memory.firestore_db import TickSignatureStore
+    client = _TickSigFakeClient()
+    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        store = TickSignatureStore("klaus-agent", "klaus-firestore")
+        # Force the doc read to raise; get() must swallow and return None.
+        store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
+        assert store.get() is None
+
+
+def test_tick_signature_store_set_fails_open():
+    """Finding 4 — a write error in set() must be swallowed, never raised
+    (fail-open by construction, mirroring test_tick_signature_store_get_fails_open).
+    The next tick simply re-evaluates rather than the whole tick crashing on a
+    transient Firestore write failure."""
+    from memory import firestore_db
+    from memory.firestore_db import TickSignatureStore
+    client = _TickSigFakeClient()
+    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        store = TickSignatureStore("klaus-agent", "klaus-firestore")
+        # Force the doc write to raise; set() must swallow and return None.
+        store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
+        assert store.set("some-signature") is None

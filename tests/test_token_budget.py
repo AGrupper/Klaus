@@ -14,9 +14,14 @@ reroute every autonomous tick to a billed fallback.
 
 Tokenizer: the real ``o200k_harmony`` encoding (officially open-sourced by
 OpenAI for the gpt-oss model family, and the actual tokenizer Groq uses
-server-side for ``openai/gpt-oss-120b``) — not a char-count estimate. The
-research notes ~300 tokens of headroom once Phase 32's slots are wired, which
-is inside the margin an approximation could false-pass or false-fail.
+server-side for ``openai/gpt-oss-120b``) — not a char-count estimate. After
+the Groq tick-efficiency recalibration (2026-07-27), the maximal fixture
+measures 7,146 tokens against the 7,200-token design target — a ~54-token
+margin, not the ~300 tokens once estimated pre-recalibration. The hard Groq
+ceiling remains 8,000 tokens; the 7,200 target is the deliberately-tighter
+design budget this guard enforces. That margin is inside the range an
+approximation could false-pass or false-fail, which is why this guard uses
+the real tokenizer rather than a char-count estimate.
 
 The fixture below populates EVERY key ``gather_situation`` (core/autonomous.py)
 produces, plus the two Phase-32 keys Plan 07 will wire into
@@ -41,6 +46,12 @@ _TZ = ZoneInfo("Asia/Jerusalem")
 
 # Groq's verified free-tier per-request ceiling for openai/gpt-oss-120b.
 _GROQ_REQUEST_TOKEN_CEILING = 8000
+
+# Design target: leave >=800 tokens of TPM headroom below the hard ceiling so a
+# busier-than-fixture day (or a same-minute heartbeat+autonomous collision)
+# does not 413. Production requests hit ~8,150 at the old max_tokens=2048; this
+# margin + the lowered max_tokens is what keeps every request admissible.
+_GROQ_REQUEST_TOKEN_TARGET = 7200
 
 # Effective tick-brain completion budget — mirrors TickBrain.__init__'s own
 # `os.getenv("TICK_BRAIN_MAX_TOKENS", str(_DEFAULT_MAX_TOKENS))` resolution
@@ -182,9 +193,14 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
     # had ~200-300 tokens of headroom under Groq's 8K ceiling (per RESEARCH),
     # and the two new render slots alone need ~800 tokens at their locked
     # caps (15 msgs/240-char triage tail + today/tomorrow training_reality).
-    # Still a genuinely busy day (7 calendar events, several overdue items,
-    # active directives, pending habits) — just no longer at the outer edge
-    # of "busy-but-real" now that real render slots occupy some of that room.
+    # Groq tick-efficiency recalibration (2026-07-27, Task 3): the live 413s
+    # showed real production input landing ~6,100 tokens — this guard's
+    # fixture previously under-measured that by ~420 tokens (false-pass).
+    # Bumped to 11 calendar events / 5 overdue tasks so system+user lands
+    # ~6,100-6,150 (measured 6,122), a genuinely packed real morning —
+    # still not the raw API's 50-event technical cap, just no longer at the
+    # outer edge of "busy-but-real" now that real render slots occupy some
+    # of that room.
     calendar = [
         {
             "id": f"evt-{i}",
@@ -193,12 +209,12 @@ def _build_maximal_fixture_situation(now: datetime) -> dict:
             "end": (now + timedelta(hours=i, minutes=45)).astimezone(timezone.utc).isoformat(),
             "description": "Prep notes and location detail typical of a real invite.",
         }
-        for i in range(7)  # a genuinely packed day, not the API's 50-event cap
+        for i in range(11)  # packed real morning (was 7) — real prod input ~6.1K
     ]
 
     ticktick_overdue = [
         {"title": f"Overdue task #{i} — reply / ship / follow up", "due": "2026-07-15"}
-        for i in range(3)
+        for i in range(5)  # was 3
     ]
 
     due_followups = [
@@ -341,12 +357,12 @@ def test_maximal_triage_prompt_plus_completion_budget_fits_groq_ceiling():
     user_tokens = _count_tokens(user_msg)
     total = system_tokens + user_tokens + _TICK_BRAIN_MAX_TOKENS
 
-    assert total <= _GROQ_REQUEST_TOKEN_CEILING, (
+    assert total <= _GROQ_REQUEST_TOKEN_TARGET, (
         f"maximal triage prompt+completion budget {total} tokens "
         f"(system={system_tokens}, user={user_tokens}, "
-        f"completion={_TICK_BRAIN_MAX_TOKENS}) exceeds Groq's "
-        f"{_GROQ_REQUEST_TOKEN_CEILING}-token per-request ceiling for "
-        "openai/gpt-oss-120b"
+        f"completion={_TICK_BRAIN_MAX_TOKENS}) exceeds the {_GROQ_REQUEST_TOKEN_TARGET}-"
+        f"token design target (hard Groq ceiling {_GROQ_REQUEST_TOKEN_CEILING}) for "
+        "openai/gpt-oss-120b — reduce max_tokens or cap the triage render"
     )
 
 

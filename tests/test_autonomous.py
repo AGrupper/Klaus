@@ -2227,10 +2227,14 @@ class TestConversationTailAndTrainingRealityRenders:
         assert "done" in tr_block
         assert "planned" in tr_block
 
-    def test_triage_render_training_reality_empty_when_no_data(self, fixed_now):
+    def test_triage_render_training_reality_omitted_when_no_data(self, fixed_now):
+        # Groq tick-efficiency (Task 4, MEM-05): empty training_reality is not
+        # salient — the whole block AND its header are omitted, not rendered
+        # with an empty "(no training reality data)" body.
         sit = _live_situation(fixed_now, training_reality={})
         prompt = autonomous._build_triage_prompt(sit, "")
-        assert "(no training reality data)" in prompt
+        assert "Training reality" not in prompt
+        assert "(no training reality data)" not in prompt
 
     def _capture_compose(self, fn, *args):
         fake_orchestrator = MagicMock()
@@ -2624,3 +2628,188 @@ class TestMorningBriefingWeatherRepointedToCurrentLocation:
 
         assert weather_calls == [], "an ambiguous derivation must never guess a forecast"
         assert data["weather"] is None
+
+
+# --- Groq tick-efficiency (Task 4, MEM-05): conditional heavy-context render ---
+
+def _tick_eff_base_situation(now):
+    """Minimal-but-complete situation for _build_triage_prompt render tests."""
+    import core.autonomous as _A
+    return {
+        "now_context": _A._now_context(now),
+        "standing_directives": [],
+        "calendar": [], "ticktick_overdue": [], "due_followups": [],
+        "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+        "training_evidence": {}, "training_status": {}, "acwr": {"ratio": None},
+        "hours_since_contact": 5.0, "recent_journal_digest": "", "self_state": {},
+        "today_outreach_log": [], "unread_email_count": 0,
+        "conversation_tail": [], "training_reality": {},
+    }
+
+
+def test_triage_prompt_omits_heavy_blocks_when_not_salient():
+    """Rest day, no recent exchange → neither heavy block (nor its header) renders."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)  # conversation_tail=[], training_reality={}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Recent conversation with Amit" not in prompt
+    assert "Training reality" not in prompt
+
+
+def test_triage_prompt_includes_heavy_blocks_when_salient():
+    """Recent exchange + a real session → both heavy blocks render with headers."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["conversation_tail"] = [
+        {"role": "user", "content": "morning",
+         "ts": (now - _td(hours=1)).astimezone(_tz.utc).isoformat()},
+    ]
+    situ["training_reality"] = {today: {"slots": {"am": "done", "pm": "planned"}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Recent conversation with Amit" in prompt
+    assert "Training reality" in prompt
+
+
+def test_triage_prompt_treats_rest_only_reality_as_no_session():
+    """A training_reality with only rest/None slots is NOT a session → block omitted."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {today: {"slots": {"am": "rest", "pm": None}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" not in prompt
+
+
+def test_triage_prompt_ignores_past_date_session_outside_render_window():
+    """Finding 2 — a real session on a PAST date (today-2) with nothing
+    today/tomorrow must NOT trigger the block: _render_training_reality_tight
+    only ever renders today+tomorrow, so a past-only session would otherwise
+    render an empty '(no sessions planned today/tomorrow)' body."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt, timedelta as _td
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    past_date = (now.date() - _td(days=2)).isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {
+        past_date: {"slots": {"am": "done", "pm": "done"}},
+    }
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" not in prompt
+
+
+def test_triage_prompt_includes_session_within_render_window():
+    """A real session today (in-window) still renders the block — regression
+    guard alongside the Finding 2 past-date-exclusion fix."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {today: {"slots": {"am": "done", "pm": "planned"}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" in prompt
+
+
+# --- Groq tick-efficiency (Task 6): signature + change-detection gate ---
+
+def test_signature_stable_and_excludes_context_only_fields():
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    base = {"ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+            "due_followups": [], "calendar": [], "now_context": _nc,
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "hours_since_contact": 5.0}
+    sig1 = _A._compute_signal_signature(base)
+    # Changing ONLY context-only fields (conversation_tail, training_reality,
+    # location) must NOT change the signature. standing_directives moved to
+    # the INCLUDED set (Finding 1 fix) — see
+    # test_signature_changes_when_standing_directives_change below.
+    ctx = dict(base,
+               training_reality={"2026-07-27": {"slots": {"am": "done"}}},
+               conversation_tail=[{"role": "user", "content": "hi"}],
+               location={"city": "Paris"})
+    assert _A._compute_signal_signature(ctx) == sig1
+    # Changing a trigger field MUST change it.
+    assert _A._compute_signal_signature(dict(base, ticktick_overdue=[])) != sig1
+
+
+def test_signature_changes_when_standing_directives_change():
+    """Finding 1 — a time-boxed directive expiring (byte-identical triggers
+    otherwise) must NOT be a silent no-op: the signature must change so the
+    now-unblocked escalation gets re-evaluated instead of staying gated by a
+    stale, unchanged signature."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    base = {"ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+            "due_followups": [], "calendar": [], "now_context": _nc,
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "hours_since_contact": 5.0,
+            "standing_directives": [{"id": "d1"}]}
+    sig_with_directive = _A._compute_signal_signature(base)
+    sig_without_directive = _A._compute_signal_signature(
+        dict(base, standing_directives=[])
+    )
+    assert sig_with_directive != sig_without_directive
+
+
+def test_signature_silence_bucket_not_raw_hours():
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    a = {"ticktick_overdue": [], "due_followups": [], "calendar": [],
+         "now_context": _nc, "meals_since_last_tick": [], "habit_pending": [],
+         "recovery": {}, "hours_since_contact": 3.0}
+    b = dict(a, hours_since_contact=3.5)   # same silence bucket (both below threshold)
+    assert _A._compute_signal_signature(a) == _A._compute_signal_signature(b)
+
+
+def test_tick_skips_groq_when_signature_unchanged():
+    import asyncio
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    situation = {"empty": False, "due_followups": [],
+                 "ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+                 "calendar": [], "now_context": _A._now_context(now),
+                 "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+                 "hours_since_contact": 5.0}
+    seen_sig = _A._compute_signal_signature(situation)
+
+    class _Sig:
+        def get(self): return seen_sig      # already seen -> unchanged
+        def set(self, s): pass
+
+    async def _noop_log(*a, **k): return None
+
+    with patch.object(_A, "gather_situation", return_value=situation), \
+         patch.object(_A, "_tick_signature_store", return_value=_Sig()), \
+         patch.object(_A, "_write_tick_log", _noop_log), \
+         patch("core.tick_brain.TickBrain",
+               side_effect=AssertionError("tick-brain must not run when unchanged")):
+        decision = asyncio.run(_A.run_autonomous_tick(bot=None, now=now))
+
+    assert any("signals_unchanged" in str(t) for t in decision["trail"])
+    assert decision["sent"] is False

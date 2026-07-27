@@ -1221,12 +1221,50 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
 
     # Phase 32 (MEM-04) — triage-tight renders: 24h/<=15/240-char tail;
     # today+tomorrow-only terminal-status training_reality (no evidence detail).
+    # Groq tick-efficiency (Task 4, MEM-05): render these two heavy blocks only
+    # when salient, so an ordinary/quiet tick sends a lean prompt — a rest day
+    # with nothing planned/logged and no genuinely recent exchange contributes
+    # NEITHER block (the label/heading line is dropped entirely, not just an
+    # empty/"(no data)" body). A busy day (session present + recent exchange)
+    # still renders both blocks exactly as before — this is average-case
+    # relief, not a cap on the worst case (see test_token_budget.py MEM-05).
     now_for_render = _situation_now(situation)
-    conversation_tail_block = _render_conversation_tail_tight(
-        situation.get("conversation_tail") or [], now_for_render
+    conversation_tail = situation.get("conversation_tail") or []
+    training_reality = situation.get("training_reality") or {}
+
+    conversation_tail_block = (
+        f"Recent conversation with Amit (last 24h, up to 15 messages):\n"
+        f"{_render_conversation_tail_tight(conversation_tail, now_for_render)}\n\n"
+        if conversation_tail
+        else ""
     )
-    training_reality_block = _render_training_reality_tight(
-        situation.get("training_reality") or {}, now_for_render
+
+    # Groq tick-efficiency fix-wave Finding 2: restrict the salience predicate
+    # to the same today+tomorrow window _render_training_reality_tight actually
+    # renders. training_reality spans today-3d..tomorrow (5 dates), but the
+    # tight render only ever shows today/tomorrow — without this restriction a
+    # session on a PAST in-window date (e.g. today-2) would make _has_training_
+    # session True while the render itself finds nothing in today/tomorrow,
+    # producing a block that renders with an empty "(no sessions planned
+    # today/tomorrow)" body for no reason.
+    _render_today = now_for_render.astimezone(_TZ).date()
+    _render_dates = {
+        _render_today.isoformat(),
+        (_render_today + timedelta(days=1)).isoformat(),
+    }
+    _has_training_session = any(
+        any(
+            status not in (None, "", "rest")
+            for status in ((entry or {}).get("slots") or {}).values()
+        )
+        for date_iso, entry in training_reality.items()
+        if date_iso in _render_dates
+    )
+    training_reality_block = (
+        f"Training reality (today + tomorrow, terminal status only):\n"
+        f"{_render_training_reality_tight(training_reality, now_for_render)}\n"
+        if _has_training_session
+        else ""
     )
 
     return (
@@ -1236,8 +1274,7 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         f"Time context:\n{now_context_block}\n\n"
         f"Topics I have already raised today:\n{outreach_block}\n\n"
         f"Active standing directives:\n{directives_block}\n\n"
-        f"Recent conversation with Amit (last 24h, up to 15 messages):\n{conversation_tail_block}\n\n"
-        f"Training reality (today + tomorrow, terminal status only):\n{training_reality_block}\n"
+        f"{conversation_tail_block}{training_reality_block}"
     )
 
 
@@ -1663,6 +1700,64 @@ async def _write_tick_log(now: datetime, situation: dict, decision: dict) -> Non
 # --------------------------------------------------------------------------- #
 
 
+def _tick_signature_store():
+    """Lazy accessor for TickSignatureStore (mirrors the other store accessors)."""
+    from memory.firestore_db import TickSignatureStore
+    return TickSignatureStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _compute_signal_signature(situation: dict) -> str:
+    """Stable hash over the salient TRIGGER signals (the set ``_is_empty_signals``
+    keys on) PLUS active ``standing_directives`` identities. Context-only
+    signals (conversation_tail, training_reality, location) remain deliberately
+    EXCLUDED (MEM-05 invariant): a change in them alone must not force a paid
+    re-eval. ``hours_since_contact`` is reduced to its silence BUCKET (bool over
+    the trigger threshold), never the raw float — otherwise it changes every
+    tick and the change-detection gate never fires.
+
+    Groq tick-efficiency fix-wave Finding 1: ``standing_directives`` moved from
+    excluded to included. Rationale (does NOT violate the MEM-05 context-only
+    invariant): this change-detection gate runs AFTER the empty-signals gate,
+    so a directive change on an otherwise-empty tick already returned early —
+    including directives here only forces a re-evaluation of an ALREADY
+    non-empty tick when directive state changes (e.g. one expires). It never
+    causes a directive to WAKE an empty tick. Without this, a time-boxed
+    directive that vetoed a trigger (e.g. "stop nagging about training while
+    I'm in France") could expire while that trigger stays byte-identical,
+    leaving the signature unchanged and the now-unblocked escalation silently
+    dropped by the change-detection gate.
+    """
+    import hashlib
+
+    hsc = situation.get("hours_since_contact")
+    silence_bucket = bool(
+        isinstance(hsc, (int, float)) and hsc >= _SILENCE_TRIGGER_HOURS
+    )
+    salient = {
+        "ticktick_overdue": situation.get("ticktick_overdue") or [],
+        "due_followups": [
+            f.get("id") for f in (situation.get("due_followups") or [])
+        ],
+        "calendar_trigger": _calendar_has_gap_or_overload(
+            situation.get("calendar") or [], situation.get("now_context") or {}
+        ),
+        "meals_since_last_tick": len(situation.get("meals_since_last_tick") or []),
+        "habit_pending": [
+            h.get("id") for h in (situation.get("habit_pending") or [])
+        ],
+        "recovery_flags": sorted((situation.get("recovery") or {}).get("flags") or []),
+        "silence_bucket": silence_bucket,
+        "standing_directives": sorted(
+            str(d.get("id")) for d in (situation.get("standing_directives") or [])
+        ),
+    }
+    blob = json.dumps(salient, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     """Top-level autonomous tick orchestrator.
 
@@ -1715,6 +1810,24 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
         # follow-up path skipped tick-brain for ITS send (Layer-2 only); Layer 1
         # still runs below so an overdue/silence escalation can also fire on
         # this tick. Per-day D-06 dedup prevents repeats across ticks.
+
+    # Layer 0.5 — change-detection gate (MEM-05 efficiency). If the salient
+    # trigger signals are byte-identical to the last tick's, there is nothing
+    # new to judge: skip the (costly, TPM-limited) Groq call and stay silent.
+    # Fail-open: any store error -> proceed with the normal triage call.
+    try:
+        _sig_store = _tick_signature_store()
+        _signature = _compute_signal_signature(situation)
+        _last_signature = _sig_store.get()
+        if _last_signature is not None and _signature == _last_signature:
+            decision["trail"].append("signals_unchanged_since_last_tick")
+            await _write_tick_log(now, situation, decision)
+            return decision
+        _sig_store.set(_signature)
+    except Exception:
+        logger.warning(
+            "autonomous: change-detection gate errored; proceeding", exc_info=True
+        )
 
     # Layer 1 — triage. tick_brain.think wraps both purpose='tick_autonomous'
     # (primary) and 'tick_autonomous_fallback' (fallback) internally (Plan 05).
