@@ -2693,6 +2693,40 @@ def test_triage_prompt_treats_rest_only_reality_as_no_session():
     assert "Training reality" not in prompt
 
 
+def test_triage_prompt_ignores_past_date_session_outside_render_window():
+    """Finding 2 — a real session on a PAST date (today-2) with nothing
+    today/tomorrow must NOT trigger the block: _render_training_reality_tight
+    only ever renders today+tomorrow, so a past-only session would otherwise
+    render an empty '(no sessions planned today/tomorrow)' body."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt, timedelta as _td
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    past_date = (now.date() - _td(days=2)).isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {
+        past_date: {"slots": {"am": "done", "pm": "done"}},
+    }
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" not in prompt
+
+
+def test_triage_prompt_includes_session_within_render_window():
+    """A real session today (in-window) still renders the block — regression
+    guard alongside the Finding 2 past-date-exclusion fix."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    now = _dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem"))
+    today = now.date().isoformat()
+    sys_ = _A._load_prompt("prompts/autonomous_triage.md")
+    situ = _tick_eff_base_situation(now)
+    situ["training_reality"] = {today: {"slots": {"am": "done", "pm": "planned"}}}
+    prompt = _A._build_triage_prompt(situ, sys_)
+    assert "Training reality" in prompt
+
+
 # --- Groq tick-efficiency (Task 6): signature + change-detection gate ---
 
 def test_signature_stable_and_excludes_context_only_fields():
@@ -2705,15 +2739,38 @@ def test_signature_stable_and_excludes_context_only_fields():
             "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
             "hours_since_contact": 5.0}
     sig1 = _A._compute_signal_signature(base)
-    # Changing ONLY context-only fields must NOT change the signature.
+    # Changing ONLY context-only fields (conversation_tail, training_reality,
+    # location) must NOT change the signature. standing_directives moved to
+    # the INCLUDED set (Finding 1 fix) — see
+    # test_signature_changes_when_standing_directives_change below.
     ctx = dict(base,
                training_reality={"2026-07-27": {"slots": {"am": "done"}}},
                conversation_tail=[{"role": "user", "content": "hi"}],
-               standing_directives=[{"id": "d1"}],
                location={"city": "Paris"})
     assert _A._compute_signal_signature(ctx) == sig1
     # Changing a trigger field MUST change it.
     assert _A._compute_signal_signature(dict(base, ticktick_overdue=[])) != sig1
+
+
+def test_signature_changes_when_standing_directives_change():
+    """Finding 1 — a time-boxed directive expiring (byte-identical triggers
+    otherwise) must NOT be a silent no-op: the signature must change so the
+    now-unblocked escalation gets re-evaluated instead of staying gated by a
+    stale, unchanged signature."""
+    import core.autonomous as _A
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+    _nc = _A._now_context(_dt(2026, 7, 27, 8, 0, tzinfo=_ZI("Asia/Jerusalem")))
+    base = {"ticktick_overdue": [{"title": "x", "due": "2026-07-15"}],
+            "due_followups": [], "calendar": [], "now_context": _nc,
+            "meals_since_last_tick": [], "habit_pending": [], "recovery": {},
+            "hours_since_contact": 5.0,
+            "standing_directives": [{"id": "d1"}]}
+    sig_with_directive = _A._compute_signal_signature(base)
+    sig_without_directive = _A._compute_signal_signature(
+        dict(base, standing_directives=[])
+    )
+    assert sig_with_directive != sig_without_directive
 
 
 def test_signature_silence_bucket_not_raw_hours():

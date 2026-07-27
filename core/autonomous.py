@@ -1239,12 +1239,26 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         else ""
     )
 
+    # Groq tick-efficiency fix-wave Finding 2: restrict the salience predicate
+    # to the same today+tomorrow window _render_training_reality_tight actually
+    # renders. training_reality spans today-3d..tomorrow (5 dates), but the
+    # tight render only ever shows today/tomorrow — without this restriction a
+    # session on a PAST in-window date (e.g. today-2) would make _has_training_
+    # session True while the render itself finds nothing in today/tomorrow,
+    # producing a block that renders with an empty "(no sessions planned
+    # today/tomorrow)" body for no reason.
+    _render_today = now_for_render.astimezone(_TZ).date()
+    _render_dates = {
+        _render_today.isoformat(),
+        (_render_today + timedelta(days=1)).isoformat(),
+    }
     _has_training_session = any(
         any(
             status not in (None, "", "rest")
             for status in ((entry or {}).get("slots") or {}).values()
         )
-        for entry in training_reality.values()
+        for date_iso, entry in training_reality.items()
+        if date_iso in _render_dates
     )
     training_reality_block = (
         f"Training reality (today + tomorrow, terminal status only):\n"
@@ -1696,13 +1710,25 @@ def _tick_signature_store():
 
 
 def _compute_signal_signature(situation: dict) -> str:
-    """Stable hash over ONLY the salient TRIGGER signals (the exact set
-    ``_is_empty_signals`` keys on). Context-only signals (conversation_tail,
-    training_reality, standing_directives, location) are deliberately EXCLUDED
-    (MEM-05 invariant): a change in them alone must not force a paid re-eval.
-    ``hours_since_contact`` is reduced to its silence BUCKET (bool over the
-    trigger threshold), never the raw float — otherwise it changes every tick
-    and the change-detection gate never fires.
+    """Stable hash over the salient TRIGGER signals (the set ``_is_empty_signals``
+    keys on) PLUS active ``standing_directives`` identities. Context-only
+    signals (conversation_tail, training_reality, location) remain deliberately
+    EXCLUDED (MEM-05 invariant): a change in them alone must not force a paid
+    re-eval. ``hours_since_contact`` is reduced to its silence BUCKET (bool over
+    the trigger threshold), never the raw float — otherwise it changes every
+    tick and the change-detection gate never fires.
+
+    Groq tick-efficiency fix-wave Finding 1: ``standing_directives`` moved from
+    excluded to included. Rationale (does NOT violate the MEM-05 context-only
+    invariant): this change-detection gate runs AFTER the empty-signals gate,
+    so a directive change on an otherwise-empty tick already returned early —
+    including directives here only forces a re-evaluation of an ALREADY
+    non-empty tick when directive state changes (e.g. one expires). It never
+    causes a directive to WAKE an empty tick. Without this, a time-boxed
+    directive that vetoed a trigger (e.g. "stop nagging about training while
+    I'm in France") could expire while that trigger stays byte-identical,
+    leaving the signature unchanged and the now-unblocked escalation silently
+    dropped by the change-detection gate.
     """
     import hashlib
 
@@ -1724,6 +1750,9 @@ def _compute_signal_signature(situation: dict) -> str:
         ],
         "recovery_flags": sorted((situation.get("recovery") or {}).get("flags") or []),
         "silence_bucket": silence_bucket,
+        "standing_directives": sorted(
+            str(d.get("id")) for d in (situation.get("standing_directives") or [])
+        ),
     }
     blob = json.dumps(salient, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
