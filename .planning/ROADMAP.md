@@ -111,13 +111,28 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 **Requirements**: OCC-01, OCC-02, OCC-03, OCC-04, OCC-05, OCC-06, OCC-07
 **Success Criteria** (what must be TRUE):
   1. The nightly review runs through the cascade and can be skipped by judgment (recorded as `skipped_by_judgment`); a total infra failure still sends the deterministic plain-text fallback, and the two are distinguishable in the logs
-  2. The morning briefing runs through the cascade behind its existing Garmin wake-up anchor and 10:15 cutoff, writing the `structured` snapshot and `daily_note` only on an actual send
+  2. The morning briefing runs through the cascade, push-triggered by an iOS Sleep-Focus-off automation on `POST /trigger/morning` — no Garmin gate, no 10:15 cutoff, no backstop — writing the `structured` snapshot and `daily_note` on every run, sent or skipped *(superseded by 33-CONTEXT.md D-05/D-06/D-08/D-09 [OVERRIDE])*
   3. The Sunday weekly review runs through the cascade as `occasion="weekly_review"`, retiring the last legacy composer (fold-in locked by user decision 2026-07-17)
   4. Occasions always get a free triage judgment regardless of the empty-signal gate, with `OutreachLog` topic keys `nightly:<date>` / `morning:<date>` / `weekly:<date>` and log entries written only after a successful send
-  5. Layer 2 composes agentically within a bounded tool-call budget, and a directive-gated proactive calendar write checks for an existing planned row before creating a duplicate
+  5. Layer 2 composes agentically bounded only by the existing `MAX_TOOL_ITERATIONS = 12` safety net (forcing a tools-stripped final answer on exhaustion), may write to the calendar without prior consent provided it declares every write on a scannable action line, and checks for an existing event at that date+slot before creating a duplicate *(superseded by 33-CONTEXT.md D-21/D-22/D-23/D-24 [OVERRIDE])*
   6. Amit can ask "why didn't you message me yesterday?" and `get_recent_decisions` returns a real answer from recent tick/occasion verdicts and reasoning
-  7. `OCCASION_CASCADE` ships behind a flag with both the cascade and legacy composers live for a 3-4 day observation window before any legacy composer code is deleted
-**Plans**: TBD
+  7. `OCCASION_CASCADE` ships behind a flag A/B-ing the nightly and weekly for a 3-4 day observation window (the morning ships cascade-only — its legacy trigger is retired this phase) before any legacy composer code is deleted in Phase 35 *(partially superseded by 33-CONTEXT.md D-30/D-31 [OVERRIDE]; `morning-briefing-tick` is the one Cloud Scheduler change)*
+**Plans**: 13 plans in 6 waves
+
+Plans:
+- [ ] 33-01-PLAN.md — ActionLogStore + OccasionInFlightStore + shared occasion test scaffolding
+- [ ] 33-02-PLAN.md — Layer-2 forced final answer on iteration exhaustion + max_tokens passthrough
+- [ ] 33-03-PLAN.md — Shared cascade prompts (skip causes, fold-in, write-and-disclose) + three occasion prompts
+- [ ] 33-04-PLAN.md — Occasion-aware cascade core in core/autonomous.py (gate bypasses, topic keys, in-flight marker)
+- [ ] 33-05-PLAN.md — Calendar-write idempotency check + action audit recording
+- [ ] 33-06-PLAN.md — Nightly review through the cascade; skipped_by_judgment vs infra failure
+- [ ] 33-07-PLAN.md — Morning briefing push-triggered cascade entry point; write-timing inversion
+- [ ] 33-08-PLAN.md — Weekly review through the cascade in advisory-only mode (never self-skips)
+- [ ] 33-09-PLAN.md — get_recent_decisions brain-direct tool
+- [ ] 33-10-PLAN.md — enqueue_occasion + /internal/process-occasion + /trigger/morning + D-32 dispatch fix
+- [ ] 33-11-PLAN.md — Heartbeat D-28 occasion anomaly checks
+- [ ] 33-12-PLAN.md — Deploy config, docs, Sleep-Focus-off Shortcut + operator trigger confirmation
+- [ ] 33-13-PLAN.md — Retire morning-briefing-tick, flip the flag, 3-4 day observation window
 
 ### Phase 34: Write-Backs
 **Goal**: Calendar workout actions and chat-reported training changes durably and idempotently update `TrainingLogStore` — the thing Klaus was told stays true even if the model doesn't restate it later
