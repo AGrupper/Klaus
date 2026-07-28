@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: ready_to_plan
-stopped_at: Phase 32 complete (8/8) — ready to discuss Phase 33
-last_updated: 2026-07-23T04:06:18.843Z
-last_activity: 2026-07-22 -- Phase 32 execution started
+status: planning
+stopped_at: Phase 33 context gathered
+last_updated: "2026-07-28T21:23:13.616Z"
+last_activity: 2026-07-23
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 22
   completed_plans: 22
-  percent: 33
+  percent: 50
 ---
 
 # State — Klaus
@@ -176,9 +176,9 @@ Carried forward from v4.0 close (still open):
 
 ## Session Continuity
 
-Last session: 2026-07-22T13:58:57.223Z
-Stopped at: Phase 32 context gathered
-Resume file: .planning/phases/32-unified-situation-ambient-memory/32-CONTEXT.md
+Last session: 2026-07-28T21:23:13.612Z
+Stopped at: Phase 33 context gathered
+Resume file: .planning/phases/33-occasion-cascade/33-CONTEXT.md
 
 ## Operator Next Steps
 
