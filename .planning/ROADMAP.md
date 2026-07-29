@@ -148,9 +148,9 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 33-06-PLAN.md — Nightly review through the cascade; skipped_by_judgment vs infra failure
-- [ ] 33-07-PLAN.md — Morning briefing push-triggered cascade entry point; write-timing inversion
-- [ ] 33-08-PLAN.md — Weekly review through the cascade in advisory-only mode (never self-skips)
+- [x] 33-06-PLAN.md — Nightly review through the cascade; skipped_by_judgment vs infra failure
+- [x] 33-07-PLAN.md — Morning briefing push-triggered cascade entry point; write-timing inversion
+- [x] 33-08-PLAN.md — Weekly review through the cascade in advisory-only mode (never self-skips)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 5/13 | In Progress|  |
+| 33. Occasion Cascade | 8/13 | In Progress|  |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
