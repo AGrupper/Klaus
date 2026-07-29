@@ -106,7 +106,7 @@ def _tiers_for_now(config: dict, now: datetime) -> set[str]:
 
 
 _CRON_MAX_STALENESS_HOURS = {
-    "morning-briefing": 26,
+    "morning-briefing": 26,  # TODO(33-12/D-10): remove once morning-briefing-tick cron is retired (D-31 dark-ship window — do not remove early, it still guards the polling cron while it runs)
     "ingest-chats": 26,
     "ingest-chat-exports": 26,
     "nightly-backstop": 26,       # WS2 — 01:00 daily journal+nightly guarantee, 26h tolerance
@@ -404,18 +404,51 @@ def _occasion_skip_streak(
     return streak, causes
 
 
+def _most_recent_sunday(today: date) -> date:
+    """Return the most recent Sunday, inclusive of `today` itself.
+
+    isoweekday(): Monday=1 ... Sunday=7, so `today.isoweekday() % 7` gives
+    the day-count back to the last Sunday (0 when today IS Sunday).
+    """
+    days_since_sunday = today.isoweekday() % 7
+    return today - timedelta(days=days_since_sunday)
+
+
+def _parse_occasion_timestamp(value) -> datetime | None:
+    """Parse an ActionLogStore entry's `at` ISO string into an aware UTC
+    datetime. Mirrors `_parse_push_timestamp`'s defensive shape — never
+    raises, returns None on anything unparseable."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        parsed = datetime.fromisoformat(str(value))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
 def check_occasion_health(now: datetime | None = None) -> list[Signal]:
     """D-28 — the occasion anomaly classes, read from each occasion's own
-    state doc (nightly_reviews/morning_briefings/weekly_reviews), never from
-    the generic heartbeat_runs cron ledger (33-RESEARCH § Pitfall 8:
-    `_log_cron_run`'s `ok` boolean was designed for crash detection, not
-    judgment-quality detection — a plain-text-fallback send still logs
-    ok=True and would pass the existing check_cron_health silently).
+    state doc (nightly_reviews/morning_briefings/weekly_reviews) or the D-25
+    action-audit store, never from the generic heartbeat_runs cron ledger
+    (33-RESEARCH § Pitfall 8: `_log_cron_run`'s `ok` boolean was designed for
+    crash detection, not judgment-quality detection — a plain-text-fallback
+    send still logs ok=True and would pass the existing check_cron_health
+    silently).
 
     1. Errored occasion (D-28 #1, SC-1, T-33-35) — composed_via names a
        degraded fallback tier.
     2. Skip streak (D-28 #2, T-33-36) — N consecutive judgment-skips on one
        occasion (nightly/morning only; weekly never self-skips, D-03).
+    3. Weekly not firing (D-28 #3, T-33-27) — a missing or directive-vetoed
+       Sunday. Complementary to (not a replacement for) the existing
+       `_CRON_MAX_STALENESS_HOURS["weekly-training-review"]` staleness check:
+       that one catches "the cron never fired at all", this one catches "the
+       cron fired and nothing happened."
+    4. Undisclosed actions pending (D-28 #4, T-33-37) — an orphaned D-25
+       write older than 24h.
 
     A legitimate `skipped_by_judgment` with no `composed_via` key never trips
     a signal here — that is the feature working as designed, not a fault.
@@ -470,6 +503,81 @@ def check_occasion_health(now: datetime | None = None) -> list[Signal]:
                     "prompt hasn't regressed toward silence."
                 ),
             ))
+
+    # --- Anomaly #3: weekly not firing (D-28 #3) ---
+    sunday = _most_recent_sunday(today)
+    sunday_iso = sunday.isoformat()
+    is_today_sunday = sunday == today
+    before_cron_fires = is_today_sunday and (now.hour, now.minute) < (10, 0)
+    if not before_cron_fires:
+        weekly_state = _read_occasion_state(
+            _OCCASION_STATE_COLLECTIONS["weekly_review"], sunday_iso,
+        )
+        status = weekly_state.get("status")
+        if not weekly_state:
+            signals.append(Signal(
+                fingerprint=f"occasion:weekly_review:not_fired:{sunday_iso}",
+                severity=SEVERITY_CRITICAL, area="occasion",
+                title=f"Weekly review did not fire for {sunday_iso}",
+                detail=(
+                    f"No weekly_reviews state doc for {sunday_iso}, the most recent "
+                    "Sunday. By D-03 the weekly never self-skips, so this is either a "
+                    "directive veto that failed to record or a genuine fault."
+                ),
+                remediation=(
+                    "Check Cloud Run logs for the Sunday 10:00 weekly-training-review "
+                    "cron; also see the existing weekly-training-review staleness check."
+                ),
+            ))
+        elif status == "skipped_by_directive":
+            signals.append(Signal(
+                fingerprint=f"occasion:weekly_review:not_fired:{sunday_iso}",
+                severity=SEVERITY_WARNING, area="occasion",
+                title=f"Weekly review vetoed by standing directive on {sunday_iso}",
+                detail=f"skip_reason={weekly_state.get('skip_reason', '?')!r}.",
+                remediation=(
+                    "Confirm this veto was intentional via get_recent_decisions or "
+                    "list_directives."
+                ),
+            ))
+        # status == "sent" -> healthy, no signal.
+
+    # --- Anomaly #4: undisclosed actions pending (D-28 #4) ---
+    try:
+        from memory.firestore_db import ActionLogStore
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        undisclosed = ActionLogStore(
+            project_id=project_id, database=database,
+        ).undisclosed(days=7)
+    except Exception:
+        logger.warning("heartbeat: ActionLogStore.undisclosed read failed", exc_info=True)
+        undisclosed = []
+
+    if undisclosed:
+        timestamps = [
+            ts for e in undisclosed
+            if (ts := _parse_occasion_timestamp(e.get("at"))) is not None
+        ]
+        if timestamps:
+            oldest = min(timestamps)
+            age_h = (datetime.now(timezone.utc) - oldest).total_seconds() / 3600
+            if age_h > _OCCASION_UNDISCLOSED_STALE_HOURS:
+                examples = undisclosed[:5]
+                detail = "; ".join(
+                    f"{e.get('action', '?')} {e.get('detail', '')} ({e.get('at', '?')})"
+                    for e in examples
+                )
+                signals.append(Signal(
+                    fingerprint="occasion:actions_undisclosed",
+                    severity=SEVERITY_WARNING, area="occasion",
+                    title=f"{len(undisclosed)} action(s) pending disclosure",
+                    detail=detail,
+                    remediation=(
+                        "Ask Klaus (get_recent_decisions) or inspect ActionLogStore "
+                        "directly — the next occasion should surface this itself."
+                    ),
+                ))
 
     return signals
 
