@@ -333,6 +333,33 @@ def test_occasion_addendum_weekly_never_self_skips():
     assert "shape" in content
 
 
+def test_autonomous_md_max_tool_iterations_corrected():
+    """Task 2(d) — the real constant in core/main.py:50 is 12, not the stale
+    8 documented previously."""
+    content = _read(AUTONOMOUS_PATH)
+    assert "MAX_TOOL_ITERATIONS = 8" not in content
+    assert "MAX_TOOL_ITERATIONS = 12" in content
+
+
+def test_autonomous_md_write_and_disclose():
+    """D-23/D-24 — write-and-disclose contract: all three action-line
+    prefixes plus the surviving standing-directive veto."""
+    content = _read(AUTONOMOUS_PATH)
+    for prefix in ("Created: ", "Moved: ", "Deleted: "):
+        assert prefix in content, (
+            f"autonomous.md missing disclosure prefix {prefix!r}"
+        )
+    assert "standing directive" in content
+
+
+def test_autonomous_md_fold_around_outreach():
+    """D-16/D-17 — fold-around-recent-outreach instruction (compose around
+    prior outreach, reference rather than restate/repeat it)."""
+    content = _read(AUTONOMOUS_PATH).lower()
+    assert "already" in content
+    assert "restate" in content or "repeat" in content
+
+
 def test_smart_agent_current_time_at_tail():
     """Prompt-caching guard: {current_time} changes every minute, so it must
     sit in the trailing ~15%% of smart_agent.md — placing it early would
