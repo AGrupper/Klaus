@@ -286,6 +286,53 @@ def test_current_time_placeholder_present_in_brain_prompts():
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 03 — occasion cascade: shared-prompt occasion judgment
+# ---------------------------------------------------------------------------
+
+OCCASION_ADDENDUM_PATH = os.path.join(REPO_ROOT, "prompts", "occasion_triage_addendum.md")
+
+
+def test_triage_skip_cause_in_output_contract():
+    """D-02 / output-contract extension — skip_cause is part of the JSON
+    verdict schema so TickBrain._parse_response's shape stays one place."""
+    content = _read(TRIAGE_PATH)
+    assert "skip_cause" in content
+
+
+def test_triage_references_occasion_addendum():
+    """Token-budget arbitration (Task 1) — the maximal triage prompt has only
+    ~14 tokens of margin under the Groq admission ceiling, so the full D-01/
+    D-02/D-03 occasion-judgment block lives in the sibling addendum file
+    instead of inline; autonomous_triage.md must still point at it by name so
+    plan 33-04 knows where to render it from (D-36's "one shared file")."""
+    content = _read(TRIAGE_PATH)
+    assert "occasion_triage_addendum.md" in content
+
+
+def test_occasion_addendum_exists():
+    assert os.path.isfile(OCCASION_ADDENDUM_PATH), (
+        f"Expected file at {OCCASION_ADDENDUM_PATH}"
+    )
+
+
+def test_occasion_addendum_four_skip_causes():
+    """D-02 — exactly four legitimate skip causes, all named."""
+    content = _read(OCCASION_ADDENDUM_PATH)
+    for cause in ("directive", "already_covered", "nothing_happened", "reaction_history"):
+        assert cause in content, (
+            f"occasion_triage_addendum.md missing skip cause {cause!r}"
+        )
+
+
+def test_occasion_addendum_weekly_never_self_skips():
+    """D-03 — weekly_review's judgment governs shape/emphasis, never whether
+    it fires; only the Step-0 standing-directive veto can silence it."""
+    content = _read(OCCASION_ADDENDUM_PATH).lower()
+    assert "weekly_review" in content
+    assert "shape" in content
+
+
 def test_smart_agent_current_time_at_tail():
     """Prompt-caching guard: {current_time} changes every minute, so it must
     sit in the trailing ~15%% of smart_agent.md — placing it early would
