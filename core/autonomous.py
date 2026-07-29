@@ -31,6 +31,16 @@ Repeat-suppression (D-06/D-09): per-day ``outreach_log/{date}`` doc; informative
 to the triage prompt, never blocking.
 
 Phase 18 — AUTO-01, AUTO-02, AUTO-03.
+
+Phase 33 (OCC-04..07): the same 3-layer body above is generalized behind
+``run_occasion_cascade`` (public entry) / ``_run_cascade`` (shared body), so
+the nightly review, morning briefing, and Sunday weekly review route through
+it as ``occasion="nightly" | "morning" | "weekly_review"`` — parameters, not
+separate pipelines. ``run_autonomous_tick`` keeps its exact pre-Phase-33
+signature and delegates to ``_run_cascade`` with ``occasion=None`` after its
+own tick-only gates (empty signals, change-detection) run. An occasion
+bypasses both of those gates structurally (they fire on schedule/trigger, not
+signal novelty) and shares the tick's ``OutreachLogStore`` namespace (D-18).
 """
 from __future__ import annotations
 
@@ -40,6 +50,7 @@ import os
 import re
 import threading
 from datetime import datetime, timedelta, timezone
+from typing import Callable
 from zoneinfo import ZoneInfo
 
 from core import prompt_loader
@@ -51,6 +62,16 @@ _TZ = ZoneInfo("Asia/Jerusalem")
 # Cron */20 7-21 = ticks at 7:00, 7:20, 7:40, 8:00, ..., 21:00 = 43 ticks/day
 # inclusive. (21 - 7) * 3 = 42 intervals, plus the 21:00 tick itself = 43.
 _TICK_TOTAL_PER_DAY = 43
+
+# Phase 33 (OCC-04..07) — the three occasions ``run_occasion_cascade`` serves,
+# and the deterministic ``OutreachLogStore`` topic-key prefix each uses
+# (D-18: one shared namespace with the tick, occasions and ticks as peers).
+_OCCASIONS = ("nightly", "morning", "weekly_review")
+_OCCASION_TOPIC_PREFIX = {
+    "nightly": "nightly",
+    "morning": "morning",
+    "weekly_review": "weekly",
+}
 
 # D-14: ``defer_count >= 3`` force-fires on the next due tick.
 _DEFER_FORCE_FIRE_THRESHOLD = 3
@@ -1161,7 +1182,25 @@ def _render_training_reality_wide(training_reality: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_triage_prompt(situation: dict, triage_system: str) -> str:
+def _first_prompt_line(text: str) -> str:
+    """Return the first non-blank, non-HTML-comment line of a rendered prompt.
+
+    D-35 occasion prompts (``prompts/{nightly,morning,weekly}_occasion.md``)
+    open with a one-line HTML comment naming the decision they implement —
+    that comment is bookkeeping for humans reading the file, never meant for
+    the model. Used by the occasion header in ``_build_triage_prompt``.
+    """
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("<!--"):
+            continue
+        return stripped
+    return ""
+
+
+def _build_triage_prompt(
+    situation: dict, triage_system: str, *, occasion_prompt: str = "",
+) -> str:
     """Build the user-message content for the triage call.
 
     ``triage_system`` is currently unused — it's passed to
@@ -1170,6 +1209,12 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
     template was loaded for which call site. WARNING 4: when
     ``hours_since_contact`` is None, the prompt renders it as ``"unknown"``,
     not ``"999.0"`` (which the LLM would interpret as "Sir vanished").
+
+    ``occasion_prompt`` (plan 33-04, D-35): rendered verbatim's FIRST LINE
+    only into a short occasion header, and ONLY when ``situation["occasion"]``
+    is set — a plain ``*/20`` tick never carries an ``occasion`` key, so the
+    entire occasion branch at the end of this function is unreachable for it
+    and the output stays byte-identical to the pre-Phase-33 render.
     """
     _ = triage_system  # reserved
     # Lazy import (avoids an import cycle — core.tools imports core.autonomous
@@ -1267,7 +1312,7 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         else ""
     )
 
-    return (
+    base_prompt = (
         f"Situation snapshot:\n{snap_json}\n\n"
         f"My self-state:\n{self_state_block}\n\n"
         f"My recent journal:\n{journal}\n\n"
@@ -1276,6 +1321,34 @@ def _build_triage_prompt(situation: dict, triage_system: str) -> str:
         f"Active standing directives:\n{directives_block}\n\n"
         f"{conversation_tail_block}{training_reality_block}"
     )
+
+    # Phase 33 (D-01/D-02/D-03, D-35) — occasion judgment addendum, rendered
+    # into the USER message ONLY on occasion runs. A plain tick's
+    # ``situation`` never carries an ``occasion`` key, so this branch is
+    # structurally unreachable for it (33-03's token-budget arbitration kept
+    # this content off the always-on Groq system-prompt path — see
+    # prompts/occasion_triage_addendum.md's header comment).
+    occasion = situation.get("occasion")
+    if not occasion:
+        return base_prompt
+
+    target_date = situation.get("occasion_target_date", "")
+    first_line = _first_prompt_line(occasion_prompt)
+    header = f"This run is occasion={occasion!r}, target_date={target_date!r}."
+    if first_line:
+        header += f" {first_line}"
+    addendum = _load_prompt("prompts/occasion_triage_addendum.md")
+    # D-02 #4 (reaction history) — a compact, one-line signal, rendered only
+    # when present (Claude's discretion, 33-CONTEXT.md): no upstream gather
+    # populates this key yet, so it costs zero tokens on the common case,
+    # matching the same "no data -> no block" discipline as the
+    # conversation_tail/training_reality blocks above.
+    reaction_note = (situation.get("self_state") or {}).get(
+        "occasion_reaction_note"
+    ) or ""
+    reaction_line = f"\nReaction pattern: {reaction_note}" if reaction_note else ""
+
+    return f"{base_prompt}\n\n{header}{reaction_line}\n\n{addendum}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1377,7 +1450,15 @@ def _parse_followup_action(text: str) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 
 
-def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
+def _compose_layer2(
+    situation: dict,
+    draft: str,
+    triage_reason: str,
+    *,
+    occasion_prompt: str = "",
+    max_tokens: int | None = None,
+    undisclosed_actions: list[dict] | None = None,
+) -> str:
     """Layer 2 — synthetic chat turn via ``AgentOrchestrator._run_smart_loop``.
 
     BLOCKER 5a fix — uses the module singleton, not per-call ``AgentOrchestrator()``.
@@ -1389,6 +1470,19 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
     Pitfall 2 — builds the messages list freshly. Does NOT call
     ``handle_message`` (which would append to conversation history, polluting
     it with the synthetic user message).
+
+    Phase 33 additions (all rendered into the USER message, never
+    ``smart_system`` — the Phase-30.5 cached system prefix must stay
+    undisturbed and a plain tick must pay nothing for these):
+      - ``occasion_prompt`` (D-35): the occasion's few-line identity prompt,
+        verbatim.
+      - D-16/D-17 fold-in: the full text of today's ``OutreachLogStore``
+        entries (capped at the last 5) — rendered for every compose, not just
+        occasions.
+      - D-25 write-and-disclose: any ``undisclosed_actions`` entries the
+        caller already fetched from ``ActionLogStore.undisclosed()``.
+      - D-27: no skip record, skip cause, or prior draft is ever rendered
+        here — silence is not news.
     """
     orchestrator = _get_orchestrator()
     # Lazy import (avoids an import cycle) — Phase 31 (DIR-03) parity.
@@ -1454,6 +1548,56 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         situation.get("training_reality") or {}
     )
 
+    # D-35 — occasion identity, verbatim, USER-message only.
+    occasion_block = (
+        f"\n\nOccasion identity:\n{occasion_prompt}\n" if occasion_prompt else ""
+    )
+
+    # D-16/D-17 fold-in — full text of today's Klaus-initiated outreach, so a
+    # natural back-reference is possible (topic keys alone cannot enable
+    # that). Capped at the last 5 entries so a chatty day cannot blow the
+    # paid compose context. Rendered for the tick too, not just occasions —
+    # this is the same shared-prompt behavior D-36 mandates.
+    fold_in_block = ""
+    try:
+        from memory.firestore_db import OutreachLogStore
+
+        today_iso = _situation_now(situation).astimezone(_TZ).date().isoformat()
+        ols = OutreachLogStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        today_entries = ols.get_today(today_iso)[-5:]
+        if today_entries:
+            fold_lines = [
+                f"- [{e.get('time', '')}] {e.get('topic_key', '')}: {e.get('final', '')}"
+                for e in today_entries
+            ]
+            fold_in_block = (
+                "\n\nToday's Klaus-initiated outreach (full text — fold "
+                "around this, reference rather than restate):\n"
+                + "\n".join(fold_lines)
+            )
+    except Exception:
+        logger.warning(
+            "autonomous: outreach fold-in fetch failed (non-fatal)", exc_info=True,
+        )
+
+    # D-25 write-and-disclose — actions I took but never told Amit about.
+    # D-27: this is the ONE exception to "silence stays silent" — an
+    # undisclosed *action* always surfaces at the next opportunity.
+    disclosure_block = ""
+    if undisclosed_actions:
+        disclosure_lines = [
+            f"- {a.get('action', '')}: {a.get('detail', '')} "
+            f"(from {a.get('occasion', '')}, {a.get('at', '')})"
+            for a in undisclosed_actions
+        ]
+        disclosure_block = (
+            "\n\nActions I took but never disclosed (disclose now, action-line "
+            "format — Created:/Moved:/Deleted:):\n" + "\n".join(disclosure_lines)
+        )
+
     synthetic_content = (
         f"Situation snapshot:\n{snap_summary}\n\n"
         f"Time context:\n{_format_now_block(situation)}\n\n"
@@ -1461,9 +1605,12 @@ def _compose_layer2(situation: dict, draft: str, triage_reason: str) -> str:
         f"Training reality (today-3d..tomorrow, with evidence detail):\n{training_reality_block}\n\n"
         f"Triage layer's draft:\n{draft}\n\n"
         f"Triage reasoning:\n{triage_reason}\n"
+        f"{occasion_block}{fold_in_block}{disclosure_block}"
     )
     messages = [{"role": "user", "content": synthetic_content}]
-    return orchestrator._run_smart_loop(messages, smart_system, worker_system)
+    return orchestrator._run_smart_loop(
+        messages, smart_system, worker_system, max_tokens=max_tokens,
+    )
 
 
 def _compose_followup_layer2(followup: dict, situation: dict) -> str:
@@ -1674,19 +1821,28 @@ async def _compose_followup(bot, followup: dict, situation: dict, now: datetime)
 # --------------------------------------------------------------------------- #
 
 
-async def _write_tick_log(now: datetime, situation: dict, decision: dict) -> None:
+async def _write_tick_log(
+    now: datetime, situation: dict, decision: dict, *, log_key: str | None = None,
+) -> None:
     """D-21 — write the per-tick snapshot for retroactive eval-fixture labeling.
 
     Best-effort. Never raises. Uses ``TickLogStore`` (Plan 01) so every
     persistent collection has a named store (NOTE 1 — keeps the memory-layer
     pattern consistent).
+
+    ``log_key`` (plan 33-04): the ``ticks/{doc_id}`` sub-collection doc id.
+    Defaults to ``None``, which resolves to the tick's own ``HH:MM`` — every
+    pre-Phase-33 call site keeps this default and stays byte-identical. An
+    occasion passes ``f"occasion:{occasion}"`` so it writes to
+    ``tick_logs/{date}/ticks/occasion:{occasion}``, a namespace that can
+    never collide with a real tick's ``HH:MM`` doc (T-33-14).
     """
     try:
         from memory.firestore_db import TickLogStore
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
         today_iso = now.astimezone(_TZ).date().isoformat()
-        tick_time = now.astimezone(_TZ).strftime("%H:%M")
+        tick_time = log_key if log_key is not None else now.astimezone(_TZ).strftime("%H:%M")
         snapshot = {k: v for k, v in situation.items() if k != "empty"}
         TickLogStore(project_id=project_id, database=database).write(
             today_iso, tick_time, snapshot, decision,
@@ -1696,7 +1852,8 @@ async def _write_tick_log(now: datetime, situation: dict, decision: dict) -> Non
 
 
 # --------------------------------------------------------------------------- #
-# Top-level entry point — run_autonomous_tick (3-layer pipeline, D-20)         #
+# Top-level entry points — run_autonomous_tick / run_occasion_cascade          #
+# (shared 3-layer pipeline, D-20 / plan 33-04)                                 #
 # --------------------------------------------------------------------------- #
 
 
@@ -1704,6 +1861,18 @@ def _tick_signature_store():
     """Lazy accessor for TickSignatureStore (mirrors the other store accessors)."""
     from memory.firestore_db import TickSignatureStore
     return TickSignatureStore(
+        project_id=os.environ.get("GCP_PROJECT_ID", ""),
+        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+    )
+
+
+def _occasion_inflight_store():
+    """Lazy accessor for OccasionInFlightStore (D-19, plan 33-04).
+
+    Mirrors ``_tick_signature_store``'s lazy-import + env-var shape.
+    """
+    from memory.firestore_db import OccasionInFlightStore
+    return OccasionInFlightStore(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -1758,40 +1927,401 @@ def _compute_signal_signature(situation: dict) -> str:
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
-async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
-    """Top-level autonomous tick orchestrator.
+async def _run_cascade(
+    bot,
+    now: datetime,
+    situation: dict,
+    *,
+    occasion: str | None,
+    topic_key: str | None,
+    advisory_only: bool,
+    occasion_prompt: str,
+    max_tokens: int | None,
+    log_key: str,
+    veto_parser: "Callable[[str], tuple[bool, str, str]] | None" = None,
+) -> dict:
+    """Shared Layer-1 -> Layer-2 -> send -> log body (plan 33-04).
 
-    3-layer pipeline per D-20:
-      1. ``gather_situation`` (Layer 0) — fast, no LLM
-      2. If empty signals → return early (D-11 gate; cost control SC-3)
-      3. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain
-         FOR THE FOLLOW-UP SEND). Execution then continues into step 4 — a
-         follow-up firing does NOT short-circuit the rest of the tick.
-      4. Triage (Layer 1) — ``TickBrain.think`` with ``autonomous_triage`` as
-         ``system_override``; purpose ``tick_autonomous`` (fallback
-         ``tick_autonomous_fallback``). Runs regardless of whether step 3
-         fired, so a tick can emit BOTH a follow-up and a triage-judged
-         escalation (e.g. overdue task on the same tick).
-      5. If ``should_act=False`` → log + return.
-      6. Compose (Layer 2) — synthetic ``[{role:user, content}]`` via
-         ``_run_smart_loop`` with ``autonomous.md`` as ``smart_system``.
-         On total failure (raise OR sentinel return), fall back to the
-         tick-brain ``draft`` (D-19, BLOCKER 3).
-      7. Send via ``send_and_inject(..., inject_into_conversation=True)``
-         (D-18).
-      8. ONLY on send success: append to ``outreach_log`` (D-10). Same-tick
-         double-sends are de-duplicated across the day by D-06 ``topic_key``
-         logic on the next tick, not within this one.
-
-    Returns a decision-trail dict suitable for ``TickLogStore`` and debugging.
+    ``run_autonomous_tick`` and ``run_occasion_cascade`` both delegate here
+    after their own occasion-agnostic/occasion-specific setup. ``occasion is
+    None`` is the tick's own call shape; everything occasion-only below is
+    gated on ``occasion is not None`` / ``advisory_only`` / ``veto_parser``,
+    all of which default to the tick's no-op values, so a plain tick's path
+    through this function is byte-identical in behavior to the pre-Phase-33
+    ``run_autonomous_tick``.
     """
     import asyncio as _asyncio
 
+    decision: dict = {
+        "skipped": False,
+        "sent": False,
+        "occasion": occasion,
+        "topic_key": topic_key or "",
+        "draft": "",
+        "triage_reason": "",
+        "skip_cause": "",
+        "composed_via": "",
+        "final_text": "",
+        "trail": [],
+    }
+
+    # Layer 1 — triage. Byte-identical call shape to the tick's pre-existing
+    # one; only the CONTENT of triage_user_msg differs (occasion_prompt +
+    # the occasion addendum, wired inside _build_triage_prompt).
+    try:
+        from core.tick_brain import TickBrain
+        tb = TickBrain()
+        triage_system = _load_prompt("prompts/autonomous_triage.md")
+        triage_user_msg = _build_triage_prompt(
+            situation, triage_system, occasion_prompt=occasion_prompt,
+        )
+        verdict = tb.think(triage_user_msg, system_override=triage_system)
+    except Exception:
+        logger.error("autonomous: Layer 1 (triage) failed entirely", exc_info=True)
+        decision["trail"].append("layer1_exception")
+        await _write_tick_log(now, situation, decision, log_key=log_key)
+        return decision
+
+    decision["trail"].append({"layer1": verdict})
+
+    should_act = bool(verdict.get("should_act"))
+    draft = verdict.get("draft", "")
+    triage_reason = verdict.get("reason", "")
+    decision["draft"] = draft
+    decision["triage_reason"] = triage_reason
+
+    if advisory_only and not should_act:
+        # D-03 — the weekly occasion never self-skips on Layer-1 judgment;
+        # should_act only shapes the draft/reason fed into Layer 2. The only
+        # thing that can still silence it is the veto_parser hook below.
+        decision["trail"].append("layer1_advisory_no_act")
+    elif not should_act:
+        decision["skipped"] = "judgment"
+        decision["skip_cause"] = verdict.get("skip_cause", "")
+        decision["trail"].append("layer1_no_act")
+        await _write_tick_log(now, situation, decision, log_key=log_key)
+        return decision
+
+    # Layer 2 — compose. Pitfall 2: build messages freshly, NEVER call
+    # handle_message (which would append the synthetic message to history).
+    if not decision["topic_key"]:
+        # Pitfall 4 — tick-only fallback chain (verdict's own topic_key,
+        # else synthesise from inferred trigger). Occasions always arrive
+        # here with a deterministic topic_key already set by
+        # run_occasion_cascade, so this branch is unreachable for them.
+        topic_key_value = verdict.get("topic_key") or ""
+        if not topic_key_value:
+            trigger_hint = _infer_trigger_type(situation)
+            topic_key_value = _synthesize_topic_key(trigger_hint, situation)
+            decision["trail"].append({"topic_key_synthesised": topic_key_value})
+        decision["topic_key"] = topic_key_value
+
+    # D-25 — fetch pending undisclosed actions ONCE, before compose, so
+    # Layer 2 can surface them (rendered for the tick too, not just
+    # occasions — an orphaned write must not wait for an occasion).
+    try:
+        from memory.firestore_db import ActionLogStore
+        als = ActionLogStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        undisclosed_actions = als.undisclosed()
+    except Exception:
+        logger.warning(
+            "autonomous: ActionLogStore.undisclosed() failed; proceeding "
+            "without a disclosure block",
+            exc_info=True,
+        )
+        undisclosed_actions = []
+
+    # BLOCKER 3 — _run_smart_loop RETURNS sentinel on total LLM failure,
+    # not raises. MUST detect both exception and sentinel-return as failure.
+    try:
+        final_text = await _asyncio.get_running_loop().run_in_executor(
+            None,
+            lambda: _compose_layer2(
+                situation, draft, triage_reason,
+                occasion_prompt=occasion_prompt, max_tokens=max_tokens,
+                undisclosed_actions=undisclosed_actions,
+            ),
+        )
+        if not final_text or any(s in final_text for s in _SMART_LOOP_ERROR_SENTINELS):
+            raise RuntimeError(
+                f"Layer 2 returned empty or sentinel error text: {final_text!r:.120}"
+            )
+        decision["composed_via"] = "llm"
+    except Exception as exc:
+        logger.warning(
+            "autonomous: Layer 2 failed; falling back to draft (D-19): %s", exc,
+        )
+        final_text = draft
+        decision["composed_via"] = "draft_fallback" if draft else ""
+
+    if not final_text:
+        decision["trail"].append("layer2_and_draft_both_empty")
+        await _write_tick_log(now, situation, decision, log_key=log_key)
+        return decision
+
+    # veto_parser — post-compose directive veto (D-03 / Phase 31 D-21/D-22).
+    # Applied to Layer 2's composed text BEFORE send. Defaults to None, so
+    # the tick path never touches this branch.
+    if veto_parser is not None:
+        veto, veto_reason, polished = veto_parser(final_text)
+        _ = veto_reason  # carried by the caller's own logging if it wants it
+        if veto:
+            decision["skipped"] = "directive"
+            decision["skip_cause"] = "standing_directive"
+            decision["final_text"] = ""
+            decision["trail"].append("directive_veto")
+            await _write_tick_log(now, situation, decision, log_key=log_key)
+            return decision
+        final_text = polished
+
+    decision["final_text"] = final_text
+
+    # Message class — matches what the legacy composers send today (D-30).
+    if occasion in ("nightly", "weekly_review"):
+        message_class = "review"
+    elif occasion == "morning":
+        message_class = "briefing"
+    else:
+        # WR-02 / D-07 note: the plain tick deliberately stays on "default".
+        # A composed tick message has no unambiguous class — the tick-brain's
+        # topic_key is free-form and one message can mix triggers (habit
+        # nudge + overdue + silence), so mapping to "habit_nudge"/"leave_by"
+        # here would be guesswork.
+        message_class = "default"
+
+    from core.scheduled_message import send_and_inject
+    from telegram.error import TimedOut
+
+    try:
+        await send_and_inject(
+            bot, final_text, inject_into_conversation=True,
+            message_class=message_class,
+        )
+    except TimedOut:
+        # Weekly-review 500 incident (2026-06-24) — one retry on a transient
+        # Telegram TimedOut, now extended to every occasion AND the tick.
+        decision["trail"].append("send_timed_out")
+        await _asyncio.sleep(2)
+        try:
+            await send_and_inject(
+                bot, final_text, inject_into_conversation=True,
+                message_class=message_class,
+            )
+        except Exception:
+            logger.error(
+                "autonomous: send_and_inject retry failed after TimedOut; "
+                "outreach_log NOT updated (D-10)",
+                exc_info=True,
+            )
+            decision["trail"].append("send_failed")
+            await _write_tick_log(now, situation, decision, log_key=log_key)
+            return decision
+    except Exception:
+        logger.error(
+            "autonomous: send_and_inject failed; outreach_log NOT updated (D-10)",
+            exc_info=True,
+        )
+        decision["trail"].append("send_failed")
+        await _write_tick_log(now, situation, decision, log_key=log_key)
+        return decision
+
+    decision["sent"] = True
+
+    # D-10 — write to outreach_log ONLY after the send succeeded.
+    today_iso = now.astimezone(_TZ).date().isoformat()
+    try:
+        from memory.firestore_db import OutreachLogStore
+        ols = OutreachLogStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        ols.append(today_iso, {
+            "topic_key": decision["topic_key"],
+            "time": now.astimezone(_TZ).strftime("%H:%M"),
+            "draft": draft,
+            "final": final_text,
+            "tick_index": (situation.get("now_context") or {}).get("tick_index", 0),
+            "occasion": occasion,
+        })
+    except Exception:
+        logger.warning(
+            "autonomous: outreach_log append failed (send already succeeded)",
+            exc_info=True,
+        )
+
+    # D-25 — mark exactly the undisclosed actions rendered into THIS compose
+    # as disclosed. Best-effort: a bookkeeping failure must never affect a
+    # message that already went out (self-heals — the entry stays
+    # undisclosed and surfaces again next time, per ActionLogStore's own
+    # last-writer-wins caveat).
+    if undisclosed_actions:
+        try:
+            from memory.firestore_db import ActionLogStore as _ActionLogStore
+            als = _ActionLogStore(
+                project_id=os.environ.get("GCP_PROJECT_ID", ""),
+                database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+            )
+            ids_by_date: dict[str, list[str]] = {}
+            for a in undisclosed_actions:
+                action_id = a.get("id")
+                if not action_id:
+                    continue
+                action_date = a.get("date") or today_iso
+                ids_by_date.setdefault(action_date, []).append(action_id)
+            for action_date, ids in ids_by_date.items():
+                als.mark_disclosed(action_date, ids)
+        except Exception:
+            logger.warning(
+                "autonomous: mark_disclosed bookkeeping failed (non-fatal)",
+                exc_info=True,
+            )
+
+    decision["trail"].append({"shipped": decision["topic_key"]})
+    await _write_tick_log(now, situation, decision, log_key=log_key)
+    return decision
+
+
+async def run_occasion_cascade(
+    bot,
+    *,
+    occasion: str,
+    target_date: str,
+    occasion_data: dict,
+    occasion_prompt: str = "",
+    now: datetime | None = None,
+    advisory_only: bool = False,
+    max_tokens: int | None = None,
+    veto_parser: "Callable[[str], tuple[bool, str, str]] | None" = None,
+) -> dict:
+    """Route an occasion (nightly / morning / weekly_review) through the same
+    3-layer cascade the ``*/20`` tick uses (plan 33-04).
+
+    Args:
+        occasion: one of ``_OCCASIONS``.
+        target_date: ``YYYY-MM-DD`` — drives the deterministic topic key
+            (``f"{prefix}:{target_date}"``, D-18) and the ``outreach_log``/
+            ``tick_logs`` date keys.
+        occasion_data: the occasion module's own specialised Layer-0 gather
+            output (e.g. ``_gather_tomorrow``), merged onto the shared
+            ``gather_situation()`` result. Per the RESEARCH anti-pattern
+            warning, ``gather_situation()`` itself is never made
+            tomorrow/week-aware — each occasion keeps its own gather.
+        occasion_prompt: rendered text of ``prompts/<occasion>_occasion.md``
+            (D-35) — carried through to both Layer 1 (header only) and
+            Layer 2 (verbatim).
+        advisory_only: D-03 — when True (the weekly occasion), a
+            ``should_act=False`` Layer-1 verdict never suppresses the send;
+            it only shapes the draft/reason handed to Layer 2.
+        max_tokens: forwarded to ``_run_smart_loop`` (the weekly's
+            large-compose budget).
+        veto_parser: post-compose directive-veto hook (D-03 / Phase 31
+            D-21/D-22), applied to Layer 2's text before send.
+
+    Returns:
+        The same decision-trail dict shape ``_run_cascade`` produces.
+
+    Raises:
+        ValueError: if ``occasion`` is not one of ``_OCCASIONS`` — a
+            caller-supplied string never reaches a Firestore document id
+            unvalidated (T-33-13).
+    """
+    if occasion not in _OCCASIONS:
+        raise ValueError(f"occasion must be one of {_OCCASIONS!r}, got {occasion!r}")
+
+    if now is None:
+        now = datetime.now(_TZ)
+
+    # Layer 0 — shared gather, PLUS the occasion's own specialised gather.
+    # Both efficiency gates that exist purely for tick cost-control (empty
+    # signals, change-detection) are structurally ABSENT from this path —
+    # not conditionally skipped inside a shared helper — so an "empty" skip
+    # or an unchanged-signature skip (see run_autonomous_tick's own gates)
+    # are impossible for an occasion (OCC-04).
+    situation = gather_situation(now)
+    situation.update(occasion_data)
+    situation["occasion"] = occasion
+    situation["occasion_target_date"] = target_date
+
+    topic_key = f"{_OCCASION_TOPIC_PREFIX[occasion]}:{target_date}"
+    log_key = f"occasion:{occasion}"
+
+    # D-19 — mark this occasion in flight for the duration of the cascade so
+    # a coincident */20 tick yields. Marking/clearing never abort the
+    # occasion (OccasionInFlightStore.mark/clear are themselves never-raise;
+    # this try/except is defense-in-depth against a raising constructor).
+    store = _occasion_inflight_store()
+    try:
+        store.mark(occasion, ttl_seconds=900)
+    except Exception:
+        logger.warning(
+            "autonomous: OccasionInFlightStore.mark(%r) failed (non-fatal)",
+            occasion, exc_info=True,
+        )
+
+    try:
+        decision = await _run_cascade(
+            bot, now, situation,
+            occasion=occasion, topic_key=topic_key, advisory_only=advisory_only,
+            occasion_prompt=occasion_prompt, max_tokens=max_tokens,
+            log_key=log_key, veto_parser=veto_parser,
+        )
+    finally:
+        try:
+            store.clear()
+        except Exception:
+            logger.warning(
+                "autonomous: OccasionInFlightStore.clear() failed (non-fatal)",
+                exc_info=True,
+            )
+
+    return decision
+
+
+async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
+    """Top-level autonomous tick orchestrator.
+
+    3-layer pipeline per D-20 (Cloud Scheduler route depends on this exact
+    signature — unchanged by plan 33-04):
+      1. ``gather_situation`` (Layer 0) — fast, no LLM
+      2. D-19 (plan 33-04) — yield if an occasion is mid-compose.
+      3. If empty signals → return early (D-11 gate; cost control SC-3)
+      4. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain
+         FOR THE FOLLOW-UP SEND). Execution then continues into step 5 — a
+         follow-up firing does NOT short-circuit the rest of the tick.
+      5. Layer 0.5 — change-detection gate (MEM-05 efficiency).
+      6. Delegates the remaining Triage -> Compose -> Send -> Log steps to
+         ``_run_cascade`` (plan 33-04) with ``occasion=None`` — the exact
+         same 3-layer body every occasion now shares.
+
+    Returns a decision-trail dict suitable for ``TickLogStore`` and debugging.
+    """
     if now is None:
         now = datetime.now(_TZ)
 
     situation = gather_situation(now)
     decision: dict = {"skipped": False, "sent": False, "trail": []}
+
+    # D-19 (plan 33-04) — yield to a mid-compose occasion. active() is
+    # fail-open by construction (OccasionInFlightStore: any store error, an
+    # absent/expired marker, or ANY exception all return None). The
+    # try/except here mirrors that same fail-open contract at the call
+    # site — not a second, different posture — so a poisoned marker or an
+    # unreachable store can never mute the tick.
+    try:
+        _inflight_occasion = _occasion_inflight_store().active()
+    except Exception:
+        logger.warning(
+            "autonomous: occasion in-flight check failed; proceeding", exc_info=True,
+        )
+        _inflight_occasion = None
+    if _inflight_occasion:
+        decision["skipped"] = "occasion_inflight"
+        decision["trail"].append({"yielded_to_occasion": _inflight_occasion})
+        await _write_tick_log(now, situation, decision)
+        return decision
 
     # Layer 0 gate (D-11 / SC-3) — empty signals = quiet tick, never call LLM.
     if situation.get("empty"):
@@ -1829,100 +2359,18 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
             "autonomous: change-detection gate errored; proceeding", exc_info=True
         )
 
-    # Layer 1 — triage. tick_brain.think wraps both purpose='tick_autonomous'
-    # (primary) and 'tick_autonomous_fallback' (fallback) internally (Plan 05).
-    try:
-        from core.tick_brain import TickBrain
-        tb = TickBrain()
-        triage_system = _load_prompt("prompts/autonomous_triage.md")
-        triage_user_msg = _build_triage_prompt(situation, triage_system)
-        verdict = tb.think(triage_user_msg, system_override=triage_system)
-    except Exception:
-        logger.error("autonomous: Layer 1 (triage) failed entirely", exc_info=True)
-        decision["trail"].append("layer1_exception")
-        await _write_tick_log(now, situation, decision)
-        return decision
-
-    decision["trail"].append({"layer1": verdict})
-
-    if not verdict.get("should_act"):
-        decision["trail"].append("layer1_no_act")
-        await _write_tick_log(now, situation, decision)
-        return decision
-
-    # Layer 2 — compose. Pitfall 2: build messages freshly, NEVER call
-    # handle_message (which would append the synthetic message to history).
-    draft = verdict.get("draft", "")
-    triage_reason = verdict.get("reason", "")
-    topic_key = verdict.get("topic_key") or ""
-    if not topic_key:
-        # Pitfall 4 — synthesise from inferred trigger.
-        trigger_hint = _infer_trigger_type(situation)
-        topic_key = _synthesize_topic_key(trigger_hint, situation)
-        decision["trail"].append({"topic_key_synthesised": topic_key})
-
-    # BLOCKER 3 — _run_smart_loop RETURNS sentinel on total LLM failure,
-    # not raises. MUST detect both exception and sentinel-return as failure.
-    try:
-        final_text = await _asyncio.get_running_loop().run_in_executor(
-            None, _compose_layer2, situation, draft, triage_reason,
-        )
-        if not final_text or any(s in final_text for s in _SMART_LOOP_ERROR_SENTINELS):
-            raise RuntimeError(
-                f"Layer 2 returned empty or sentinel error text: {final_text!r:.120}"
-            )
-    except Exception as exc:
-        logger.warning(
-            "autonomous: Layer 2 failed; falling back to draft (D-19): %s", exc,
-        )
-        final_text = draft
-
-    if not final_text:
-        decision["trail"].append("layer2_and_draft_both_empty")
-        await _write_tick_log(now, situation, decision)
-        return decision
-
-    # Send (D-18: inject_into_conversation=True).
-    # WR-02 / D-07 note: deliberately left on the "default" push class. A
-    # composed tick message has no unambiguous class — the tick-brain's
-    # topic_key is free-form and one message can mix triggers (habit nudge +
-    # overdue + silence), so mapping to "habit_nudge"/"leave_by" here would
-    # be guesswork. Revisit if triage ever emits an explicit message kind.
-    from core.scheduled_message import send_and_inject
-    try:
-        await send_and_inject(bot, final_text, inject_into_conversation=True)
-    except Exception:
-        logger.error(
-            "autonomous: send_and_inject failed; outreach_log NOT updated (D-10)",
-            exc_info=True,
-        )
-        decision["trail"].append("send_failed")
-        await _write_tick_log(now, situation, decision)
-        return decision
-
-    decision["sent"] = True
-
-    # D-10 — write to outreach_log ONLY after the send succeeded.
-    try:
-        from memory.firestore_db import OutreachLogStore
-        ols = OutreachLogStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
-        today_iso = now.astimezone(_TZ).date().isoformat()
-        ols.append(today_iso, {
-            "topic_key": topic_key,
-            "time": now.astimezone(_TZ).strftime("%H:%M"),
-            "draft": draft,
-            "final": final_text,
-            "tick_index": (situation.get("now_context") or {}).get("tick_index", 0),
-        })
-    except Exception:
-        logger.warning(
-            "autonomous: outreach_log append failed (send already succeeded)",
-            exc_info=True,
-        )
-
-    decision["trail"].append({"shipped": topic_key})
-    await _write_tick_log(now, situation, decision)
-    return decision
+    # Layers 1-2 + send + log — shared cascade body (plan 33-04). The tick's
+    # own topic_key fallback chain lives inside _run_cascade, gated on an
+    # empty decision["topic_key"] (always true for the tick, since
+    # topic_key=None here).
+    cascade_decision = await _run_cascade(
+        bot, now, situation,
+        occasion=None, topic_key=None, advisory_only=False,
+        occasion_prompt="", max_tokens=None,
+        log_key=now.astimezone(_TZ).strftime("%H:%M"),
+    )
+    # The follow-up trail entries were appended above, before the cascade
+    # ran — prepend them onto the cascade's own trail (built fresh inside
+    # _run_cascade) so both are visible in the returned decision.
+    cascade_decision["trail"] = decision["trail"] + cascade_decision["trail"]
+    return cascade_decision
