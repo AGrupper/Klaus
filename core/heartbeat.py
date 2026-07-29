@@ -16,7 +16,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -326,6 +326,149 @@ def _check_push_health() -> list[Signal]:
                        f"successfully since {stale_cutoff.isoformat()}.",
                 remediation="Verify the push send path (core/push_sender.py) is being "
                             "invoked; check pywebpush errors in Cloud Run logs.",
+            ))
+
+    return signals
+
+
+# ------------------------------------------------------------------ #
+# D-28 — occasion health (Phase 33 Plan 11)                          #
+# ------------------------------------------------------------------ #
+
+_OCCASION_STATE_COLLECTIONS = {
+    "nightly": "nightly_reviews",
+    "morning": "morning_briefings",
+    "weekly_review": "weekly_reviews",
+}
+_OCCASION_SKIP_STREAK_THRESHOLD = 3     # Claude's Discretion (D-28 #2, N chosen = 3)
+_OCCASION_SKIP_STREAK_WINDOW_DAYS = 10
+_OCCASION_ERRORED_LOOKBACK_DAYS = 2
+_OCCASION_UNDISCLOSED_STALE_HOURS = 24
+# T-33-35 / SC-1 — composed_via values that mean "a message shipped, but only
+# because a fallback tier fired" — read from the occasion's own state doc,
+# never from _log_cron_run's ok boolean (33-RESEARCH § Pitfall 8: a
+# plain-text-fallback send is logged ok=True and would otherwise pass silently).
+_OCCASION_ERRORED_COMPOSED_VIA = {"plain_text_fallback", "draft_fallback"}
+
+
+def _read_occasion_state(collection: str, date_str: str) -> dict:
+    """Read a date-keyed occasion state doc directly.
+
+    Mirrors nightly_review.py/morning_briefing.py/weekly_training_review.py's
+    own `_get_state` pattern — 33-PATTERNS.md is explicit that these date-keyed
+    docs use direct collection access, not a store class. Never raises;
+    returns {} on any error or missing doc.
+    """
+    try:
+        from memory.firestore_db import _make_firestore_client
+        project_id = os.environ["GCP_PROJECT_ID"]
+        database = os.getenv("FIRESTORE_DATABASE", "(default)")
+        client = _make_firestore_client(project_id, database)
+        snap = client.collection(collection).document(date_str).get()
+        return (snap.to_dict() or {}) if snap.exists else {}
+    except Exception:
+        logger.warning(
+            "heartbeat: occasion state read failed (%s/%s)", collection, date_str,
+            exc_info=True,
+        )
+        return {}
+
+
+def _occasion_skip_streak(
+    collection: str, *, today: date, window_days: int,
+) -> tuple[int, list[str]]:
+    """Count the consecutive `skipped_by_judgment` run ending at the most
+    recent date (within `window_days`) that has a state doc at all (D-28 #2).
+
+    A missing doc is "unknown" — skipped without breaking or counting the
+    streak, since a missed morning trigger (D-09: no backstop) legitimately
+    leaves a gap. The streak stops at the first date whose doc carries a
+    non-skip terminal status (e.g. "sent").
+
+    Returns (streak_length, skip_causes_seen) — the causes list lets the
+    caller distinguish "three quiet nothing_happened nights" from "three
+    reaction_history back-offs" in the alert detail.
+    """
+    streak = 0
+    causes: list[str] = []
+    for offset in range(window_days):
+        d_iso = (today - timedelta(days=offset)).isoformat()
+        state = _read_occasion_state(collection, d_iso)
+        if not state:
+            continue  # no doc that day — unknown, keep walking, don't reset
+        if state.get("status") == "skipped_by_judgment":
+            streak += 1
+            causes.append(state.get("skip_cause") or "unknown")
+            continue
+        break  # a non-skip terminal status ends the streak
+    return streak, causes
+
+
+def check_occasion_health(now: datetime | None = None) -> list[Signal]:
+    """D-28 — the occasion anomaly classes, read from each occasion's own
+    state doc (nightly_reviews/morning_briefings/weekly_reviews), never from
+    the generic heartbeat_runs cron ledger (33-RESEARCH § Pitfall 8:
+    `_log_cron_run`'s `ok` boolean was designed for crash detection, not
+    judgment-quality detection — a plain-text-fallback send still logs
+    ok=True and would pass the existing check_cron_health silently).
+
+    1. Errored occasion (D-28 #1, SC-1, T-33-35) — composed_via names a
+       degraded fallback tier.
+    2. Skip streak (D-28 #2, T-33-36) — N consecutive judgment-skips on one
+       occasion (nightly/morning only; weekly never self-skips, D-03).
+
+    A legitimate `skipped_by_judgment` with no `composed_via` key never trips
+    a signal here — that is the feature working as designed, not a fault.
+    """
+    signals: list[Signal] = []
+    now = now or datetime.now(_TZ)
+    today = now.date()
+
+    # --- Anomaly #1: errored occasion (D-28 #1, SC-1) ---
+    for name, collection in _OCCASION_STATE_COLLECTIONS.items():
+        state: dict = {}
+        state_date: str | None = None
+        for offset in range(_OCCASION_ERRORED_LOOKBACK_DAYS):
+            d_iso = (today - timedelta(days=offset)).isoformat()
+            candidate = _read_occasion_state(collection, d_iso)
+            if candidate:
+                state = candidate
+                state_date = d_iso
+                break
+        if not state:
+            continue
+        composed_via = state.get("composed_via")
+        if composed_via in _OCCASION_ERRORED_COMPOSED_VIA:
+            signals.append(Signal(
+                fingerprint=f"occasion:{name}:errored:{state_date}",
+                severity=SEVERITY_CRITICAL, area="occasion",
+                title=f"{name} occasion degraded on {state_date}",
+                detail=(
+                    f"composed_via={composed_via!r}, trigger={state.get('trigger', '?')!r} "
+                    "— a message still shipped, but only via a fallback tier."
+                ),
+                remediation=(
+                    f"Check Cloud Run logs for {state_date} and call get_recent_decisions "
+                    "to see what Klaus's Layer 1/2 saw."
+                ),
+            ))
+
+    # --- Anomaly #2: skip streak (D-28 #2) ---
+    for name in ("nightly", "morning"):  # weekly_review never self-skips (D-03)
+        collection = _OCCASION_STATE_COLLECTIONS[name]
+        streak, causes = _occasion_skip_streak(
+            collection, today=today, window_days=_OCCASION_SKIP_STREAK_WINDOW_DAYS,
+        )
+        if streak >= _OCCASION_SKIP_STREAK_THRESHOLD:
+            signals.append(Signal(
+                fingerprint=f"occasion:{name}:skip_streak",
+                severity=SEVERITY_WARNING, area="occasion",
+                title=f"{name} has skipped {streak} times in a row",
+                detail=f"skip_cause values seen: {', '.join(causes)}.",
+                remediation=(
+                    "Check get_recent_decisions for the reasoning; verify the triage "
+                    "prompt hasn't regressed toward silence."
+                ),
             ))
 
     return signals
@@ -1009,7 +1152,7 @@ def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
     """Run all checkers, then keep only signals whose severity is in `tiers`."""
     raw: list[Signal] = []
     for checker in (check_cron_health, check_tokens, check_degradation, check_deployment,
-                    _check_push_health):
+                    _check_push_health, check_occasion_health):
         try:
             raw.extend(checker())
         except Exception:

@@ -1132,3 +1132,186 @@ def test_run_tick_invokes_groq_budget_alert(monkeypatch):
 
     assert called["groq_budget"] is True
 
+
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 11 — check_occasion_health (D-28, OCC-06)
+#
+# Task 1: Anomaly #1 (errored occasion) + Anomaly #2 (skip streak).
+# ---------------------------------------------------------------------------
+
+def _occasion_state_reader(states: dict):
+    """Build a heartbeat._read_occasion_state replacement from a
+    {(collection, date_str): state_dict} map. Any lookup not present in the
+    map returns {} — mirrors a missing Firestore doc."""
+    def _reader(collection, date_str):
+        return states.get((collection, date_str), {})
+    return _reader
+
+
+# Anchor "now" on a Wednesday so the D-28 #3 weekly-not-fired check (added in
+# Task 2) never accidentally fires inside a Task-1-only test — 2026-05-20 is
+# a Wednesday.
+_OCC_NOW = datetime(2026, 5, 20, 12, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
+_OCC_TODAY = _OCC_NOW.date().isoformat()
+
+
+def test_check_occasion_health_plain_text_fallback_is_critical(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({
+        ("nightly_reviews", _OCC_TODAY): {
+            "status": "sent", "trigger": "focus", "composed_via": "plain_text_fallback",
+        },
+    }))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    matches = [s for s in signals if s.fingerprint.startswith("occasion:nightly:errored:")]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_CRITICAL
+    assert matches[0].area == "occasion"
+
+
+def test_check_occasion_health_draft_fallback_is_critical(monkeypatch):
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({
+        ("morning_briefings", _OCC_TODAY): {
+            "status": "sent", "trigger": "focus", "composed_via": "draft_fallback",
+        },
+    }))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    matches = [s for s in signals if s.fingerprint.startswith("occasion:morning:errored:")]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_CRITICAL
+
+
+def test_check_occasion_health_healthy_send_no_signal(monkeypatch):
+    """status=sent, composed_via=llm — the normal, healthy send path."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({
+        ("nightly_reviews", _OCC_TODAY): {
+            "status": "sent", "trigger": "focus", "composed_via": "llm",
+        },
+    }))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    assert not any(s.fingerprint.startswith("occasion:nightly:errored:") for s in signals)
+
+
+def test_check_occasion_health_healthy_judgment_skip_no_composed_via_no_signal(monkeypatch):
+    """status=skipped_by_judgment with NO composed_via key — the feature, not a fault."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({
+        ("nightly_reviews", _OCC_TODAY): {
+            "status": "skipped_by_judgment", "trigger": "focus",
+            "skip_cause": "nothing_happened", "draft": "quiet night",
+        },
+    }))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    assert not any(s.fingerprint.startswith("occasion:nightly:errored:") for s in signals)
+
+
+def test_check_occasion_health_skip_streak_three_consecutive_warns(monkeypatch):
+    from core import heartbeat
+    from datetime import timedelta
+    today = _OCC_NOW.date()
+    states = {}
+    for offset in range(3):
+        d_iso = (today - timedelta(days=offset)).isoformat()
+        states[("morning_briefings", d_iso)] = {
+            "status": "skipped_by_judgment", "skip_cause": "nothing_happened",
+        }
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader(states))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    matches = [s for s in signals if s.fingerprint == "occasion:morning:skip_streak"]
+    assert len(matches) == 1
+    assert matches[0].severity == heartbeat.SEVERITY_WARNING
+    assert "nothing_happened" in matches[0].detail
+
+
+def test_check_occasion_health_skip_streak_two_consecutive_no_signal(monkeypatch):
+    from core import heartbeat
+    from datetime import timedelta
+    today = _OCC_NOW.date()
+    states = {}
+    for offset in range(2):
+        d_iso = (today - timedelta(days=offset)).isoformat()
+        states[("morning_briefings", d_iso)] = {"status": "skipped_by_judgment"}
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader(states))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    assert not any(s.fingerprint == "occasion:morning:skip_streak" for s in signals)
+
+
+def test_check_occasion_health_skip_streak_missing_doc_does_not_reset(monkeypatch):
+    """A missing doc mid-run is 'unknown' — it doesn't break the streak count
+    and does not itself emit a Signal."""
+    from core import heartbeat
+    from datetime import timedelta
+    today = _OCC_NOW.date()
+    # day 0: skip, day 1: MISSING (no key at all), day 2: skip, day 3: skip
+    keyed = {
+        ("nightly_reviews", (today - timedelta(days=0)).isoformat()): {
+            "status": "skipped_by_judgment", "skip_cause": "reaction_history"},
+        ("nightly_reviews", (today - timedelta(days=2)).isoformat()): {
+            "status": "skipped_by_judgment", "skip_cause": "reaction_history"},
+        ("nightly_reviews", (today - timedelta(days=3)).isoformat()): {
+            "status": "skipped_by_judgment", "skip_cause": "reaction_history"},
+    }
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader(keyed))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    matches = [s for s in signals if s.fingerprint == "occasion:nightly:skip_streak"]
+    assert len(matches) == 1
+    # The missing day itself must not manifest as its own signal.
+    assert not any("missing" in s.title.lower() for s in signals)
+
+
+def test_check_occasion_health_weekly_review_never_evaluated_for_skip_streak(monkeypatch):
+    """Even if weekly_reviews docs somehow carried skipped_by_judgment status
+    (structurally unreachable in production, D-03), the checker must never
+    evaluate weekly_review for a skip streak."""
+    from core import heartbeat
+    from datetime import timedelta
+    today = _OCC_NOW.date()
+    states = {}
+    for offset in range(5):
+        d_iso = (today - timedelta(days=offset)).isoformat()
+        states[("weekly_reviews", d_iso)] = {"status": "skipped_by_judgment"}
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader(states))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    assert not any(s.fingerprint == "occasion:weekly_review:skip_streak" for s in signals)
+
+
+def test_check_occasion_health_signals_have_all_fields_nonempty(monkeypatch):
+    from core import heartbeat
+    from datetime import timedelta
+    today = _OCC_NOW.date()
+    states = {
+        ("nightly_reviews", _OCC_TODAY): {
+            "status": "sent", "trigger": "focus", "composed_via": "plain_text_fallback",
+        },
+    }
+    for offset in range(3):
+        d_iso = (today - timedelta(days=offset)).isoformat()
+        states[("morning_briefings", d_iso)] = {
+            "status": "skipped_by_judgment", "skip_cause": "nothing_happened",
+        }
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader(states))
+    signals = heartbeat.check_occasion_health(now=_OCC_NOW)
+    assert len(signals) >= 2
+    for s in signals:
+        assert s.fingerprint and s.severity and s.area and s.title and s.detail and s.remediation
+
+
+def test_check_occasion_health_registered_in_collect_signals(monkeypatch):
+    from core import heartbeat
+    called = {"occasion": False}
+
+    def _spy(now=None):
+        called["occasion"] = True
+        return []
+
+    monkeypatch.setattr(heartbeat, "check_cron_health", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_tokens", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_degradation", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_deployment", lambda: [])
+    monkeypatch.setattr(heartbeat, "_check_push_health", lambda: [])
+    monkeypatch.setattr(heartbeat, "check_occasion_health", _spy)
+    heartbeat._collect_signals(tiers={heartbeat.SEVERITY_CRITICAL})
+    assert called["occasion"] is True
+
