@@ -46,16 +46,20 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 ## Phase Details
 
 ### Phase 30.5: Brain Upgrade (Sonnet 5)
+
 **Goal**: Klaus's smart brain runs on `claude-sonnet-5` with prompt caching active and cost metering that can be trusted — no silent fallback-cost inversion, no sampling-parameter errors, and a measurably lighter always-on prompt
 **Depends on**: Nothing (first phase of v6.0; Phase 0 tick-brain migration already shipped pre-milestone)
 **Requirements**: BRAIN-01, BRAIN-02, BRAIN-03, BRAIN-04, BRAIN-05, BRAIN-06, BRAIN-07
 **Success Criteria** (what must be TRUE):
+
   1. Every conversation turn and every paid proactive compose is answered by `claude-sonnet-5`, and a forced Anthropic outage falls back cleanly to `gemini-3.5-flash`
   2. LLMUsage records cache-read/cache-write token counts with correctly computed cost, and Klaus's cost reporting is within ~10% of the Anthropic console
   3. A forced Groq failure in staging logs the tick-brain fallback as `gemini-3.5-flash` via the decoupled `TICK_BRAIN_FALLBACK_*` env — never `claude-sonnet-5` — verified deployed BEFORE the brain model flip
   4. When yesterday's total LLM cost exceeds `KLAUS_DAILY_COST_ALERT`, Klaus proactively tells Amit with a per-purpose cost breakdown and cache-hit rate
   5. Every Anthropic-backend call succeeds with no `temperature`/`top_p`/`top_k`/manual-`thinking` 400 errors, the always-on system prompt is measurably smaller (re-measured with the real Sonnet-5 tokenizer), and `UserProfileStore` reads are TTL-cached with no uncached Firestore read on every smart turn
+
 **Plans**: 6 plans (4 waves)
+
 - [x] 30.5-01-PLAN.md — Tick-brain fallback decoupling (TICK_BRAIN_FALLBACK_*), ship + live-verify before the flip (BRAIN-03)
 - [x] 30.5-02-PLAN.md — Storage layer: LLMUsage cache/per-purpose cost + yesterday summary, UserProfileStore TTL cache, CostTripwireLog (BRAIN-02/04/07)
 - [x] 30.5-03-PLAN.md — Anthropic prompt caching + cache-token metering + pricing + Sonnet-5 param/max_tokens compat (BRAIN-02/05)
@@ -64,17 +68,21 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 30.5-06-PLAN.md — Brain flip to claude-sonnet-5 + 3-tier fallback chain + D-12 disclosure + D-14 live checklist (BRAIN-01)
 
 ### Phase 31: Standing Directives
+
 **Goal**: Amit can state a lasting wish about Klaus's behavior once and have it honored everywhere, indefinitely or until it expires/is cancelled, with conflicts surfaced and Klaus able to learn new directives from how Amit reacts to his own outreach
 **Depends on**: Phase 30.5
 **Requirements**: DIR-01, DIR-02, DIR-03, DIR-04, DIR-05, DIR-06, DIR-07
 **Success Criteria** (what must be TRUE):
+
   1. Amit can state a lasting wish in chat (including "I already told you…") and Klaus stores it verbatim with origin + triggering-context quote, acknowledging it in one line
   2. A directive with a stated or implied end condition expires on it automatically; a directive with none persists until Amit cancels it — Klaus asks "until when?" only when genuinely unsure
   3. An active directive changes Klaus's behavior everywhere it's relevant — chat, tick triage (as a Step-0 veto above all other logic), Layer-2 compose, and follow-up compose — not just the surface where it was stated
   4. Amit can list and cancel standing directives from chat
   5. When a directive contradicts a baked-in persona routine, Klaus flags it, asks once which wins, and records the answer as a refined directive with a `superseded_by` link on the old one
   6. Nightly reflection reads the full day's conversation (not an empty 6h window) via `get_recent_window`, pairs each Klaus-initiated outreach with Amit's reaction, and may propose self-directives surfaced in the nightly message with a one-line veto
+
 **Plans**: 8 plans (6 base + 2 gap-closure; 5 waves)
+
 - [x] 31-01-PLAN.md — StandingDirectiveStore (verbatim capture, expiry fields, superseded_by chain, read-cached, never hard-delete) (DIR-02/05)
 - [x] 31-02-PLAN.md — get_recent_window() + per-message ts on FirestoreConversationStore (fixes bug B3) (DIR-06)
 - [x] 31-03-PLAN.md — 3 brain-direct directive tools + shared render_standing_directives_block formatter + chat injection + capture rule (DIR-01/03/04/05)
@@ -85,17 +93,21 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 31-08-PLAN.md — [gap] vetoed anti-lesson reachable: StandingDirectiveStore.veto() writer + cancel routes klaus_self→veto + real no-re-propose test (DIR-07)
 
 ### Phase 32: Unified Situation (Ambient Memory)
+
 **Goal**: Klaus perceives his full situation on every reasoning path — relevant memories, conversation continuity, and reconciled training reality — without ever letting ordinary chat activity defeat the free-tier cost gate that is Klaus's entire cost model
 **Depends on**: Phase 31 (`get_recent_window()` primitive)
 **Requirements**: MEM-01, MEM-02, MEM-03, MEM-04, MEM-05, MEM-06, MEM-07
 **Success Criteria** (what must be TRUE):
+
   1. Every chat turn auto-injects relevant Pinecone memories as a "Things you remember" block, best-effort with a short timeout — a slow or failed recall never blocks the turn
   2. After a 6h+ idle gap, a fresh "hey" is met with continuity (recent conversation tail prepended) instead of amnesia
   3. Amit can deliberately forget a memory via `forget_memory`, and reflection flags memories contradicted by newer facts — nothing decays automatically
   4. Tick triage and paid Layer-2 compose both see a reconciled `training_reality` window (planned vs. logged vs. Garmin/Hevy vs. calendar) — a session completed or moved earlier is never re-asked about
   5. A token-budget guard test confirms the maximal rendered triage prompt plus `max_tokens` fits Groq's verified per-request ceiling, and none of the new gathers (`conversation_tail`, `standing_directives`, `training_reality`, `location`) flip an otherwise-empty tick to non-empty
   6. Weather and travel-time gathers use Klaus's derived `current_location` (from calendar travel events + standing directives) — no more Tel Aviv forecasts delivered to Paris — and a local Groq daily token ledger alerts via heartbeat as usage nears the 200K TPD cap
+
 **Plans**: 8 plans (3 waves)
+
 - [x] 32-01-PLAN.md — tiktoken dep + MEM-05 token-budget guard test (real o200k_harmony tokenizer, ≤8K Groq ceiling) (MEM-05)
 - [x] 32-02-PLAN.md — Prompt-cache block split: render_smart_system → (stable, volatile), two real Anthropic content blocks (MEM-01/02 foundation)
 - [x] 32-03-PLAN.md — forget_memory tool (Pinecone delete-by-id, validated) + reflection contradiction-flag, never auto-delete (MEM-03)
@@ -106,10 +118,12 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] 32-08-PLAN.md — current_location derivation (calendar + directives, ask-when-ambiguous) + weather/routes repoint (MEM-07/05)
 
 ### Phase 33: Occasion Cascade
+
 **Goal**: Nightly review, morning briefing, and the Sunday weekly review stop being always-fire templates and become judgment-driven occasions through the same 3-layer cascade as the tick, with silence a valid, self-explainable outcome distinguishable from infra failure
 **Depends on**: Phase 32 (context-only invariant + Groq token ledger must be safe before occasion traffic routes through triage)
 **Requirements**: OCC-01, OCC-02, OCC-03, OCC-04, OCC-05, OCC-06, OCC-07
 **Success Criteria** (what must be TRUE):
+
   1. The nightly review runs through the cascade and can be skipped by judgment (recorded as `skipped_by_judgment`); a total infra failure still sends the deterministic plain-text fallback, and the two are distinguishable in the logs
   2. The morning briefing runs through the cascade, push-triggered by an iOS Sleep-Focus-off automation on `POST /trigger/morning` — no Garmin gate, no 10:15 cutoff, no backstop — writing the `structured` snapshot and `daily_note` on every run, sent or skipped *(superseded by 33-CONTEXT.md D-05/D-06/D-08/D-09 [OVERRIDE])*
   3. The Sunday weekly review runs through the cascade as `occasion="weekly_review"`, retiring the last legacy composer (fold-in locked by user decision 2026-07-17)
@@ -117,44 +131,68 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
   5. Layer 2 composes agentically bounded only by the existing `MAX_TOOL_ITERATIONS = 12` safety net (forcing a tools-stripped final answer on exhaustion), may write to the calendar without prior consent provided it declares every write on a scannable action line, and checks for an existing event at that date+slot before creating a duplicate *(superseded by 33-CONTEXT.md D-21/D-22/D-23/D-24 [OVERRIDE])*
   6. Amit can ask "why didn't you message me yesterday?" and `get_recent_decisions` returns a real answer from recent tick/occasion verdicts and reasoning
   7. `OCCASION_CASCADE` ships behind a flag A/B-ing the nightly and weekly for a 3-4 day observation window (the morning ships cascade-only — its legacy trigger is retired this phase) before any legacy composer code is deleted in Phase 35 *(partially superseded by 33-CONTEXT.md D-30/D-31 [OVERRIDE]; `morning-briefing-tick` is the one Cloud Scheduler change)*
+
 **Plans**: 13 plans in 6 waves
 
 Plans:
+**Wave 1**
+
 - [ ] 33-01-PLAN.md — ActionLogStore + OccasionInFlightStore + shared occasion test scaffolding
 - [ ] 33-02-PLAN.md — Layer-2 forced final answer on iteration exhaustion + max_tokens passthrough
 - [ ] 33-03-PLAN.md — Shared cascade prompts (skip causes, fold-in, write-and-disclose) + three occasion prompts
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 33-04-PLAN.md — Occasion-aware cascade core in core/autonomous.py (gate bypasses, topic keys, in-flight marker)
 - [ ] 33-05-PLAN.md — Calendar-write idempotency check + action audit recording
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 33-06-PLAN.md — Nightly review through the cascade; skipped_by_judgment vs infra failure
 - [ ] 33-07-PLAN.md — Morning briefing push-triggered cascade entry point; write-timing inversion
 - [ ] 33-08-PLAN.md — Weekly review through the cascade in advisory-only mode (never self-skips)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 33-09-PLAN.md — get_recent_decisions brain-direct tool
 - [ ] 33-10-PLAN.md — enqueue_occasion + /internal/process-occasion + /trigger/morning + D-32 dispatch fix
 - [ ] 33-11-PLAN.md — Heartbeat D-28 occasion anomaly checks
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 33-12-PLAN.md — Deploy config, docs, Sleep-Focus-off Shortcut + operator trigger confirmation
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 33-13-PLAN.md — Retire morning-briefing-tick, flip the flag, 3-4 day observation window
 
 ### Phase 34: Write-Backs
+
 **Goal**: Calendar workout actions and chat-reported training changes durably and idempotently update `TrainingLogStore` — the thing Klaus was told stays true even if the model doesn't restate it later
 **Depends on**: Phase 33 (occasion machinery supplies the date+slot dedup key for idempotency)
 **Requirements**: WB-01, WB-02, WB-03, WB-04
 **Success Criteria** (what must be TRUE):
+
   1. Creating a workout calendar event best-effort writes a planned `TrainingLogStore` row — the calendar create itself never fails because of it
   2. Moving or deleting a workout event updates the planned row symmetrically (a move merges a new-date row and marks the old one `skipped_reason="moved"`; a delete removes/marks the row)
   3. When Amit tells Klaus in chat that he did/moved/skipped a session, Klaus logs it before replying, and the chat-created row merges idempotently with later Garmin/Hevy completion data for the same `{date}_{slot}`
   4. The weekly review and the occasion cascade both read the same shared `training_reality` window instead of independently re-deriving split-vs-log guesses
+
 **Plans**: TBD
 
 ### Phase 35: Hardening & Subtraction
+
 **Goal**: Klaus's judgment is measurably tested against new fixtures, the codebase sheds retired pipelines and dead weight accumulated across the milestone, and the invariants this milestone introduces are documented for whoever builds on Klaus next
 **Depends on**: Phase 34 (system stable enough to write fixtures against; Phase 33's observation window must have elapsed)
 **Requirements**: HARD-01, HARD-02, HARD-03, HARD-04, HARD-05
 **Success Criteria** (what must be TRUE):
+
   1. ≥6 new eval fixtures (vacation suppression, directive-expiry resumption, moved-session no-re-ask, nightly judgment-skip, nightly fold, follow-up cancelled by directive) pass via `scripts/eval_tick_brain.py`
   2. `core/proactive_alerts.py` (+ its route/prompt/tests), TickTick residue, the oversized `.venv.py314.bak/`, and `.claude/worktrees/` residue are gone from the repo, and the full suite still passes
   3. Chat-ingest (04:00) and chat-export-ingest (04:30) Cloud Scheduler jobs are paused, with the code kept and resumable anytime
   4. `PROJECT.md` Key Decisions records a worker-layer retirement verdict backed by measured post-Sonnet LLMUsage delegation volume
   5. `CLAUDE.md`/`TECHNICAL_PLAN.md`/`DEPLOYMENT.md` reflect the milestone's new invariants (directives-in-every-path, Groq per-request budget), and phase-pinned tool-registration tests are consolidated into one current-invariant test
+
 **Plans**: TBD
 
 ---
@@ -289,6 +327,7 @@ Detail: see `.planning/MILESTONES.md § v1.0`.
   worth sending — previously structurally impossible. If that feels chatty,
   tune the threshold or the triage prompt's silence guidance, and mint
   fixtures from the new outreach logs.
+
 - ✅ **Tune `prompts/autonomous_triage.md` against the expanded eval** —
   done 2026-06-12. Restructured the triage prompt for qwen (hard
   followup-silence rule + ordered vetoes→signals→silence decision
@@ -300,6 +339,7 @@ Detail: see `.planning/MILESTONES.md § v1.0`.
   P 0.83–0.90 / R 0.73–0.91 / F1 0.80–0.87 over three runs, WARNING-8
   violations 0/6 (was 3/3), aged-overdue recall preserved. Full numbers in
   `evals/tick_brain/README.md § Baselines`.
+
 - **Deploy the Groq tick-brain fix + tuned triage prompt (ready as of
   2026-06-12)** — ships together: the 2026-06-11 `core/tick_brain.py`
   fixes (model id `qwen/qwen3-32b`, `<think>` strip), the 2026-06-12

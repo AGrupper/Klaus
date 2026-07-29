@@ -1,8 +1,8 @@
 ---
 phase: 33
 slug: occasion-cascade
-status: draft
-nyquist_compliant: false
+status: approved
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-07-29
 ---
@@ -100,12 +100,23 @@ contract each task's `<automated>` verify must satisfy.
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `pytest tests/test_token_budget.py -x` green after every triage-prompt edit
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies — verified across all 13 plans by gsd-plan-checker
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references — all named test files exist; pytest + tiktoken installed. The real gap was shared fixtures, covered by 33-01 Task 1 (`tests/occasion_helpers.py`, `SKIP_CAUSES` as single source of truth)
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [ ] `pytest tests/test_token_budget.py -x` green after every triage-prompt edit — *enforced during execution, not at plan time*
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-29 (post plan-checker verification + blocker revision)
+
+### Post-revision additions
+
+Two blockers found by the plan-checker changed the verification contract; the rows below
+supplement the Per-Task Verification Map above.
+
+| Requirement | Behavior | Test Type | Automated Command |
+|-------------|----------|-----------|-------------------|
+| OCC-03 / D-03 | Directive veto rides the Layer-2 `veto_parser` hook — never Layer 1's `should_act` | unit | `pytest tests/test_autonomous.py -k veto_parser -x` |
+| OCC-03 / D-03 | Weekly prompt retains the Step-0 `"skip"` trailer instruction | unit (regression guard) | `pytest tests/test_weekly_training_review.py -k directive_veto_prompt_contract -x` |
+| OCC-04 | `TimedOut` on send retried exactly once inside `_run_cascade`; fails closed on the second | unit | `pytest tests/test_autonomous.py -k send_timed_out -x` |

@@ -1028,10 +1028,19 @@ async def trigger_morning(request: Request) -> JSONResponse:
 
 **If this table is empty:** All claims in this research were verified or cited — no user confirmation needed. *(Not applicable — see table above.)*
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> All three were resolved during planning (2026-07-29). Resolutions noted inline below;
+> the deciding plan/task is cited in each. A fourth question surfaced by the plan-checker
+> — the mechanism for the weekly's standing-directive veto — is recorded as Q4.
 
 1. **Exact call-site shape: does `run_autonomous_tick` itself gain the `occasion`
    parameter, or does a new thin wrapper function share its Layer 1/2 body?**
+   - **RESOLVED — plan 33-04 Task 1** took the recommendation: a shared internal
+     `_run_cascade(...)` body with `run_autonomous_tick` calling it as `occasion=None`
+     and a public `run_occasion_cascade(...)` entry for the three occasions.
+     `run_autonomous_tick`'s public signature is unchanged, pinned by an acceptance
+     criterion (the Cloud Scheduler route depends on it).
    - What we know: CONTEXT.md's code_context literally states "the 3-layer
      orchestrator that gains the occasion parameter," naming
      `run_autonomous_tick` specifically. The function's docstring documents an
@@ -1069,6 +1078,9 @@ async def trigger_morning(request: Request) -> JSONResponse:
      exists and is the natural signal) and only add a genuinely wider gather if
      UAT during the observation window shows it's insufficient — avoid building
      new fetch logic speculatively.
+   - **RESOLVED — plan 33-07 Task 2** took the recommendation: D-15 is detected from
+     the existing `_nightly_state(yesterday)` read via a new `nightly_ran` flag. No
+     new fetch logic.
 
 3. **Should the `daily_note`/`structured`-write timing fix (Pitfall 4) also apply
    to the nightly and weekly occasions, or is it morning-only per the literal
@@ -1087,6 +1099,26 @@ async def trigger_morning(request: Request) -> JSONResponse:
      always written" (same session, same phase, same underlying philosophy: "Klaus
      perceived the day" separate from "Klaus decided to speak"). Flag for
      discuss-phase/plan confirmation since it is not explicitly locked.
+   - **RESOLVED — plan 33-06 Task 2** took the recommendation: the always-write-snapshot
+     principle extends to the nightly, matching D-05/D-07's philosophy.
+
+4. **[Added by gsd-plan-checker, 2026-07-29] By what mechanism does a standing directive
+   veto the weekly review, given `advisory_only=True` ignores Layer 1's `should_act`?**
+   - What we found: there is no deterministic option. `StandingDirectiveStore`
+     (`memory/firestore_db.py:1841`) stores directives as free-form verbatim `text` with
+     no `scope`/`applies_to` field; `_gather_standing_directives`
+     (`core/autonomous.py:399`) returns that list unfiltered; and
+     `render_standing_directives_block` (`core/tools.py:2339`) is a pure formatter by its
+     own docstring. Nothing in the codebase maps directive free-text → occasion
+     applicability without an LLM.
+   - **RESOLVED — plans 33-04 (`veto_parser` hook), 33-08 Task 2, 33-03 Task 3**: the veto
+     stays LLM judgment expressed through the existing `_parse_review_skip` fenced-JSON
+     trailer, now passed into `_run_cascade` as a `veto_parser` callable applied to Layer
+     2's text before send. This generalizes the three near-duplicate `_parse_*_skip`
+     functions flagged earlier in this document, preserves Phase 31 D-21/D-22 literally
+     (same parser, same trailer, same log line), and adds **zero** LLM calls — the veto
+     rides the Layer-2 compose the weekly already pays for, leaving the Layer 0/1 free →
+     Layer 2 paid cost invariant intact.
 
 ## Environment Availability
 
