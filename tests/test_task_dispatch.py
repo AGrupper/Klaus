@@ -120,6 +120,85 @@ class TestEnqueueUpdate:
         assert enqueue_update({"update_id": 7}) is False
 
 
+class TestEnqueueOccasion:
+
+    def test_enqueue_occasion_targets_correct_url_with_target_date(
+        self, monkeypatch, fake_tasks_v2,
+    ):
+        """Happy path: creates a task targeting /internal/process-occasion with
+        the OIDC service account and {occasion, trigger, target_date} JSON body.
+        """
+        fake, fake_client = fake_tasks_v2
+        from core.task_dispatch import enqueue_occasion
+
+        for key, value in _ENV.items():
+            monkeypatch.setenv(key, value)
+
+        assert enqueue_occasion(
+            "nightly", trigger="focus", target_date="2026-08-01",
+        ) is True
+
+        fake_client.create_task.assert_called_once()
+        _, kwargs = fake_client.create_task.call_args
+        request = kwargs.get("request") or fake_client.create_task.call_args[0][0]
+        task = request["task"]
+        http = task["http_request"]
+
+        assert http["url"].endswith("/internal/process-occasion"), (
+            f"Expected URL ending with /internal/process-occasion, got: {http['url']}"
+        )
+        body = json.loads(http["body"].decode("utf-8"))
+        assert body == {
+            "occasion": "nightly", "trigger": "focus", "target_date": "2026-08-01",
+        }
+        assert http["oidc_token"]["service_account_email"] == (
+            "sa@test-project.iam.gserviceaccount.com"
+        )
+        assert http["oidc_token"]["audience"] == "https://klaus.example.run.app"
+        assert task["dispatch_deadline"]["seconds"] == 540
+
+    def test_enqueue_occasion_omits_target_date_key_when_absent(
+        self, monkeypatch, fake_tasks_v2,
+    ):
+        """Omitting target_date must not add a target_date key to the body."""
+        fake, fake_client = fake_tasks_v2
+        from core.task_dispatch import enqueue_occasion
+
+        for key, value in _ENV.items():
+            monkeypatch.setenv(key, value)
+
+        assert enqueue_occasion("morning", trigger="focus") is True
+
+        _, kwargs = fake_client.create_task.call_args
+        request = kwargs.get("request") or fake_client.create_task.call_args[0][0]
+        body = json.loads(request["task"]["http_request"]["body"].decode("utf-8"))
+        assert body == {"occasion": "morning", "trigger": "focus"}
+        assert "target_date" not in body
+
+    def test_returns_false_when_queue_env_unset(self, monkeypatch, fake_tasks_v2):
+        """No CLOUD_TASKS_QUEUE → dispatch disabled → False, no client built."""
+        fake, fake_client = fake_tasks_v2
+        from core.task_dispatch import enqueue_occasion
+
+        for key, value in _ENV.items():
+            monkeypatch.setenv(key, value)
+        monkeypatch.delenv("CLOUD_TASKS_QUEUE", raising=False)
+
+        assert enqueue_occasion("weekly_review", trigger="cron") is False
+        fake.CloudTasksClient.assert_not_called()
+
+    def test_returns_false_when_create_task_raises(self, monkeypatch, fake_tasks_v2):
+        """Cloud Tasks outage must not raise — caller degrades to 503."""
+        fake, fake_client = fake_tasks_v2
+        from core.task_dispatch import enqueue_occasion
+
+        for key, value in _ENV.items():
+            monkeypatch.setenv(key, value)
+        fake_client.create_task.side_effect = RuntimeError("queue unavailable")
+
+        assert enqueue_occasion("nightly", trigger="focus") is False
+
+
 class TestEnqueueHubMessage:
 
     def test_enqueue_hub_message_targets_correct_url(self, monkeypatch, fake_tasks_v2):
