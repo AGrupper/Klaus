@@ -756,9 +756,9 @@ def test_trigger_nightly_rejects_bad_token():
     assert resp.status_code == 403
 
 
-def test_trigger_nightly_dev_bypass_acks_and_runs_in_background():
-    """CRON_DEV_BYPASS=true skips auth; route returns 202 immediately and the nightly
-    runs in a background task (Starlette TestClient executes background tasks in-cycle)."""
+def test_trigger_nightly_dev_bypass_acks_and_enqueues():
+    """CRON_DEV_BYPASS=true skips auth; route returns 202 immediately and enqueues
+    via Cloud Tasks (D-32) — run_nightly is NOT called inside the request."""
     stubs, env_patch = _build_test_client({
         "GCP_PROJECT_ID": "test-project",
         "FIRESTORE_DATABASE": "(default)",
@@ -767,6 +767,7 @@ def test_trigger_nightly_dev_bypass_acks_and_runs_in_background():
         "CRON_DEV_BYPASS": "true",
     })
     run_mock = AsyncMock(return_value=True)
+    enqueue_mock = MagicMock(return_value=True)
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
@@ -774,14 +775,42 @@ def test_trigger_nightly_dev_bypass_acks_and_runs_in_background():
             with patch("core.nightly_review.run_nightly", run_mock):
                 ws._log_cron_run = lambda *a, **k: None  # type: ignore[attr-defined]
                 ws._application = MagicMock()  # TestClient w/o `with` skips lifespan
+                ws.enqueue_occasion = enqueue_mock  # type: ignore[attr-defined]
                 client = TestClient(ws.app)
                 resp = client.post("/trigger/nightly")
     # Phone gets an instant ack, not the slow compose result.
     assert resp.status_code == 202
     assert resp.json() == {"accepted": True}
-    # The background task still ran the nightly with the focus trigger.
-    run_mock.assert_awaited_once()
-    assert run_mock.await_args.kwargs.get("trigger") == "focus"
+    # Enqueued via Cloud Tasks with the focus trigger — never composed inline.
+    enqueue_mock.assert_called_once()
+    args, kwargs = enqueue_mock.call_args
+    assert args == ("nightly",)
+    assert kwargs.get("trigger") == "focus"
+    run_mock.assert_not_awaited()
+
+
+def test_trigger_nightly_enqueue_failure_returns_503():
+    """Cloud Tasks outage → 503, retryable by the iOS Shortcut; never a
+    BackgroundTask fallback (D-32)."""
+    stubs, env_patch = _build_test_client({
+        "GCP_PROJECT_ID": "test-project",
+        "FIRESTORE_DATABASE": "(default)",
+        "TELEGRAM_BOT_TOKEN": "1234:fake",
+        "TELEGRAM_ALLOWED_USER_IDS": "123456",
+        "CRON_DEV_BYPASS": "true",
+    })
+    enqueue_mock = MagicMock(return_value=False)
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        with patch.dict(os.environ, env_patch):
+            ws._log_cron_run = lambda *a, **k: None  # type: ignore[attr-defined]
+            ws._application = MagicMock()  # TestClient w/o `with` skips lifespan
+            ws.enqueue_occasion = enqueue_mock  # type: ignore[attr-defined]
+            client = TestClient(ws.app)
+            resp = client.post("/trigger/nightly")
+    assert resp.status_code == 503
+    assert resp.json() == {"accepted": False, "error": "dispatch unavailable"}
 
 
 def test_nightly_backstop_rejects_unauthenticated():
@@ -804,8 +833,9 @@ def test_nightly_backstop_rejects_unauthenticated():
     assert resp.status_code == 401
 
 
-def test_nightly_backstop_dev_bypass_runs_nightly():
-    """CRON_DEV_BYPASS=true → backstop invokes run_nightly with trigger='backstop'."""
+def test_nightly_backstop_dev_bypass_enqueues():
+    """CRON_DEV_BYPASS=true → backstop enqueues via Cloud Tasks with
+    trigger='backstop' (D-32) — run_nightly is NOT called inside the request."""
     stubs, env_patch = _build_test_client({
         "GCP_PROJECT_ID": "test-project",
         "FIRESTORE_DATABASE": "(default)",
@@ -814,6 +844,7 @@ def test_nightly_backstop_dev_bypass_runs_nightly():
         "CRON_DEV_BYPASS": "true",
     })
     run_mock = AsyncMock(return_value=False)
+    enqueue_mock = MagicMock(return_value=True)
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
@@ -821,9 +852,36 @@ def test_nightly_backstop_dev_bypass_runs_nightly():
             with patch("core.nightly_review.run_nightly", run_mock):
                 ws._log_cron_run = lambda *a, **k: None  # type: ignore[attr-defined]
                 ws._application = MagicMock()  # TestClient w/o `with` skips lifespan
+                ws.enqueue_occasion = enqueue_mock  # type: ignore[attr-defined]
                 client = TestClient(ws.app)
                 resp = client.post("/cron/nightly-backstop")
-    assert resp.status_code == 200
-    assert resp.json() == {"sent": False}
-    run_mock.assert_awaited_once()
-    assert run_mock.await_args.kwargs.get("trigger") == "backstop"
+    assert resp.status_code == 202
+    assert resp.json() == {"accepted": True}
+    enqueue_mock.assert_called_once()
+    args, kwargs = enqueue_mock.call_args
+    assert args == ("nightly",)
+    assert kwargs.get("trigger") == "backstop"
+    run_mock.assert_not_awaited()
+
+
+def test_nightly_backstop_enqueue_failure_returns_503():
+    """Cloud Tasks outage on the backstop → 503, retryable by Cloud Scheduler."""
+    stubs, env_patch = _build_test_client({
+        "GCP_PROJECT_ID": "test-project",
+        "FIRESTORE_DATABASE": "(default)",
+        "TELEGRAM_BOT_TOKEN": "1234:fake",
+        "TELEGRAM_ALLOWED_USER_IDS": "123456",
+        "CRON_DEV_BYPASS": "true",
+    })
+    enqueue_mock = MagicMock(return_value=False)
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        with patch.dict(os.environ, env_patch):
+            ws._log_cron_run = lambda *a, **k: None  # type: ignore[attr-defined]
+            ws._application = MagicMock()  # TestClient w/o `with` skips lifespan
+            ws.enqueue_occasion = enqueue_mock  # type: ignore[attr-defined]
+            client = TestClient(ws.app)
+            resp = client.post("/cron/nightly-backstop")
+    assert resp.status_code == 503
+    assert resp.json() == {"accepted": False, "error": "dispatch unavailable"}

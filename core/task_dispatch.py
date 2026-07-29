@@ -103,6 +103,61 @@ def enqueue_update(payload: dict) -> bool:
         return False
 
 
+def enqueue_occasion(
+    occasion: str, *, trigger: str, target_date: str | None = None,
+) -> bool:
+    """Enqueue an occasion compose (nightly/morning/weekly_review) for full-CPU
+    processing (D-32 — never a Starlette BackgroundTask, CLAUDE.md invariant).
+    Mirrors enqueue_hub_message: same queue/OIDC/deadline, dedicated endpoint.
+
+    Args:
+        occasion: "nightly" | "morning" | "weekly_review".
+        trigger: Why this occasion is firing ("focus"/"backstop"/"cron"/"manual").
+        target_date: Optional ISO date; omitted lets the internal endpoint
+                 derive "today"/"tonight" per occasion.
+
+    Returns:
+        True if the task was created; False on ANY failure. Never raises —
+        the caller must be able to degrade to a 503 rather than crash.
+    """
+    queue = os.getenv("CLOUD_TASKS_QUEUE", "")
+    if not queue:
+        return False
+    try:
+        project = os.environ["GCP_PROJECT_ID"]
+        location = os.getenv("CLOUD_TASKS_LOCATION", "me-central1")
+        base_url = os.environ["CLOUD_RUN_URL"]
+        sa_email = os.environ["CLOUD_SCHEDULER_SA_EMAIL"]
+
+        client = _get_client()
+        parent = client.queue_path(project, location, queue)
+        payload: dict = {"occasion": occasion, "trigger": trigger}
+        if target_date:
+            payload["target_date"] = target_date
+        task = {
+            "dispatch_deadline": {"seconds": _DISPATCH_DEADLINE_SECONDS},
+            "http_request": {
+                "http_method": "POST",
+                "url": f"{base_url}/internal/process-occasion",
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps(payload).encode("utf-8"),
+                "oidc_token": {
+                    "service_account_email": sa_email,
+                    "audience": base_url,
+                },
+            },
+        }
+        client.create_task(request={"parent": parent, "task": task})
+        return True
+    except Exception:
+        logger.exception(
+            "Cloud Tasks enqueue failed for occasion=%s — caller should "
+            "surface 503/degrade",
+            occasion,
+        )
+        return False
+
+
 def enqueue_hub_message(
     content: str, user_id: int, attachments: list[dict] | None = None,
     regenerate: bool = False,

@@ -36,7 +36,7 @@ from telegram import Update
 from telegram.ext import Application
 
 from core.main import AgentOrchestrator
-from core.task_dispatch import enqueue_hub_message, enqueue_update
+from core.task_dispatch import enqueue_hub_message, enqueue_occasion, enqueue_update
 from interfaces._router import MessageRouter, parse_allowed_user_ids
 from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
@@ -319,6 +319,70 @@ async def internal_process_update(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/internal/process-occasion")
+async def internal_process_occasion(request: Request) -> JSONResponse:
+    """Cloud Tasks target: run one occasion compose (nightly/morning/weekly_review)
+    with full CPU (D-32).
+
+    ``core.task_dispatch.enqueue_occasion`` enqueues
+    ``{occasion, trigger, target_date}``; Cloud Tasks POSTs it here with an
+    OIDC token from the same service account the Cloud Scheduler crons use,
+    verified by ``_verify_cron_request``. Because the compose runs inside this
+    tracked request, Cloud Run allocates full CPU for its whole duration —
+    unlike a BackgroundTask, which runs after the response on throttled CPU.
+    This closes the D-32 defect: ``/trigger/nightly`` used to compose in a
+    Starlette BackgroundTask.
+
+    Raises:
+        HTTPException 401/403: OIDC verification failed.
+        HTTPException 500: Singletons not initialised (Cloud Tasks retries).
+        HTTPException 400: Unknown occasion value.
+    """
+    await _verify_cron_request(request)
+
+    if _application is None:
+        logger.error("/internal/process-occasion before singletons initialised")
+        raise HTTPException(
+            status_code=500,
+            detail={"error": "Server is still initialising; please retry."},
+        )
+
+    request_json: dict = await request.json()
+    occasion = request_json.get("occasion", "")
+    trigger = request_json.get("trigger", "")
+    target_date = request_json.get("target_date")
+
+    if occasion not in {"nightly", "morning", "weekly_review"}:
+        raise HTTPException(
+            status_code=400, detail={"error": f"unknown occasion: {occasion!r}"},
+        )
+
+    # WHY lazy imports: every other cron route in this file imports its
+    # target module inside the handler, not at module load time, to keep
+    # /health cold-start fast.
+    try:
+        if occasion == "nightly":
+            import core.nightly_review as _nightly
+            date = target_date or nightly_target_date_now()
+            await _nightly.run_nightly(_application.bot, date, trigger=trigger)
+        elif occasion == "morning":
+            import core.morning_briefing as _morning
+            date = target_date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            await _morning.run_morning_briefing_triggered(
+                _application.bot, date, trigger=trigger,
+            )
+        else:  # "weekly_review"
+            import core.weekly_training_review as _review
+            date = target_date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            await _review.run_weekly_review(_application.bot, date)
+        _log_cron_run(f"occasion-{occasion}", ok=True)
+    except Exception:
+        _log_cron_run(f"occasion-{occasion}", ok=False)
+        raise
+
+    return JSONResponse(content={"ok": True})
+
+
 # ------------------------------------------------------------------ #
 # Cloud Scheduler OIDC verification                                  #
 # ------------------------------------------------------------------ #
@@ -473,6 +537,49 @@ async def _verify_trigger_request(request: Request) -> None:
         raise HTTPException(status_code=403, detail={"error": "Invalid token"})
 
 
+async def _verify_morning_trigger_request(request: Request) -> None:
+    """Verify a shared-secret bearer token from the iOS Sleep-Focus-off Shortcut.
+
+    Byte-for-byte mirror of _verify_trigger_request, with MORNING_TRIGGER_TOKEN
+    in place of NIGHTLY_TRIGGER_TOKEN. D-13: this is a DISTINCT secret — no
+    fallback to NIGHTLY_TRIGGER_TOKEN — so a leaked credential does not unlock
+    every proactive surface.
+
+    Mirrors _verify_healthkit_request exactly (constant-time compare, refuse-all on
+    unset env, redacted-prefix logging).
+
+    Raises:
+        HTTPException 401: Missing / malformed Authorization header.
+        HTTPException 403: Bearer present but does not match the secret.
+        HTTPException 500: MORNING_TRIGGER_TOKEN env unset (refuse-all).
+    """
+    if os.getenv("CRON_DEV_BYPASS", "false").lower() == "true":
+        logger.info("CRON_DEV_BYPASS=true — skipping morning-trigger auth")
+        return
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "Missing or malformed Authorization header"},
+        )
+
+    received = auth_header.removeprefix("Bearer ").strip()
+    expected = os.environ.get("MORNING_TRIGGER_TOKEN", "")
+    if not expected:
+        # WHY: refuse-all on unset env prevents a fail-open if the Secret Manager
+        # mount silently fails — surfaces as a 500 the operator can detect rather
+        # than letting any random POST trigger a send.
+        logger.error("MORNING_TRIGGER_TOKEN env unset — refusing all morning-trigger auth")
+        raise HTTPException(status_code=500, detail={"error": "Server misconfigured"})
+
+    if not hmac.compare_digest(received.encode(), expected.encode()):
+        client = request.client.host if request.client else "?"
+        redacted = received[:4] + "..." + received[-4:] if len(received) >= 8 else "***"
+        logger.warning("morning-trigger auth failed from %s (token_prefix=%s)", client, redacted)
+        raise HTTPException(status_code=403, detail={"error": "Invalid token"})
+
+
 def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) -> None:
     """Best-effort liveness ledger write for a cron endpoint. Never raises."""
     try:
@@ -517,44 +624,45 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
 # on and is invoked by the nightly flow.
 
 
-async def _run_nightly_background(target: str, trigger: str) -> None:
-    """Compose + send the nightly review off the request's critical path.
-
-    WHY: composing the nightly runs several LLM calls (reflection + tomorrow gather +
-    compose) which can exceed the iOS Shortcut's HTTP timeout. Run as a FastAPI
-    background task so the trigger route returns 202 immediately (the phone stops
-    waiting) while the server finishes the work. The request is still in-flight while
-    this runs, so Cloud Run keeps CPU allocated — no --no-cpu-throttling needed.
-    Errors are logged + recorded here since they can no longer surface in the response.
-    """
-    import core.nightly_review as _nightly
-    try:
-        await _nightly.run_nightly(_application.bot, target, trigger=trigger)
-        _log_cron_run("nightly-trigger", ok=True)
-    except Exception:
-        logger.exception("nightly background task failed for %s (%s)", target, trigger)
-        _log_cron_run("nightly-trigger", ok=False)
-
-
 @app.post("/trigger/nightly")
-async def trigger_nightly(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
-    """Receive the iOS Sleep-Focus automation and send the nightly review.
+async def trigger_nightly(request: Request) -> JSONResponse:
+    """Receive the iOS Sleep-Focus automation and enqueue the nightly review.
 
     Triggered when Amit's phone winds down (organic), so there is no fixed schedule.
     Authenticated via the shared-secret NIGHTLY_TRIGGER_TOKEN.
 
-    Acknowledges immediately (202) and composes the nightly in the background so the
-    iOS Shortcut never waits on the multi-LLM compose. Idempotent downstream: if the
-    nightly already sent for tonight (e.g. the backstop beat it), run_nightly no-ops.
+    Acknowledges immediately (202) and enqueues the compose via Cloud Tasks
+    (core.task_dispatch.enqueue_occasion) — never a Starlette BackgroundTask.
+    This closes the D-32 defect: composing here used to run in a BackgroundTask,
+    which runs AFTER the response and gets CPU-throttled by Cloud Run (the
+    mistaken belief that "the request is still in-flight, so CPU stays
+    allocated" does not hold for BackgroundTasks — that is the whole point of
+    them running after the response). The response contract for the happy path
+    is unchanged, so Amit's existing iOS Shortcut keeps working without
+    modification. Idempotent downstream: if the nightly already sent for
+    tonight (e.g. the backstop beat it), run_nightly no-ops.
 
     Returns:
-        JSONResponse: ``{"accepted": true}`` with HTTP 202.
+        JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful
+            enqueue, or ``{"accepted": false, "error": "dispatch unavailable"}``
+            with HTTP 503 if Cloud Tasks enqueue fails — the caller (iOS
+            Shortcut) can retry.
     """
     await _verify_trigger_request(request)
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
     target = nightly_target_date_now()
-    background_tasks.add_task(_run_nightly_background, target, "focus")
+    loop = asyncio.get_running_loop()
+    # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
+    # api_chat_send's enqueue_hub_message dispatch.
+    ok = await loop.run_in_executor(
+        None, lambda: enqueue_occasion("nightly", trigger="focus", target_date=target),
+    )
+    if not ok:
+        return JSONResponse(
+            status_code=503,
+            content={"accepted": False, "error": "dispatch unavailable"},
+        )
     return JSONResponse(status_code=202, content={"accepted": True})
 
 
@@ -562,6 +670,51 @@ def nightly_target_date_now() -> str:
     """The wind-down date for 'now' in Asia/Jerusalem (import-light helper)."""
     import core.nightly_review as _nightly
     return _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
+
+
+# D-31 dark-ship sequencing: this route deploys and does NOTHING until Amit's
+# Sleep-Focus-off iOS Shortcut starts hitting it. morning-briefing-tick
+# (*/10 6-10) keeps running unchanged until that trigger is confirmed firing
+# live — retired only then, in plan 33-12. Do not retire the legacy cron
+# early just because this route exists.
+@app.post("/trigger/morning")
+async def trigger_morning(request: Request) -> JSONResponse:
+    """Receive the iOS Sleep-Focus-off automation and enqueue the morning briefing.
+
+    Triggered when Amit's phone exits Sleep Focus (alarm fires, or he
+    disables it manually) — the mirror of the existing Sleep-Focus-on →
+    /trigger/nightly automation (D-08). Authenticated via the dedicated
+    MORNING_TRIGGER_TOKEN (D-13 — least privilege, no shared secret with the
+    nightly trigger).
+
+    Acknowledges immediately (202) and enqueues the compose via Cloud Tasks
+    (core.task_dispatch.enqueue_occasion) — never a Starlette BackgroundTask
+    (D-32 / CLAUDE.md invariant). Idempotent downstream: run_morning_briefing_
+    triggered's dedup-via-state-doc no-ops a snooze/second alarm/Focus
+    toggled off-on-off (D-12).
+
+    Returns:
+        JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful
+            enqueue, or ``{"accepted": false, "error": "dispatch unavailable"}``
+            with HTTP 503 if Cloud Tasks enqueue fails — the caller (iOS
+            Shortcut) can retry.
+    """
+    await _verify_morning_trigger_request(request)
+    if _application is None:
+        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    loop = asyncio.get_running_loop()
+    # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
+    # api_chat_send's enqueue_hub_message dispatch.
+    ok = await loop.run_in_executor(
+        None, lambda: enqueue_occasion("morning", trigger="focus", target_date=today_iso),
+    )
+    if not ok:
+        return JSONResponse(
+            status_code=503,
+            content={"accepted": False, "error": "dispatch unavailable"},
+        )
+    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/nightly-backstop")
@@ -572,21 +725,35 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
     Idempotent: run_nightly no-ops if the trigger already sent tonight's review, so
     on a normal night this fires, sees "already sent", and does nothing.
 
+    D-32: enqueues via Cloud Tasks (core.task_dispatch.enqueue_occasion) instead
+    of composing inline. Honest caveat: this route was NOT broken today — holding
+    the request open kept CPU allocated for the inline compose — it moves for
+    consistency and request-timeout headroom now that Layer 2 can run up to 12
+    tool-calling turns. The compose outcome (sent vs. skipped_by_judgment) is now
+    logged by /internal/process-occasion under occasion-nightly; this route's
+    _log_cron_run only reflects the enqueue outcome.
+
     Returns:
-        JSONResponse: ``{"sent": true|false}`` with HTTP 200.
+        JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful enqueue,
+            or ``{"accepted": false, "error": "dispatch unavailable"}`` with
+            HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
     """
     await _verify_cron_request(request)
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.nightly_review as _nightly
-    try:
-        target = _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
-        sent = await _nightly.run_nightly(_application.bot, target, trigger="backstop")
-        _log_cron_run("nightly-backstop", ok=True)
-    except Exception:
+    target = nightly_target_date_now()
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(
+        None, lambda: enqueue_occasion("nightly", trigger="backstop", target_date=target),
+    )
+    if not ok:
         _log_cron_run("nightly-backstop", ok=False)
-        raise
-    return JSONResponse(content={"sent": sent})
+        return JSONResponse(
+            status_code=503,
+            content={"accepted": False, "error": "dispatch unavailable"},
+        )
+    _log_cron_run("nightly-backstop", ok=True)
+    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/autonomous-tick")
@@ -633,35 +800,43 @@ async def cron_autonomous_tick(request: Request) -> JSONResponse:
 async def cron_weekly_training_review(request: Request) -> JSONResponse:
     """Weekly training review — Sunday 10:00 Asia/Jerusalem.
 
-    Phase 20 — REVIEW-01.
+    Phase 20 — REVIEW-01. Phase 33-10 — D-32.
 
     Flow:
       1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
       2. Guard: _application must be initialised (bot is required to send).
-      3. Delegate to core.weekly_training_review.run_weekly_review, which
-         gathers the previous Sun–Sat window (training_log, Garmin, biometrics,
-         MealStore totals, athletic_goals), brain-composes the scorecard +
-         narrative + suggestion, and always sends (D-24).
-      4. Record success or failure to the heartbeat liveness ledger via
-         _log_cron_run('weekly-training-review', ok=...). Re-raises on exception.
+      3. Enqueue via Cloud Tasks (core.task_dispatch.enqueue_occasion) instead
+         of composing inline. Honest caveat: this route was NOT broken today —
+         holding the request open kept CPU allocated for the inline compose —
+         it moves for consistency and request-timeout headroom now that Layer 2
+         can run up to 12 tool-calling turns; this surface also has a 500-
+         incident history (blocking work starving the send). The compose
+         outcome is now logged by /internal/process-occasion under
+         occasion-weekly_review.
+      4. Record the enqueue outcome to the heartbeat liveness ledger via
+         _log_cron_run('weekly-training-review', ok=...).
 
     Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
+        JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful
+            enqueue, or ``{"accepted": false, "error": "dispatch unavailable"}``
+            with HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
     """
     await _verify_cron_request(request)
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    # WHY: imported inside the handler so the module does not load at
-    # web_server import time — keeps /health cold-start fast.
-    import core.weekly_training_review as _review  # lazy import — keeps /health cold-start fast
-    try:
-        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        await _review.run_weekly_review(_application.bot, today)
-        _log_cron_run("weekly-training-review", ok=True)
-    except Exception:
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    loop = asyncio.get_running_loop()
+    ok = await loop.run_in_executor(
+        None, lambda: enqueue_occasion("weekly_review", trigger="cron", target_date=today),
+    )
+    if not ok:
         _log_cron_run("weekly-training-review", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
+        return JSONResponse(
+            status_code=503,
+            content={"accepted": False, "error": "dispatch unavailable"},
+        )
+    _log_cron_run("weekly-training-review", ok=True)
+    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/healthkit-sync")
