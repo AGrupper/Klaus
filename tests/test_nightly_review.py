@@ -14,6 +14,8 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.occasion_helpers import SKIP_CAUSES
+
 _TZ = ZoneInfo("Asia/Jerusalem")
 
 
@@ -109,10 +111,11 @@ def test_compose_nightly_brain_fails_gemini_fallback_composes(monkeypatch):
     with patch("core.llm_client.LLMClient", side_effect=_client_factory), \
          patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
          patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
-        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+        result, composed_via = _compose_nightly(journal, tomorrow, "2026-06-11")
 
     assert result == "Gemini-composed nightly text."
     assert "Tomorrow:" not in result
+    assert composed_via == "llm"
 
 
 def test_compose_nightly_brain_and_fallback_fail_returns_plain_template(monkeypatch):
@@ -131,9 +134,10 @@ def test_compose_nightly_brain_and_fallback_fail_returns_plain_template(monkeypa
     with patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
          patch("pathlib.Path.read_text", return_value="System prompt for {today_date}"), \
          patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
-        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+        result, composed_via = _compose_nightly(journal, tomorrow, "2026-06-11")
 
     assert "Nothing on the calendar." in result
+    assert composed_via == "plain_text_fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -274,9 +278,10 @@ def test_compose_nightly_payload_includes_rendered_standing_directives_block(mon
     with patch("core.llm_client.LLMClient", side_effect=client_factory), \
          patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
          patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
-        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+        result, composed_via = _compose_nightly(journal, tomorrow, "2026-06-11")
 
     assert result == "Night text."
+    assert composed_via == "llm"
     payload = json.loads(captured["messages"][0]["content"])
     assert "standing_directives_block" in payload
     assert "No pings after 10pm" in payload["standing_directives_block"]
@@ -303,7 +308,7 @@ def test_compose_nightly_payload_includes_directive_proposal_with_veto_context(m
     with patch("core.llm_client.LLMClient", side_effect=client_factory), \
          patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
          patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
-        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+        result, _composed_via = _compose_nightly(journal, tomorrow, "2026-06-11")
 
     payload = json.loads(captured["messages"][0]["content"])
     assert payload["directive_items"] == [proposal_item]
@@ -366,11 +371,12 @@ def test_compose_nightly_never_emits_skip_verdict_even_with_covering_directive(m
     with patch("core.llm_client.LLMClient", side_effect=client_factory), \
          patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
          patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")):
-        result = _compose_nightly(journal, tomorrow, "2026-06-11")
+        result, composed_via = _compose_nightly(journal, tomorrow, "2026-06-11")
 
     assert isinstance(result, str) and result, (
         "_compose_nightly must always return composed text — no skip-verdict path exists for nightly"
     )
+    assert composed_via == "llm"
 
 
 # ---------------------------------------------------------------------------
@@ -387,14 +393,26 @@ def test_run_nightly_idempotent_skips_when_already_sent():
     send_mock.assert_not_awaited()
 
 
+def _merging_set_state_capture(merged: dict):
+    """_set_state side_effect that merges (Firestore merge=True semantics)
+    rather than overwriting — run_nightly now calls _set_state twice per
+    run (D-05's unconditional-structured-write split), so tests must merge
+    both calls' fields to see the final on-disk shape."""
+    def _capture(date_str: str, fields: dict) -> None:
+        merged.setdefault(date_str, {}).update(fields)
+    return _capture
+
+
 def test_run_nightly_sends_injects_and_marks_state():
     import core.nightly_review as nr
     send_mock = AsyncMock()
     set_calls: dict = {}
     with patch.object(nr, "was_sent", return_value=False), \
          patch.object(nr, "_build_nightly",
-                      return_value={"text": "night text", "structured": {"tomorrow_date": "2026-06-11"}}), \
-         patch.object(nr, "_set_state", side_effect=lambda d, f: set_calls.update({d: f})), \
+                      return_value={"text": "night text",
+                                    "structured": {"tomorrow_date": "2026-06-11"},
+                                    "composed_via": "llm"}), \
+         patch.object(nr, "_set_state", side_effect=_merging_set_state_capture(set_calls)), \
          patch("core.scheduled_message.send_and_inject", new=send_mock):
         result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
 
@@ -406,6 +424,273 @@ def test_run_nightly_sends_injects_and_marks_state():
     assert set_calls["2026-06-10"]["status"] == "sent"
     assert set_calls["2026-06-10"]["trigger"] == "focus"
     assert set_calls["2026-06-10"]["structured"]["tomorrow_date"] == "2026-06-11"
+    assert set_calls["2026-06-10"]["composed_via"] == "llm"
+
+
+@pytest.mark.parametrize("cascade_flag", ["false", "true"])
+def test_run_nightly_dedup_short_circuits_on_both_flag_branches(cascade_flag, monkeypatch):
+    """was_sent() (now terminal-status semantics) short-circuits identically
+    whether OCCASION_CASCADE is on or off — the dedup check happens before
+    the flag branch is even read."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", cascade_flag)
+    send_mock = AsyncMock()
+    with patch.object(nr, "was_sent", return_value=True), \
+         patch("core.scheduled_message.send_and_inject", new=send_mock), \
+         patch("core.autonomous.run_occasion_cascade") as cascade_mock:
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="backstop"))
+    assert result is False
+    send_mock.assert_not_awaited()
+    cascade_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Task 1 — OCCASION_CASCADE flag branching + D-07 call-order guarantee
+# ---------------------------------------------------------------------------
+
+def test_occasion_cascade_flag_off_uses_legacy_composer(monkeypatch):
+    """OCCASION_CASCADE unset/false -> the legacy _build_nightly/_compose_nightly
+    path runs; run_occasion_cascade is never called."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "false")
+    send_mock = AsyncMock()
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_build_nightly",
+                      return_value={"text": "night text", "structured": {},
+                                    "composed_via": "llm"}), \
+         patch.object(nr, "_set_state"), \
+         patch("core.scheduled_message.send_and_inject", new=send_mock), \
+         patch("core.autonomous.run_occasion_cascade") as cascade_mock:
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result is True
+    send_mock.assert_awaited_once()
+    cascade_mock.assert_not_called()
+
+
+def test_occasion_cascade_flag_on_uses_cascade_not_legacy_composer(monkeypatch):
+    """OCCASION_CASCADE=true -> run_occasion_cascade runs; the legacy
+    _compose_nightly composer is never called (the inverse of the flag-off test,
+    both assertions living in this module per Task 1's acceptance criteria)."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    decision = {"sent": True, "skipped": False, "composed_via": "llm",
+                "skip_cause": "", "draft": "", "trail": []}
+    cascade_mock = AsyncMock(return_value=decision)
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "ok"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state"), \
+         patch.object(nr, "_compose_nightly") as compose_mock, \
+         patch("core.autonomous._load_prompt", return_value="occasion prompt text"), \
+         patch("core.autonomous.run_occasion_cascade", cascade_mock):
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result is True
+    cascade_mock.assert_awaited_once()
+    compose_mock.assert_not_called()
+
+
+def test_flag_on_ensure_reflection_runs_once_before_cascade_including_on_skip(monkeypatch):
+    """D-07: on the flag-ON path, _ensure_reflection runs exactly once and
+    BEFORE run_occasion_cascade — including on a run whose cascade returns a
+    judgment skip (choosing not to interrupt Amit must not skip the journal)."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    call_order: list[str] = []
+
+    def _fake_ensure_reflection(target_date):
+        call_order.append("ensure_reflection")
+        return {"summary": "ok"}
+
+    async def _fake_cascade(*args, **kwargs):
+        call_order.append("run_occasion_cascade")
+        return {"sent": False, "skipped": "judgment", "skip_cause": "nothing_happened",
+                "draft": "Quiet night.", "composed_via": "", "trail": []}
+
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", side_effect=_fake_ensure_reflection), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state"), \
+         patch("core.autonomous._load_prompt", return_value="prompt"), \
+         patch("core.autonomous.run_occasion_cascade", side_effect=_fake_cascade):
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result is False
+    assert call_order == ["ensure_reflection", "run_occasion_cascade"]
+    assert call_order.count("ensure_reflection") == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — skipped_by_judgment vs infra failure, always-written snapshot,
+# terminal backstop idempotency
+# ---------------------------------------------------------------------------
+
+def test_skipped_by_judgment_state_write_and_no_send(monkeypatch):
+    """A cascade judgment skip: no send, status=skipped_by_judgment, a D-02
+    skip_cause, a D-06 draft one-liner, D-05's structured snapshot present,
+    and NO composed_via key at all (absent means "no compose was attempted")."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    decision = {
+        "sent": False, "skipped": "judgment", "skip_cause": "nothing_happened",
+        "draft": "Quiet night, nothing worth flagging.", "composed_via": "", "trail": [],
+    }
+    cascade_mock = AsyncMock(return_value=decision)
+    send_mock = AsyncMock()
+    merged: dict = {}
+
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "quiet"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state", side_effect=_merging_set_state_capture(merged)), \
+         patch("core.autonomous._load_prompt", return_value="prompt"), \
+         patch("core.autonomous.run_occasion_cascade", cascade_mock), \
+         patch("core.scheduled_message.send_and_inject", new=send_mock):
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result is False
+    send_mock.assert_not_awaited()
+    payload = merged["2026-06-10"]
+    assert payload["status"] == "skipped_by_judgment"
+    assert payload["skip_cause"] in SKIP_CAUSES
+    assert isinstance(payload["draft"], str) and payload["draft"]
+    assert "structured" in payload
+    assert "composed_via" not in payload
+
+
+def test_infra_failure_plain_text_still_sends_with_composed_via(monkeypatch):
+    """Both LLM tiers fail on the flag-OFF (legacy) path -> send_and_inject IS
+    called with the _plain_text_fallback text, and the state write has
+    status=='sent' with composed_via=='plain_text_fallback' (SC-1: a total
+    infra failure must still SEND while being greppable as degraded)."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "false")
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+
+    send_mock = AsyncMock()
+    merged: dict = {}
+
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "ok"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state", side_effect=_merging_set_state_capture(merged)), \
+         patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")), \
+         patch("core.scheduled_message.send_and_inject", new=send_mock):
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result is True
+    send_mock.assert_awaited_once()
+    sent_text = send_mock.await_args.args[1]
+    assert "Nothing on the calendar." in sent_text
+    payload = merged["2026-06-10"]
+    assert payload["status"] == "sent"
+    assert payload["composed_via"] == "plain_text_fallback"
+
+
+def test_judgment_skip_and_infra_degraded_send_distinguishable_by_single_field(monkeypatch):
+    """A judgment skip and an infra-degraded-but-sent night produce state docs
+    that differ in `status` AND in the presence of `composed_via` — a single
+    field comparison is enough to tell them apart (SC-1)."""
+    import core.nightly_review as nr
+
+    # Judgment-skip run (flag ON).
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    skip_decision = {"sent": False, "skipped": "judgment", "skip_cause": "nothing_happened",
+                      "draft": "Quiet night.", "composed_via": "", "trail": []}
+    merged_skip: dict = {}
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "ok"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state", side_effect=_merging_set_state_capture(merged_skip)), \
+         patch("core.autonomous._load_prompt", return_value="prompt"), \
+         patch("core.autonomous.run_occasion_cascade", AsyncMock(return_value=skip_decision)), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()):
+        result_skip = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    # Infra-degraded send (flag OFF, both LLM tiers fail).
+    monkeypatch.setenv("OCCASION_CASCADE", "false")
+    monkeypatch.setenv("SMART_AGENT_BACKEND", "anthropic")
+    monkeypatch.setenv("SMART_AGENT_MODEL", "claude-sonnet-5")
+    monkeypatch.setenv("SMART_AGENT_API_KEY", "test-smart-key")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_BACKEND", "gemini")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_MODEL", "gemini-3.5-flash")
+    monkeypatch.setenv("SMART_AGENT_FALLBACK_API_KEY", "test-fallback-key")
+    merged_sent: dict = {}
+    with patch.object(nr, "was_sent", return_value=False), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "ok"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state", side_effect=_merging_set_state_capture(merged_sent)), \
+         patch("core.llm_client.LLMClient", side_effect=Exception("all LLMs down")), \
+         patch("pathlib.Path.read_text", return_value="SYS {today_date}"), \
+         patch("core.autonomous._get_orchestrator", side_effect=Exception("no orchestrator")), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()):
+        result_sent = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="focus"))
+
+    assert result_skip is False
+    assert result_sent is True
+    payload_skip = merged_skip["2026-06-10"]
+    payload_sent = merged_sent["2026-06-10"]
+    assert payload_skip["status"] == "skipped_by_judgment"
+    assert payload_sent["status"] == "sent"
+    # SC-1 — a single field's presence distinguishes the two outcomes.
+    assert ("composed_via" in payload_skip) != ("composed_via" in payload_sent)
+    assert "composed_via" not in payload_skip
+    assert payload_sent["composed_via"] == "plain_text_fallback"
+
+
+@pytest.mark.parametrize("state,expected", [
+    ({"status": "skipped_by_judgment"}, True),
+    ({"status": "sent"}, True),
+    ({}, False),
+    ({"status": "skipped_by_directive"}, False),
+])
+def test_was_sent_terminal_status_semantics(state, expected):
+    """was_sent() is now a terminal-status check (D-04/D-12), not a literal
+    'sent' check — 'skipped_by_directive' (morning's own status string) is
+    deliberately NOT terminal for the nightly."""
+    import core.nightly_review as nr
+    with patch.object(nr, "_get_state", return_value=state):
+        assert nr.was_sent("2026-06-10") is expected
+
+
+def test_backstop_on_already_skipped_by_judgment_is_terminal_no_cascade_call(monkeypatch):
+    """D-04: the 01:00 backstop never re-litigates a night already marked
+    skipped_by_judgment — run_occasion_cascade is not even called."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    with patch.object(nr, "_get_state", return_value={"status": "skipped_by_judgment"}), \
+         patch("core.autonomous.run_occasion_cascade") as cascade_mock:
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="backstop"))
+    assert result is False
+    cascade_mock.assert_not_called()
+
+
+def test_backstop_on_no_state_doc_does_call_cascade(monkeypatch):
+    """D-04: a night with no state doc at all (nothing ran) DOES get fresh
+    judgment from the backstop."""
+    import core.nightly_review as nr
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    decision = {"sent": True, "skipped": False, "composed_via": "llm",
+                "skip_cause": "", "draft": "", "trail": []}
+    cascade_mock = AsyncMock(return_value=decision)
+    with patch.object(nr, "_get_state", return_value={}), \
+         patch.object(nr, "_ensure_reflection", return_value={"summary": "ok"}), \
+         patch.object(nr, "_gather_tomorrow", return_value={"calendar": []}), \
+         patch.object(nr, "_set_state"), \
+         patch("core.autonomous._load_prompt", return_value="prompt"), \
+         patch("core.autonomous.run_occasion_cascade", cascade_mock), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()):
+        result = asyncio.run(nr.run_nightly(MagicMock(), "2026-06-10", trigger="backstop"))
+    assert result is True
+    cascade_mock.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
