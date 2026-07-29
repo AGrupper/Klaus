@@ -118,3 +118,19 @@ None - no external service configuration required. Pure application code (new to
 ---
 *Phase: 33-occasion-cascade*
 *Completed: 2026-07-30*
+
+## Self-Check: PASSED
+
+- FOUND: `def _handle_get_recent_decisions` in core/tools.py (`grep -c` = 1)
+- FOUND commit 3961369 (Task 1 + Task 2 combined)
+- FOUND commit 17df766 (deferred-items.md process note)
+- FOUND commit 69c363f (this SUMMARY's own commit, verified post-hoc)
+- FOUND: .planning/phases/33-occasion-cascade/33-09-SUMMARY.md
+- FOUND: .planning/phases/33-occasion-cascade/deferred-items.md
+- VERIFIED: `pytest tests/test_tools.py -x -q` — 128 passed
+- VERIFIED: `pytest tests/test_tool_registration_phase25.py -x -q` — 5 passed
+- VERIFIED: `python -c "...dispatch('get_recent_decisions', {})['days']"` prints `2`
+
+---
+*Phase: 33-occasion-cascade*
+*Completed: 2026-07-30*
