@@ -817,12 +817,24 @@ class AgentOrchestrator:
         worker_system: str | tuple[str, str],
         attachments: list[InboundAttachment] | None = None,
         stream_sink: StreamSink | None = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Run the Smart Agent tool-use loop until it produces a final text response.
 
         The Smart Agent may call delegate_to_worker one or more times. Each call is
         intercepted here and routed to _run_worker_loop(). Tool results are
         fed back to the Smart Agent so it can reason and respond.
+
+        Args:
+            max_tokens: Optional output-token ceiling threaded into the primary
+                in-loop ``smart_agent.chat`` call and the D-22 forced-final call
+                below. ``None`` keeps each backend's own default. Exists for
+                composes whose data volume exceeds the default budget — e.g. the
+                weekly training review, which previously called
+                ``core/weekly_training_review.py::_compose_review`` directly with
+                ``max_tokens=32000`` after a 2026-07-19 mid-thought-truncation
+                incident (Sonnet's internal thinking counts against the output
+                budget). Callers that don't need a larger budget simply omit it.
         """
         # Work on a local deep copy so the conversation manager's history is not
         # polluted with intermediate tool_use / tool_result messages or large image data.
@@ -890,6 +902,7 @@ class AgentOrchestrator:
                     system=smart_system,
                     tools=smart_tools,
                     purpose="smart",
+                    max_tokens=max_tokens,
                     on_text_delta=on_text_delta,
                 )
             except LLMError as exc:
@@ -1034,6 +1047,41 @@ class AgentOrchestrator:
             "Smart loop exceeded MAX_TOOL_ITERATIONS (%d) without a final text response.",
             MAX_TOOL_ITERATIONS,
         )
+
+        # D-22: strip the tools and take exactly one more turn to force a real
+        # final answer out of everything gathered across the MAX_TOOL_ITERATIONS
+        # prior iterations, instead of falling straight to the last_response_text
+        # / apologetic fallback below. Passing tools=None makes the model
+        # physically unable to call another tool, so it must write prose from
+        # current_messages — which already holds every tool result accumulated
+        # so far. Only if this forced turn also fails (raises, returns empty
+        # text, or echoes the canned connectivity-error sentinel) does the
+        # pre-existing fallback chain fire, unchanged.
+        try:
+            forced_response = self.smart_agent.chat(
+                current_messages,
+                system=smart_system,
+                tools=None,
+                purpose="smart_forced_final",
+                max_tokens=max_tokens,
+            )
+            forced_text = forced_response.get("text") or ""
+            if forced_text and CONNECTIVITY_ERROR_TEXT not in forced_text:
+                logger.warning(
+                    "Iteration exhaustion recovered via a tools-stripped "
+                    "forced-final turn (%d chars) — D-22.", len(forced_text),
+                )
+                return forced_text
+            logger.warning(
+                "Tools-stripped forced-final turn returned empty or sentinel "
+                "text; falling back to the pre-existing chain."
+            )
+        except LLMError as exc:
+            logger.warning(
+                "Tools-stripped forced-final turn raised after iteration "
+                "exhaustion: %s", exc,
+            )
+
         # Double-send fix (Phase 24): when the brain produced a substantive answer
         # alongside its final tool calls, return that answer directly instead of
         # discarding it and emitting the apologetic fallback. The >100-char guard

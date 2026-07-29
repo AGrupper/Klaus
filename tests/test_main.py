@@ -247,6 +247,150 @@ class TestPhase24DoublesSendFix:
 
 
 # ---------------------------------------------------------------------------
+# Phase 33 Plan 02 (D-21/D-22) — forced-final answer on iteration exhaustion
+# + max_tokens passthrough
+# ---------------------------------------------------------------------------
+
+class TestD22ForcedFinalAnswer:
+    """Verify the D-22 tools-stripped forced-final turn and D-21's max_tokens
+    passthrough, added on top of the Phase-24 exhaustion fallback chain.
+    """
+
+    def test_forced_final_turn_returns_text_with_correct_call_args(self, monkeypatch):
+        """12 tool-call iterations, then a 13th tools-stripped turn returns real
+        text — that text is returned, and the 13th call used tools=None +
+        purpose='smart_forced_final'.
+        """
+        orch = _make_minimal_orchestrator()
+
+        # No substantive text on any in-loop iteration, so only the D-22 forced
+        # turn can produce the returned answer — isolates the new code path
+        # from the pre-existing last_response_text fallback.
+        tool_response = _tool_call_response(text="")
+        forced_response = _text_only_response("FORCED FINAL TEXT")
+        responses = [tool_response] * 12 + [forced_response]
+        orch.smart_agent.chat = MagicMock(side_effect=responses)
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.dispatch",
+            lambda name, args: '{"result": "ok"}',
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.SMART_AGENT_DIRECT_TOOLS",
+            {"read_coaching_guide"},
+        )
+
+        messages = [{"role": "user", "content": "test"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        assert result == "FORCED FINAL TEXT", (
+            f"Expected the forced-final turn's text to be returned, got: {result!r}"
+        )
+        assert orch.smart_agent.chat.call_count == 13, (
+            "Expected exactly one extra call beyond the 12 in-loop iterations"
+        )
+        forced_call = orch.smart_agent.chat.call_args_list[-1]
+        assert forced_call.kwargs.get("tools") is None, (
+            "Forced-final call must pass tools=None so the model cannot call another tool"
+        )
+        assert forced_call.kwargs.get("purpose") == "smart_forced_final", (
+            "Forced-final call must be tagged purpose='smart_forced_final' for usage metering"
+        )
+
+    def test_forced_final_turn_raises_falls_back_to_last_response_text(self, monkeypatch):
+        """If the 13th (forced-final) call raises, the pre-existing >100-char
+        last_response_text fallback still fires — proving D-22 is additive,
+        not a replacement of the Phase-24 double-send fix.
+        """
+        from core.llm_client import LLMError
+
+        orch = _make_minimal_orchestrator()
+
+        substantive_text = "B" * 120  # > 100 chars
+        tool_response = _tool_call_response(text=substantive_text)
+        responses = [tool_response] * 12 + [LLMError("forced-final boom", backend="anthropic")]
+        orch.smart_agent.chat = MagicMock(side_effect=responses)
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.dispatch",
+            lambda name, args: '{"result": "ok"}',
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.SMART_AGENT_DIRECT_TOOLS",
+            {"read_coaching_guide"},
+        )
+
+        messages = [{"role": "user", "content": "test"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        assert result == substantive_text, (
+            f"Expected fallback to pre-existing last_response_text, got: {result!r}"
+        )
+
+    def test_forced_final_turn_empty_text_falls_back_to_apology(self, monkeypatch):
+        """If the forced-final turn returns empty text and there was no
+        substantive last_response_text, the existing apologetic string is
+        returned verbatim (unchanged fallback chain).
+        """
+        orch = _make_minimal_orchestrator()
+
+        tool_response = _tool_call_response(text="")
+        responses = [tool_response] * 12 + [_text_only_response("")]
+        orch.smart_agent.chat = MagicMock(side_effect=responses)
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.dispatch",
+            lambda name, args: '{"result": "ok"}',
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+        monkeypatch.setattr(
+            "core.main.tool_registry.SMART_AGENT_DIRECT_TOOLS",
+            {"read_coaching_guide"},
+        )
+
+        messages = [{"role": "user", "content": "test"}]
+        result = orch._run_smart_loop(messages, smart_system="", worker_system="")
+
+        assert "more steps" in result, (
+            f"Expected the cap-exhaustion apology fallback, got: {result!r}"
+        )
+
+    def test_max_tokens_passthrough_on_in_loop_call(self, monkeypatch):
+        """max_tokens passed to _run_smart_loop reaches the in-loop
+        smart_agent.chat call (the weekly-review-sized compose use case).
+        """
+        orch = _make_minimal_orchestrator()
+        orch.smart_agent.chat = MagicMock(return_value=_text_only_response("done"))
+
+        monkeypatch.setattr(
+            "core.main.tool_registry.get_smart_schemas",
+            lambda user_message=None: [],
+        )
+
+        messages = [{"role": "user", "content": "test"}]
+        result = orch._run_smart_loop(
+            messages, smart_system="", worker_system="", max_tokens=32000,
+        )
+
+        assert result == "done"
+        call = orch.smart_agent.chat.call_args
+        assert call.kwargs.get("max_tokens") == 32000, (
+            "Expected max_tokens=32000 to reach the in-loop smart_agent.chat call"
+        )
+
+
+# ---------------------------------------------------------------------------
 # WR-05 (Phase 26) — empty orchestrator reply must not be persisted verbatim
 # ---------------------------------------------------------------------------
 
