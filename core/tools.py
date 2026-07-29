@@ -85,6 +85,8 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     "cancel_standing_directive",
     # Phase 32 Plan 03 — deliberate memory hygiene (MEM-03/D-04): brain-direct only
     "forget_memory",
+    # Phase 33 — self-accountability (OCC-07/D-26): brain-direct only
+    "get_recent_decisions",
 })
 
 # ------------------------------------------------------------------ #
@@ -518,6 +520,26 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["vector_id"],
+        },
+    },
+    {
+        "name": "get_recent_decisions",
+        "description": (
+            "Look back at recent tick/occasion judgment calls — what Klaus decided "
+            "and why, what was actually sent (or not), and any calendar/task actions "
+            "he took. Call this directly — do NOT delegate to the worker. Use when "
+            "Amit asks why Klaus did or didn't say something recently, or what he "
+            "changed on the calendar."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "How many days back to look. Default 2, maximum 30.",
+                },
+            },
+            "required": [],
         },
     },
     {
@@ -2064,6 +2086,114 @@ def _handle_run_morning_briefing() -> str:
         return json.dumps({"error": str(exc)})
 
 
+# ------------------------------------------------------------------ #
+# Phase 33 Plan 09 — get_recent_decisions (OCC-07 / D-26)            #
+# ------------------------------------------------------------------ #
+
+def _handle_get_recent_decisions(days: int = 2) -> str:
+    """OCC-07 / D-26: brain-direct self-accountability read.
+
+    Answers "why didn't you message me yesterday?" and "what did you change
+    on my calendar?" from the three stores that already carry the truth:
+    ``TickLogStore`` (verdict + triage reasoning per tick AND occasion run,
+    keyed by the ``decision_trail`` plan 33-04's ``_run_cascade`` writes),
+    ``OutreachLogStore`` (what was actually sent, full text), and
+    ``ActionLogStore`` (D-25 — every calendar/task write, independent of
+    send success).
+
+    D-27 constraint on the *use*, not this contract: this handler returns
+    skip records faithfully, with no filtering or redaction. The "never
+    surface a skip unasked" rule is enforced upstream — ``prompts/
+    autonomous.md`` instructs Klaus never to volunteer one, and the compose
+    prompt structurally excludes skip records from ever reaching a draft.
+    Do not add redaction logic here; this is the one place that data is
+    allowed to surface, on an explicit tool call only.
+
+    Never raises: any failure below degrades to ``{"error": ...}``, matching
+    the surrounding handlers' posture. Every store read is itself
+    never-raising by contract; this try/except is a second line of defence,
+    also covering the ``json.dumps`` call and the field-extraction loop.
+    """
+    from zoneinfo import ZoneInfo
+    from memory.firestore_db import (
+        TickLogStore, OutreachLogStore, ActionLogStore, _jsonsafe_doc,
+    )
+
+    # ASVS V5 — clamp BEFORE anything drives a Firestore read. Coerce rather
+    # than reject: an LLM-supplied 1000 or -5 (or "3" as a string) must not
+    # fan a read out beyond a month, but should still return something.
+    try:
+        days = max(1, min(int(days), 30))
+    except (TypeError, ValueError):
+        days = 2
+
+    try:
+        tz = ZoneInfo("Asia/Jerusalem")
+        today = datetime.now(tz).date()
+        dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
+
+        project_id = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+        database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+        tls = TickLogStore(project_id=project_id, database=database)
+        ols = OutreachLogStore(project_id=project_id, database=database)
+        als = ActionLogStore(project_id=project_id, database=database)
+
+        decisions: list[dict] = []
+        sent: list[dict] = []
+        for d in dates:
+            for tick in tls.ticks_for_date(d):
+                tick = _jsonsafe_doc(tick)
+                time_id = tick.get("time", "")
+                is_occasion = time_id.startswith("occasion:")
+                trail = tick.get("decision_trail") or {}
+                # The layer-1 verdict lives inside decision_trail["trail"] as
+                # a {"layer1": verdict} element (plan 33-04's shape). Legacy
+                # tick logs written before this phase have neither the
+                # element nor the surrounding keys — layer1 stays {} and
+                # every field below degrades to its None/""/False default
+                # rather than raising KeyError.
+                layer1: dict = {}
+                for item in trail.get("trail") or []:
+                    if isinstance(item, dict) and "layer1" in item:
+                        layer1 = item.get("layer1") or {}
+                        break
+                decisions.append({
+                    "date": d,
+                    "time": time_id,
+                    "kind": "occasion" if is_occasion else "tick",
+                    "occasion": time_id.split("occasion:", 1)[1] if is_occasion else "",
+                    "should_act": layer1.get("should_act"),
+                    "reason": layer1.get("reason", ""),
+                    "skip_cause": trail.get("skip_cause", ""),
+                    "sent": bool(trail.get("sent", False)),
+                    "composed_via": trail.get("composed_via", ""),
+                    "topic_key": trail.get("topic_key", ""),
+                })
+            for entry in ols.get_today(d):
+                entry = _jsonsafe_doc(entry)
+                sent.append({
+                    "date": d,
+                    "time": entry.get("time", ""),
+                    "topic_key": entry.get("topic_key", ""),
+                    "occasion": entry.get("occasion") or "",
+                    "final": entry.get("final", ""),
+                })
+
+        actions = als.get_recent(days)  # already routed through _jsonsafe_doc
+
+        payload = {
+            "days": days,
+            "dates": dates,
+            "decisions": decisions,
+            "sent": sent,
+            "actions": actions,
+        }
+        return json.dumps(payload, default=str)
+    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
+        logger.warning("get_recent_decisions failed", exc_info=True)
+        return json.dumps({"error": str(exc)})
+
+
 def _handle_notion_search(query: str, filter_type: str | None = None) -> str:
     result = _notion_search(query=query, filter_type=filter_type)
     return json.dumps(result)
@@ -3357,6 +3487,8 @@ _HANDLERS: dict[str, object] = {
     "set_standing_directive":       lambda args: _handle_set_standing_directive(**args),
     "list_standing_directives":     lambda args: _handle_list_standing_directives(**args),
     "cancel_standing_directive":    lambda args: _handle_cancel_standing_directive(**args),
+    # Phase 33 Plan 09 — self-accountability (OCC-07/D-26), brain-direct only
+    "get_recent_decisions":         lambda args: _handle_get_recent_decisions(**args),
 }
 
 
