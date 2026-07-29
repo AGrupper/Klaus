@@ -214,13 +214,15 @@ class TestCronAutonomousTick:
 class TestCronWeeklyTrainingReview:
     """Behavioral tests for the POST /cron/weekly-training-review endpoint.
 
-    Mirrors TestCronAutonomousTick: OIDC gate + _application guard +
-    run_weekly_review invocation + _log_cron_run ledger writes on both paths.
-    Covers REVIEW-01 + REVIEW-04.
+    Phase 33-10 (D-32): the route now enqueues via Cloud Tasks
+    (core.task_dispatch.enqueue_occasion) instead of composing inline —
+    run_weekly_review runs on the /internal/process-occasion worker, not
+    inside this request. Mirrors TestTriggerMorning's enqueue-and-ACK shape.
+    Covers REVIEW-01 + REVIEW-04 + OCC-06.
     """
 
-    def test_returns_200_with_dev_bypass_and_app_present(self, monkeypatch):
-        """Dev bypass + initialised _application + run_weekly_review succeeds → 200."""
+    def test_weekly_cron_returns_202_with_dev_bypass_and_app_present(self, monkeypatch):
+        """Dev bypass + initialised _application + enqueue succeeds → 202."""
         stubs = _stub_web_server_imports()
 
         with patch.dict(sys.modules, stubs):
@@ -232,19 +234,24 @@ class TestCronWeeklyTrainingReview:
                 fake_app.bot = MagicMock(name="bot")
                 ws._application = fake_app  # type: ignore[attr-defined]
 
-                async_mock = AsyncMock(return_value=None)
-                with patch("core.weekly_training_review.run_weekly_review", async_mock):
+                run_mock = AsyncMock(return_value=None)
+                enqueue_mock = MagicMock(return_value=True)
+                with patch("core.weekly_training_review.run_weekly_review", run_mock), \
+                     patch.object(ws, "enqueue_occasion", enqueue_mock):
                     client = TestClient(ws.app, raise_server_exceptions=True)
                     resp = client.post("/cron/weekly-training-review")
 
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-        assert resp.json() == {"ok": True}
-        async_mock.assert_awaited_once()
-        # First positional arg must be _application.bot
-        args, _kwargs = async_mock.await_args
-        assert args[0] is fake_app.bot, "run_weekly_review must receive _application.bot"
+        assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
+        assert resp.json() == {"accepted": True}
+        enqueue_mock.assert_called_once()
+        args, kwargs = enqueue_mock.call_args
+        assert args == ("weekly_review",)
+        assert kwargs.get("trigger") == "cron"
+        # run_weekly_review must NOT run inside this request (D-32) — it
+        # runs on the /internal/process-occasion Cloud Tasks worker.
+        run_mock.assert_not_awaited()
 
-    def test_returns_401_without_bearer(self, monkeypatch):
+    def test_weekly_cron_returns_401_without_bearer(self, monkeypatch):
         """No bypass + no Authorization header → 401 from _verify_cron_request."""
         stubs = _stub_web_server_imports()
 
@@ -263,7 +270,7 @@ class TestCronWeeklyTrainingReview:
 
         assert resp.status_code == 401
 
-    def test_returns_500_when_application_is_none(self, monkeypatch):
+    def test_weekly_cron_returns_500_when_application_is_none(self, monkeypatch):
         """Dev bypass + _application is None → 500 from the singleton guard."""
         stubs = _stub_web_server_imports()
 
@@ -280,8 +287,8 @@ class TestCronWeeklyTrainingReview:
         body = resp.json()
         assert "detail" in body
 
-    def test_logs_cron_run_ok_true_on_success(self, monkeypatch):
-        """On a clean success path, _log_cron_run('weekly-training-review', ok=True) is called."""
+    def test_weekly_cron_logs_ok_true_on_enqueue_success(self, monkeypatch):
+        """On a successful enqueue, _log_cron_run('weekly-training-review', ok=True) is called."""
         stubs = _stub_web_server_imports()
         calls: list[dict] = []
 
@@ -298,20 +305,21 @@ class TestCronWeeklyTrainingReview:
                 ws._application = fake_app  # type: ignore[attr-defined]
                 ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
 
-                async_mock = AsyncMock(return_value=None)
-                with patch("core.weekly_training_review.run_weekly_review", async_mock):
+                enqueue_mock = MagicMock(return_value=True)
+                with patch.object(ws, "enqueue_occasion", enqueue_mock):
                     client = TestClient(ws.app, raise_server_exceptions=True)
                     resp = client.post("/cron/weekly-training-review")
 
-        assert resp.status_code == 200
+        assert resp.status_code == 202
         relevant = [c for c in calls if c["job_id"] == "weekly-training-review"]
         assert relevant, f"_log_cron_run('weekly-training-review', ...) must be called; got {calls}"
         assert relevant[-1]["ok"] is True, (
             f"Expected ok=True on success, got {relevant}"
         )
 
-    def test_logs_cron_run_ok_false_on_exception(self, monkeypatch):
-        """If run_weekly_review raises, _log_cron_run called with ok=False AND exception propagates."""
+    def test_weekly_cron_logs_ok_false_and_returns_503_on_enqueue_failure(self, monkeypatch):
+        """If enqueue_occasion returns False, _log_cron_run is called with ok=False
+        and the route degrades to 503 — Cloud Scheduler retries (D-32/T-33-34)."""
         stubs = _stub_web_server_imports()
         calls: list[dict] = []
 
@@ -328,18 +336,17 @@ class TestCronWeeklyTrainingReview:
                 ws._application = fake_app  # type: ignore[attr-defined]
                 ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
 
-                async_mock = AsyncMock(side_effect=RuntimeError("weekly review blew up"))
-                with patch("core.weekly_training_review.run_weekly_review", async_mock):
-                    client = TestClient(ws.app, raise_server_exceptions=False)
+                enqueue_mock = MagicMock(return_value=False)
+                with patch.object(ws, "enqueue_occasion", enqueue_mock):
+                    client = TestClient(ws.app, raise_server_exceptions=True)
                     resp = client.post("/cron/weekly-training-review")
 
-        assert resp.status_code == 500, (
-            f"Unhandled exception in the route must surface as 500; got {resp.status_code}"
-        )
+        assert resp.status_code == 503
+        assert resp.json() == {"accepted": False, "error": "dispatch unavailable"}
         relevant = [c for c in calls if c["job_id"] == "weekly-training-review"]
         assert relevant, f"_log_cron_run('weekly-training-review', ...) must be called; got {calls}"
         assert relevant[-1]["ok"] is False, (
-            f"Expected ok=False on exception, got {relevant}"
+            f"Expected ok=False on enqueue failure, got {relevant}"
         )
 
 
