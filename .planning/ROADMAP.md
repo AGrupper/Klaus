@@ -154,9 +154,9 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 33-09-PLAN.md — get_recent_decisions brain-direct tool
-- [ ] 33-10-PLAN.md — enqueue_occasion + /internal/process-occasion + /trigger/morning + D-32 dispatch fix
-- [ ] 33-11-PLAN.md — Heartbeat D-28 occasion anomaly checks
+- [x] 33-09-PLAN.md — get_recent_decisions brain-direct tool
+- [x] 33-10-PLAN.md — enqueue_occasion + /internal/process-occasion + /trigger/morning + D-32 dispatch fix
+- [x] 33-11-PLAN.md — Heartbeat D-28 occasion anomaly checks
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 8/13 | In Progress|  |
+| 33. Occasion Cascade | 11/13 | In Progress|  |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
