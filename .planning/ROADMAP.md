@@ -143,8 +143,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 33-04-PLAN.md — Occasion-aware cascade core in core/autonomous.py (gate bypasses, topic keys, in-flight marker)
-- [ ] 33-05-PLAN.md — Calendar-write idempotency check + action audit recording
+- [x] 33-04-PLAN.md — Occasion-aware cascade core in core/autonomous.py (gate bypasses, topic keys, in-flight marker)
+- [x] 33-05-PLAN.md — Calendar-write idempotency check + action audit recording
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 3/13 | In Progress|  |
+| 33. Occasion Cascade | 5/13 | In Progress|  |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
