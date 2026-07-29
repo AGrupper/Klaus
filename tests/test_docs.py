@@ -248,3 +248,28 @@ def test_weekly_training_review_prompt_exists():
     assert "⚠️" in content, "prompt must reference ⚠️ scorecard emoji (D-18)"
     # D-24 sparse-week copy
     assert "Quiet week" in content, "prompt must contain D-24 sparse-week copy"
+
+
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 02 (D-22) — self_manifest.py never hardcodes a stale
+# MAX_TOOL_ITERATIONS digit; must always interpolate the live constant.
+# ---------------------------------------------------------------------------
+
+def test_self_manifest_reports_live_max_tool_iterations():
+    """The generated manifest must report core.main.MAX_TOOL_ITERATIONS's live
+    value, not a hardcoded digit — this previously drifted to a stale "8"
+    after the real cap was raised to 12 (core/main.py:50)."""
+    from core.main import MAX_TOOL_ITERATIONS
+    from core.self_manifest import _render_manifest, _get_source_root, _compute_schema_hash
+
+    root = _get_source_root()
+    sha = _compute_schema_hash(root)
+    content = _render_manifest(root, sha)
+
+    assert f"**Max tool iterations per conversation:** {MAX_TOOL_ITERATIONS}" in content, (
+        "Generated manifest must report the live MAX_TOOL_ITERATIONS value "
+        f"({MAX_TOOL_ITERATIONS})"
+    )
+    assert "iterations per conversation:** 8" not in content, (
+        "Generated manifest must never hardcode a stale MAX_TOOL_ITERATIONS value"
+    )
