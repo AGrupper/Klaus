@@ -126,6 +126,16 @@ None — no external service configuration, no new env vars, no infra changes. T
 - `tests/test_token_budget.py`'s occasion guard currently has a ~580-token margin under the 7,200 target — any further growth to the occasion-only Layer-1 additions (header, addendum) should be measured against this guard before landing; the tick's own guard remains at its pre-existing 14-token margin, untouched by this plan.
 - No blockers or concerns for downstream plans.
 
+## Self-Check: PASSED
+
+- FOUND: core/autonomous.py
+- FOUND: tests/test_autonomous.py
+- FOUND: tests/test_token_budget.py
+- FOUND: .planning/phases/33-occasion-cascade/33-04-SUMMARY.md
+- FOUND commit: c92b348
+- FOUND commit: 539f98f
+- FOUND commit: 49fbc1e (this SUMMARY's own commit, verified post-hoc)
+
 ---
 *Phase: 33-occasion-cascade*
 *Completed: 2026-07-29*
