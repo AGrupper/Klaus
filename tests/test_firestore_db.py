@@ -1126,6 +1126,81 @@ class TestActionLogStore:
 
 
 # =============================================================================
+# OccasionInFlightStore — D-19 race marker (Phase 33)
+# =============================================================================
+
+class TestOccasionInFlightStore:
+    """Unit tests for OccasionInFlightStore — the D-19 same-minute-race marker."""
+
+    def test_mark_then_active_returns_occasion_name(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("nightly")
+            assert store.active() == "nightly"
+
+    def test_active_returns_none_when_expired(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            # Directly seed an already-expired marker (one second in the past).
+            from datetime import datetime, timedelta, timezone
+            past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            store._col.document("current").set(
+                {"occasion": "nightly", "started_at": past, "expires_at": past},
+                merge=False,
+            )
+            assert store.active() is None
+
+    def test_active_returns_none_on_firestore_error(self):
+        class _RaisingDoc:
+            def get(self):
+                raise RuntimeError("simulated outage")
+
+        class _RaisingCol:
+            def document(self, _key):
+                return _RaisingDoc()
+
+        class _RaisingClient:
+            def collection(self, _name):
+                return _RaisingCol()
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            assert store.active() is None
+
+    def test_clear_removes_marker(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("morning")
+            assert store.active() == "morning"
+            store.clear()
+            assert store.active() is None
+
+    def test_mark_does_not_raise_when_set_fails(self):
+        class _RaisingDoc:
+            def set(self, *_a, **_k):
+                raise RuntimeError("simulated write failure")
+
+        class _RaisingCol:
+            def document(self, _key):
+                return _RaisingDoc()
+
+        class _RaisingClient:
+            def collection(self, _name):
+                return _RaisingCol()
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("weekly_review")  # must not raise
+
+    def test_collection_and_doc_id(self):
+        assert firestore_db.OccasionInFlightStore._COLLECTION == "occasion_inflight"
+        assert firestore_db.OccasionInFlightStore._DOC_ID == "current"
+
+
+# =============================================================================
 # TickLogStore — NOTE 1, D-21
 # =============================================================================
 

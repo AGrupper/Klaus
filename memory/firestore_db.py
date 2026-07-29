@@ -2631,6 +2631,104 @@ class TickSignatureStore:
             logger.warning("TickSignatureStore.set() failed", exc_info=True)
 
 
+class OccasionInFlightStore:
+    """D-19 race marker — lets the ``*/20`` tick yield while an occasion composes.
+
+    Firestore collection: ``occasion_inflight`` (lowercase per project casing
+    invariant). Single document, id ``current``. Document fields:
+        occasion:    str   # "nightly" | "morning" | "weekly_review"
+        started_at:  str   # ISO-8601, Asia/Jerusalem
+        expires_at:  str   # ISO-8601, Asia/Jerusalem
+
+    D-19 — on a same-minute race between an occasion and the ordinary
+    ``*/20`` tick, the occasion wins and the tick yields: the occasion is the
+    more substantial message and already covers what the tick would have
+    said. A short TTL (default 900s / 15 min — comfortably longer than any
+    single occasion compose) exists so a crashed or hung occasion self-heals
+    rather than muting the tick forever.
+
+    ``active()`` is fail-open BY DESIGN: a missing doc, an absent/unparseable
+    `expires_at`, an expired `expires_at`, or ANY exception all return
+    ``None`` (no occasion in flight). A Firestore outage must never
+    permanently mute the ``*/20`` tick — the worst case of failing open here
+    is an occasional same-minute double-message, not silence. ``mark()`` and
+    ``clear()`` are likewise never-raise: an occasion must still run even if
+    this store is unreachable, mirroring ``TickSignatureStore``'s fail-open
+    posture (the closest existing analog — single-doc, never-raises-on-read).
+    """
+
+    _COLLECTION = "occasion_inflight"
+    _DOC_ID = "current"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def mark(self, occasion: str, *, ttl_seconds: int = 900) -> None:
+        """Record that `occasion` has started composing, expiring in `ttl_seconds`.
+
+        Uses ``merge=False`` so a stale prior marker (a different occasion,
+        or an earlier `expires_at`) is fully replaced rather than merged.
+        Never raises (logs at WARNING and returns) — an occasion must still
+        run even if this store is unreachable; D-19 is a nice-to-have race
+        mitigation, not a correctness gate.
+        """
+        try:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+
+            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+            expires_at = now + timedelta(seconds=ttl_seconds)
+            self._col.document(self._DOC_ID).set(
+                {
+                    "occasion": occasion,
+                    "started_at": now.isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                },
+                merge=False,
+            )
+        except Exception:
+            logger.warning("OccasionInFlightStore.mark(%r) failed", occasion, exc_info=True)
+
+    def active(self) -> str | None:
+        """Return the in-flight occasion's name, or None (also None on ANY error).
+
+        Fail-open by design (see class docstring): a missing doc, an
+        absent/unparseable `expires_at`, an expired `expires_at`, or any
+        exception all return None so a poisoned or orphaned marker can never
+        mute the ``*/20`` tick beyond `ttl_seconds`.
+        """
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            snap = self._col.document(self._DOC_ID).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            expires_raw = data.get("expires_at")
+            if not expires_raw:
+                return None
+            expires_at = datetime.fromisoformat(str(expires_raw))
+            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=ZoneInfo("Asia/Jerusalem"))
+            if expires_at <= now:
+                return None
+            occasion = data.get("occasion")
+            return str(occasion) if occasion else None
+        except Exception:
+            logger.warning("OccasionInFlightStore.active() failed", exc_info=True)
+            return None
+
+    def clear(self) -> None:
+        """Remove the in-flight marker. Never raises."""
+        try:
+            self._col.document(self._DOC_ID).delete()
+        except Exception:
+            logger.warning("OccasionInFlightStore.clear() failed", exc_info=True)
+
+
 class CoachingTopicStore:
     """Per-day coaching topic gate for cross-cron dedup (Phase 24 — COACH-05).
 
