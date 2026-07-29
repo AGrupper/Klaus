@@ -911,6 +911,247 @@ class TestInternalProcessUpdate:
 
 
 # --------------------------------------------------------------------------- #
+# TestTriggerMorning — Phase 33-10 (D-08/D-13/D-31/D-32)                       #
+# --------------------------------------------------------------------------- #
+
+
+class TestTriggerMorning:
+    """POST /trigger/morning — dedicated MORNING_TRIGGER_TOKEN auth, enqueue-only
+    (never composes inside the request — D-31 dark ship / D-32 fix)."""
+
+    def _env(self, **overrides) -> dict:
+        env = dict(_BASE_ENV)
+        env["CRON_DEV_BYPASS"] = "false"
+        env["MORNING_TRIGGER_TOKEN"] = "morning-secret"
+        env.update(overrides)
+        return env
+
+    @pytest.fixture(autouse=True)
+    def _clean_app(self, _ws_module):
+        ws = _ws_module
+        original_app = ws._application
+        fake_app = MagicMock(name="Application")
+        fake_app.bot = MagicMock(name="bot")
+        ws._application = fake_app
+        yield
+        ws._application = original_app
+
+    def test_trigger_morning_missing_auth_returns_401(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        with patch.dict(os.environ, self._env()):
+            client = TestClient(ws.app)
+            resp = client.post("/trigger/morning")
+        assert resp.status_code == 401
+
+    def test_trigger_morning_malformed_auth_header_returns_401(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        with patch.dict(os.environ, self._env()):
+            client = TestClient(ws.app)
+            resp = client.post("/trigger/morning", headers={"Authorization": "Token abc"})
+        assert resp.status_code == 401
+
+    def test_trigger_morning_wrong_token_returns_403(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        with patch.dict(os.environ, self._env()):
+            client = TestClient(ws.app)
+            resp = client.post("/trigger/morning", headers={"Authorization": "Bearer wrong"})
+        assert resp.status_code == 403
+
+    def test_trigger_morning_unset_token_env_returns_500(self, _ws_module, monkeypatch):
+        """A well-formed bearer with MORNING_TRIGGER_TOKEN unset → 500 refuse-all."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        env = self._env()
+        del env["MORNING_TRIGGER_TOKEN"]
+        monkeypatch.delenv("MORNING_TRIGGER_TOKEN", raising=False)
+        with patch.dict(os.environ, env):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/trigger/morning", headers={"Authorization": "Bearer whatever"},
+            )
+        assert resp.status_code == 500
+
+    def test_trigger_morning_no_fallback_to_nightly_token(self, _ws_module, monkeypatch):
+        """A correct NIGHTLY_TRIGGER_TOKEN must NOT authenticate /trigger/morning
+        (D-13 — distinct, least-privilege secret)."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        env = self._env(NIGHTLY_TRIGGER_TOKEN="morning-secret")
+        del env["MORNING_TRIGGER_TOKEN"]
+        monkeypatch.delenv("MORNING_TRIGGER_TOKEN", raising=False)
+        with patch.dict(os.environ, env):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/trigger/morning", headers={"Authorization": "Bearer morning-secret"},
+            )
+        assert resp.status_code == 500  # refuse-all: MORNING_TRIGGER_TOKEN itself unset
+
+    def test_trigger_morning_valid_token_enqueues_and_acks_202(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        enqueue_mock = MagicMock(return_value=True)
+        with patch.dict(os.environ, self._env()), \
+             patch.object(ws, "enqueue_occasion", enqueue_mock):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/trigger/morning", headers={"Authorization": "Bearer morning-secret"},
+            )
+        assert resp.status_code == 202
+        assert resp.json() == {"accepted": True}
+        enqueue_mock.assert_called_once()
+        args, kwargs = enqueue_mock.call_args
+        assert args == ("morning",)
+        assert kwargs.get("trigger") == "focus"
+
+    def test_trigger_morning_dark_ship_no_send_within_request(self, _ws_module):
+        """The compose happens on the Cloud Tasks worker, not here — send_and_inject
+        must never be called from within the /trigger/morning request (D-31/D-32)."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        enqueue_mock = MagicMock(return_value=True)
+        send_mock = AsyncMock()
+        with patch.dict(os.environ, self._env()), \
+             patch.object(ws, "enqueue_occasion", enqueue_mock), \
+             patch("core.scheduled_message.send_and_inject", send_mock):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/trigger/morning", headers={"Authorization": "Bearer morning-secret"},
+            )
+        assert resp.status_code == 202
+        send_mock.assert_not_awaited()
+
+    def test_trigger_morning_enqueue_failure_returns_503_never_background_tasks(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        enqueue_mock = MagicMock(return_value=False)
+        with patch.dict(os.environ, self._env()), \
+             patch.object(ws, "enqueue_occasion", enqueue_mock):
+            client = TestClient(ws.app)
+            resp = client.post(
+                "/trigger/morning", headers={"Authorization": "Bearer morning-secret"},
+            )
+        assert resp.status_code == 503
+        assert resp.json() == {"accepted": False, "error": "dispatch unavailable"}
+
+
+# --------------------------------------------------------------------------- #
+# TestInternalProcessOccasion — Phase 33-10 (D-32)                             #
+# --------------------------------------------------------------------------- #
+
+
+class TestInternalProcessOccasion:
+    """POST /internal/process-occasion — OIDC-gated Cloud Tasks target that
+    dispatches nightly/morning/weekly_review composes with full CPU."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self, _ws_module):
+        ws = _ws_module
+        original_app = ws._application
+        fake_app = MagicMock(name="Application")
+        fake_app.bot = MagicMock(name="bot")
+        ws._application = fake_app
+        yield
+        ws._application = original_app
+
+    def test_process_occasion_unauthenticated_rejected(self, _ws_module, monkeypatch):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        env = dict(_BASE_ENV)
+        env["CRON_DEV_BYPASS"] = "false"
+        monkeypatch.delenv("CLOUD_RUN_URL", raising=False)
+        monkeypatch.delenv("CLOUD_SCHEDULER_SA_EMAIL", raising=False)
+        with patch.dict(os.environ, env):
+            client = TestClient(ws.app)
+            resp = client.post("/internal/process-occasion", json={"occasion": "morning"})
+        assert resp.status_code == 401
+
+    def test_process_occasion_returns_500_when_application_is_none(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        ws._application = None
+        with patch.dict(os.environ, _BASE_ENV):
+            client = TestClient(ws.app, raise_server_exceptions=False)
+            resp = client.post("/internal/process-occasion", json={"occasion": "morning"})
+        assert resp.status_code == 500
+
+    def test_process_occasion_morning_calls_run_morning_briefing_triggered(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_mock = AsyncMock(return_value=True)
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.morning_briefing.run_morning_briefing_triggered", run_mock):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "morning", "trigger": "focus", "target_date": "2026-08-01"},
+            )
+        assert resp.status_code == 200
+        assert resp.json() == {"ok": True}
+        run_mock.assert_awaited_once()
+        args, kwargs = run_mock.await_args
+        assert args[0] is ws._application.bot
+        assert args[1] == "2026-08-01"
+        assert kwargs.get("trigger") == "focus"
+
+    def test_process_occasion_nightly_calls_run_nightly(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_mock = AsyncMock(return_value=True)
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.nightly_review.run_nightly", run_mock):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "nightly", "trigger": "backstop", "target_date": "2026-08-01"},
+            )
+        assert resp.status_code == 200
+        run_mock.assert_awaited_once()
+        args, kwargs = run_mock.await_args
+        assert args[0] is ws._application.bot
+        assert args[1] == "2026-08-01"
+        assert kwargs.get("trigger") == "backstop"
+
+    def test_process_occasion_weekly_review_calls_run_weekly_review(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_mock = AsyncMock(return_value=None)
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.weekly_training_review.run_weekly_review", run_mock):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "weekly_review", "trigger": "cron", "target_date": "2026-08-02"},
+            )
+        assert resp.status_code == 200
+        run_mock.assert_awaited_once()
+        args, _kwargs = run_mock.await_args
+        assert args[0] is ws._application.bot
+        assert args[1] == "2026-08-02"
+
+    def test_process_occasion_bogus_returns_400_without_calling_anything(self, _ws_module):
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_nightly = AsyncMock()
+        run_morning = AsyncMock()
+        run_weekly = AsyncMock()
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.nightly_review.run_nightly", run_nightly), \
+             patch("core.morning_briefing.run_morning_briefing_triggered", run_morning), \
+             patch("core.weekly_training_review.run_weekly_review", run_weekly):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion", json={"occasion": "bogus"},
+            )
+        assert resp.status_code == 400
+        run_nightly.assert_not_awaited()
+        run_morning.assert_not_awaited()
+        run_weekly.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------- #
 # TestSPAMountRegression — Phase 26 HUB-04 / threat T-26-01-01                 #
 # The SPAStaticFiles catch-all is mounted at "/" as the absolute last route.  #
 # It must NOT shadow existing API/cron routes like /health.                    #
