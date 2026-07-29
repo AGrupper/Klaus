@@ -1014,6 +1014,76 @@ class TestUpdateCalendarEventRegistration:
         mock_cal.delete_event.assert_called_once_with("evt1", calendar_id="training_cal_id")
 
 
+class TestCalendarCreateIdempotency:
+    """D-23 (Phase 33 plan 05): a proactive calendar create must not double-book.
+
+    `_existing_event_at` looks up the target window before `create_event` runs;
+    when a matching summary is already there, the create is refused. The lookup
+    fails open (never blocks a legitimate create) on any Calendar API error.
+    """
+
+    def test_existing_event_at_matches_case_and_whitespace_insensitively(self):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-existing", "summary": "Upper Body", "start": "s", "end": "e"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "upper  body",
+            )
+        assert found is not None
+        assert found["id"] == "evt-existing"
+
+    def test_existing_event_at_no_match_returns_none(self):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
+            )
+        assert found is None
+
+    def test_existing_event_at_fails_open_on_error(self):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.side_effect = RuntimeError("Calendar API down")
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
+            )
+        assert found is None
+
+    def test_calendar_create_checks_existing(self):
+        """A duplicate-matching event in the window blocks the create entirely."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-existing", "summary": "Upper Body", "start": "s", "end": "e"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-02T18:00:00+03:00",
+                end_iso="2026-08-02T19:00:00+03:00",
+            ))
+        assert out["created"] is False
+        assert out["duplicate"] is True
+        assert out["existing_event_id"] == "evt-existing"
+        mock_cal.create_event.assert_not_called()
+
+    def test_calendar_create_proceeds_when_window_empty(self):
+        """No matching event in the window — normal create path, unchanged result."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-02T18:00:00+03:00",
+                end_iso="2026-08-02T19:00:00+03:00",
+            ))
+        mock_cal.create_event.assert_called_once()
+        assert out == {"event_id": "evt-new", "summary": "Upper Body"}
+
+
 class TestNativeHabitTools:
     """Native habit/adherence tool registration in core/tools.py.
 

@@ -1659,6 +1659,48 @@ def _handle_list_calendar_events(time_min_iso: str, time_max_iso: str) -> str:
     return json.dumps({"events": events, "count": len(events)})
 
 
+def _existing_event_at(
+    start_iso: str,
+    end_iso: str,
+    summary: str,
+    calendar_id: str | None = None,
+) -> dict | None:
+    """Return the first existing event overlapping [start_iso, end_iso) whose
+    summary matches `summary` case-insensitively after collapsing internal
+    whitespace, else None.
+
+    D-23 (Phase 33) removed the directive gate on proactive calendar writes —
+    Layer 2 can now create events far more often, without asking first. That
+    raises the stakes on a check-then-act failure mode the review flagged
+    (amendment B2): compose succeeds, the disclosure send fails, D-10's
+    write-after-send discipline logs nothing to `OutreachLogStore`, and the
+    next occasion re-composes from the same inputs — producing a duplicate
+    event on Amit's calendar. This lookup is the mitigation: call it
+    immediately before every proactive `create_event`, narrowing the
+    lookup-to-create window as much as possible (33-RESEARCH.md Pitfall 6 —
+    this remains a check-then-act race without an atomic guard; `_record_action`
+    is the after-the-fact detector for the residual race).
+
+    Never raises — a Calendar API hiccup on the lookup must not block a
+    legitimate create (fail-open): any exception here is logged and `None` is
+    returned so the caller proceeds exactly as if no duplicate were found.
+    """
+    try:
+        target = " ".join(summary.split()).casefold()
+        events = _get_calendar_tool().list_all_events(start_iso, end_iso)
+        for event in events:
+            existing_summary = event.get("summary", "") or ""
+            if " ".join(existing_summary.split()).casefold() == target:
+                return event
+        return None
+    except Exception:
+        logger.warning(
+            "_existing_event_at(%r, %r, %r) failed; proceeding as if unmatched (fail-open)",
+            start_iso, end_iso, summary, exc_info=True,
+        )
+        return None
+
+
 def _handle_create_calendar_event(
     summary: str,
     start_iso: str,
@@ -1668,7 +1710,24 @@ def _handle_create_calendar_event(
     is_workout: bool | None = None,
     calendar_id: str | None = None,
 ) -> str:
-    """Delegate to GoogleCalendarManager.create_event and serialise the result."""
+    """Delegate to GoogleCalendarManager.create_event and serialise the result.
+
+    D-23 idempotency pre-check: looks for an existing event with the same
+    summary already overlapping [start_iso, end_iso) before creating. When
+    found, refuses to create a duplicate and returns a `duplicate` response
+    the brain can surface on its disclosure line instead of silently
+    double-booking. See `_existing_event_at` for why this exists.
+    """
+    existing = _existing_event_at(start_iso, end_iso, summary, calendar_id=calendar_id)
+    if existing is not None:
+        return json.dumps({
+            "created": False,
+            "duplicate": True,
+            "existing_event_id": existing.get("id", ""),
+            "existing_summary": existing.get("summary", ""),
+            "reason": "An event with this summary already exists in that window",
+        })
+
     result = _get_calendar_tool().create_event(
         summary=summary,
         start_iso=start_iso,
