@@ -964,3 +964,334 @@ def test_run_morning_briefing_non_skip_sends_and_writes_structured(bot):
     sss_cls.return_value.set.assert_called_once()
     daily_note_fields = sss_cls.return_value.set.call_args.args[0]
     assert daily_note_fields["daily_note"] == "Good morning."
+
+
+# ====================================================================== #
+# Phase 33 Plan 07 — push-triggered, cascade-only entry point            #
+# (D-08/D-09/D-11/D-12/D-13/D-14/D-15/D-20/D-30)                          #
+# ====================================================================== #
+
+
+def _cascade_decision(**overrides) -> dict:
+    """Build a run_occasion_cascade()-shaped decision dict for these tests."""
+    base = {
+        "sent": True, "skipped": False, "occasion": "morning", "topic_key": "morning:x",
+        "draft": "quiet morning", "triage_reason": "nothing urgent", "skip_cause": "",
+        "composed_via": "llm", "final_text": "Morning, sir.\nStandup at 09:30.", "trail": [],
+    }
+    base.update(overrides)
+    return base
+
+
+class TestTriggerMorningEntryPoint:
+    """Task 1 — run_morning_briefing_triggered: no gates, D-12 dedup, D-11 gap-naming."""
+
+    def test_calls_cascade_no_time_floor(self, bot):
+        """D-09: fires at 03:40 with no hour check — cascade called exactly once."""
+        decision = _cascade_decision()
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 2}}), \
+             patch("core.morning_briefing._fetch_garmin_safe", return_value=None), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision) as mock_cascade, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+        mock_cascade.assert_called_once()
+        _, kwargs = mock_cascade.call_args
+        assert kwargs["occasion"] == "morning"
+        assert kwargs["target_date"] == "2026-07-20"
+        assert result is True
+
+    def test_no_garmin_gate_data_reaches_cascade_with_missing_flag(self, bot):
+        """D-09/D-11: no sync yet -> garmin_missing=True carried into occasion_data,
+        and the cascade still runs (no Garmin precondition)."""
+        decision = _cascade_decision()
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"garmin": {"state": 2}, "calendar": [], "tasks": {}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision) as mock_cascade, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            asyncio.run(run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus"))
+        _, kwargs = mock_cascade.call_args
+        assert kwargs["occasion_data"]["garmin_missing"] is True
+
+    def test_garmin_present_no_missing_flag(self, bot):
+        """When today's Garmin sync landed, garmin_missing is never set."""
+        decision = _cascade_decision()
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"garmin": {"state": 1, "sleep_score": 80}, "calendar": [], "tasks": {}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision) as mock_cascade, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            asyncio.run(run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus"))
+        _, kwargs = mock_cascade.call_args
+        assert "garmin_missing" not in kwargs["occasion_data"]
+
+    @pytest.mark.parametrize(
+        "status", ["sent", "manual", "skipped_by_judgment", "skipped_by_directive"]
+    )
+    def test_dedup_true_noops_on_every_terminal_status(self, bot, status):
+        """D-12: a snooze / second alarm / focus toggled off-on-off no-ops once terminal."""
+        with patch("core.morning_briefing._get_state", return_value={"status": status}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock) as mock_cascade:
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus", dedup=True)
+            )
+        assert result is False
+        mock_cascade.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status", ["sent", "manual", "skipped_by_judgment", "skipped_by_directive"]
+    )
+    def test_dedup_false_always_fires(self, bot, status):
+        """D-14: dedup=False (the manual chat path) always fires regardless of status."""
+        decision = _cascade_decision()
+        with patch("core.morning_briefing._get_state", return_value={"status": status}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 2}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision) as mock_cascade, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="manual", dedup=False)
+            )
+        mock_cascade.assert_called_once()
+        assert result is True
+
+    def test_sc1_cascade_raises_falls_back_to_plain_text_send(self, bot):
+        """SC-1: an exception escaping run_occasion_cascade itself must never
+        leave the morning silent — the deterministic plain-text template is
+        sent directly and composed_via records the fallback."""
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 2}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, side_effect=RuntimeError("gather blew up")), \
+             patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+        assert result is True
+        mock_send.assert_called_once()
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert any(
+            c.args[1]["status"] == "sent" and c.args[1].get("composed_via") == "plain_text_fallback"
+            for c in status_calls
+        )
+
+
+class TestHandleRunMorningBriefingRepoint:
+    """D-14: the manual chat tool now runs the triggered cascade entry point."""
+
+    def test_schedules_triggered_with_manual_trigger_and_dedup_false(self):
+        from core.tools import _handle_run_morning_briefing
+        fake_app = MagicMock()
+        fake_app.bot = MagicMock()
+        # _handle_run_morning_briefing calls asyncio.get_event_loop() as a sync
+        # tool handler; in production it always runs inside a live request's
+        # running loop. A prior test's asyncio.run() in this SAME process can
+        # leave no thread-local loop set, so give this test its own loop
+        # (matching production's "a loop is always present" invariant) —
+        # test-environment setup, not a production behavior change.
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with patch("interfaces.web_server._application", fake_app), \
+                 patch("core.morning_briefing.run_morning_briefing_triggered",
+                       new_callable=AsyncMock) as mock_run, \
+                 patch("core.morning_briefing._set_state"):
+                result = _handle_run_morning_briefing()
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+        mock_run.assert_called_once()
+        _, kwargs = mock_run.call_args
+        assert kwargs.get("trigger") == "manual"
+        assert kwargs.get("dedup") is False
+        import json as _json
+        parsed = _json.loads(result)
+        assert parsed["status"] == "composing"
+
+
+# ====================================================================== #
+# Phase 33 Plan 07 Task 2 — write-timing inversion (D-05/D-06)           #
+# and the widened window (D-15/D-20)                                     #
+# ====================================================================== #
+
+
+class TestWriteTimingInversion:
+    """D-05/D-06: structured + daily_note written unconditionally, sourced
+    per-branch; CoachingTopicStore stays send-gated."""
+
+    def test_judgment_skip_writes_structured_and_draft_as_note_no_send(self, bot):
+        decision = _cascade_decision(
+            sent=False, skipped="judgment", draft="Quiet morning, nothing pressing.",
+            final_text="", composed_via="", skip_cause="nothing_happened",
+        )
+        today_data = {
+            "calendar": [{"summary": "Standup"}], "tasks": {"today": [], "overdue": []},
+            "garmin": {"state": 1},
+        }
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data", return_value=today_data), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("memory.firestore_db.SelfStateStore") as sss_cls:
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+
+        assert result is False
+        structured_calls = [c for c in mock_set.call_args_list if "structured" in c.args[1]]
+        assert structured_calls
+        sss_cls.return_value.set.assert_called_once()
+        note_fields = sss_cls.return_value.set.call_args.args[0]
+        assert note_fields["daily_note"] == "Quiet morning, nothing pressing."
+        assert note_fields["daily_note_date"] == "2026-07-20"
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert any(c.args[1]["status"] == "skipped_by_judgment" for c in status_calls)
+
+    def test_send_writes_first_nonempty_line_of_final_text_as_note(self, bot):
+        decision = _cascade_decision(
+            sent=True, final_text="Morning, sir.\nStandup at 09:30.", composed_via="llm",
+        )
+        today_data = {"calendar": [], "tasks": {"today": [], "overdue": []}, "garmin": {"state": 1}}
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data", return_value=today_data), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("memory.firestore_db.SelfStateStore") as sss_cls:
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+
+        assert result is True
+        sss_cls.return_value.set.assert_called_once()
+        note_fields = sss_cls.return_value.set.call_args.args[0]
+        assert note_fields["daily_note"] == "Morning, sir."
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert any(c.args[1]["status"] == "sent" for c in status_calls)
+
+    def test_coaching_topics_not_written_on_judgment_skip(self, bot):
+        decision = _cascade_decision(sent=False, skipped="judgment", draft="quiet", final_text="")
+        today_data = {
+            "coaching_topics_included": ["protein-miss"], "calendar": [], "tasks": {},
+        }
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data", return_value=today_data), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.CoachingTopicStore") as mock_cts:
+            from core.morning_briefing import run_morning_briefing_triggered
+            asyncio.run(run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus"))
+        mock_cts.return_value.add_topic.assert_not_called()
+
+    def test_coaching_topics_written_after_send(self, bot):
+        decision = _cascade_decision(sent=True, final_text="Morning.", composed_via="llm")
+        today_data = {
+            "coaching_topics_included": ["protein-miss"], "calendar": [], "tasks": {},
+        }
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing._gather_data", return_value=today_data), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("memory.firestore_db.SelfStateStore"), \
+             patch("memory.firestore_db.CoachingTopicStore") as mock_cts:
+            from core.morning_briefing import run_morning_briefing_triggered
+            asyncio.run(run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus"))
+        mock_cts.return_value.add_topic.assert_called_once_with("2026-07-20", "protein-miss")
+
+    def test_daily_note_write_not_nested_inside_sent_branch(self):
+        """Grep-style regression: the daily_note write call must appear
+        textually BEFORE the `if sent:` branch, i.e. it is unconditional."""
+        src = open("core/morning_briefing.py", encoding="utf-8").read()
+        note_write_idx = src.index('_sss.set({"daily_note": daily_note')
+        if_sent_idx = src.index("    if sent:\n        _set_state(today_iso, {\n            \"status\": \"sent\",")
+        assert note_write_idx < if_sent_idx
+
+
+class TestWidenedWindowD15:
+    """D-15: a night without a nightly wind-down widens the morning's window."""
+
+    def test_nightly_absent_widens_window(self):
+        from core.morning_briefing import _gather_data
+        bs = MagicMock()
+        bs.return_value.get_current.return_value = None
+        with _quiet_gather(bs), \
+             patch("core.nightly_review._get_state", return_value={}):
+            data = _gather_data("2026-06-29")
+        assert data["nightly_ran"] is False
+        assert "yesterday" in data
+
+    @pytest.mark.parametrize("status", ["sent", "skipped_by_judgment"])
+    def test_nightly_terminal_status_no_widen(self, status):
+        from core.morning_briefing import _gather_data
+        bs = MagicMock()
+        bs.return_value.get_current.return_value = None
+        with _quiet_gather(bs), \
+             patch("core.nightly_review._get_state", return_value={"status": status}):
+            data = _gather_data("2026-06-29")
+        assert data["nightly_ran"] is True
+        assert "yesterday" not in data
+
+
+class TestSundayDeferralD20:
+    """D-20: a Sunday morning stays light on training when the weekly hasn't sent yet."""
+
+    def test_sunday_no_weekly_sent_sets_flag_true(self):
+        from core.morning_briefing import _gather_data
+        bs = MagicMock()
+        bs.return_value.get_current.return_value = None
+        ols = MagicMock()
+        ols.return_value.topics_today.return_value = ["morning:2026-06-28"]
+        with _quiet_gather(bs), \
+             patch("memory.firestore_db.OutreachLogStore", ols), \
+             patch("core.nightly_review._get_state", return_value={"status": "sent"}):
+            data = _gather_data("2026-06-28")  # a Sunday
+        assert data["weekly_review_due_today"] is True
+
+    def test_sunday_weekly_already_sent_sets_flag_false(self):
+        from core.morning_briefing import _gather_data
+        bs = MagicMock()
+        bs.return_value.get_current.return_value = None
+        ols = MagicMock()
+        ols.return_value.topics_today.return_value = ["weekly:2026-06-28"]
+        with _quiet_gather(bs), \
+             patch("memory.firestore_db.OutreachLogStore", ols), \
+             patch("core.nightly_review._get_state", return_value={"status": "sent"}):
+            data = _gather_data("2026-06-28")  # a Sunday
+        assert data["weekly_review_due_today"] is False
+
+    def test_monday_flag_absent(self):
+        from core.morning_briefing import _gather_data
+        bs = MagicMock()
+        bs.return_value.get_current.return_value = None
+        with _quiet_gather(bs), \
+             patch("core.nightly_review._get_state", return_value={"status": "sent"}):
+            data = _gather_data("2026-07-20")  # a Monday
+        assert "weekly_review_due_today" not in data
