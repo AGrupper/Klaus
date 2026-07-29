@@ -413,7 +413,8 @@ def test_run_weekly_review_writes_topics_after_send(monkeypatch):
     with patch("core.weekly_training_review._gather_week_data", return_value=week_data_with_topics), \
          patch("core.weekly_training_review._compose_review", return_value="Review text"), \
          patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
-         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class), \
+         patch("core.weekly_training_review._set_state"):
         asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
 
     mock_send.assert_called_once()
@@ -445,7 +446,8 @@ def test_run_weekly_review_no_topic_write_when_send_fails(monkeypatch):
          patch("core.weekly_training_review._compose_review", return_value="Review text"), \
          patch("core.scheduled_message.send_and_inject",
                new_callable=AsyncMock, side_effect=RuntimeError("telegram down")), \
-         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class):
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class), \
+         patch("core.weekly_training_review._set_state"):
         # IN-02: assert the send failure actually propagates (a silent no-raise must fail
         # this test, not pass it) — write-after-send means no topic write on failure.
         with pytest.raises(RuntimeError):
@@ -479,7 +481,8 @@ def test_run_weekly_review_retries_send_on_timeout(monkeypatch):
 
     with patch("core.weekly_training_review._gather_week_data", return_value={}), \
          patch("core.weekly_training_review._compose_review", return_value="Review text"), \
-         patch("core.scheduled_message.send_and_inject", mock_send):
+         patch("core.scheduled_message.send_and_inject", mock_send), \
+         patch("core.weekly_training_review._set_state"):
         # Must NOT raise — the retry recovers.
         asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
 
@@ -990,7 +993,12 @@ class TestParseReviewSkip:
 
 def test_run_weekly_review_directive_skip_no_send(monkeypatch):
     """DIR-03 / D-21 / D-22: a covering directive skip must NOT call send_and_inject
-    and must log skipped_by_directive — the one exception to D-24 always-send."""
+    and must log skipped_by_directive — the one exception to D-24 always-send.
+
+    Phase 33 / 33-08 Task 2: the flag-OFF path writes the SAME state-doc
+    contract as the cascade path (status == "skipped_by_directive"), so the
+    heartbeat check works identically during the OCCASION_CASCADE A/B window.
+    """
     import asyncio
     from unittest.mock import AsyncMock
 
@@ -1003,16 +1011,28 @@ def test_run_weekly_review_directive_skip_no_send(monkeypatch):
         '```json\n{"skip": true, "reason": "Standing directive: no reviews while traveling"}\n```'
     )
 
+    written_state = {}
+
+    def _fake_set_state(target_date, fields):
+        written_state.update(fields)
+
     with patch("core.weekly_training_review._gather_week_data", return_value={}), \
          patch("core.weekly_training_review._compose_review", return_value=skip_text), \
-         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send:
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("core.weekly_training_review._set_state", side_effect=_fake_set_state):
         asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
 
     mock_send.assert_not_called()
+    assert written_state.get("status") == "skipped_by_directive"
+    assert written_state.get("skip_reason") == "Standing directive: no reviews while traveling"
 
 
 def test_run_weekly_review_non_skip_sends_normally(monkeypatch):
-    """No covering directive → normal send path unchanged."""
+    """No covering directive → normal send path unchanged.
+
+    Phase 33 / 33-08 Task 2: a successful send writes `composed_via`; a veto
+    (above) does not — one field distinguishes "vetoed" from "ran".
+    """
     import asyncio
     from unittest.mock import AsyncMock
 
@@ -1021,13 +1041,21 @@ def test_run_weekly_review_non_skip_sends_normally(monkeypatch):
 
     bot = AsyncMock()
 
+    written_state = {}
+
+    def _fake_set_state(target_date, fields):
+        written_state.update(fields)
+
     with patch("core.weekly_training_review._gather_week_data", return_value={}), \
          patch("core.weekly_training_review._compose_review", return_value="Here's your week."), \
-         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send:
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("core.weekly_training_review._set_state", side_effect=_fake_set_state):
         asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
 
     mock_send.assert_called_once()
     assert mock_send.call_args.args[1] == "Here's your week."
+    assert written_state.get("status") == "sent"
+    assert written_state.get("composed_via") == "llm"
 
 
 def test_weekly_review_prompt_has_standing_directives_and_skip_instruction():
@@ -1035,3 +1063,354 @@ def test_weekly_review_prompt_has_standing_directives_and_skip_instruction():
     content = open("prompts/weekly_training_review.md", encoding="utf-8").read()
     assert "{standing_directives}" in content
     assert '"skip"' in content or "'skip'" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 33 / OCC-03 — OCCASION_CASCADE routing (33-08)
+# ---------------------------------------------------------------------------
+
+
+def _cascade_decision(
+    *, sent=True, skipped=False, composed_via="llm", skip_cause="",
+    final_text="Composed weekly review body.",
+) -> dict:
+    """Build a ``run_occasion_cascade``-shaped decision dict for mocking."""
+    return {
+        "skipped": skipped,
+        "sent": sent,
+        "occasion": "weekly_review",
+        "topic_key": "weekly:2026-06-07",
+        "draft": "shape note",
+        "triage_reason": "week closed",
+        "skip_cause": skip_cause,
+        "composed_via": composed_via,
+        "final_text": final_text,
+        "trail": [],
+    }
+
+
+def test_occasion_cascade_flag_off_uses_legacy_compose(monkeypatch):
+    """OCC-06 / D-30: flag unset -> _compose_review runs; run_occasion_cascade
+    is never called (the byte-identical legacy arm)."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.delenv("OCCASION_CASCADE", raising=False)
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review",
+               return_value="Here's your week.") as mock_compose, \
+         patch("core.autonomous.run_occasion_cascade") as mock_cascade, \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("core.weekly_training_review._set_state"):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_compose.assert_called_once()
+    mock_cascade.assert_not_called()
+    mock_send.assert_called_once()
+
+
+def test_occasion_cascade_flag_on_uses_cascade(monkeypatch):
+    """OCC-03 / D-30: flag on -> run_occasion_cascade runs with the exact
+    D-03 kwargs; _compose_review is never called."""
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    bot = object()
+    mock_cascade = AsyncMock(return_value=_cascade_decision())
+
+    with patch("core.weekly_training_review._gather_week_data", return_value={}), \
+         patch("core.weekly_training_review._compose_review") as mock_compose, \
+         patch("core.autonomous.run_occasion_cascade", mock_cascade), \
+         patch("core.weekly_training_review._set_state") as mock_set_state:
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_cascade.assert_called_once()
+    mock_compose.assert_not_called()
+    kwargs = mock_cascade.call_args.kwargs
+    assert kwargs["occasion"] == "weekly_review"
+    assert kwargs["target_date"] == "2026-06-07"
+    assert kwargs["advisory_only"] is True
+    assert kwargs["max_tokens"] == 32000
+    assert kwargs["veto_parser"] is wtr._parse_review_skip
+    mock_set_state.assert_called_once()
+    assert mock_set_state.call_args.args[1]["status"] == "sent"
+    assert mock_set_state.call_args.args[1]["composed_via"] == "llm"
+
+
+def test_never_self_skips_on_advisory_should_act_false(monkeypatch):
+    """D-03: a should_act=False Layer-1 verdict must never suppress the
+    weekly send, and the resulting status must never be
+    "skipped_by_judgment" (structurally unreachable for this occasion)."""
+    import asyncio
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tests.occasion_helpers import make_occasion_situation, make_occasion_verdict
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    fixed_now = datetime(2026, 6, 7, 10, 0, tzinfo=wtr._TZ)
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(
+        should_act=False, draft="Nothing major this week.", reason="quiet week",
+    )
+
+    written_state = {}
+
+    def _fake_set_state(target_date, fields):
+        written_state.update(fields)
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data",
+               return_value={"coaching_topics_included": []}), \
+         patch("core.autonomous.gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch("core.autonomous._compose_layer2", return_value="Composed weekly review body."), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch("core.autonomous._occasion_inflight_store"), \
+         patch("core.autonomous._write_tick_log", new_callable=AsyncMock), \
+         patch("core.weekly_training_review._set_state", side_effect=_fake_set_state):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_called_once()
+    assert written_state.get("status") == "sent"
+    assert written_state.get("status") != "skipped_by_judgment"
+    assert "composed_via" in written_state
+
+
+def test_directive_veto_no_send_and_state_records_skip_reason(monkeypatch):
+    """T-33-25: with advisory_only=True, a Layer-2 directive-veto trailer
+    still blocks send_and_inject and OutreachLogStore, and the state doc
+    records the exact parsed reason — never derived from should_act."""
+    import asyncio
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tests.occasion_helpers import make_occasion_situation, make_occasion_verdict
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    fixed_now = datetime(2026, 6, 7, 10, 0, tzinfo=wtr._TZ)
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(should_act=True)
+
+    skip_text = (
+        'Skipping this week.\n'
+        '```json\n{"skip": true, "reason": "Standing directive: no reviews while traveling"}\n```'
+    )
+
+    written_state = {}
+
+    def _fake_set_state(target_date, fields):
+        written_state.update(fields)
+
+    bot = AsyncMock()
+    outreach_store = MagicMock()
+
+    with patch("core.weekly_training_review._gather_week_data",
+               return_value={"coaching_topics_included": []}), \
+         patch("core.autonomous.gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch("core.autonomous._compose_layer2", return_value=skip_text), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.OutreachLogStore", return_value=outreach_store), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch("core.autonomous._occasion_inflight_store"), \
+         patch("core.autonomous._write_tick_log", new_callable=AsyncMock), \
+         patch("core.weekly_training_review._set_state", side_effect=_fake_set_state):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_not_called()
+    outreach_store.append.assert_not_called()
+    assert written_state.get("status") == "skipped_by_directive"
+    assert written_state.get("skip_reason") == "Standing directive: no reviews while traveling"
+    assert "composed_via" not in written_state
+
+
+def test_advisory_only_no_trailer_still_sends_despite_should_act_false(monkeypatch):
+    """T-33-25 regression guard: should_act=False + NO directive trailer in the
+    composed text -> still status == "sent". Proves the veto comes exclusively
+    from the Layer-2 trailer, never from Layer 1's should_act."""
+    import asyncio
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from tests.occasion_helpers import make_occasion_situation, make_occasion_verdict
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    fixed_now = datetime(2026, 6, 7, 10, 0, tzinfo=wtr._TZ)
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(should_act=False)
+
+    written_state = {}
+
+    def _fake_set_state(target_date, fields):
+        written_state.update(fields)
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data",
+               return_value={"coaching_topics_included": []}), \
+         patch("core.autonomous.gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch("core.autonomous._compose_layer2",
+               return_value="No directive here, just the review body."), \
+         patch("core.scheduled_message.send_and_inject", new_callable=AsyncMock) as mock_send, \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch("core.autonomous._occasion_inflight_store"), \
+         patch("core.autonomous._write_tick_log", new_callable=AsyncMock), \
+         patch("core.weekly_training_review._set_state", side_effect=_fake_set_state):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    mock_send.assert_called_once()
+    assert written_state.get("status") == "sent"
+
+
+def test_timeout_retry_lives_in_cascade(monkeypatch):
+    """OPS / T-33-28: with the flag ON, a single Telegram TimedOut is retried
+    by _run_cascade (33-04), not reimplemented in this module — the weekly
+    still sends after exactly one retry."""
+    import asyncio
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from telegram.error import TimedOut
+
+    from tests.occasion_helpers import make_occasion_situation, make_occasion_verdict
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    fixed_now = datetime(2026, 6, 7, 10, 0, tzinfo=wtr._TZ)
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(should_act=True)
+
+    mock_send = AsyncMock(side_effect=[TimedOut("Timed out"), None])
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data",
+               return_value={"coaching_topics_included": []}), \
+         patch("core.autonomous.gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch("core.autonomous._compose_layer2", return_value="Composed weekly review body."), \
+         patch("core.scheduled_message.send_and_inject", new=mock_send), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch("core.autonomous._occasion_inflight_store"), \
+         patch("core.autonomous._write_tick_log", new_callable=AsyncMock), \
+         patch("asyncio.sleep", new_callable=AsyncMock), \
+         patch("core.weekly_training_review._set_state"):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    assert mock_send.call_count == 2
+
+
+def test_coaching_topics_written_after_cascade_send(monkeypatch):
+    """Pitfall 9: CoachingTopicStore.add_topic is called once per entry in
+    week_data["coaching_topics_included"] after a successful cascade send."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    week_data = {
+        "coaching_topics_included": [
+            "structural-critique:session-quality",
+            "structural-critique:projection:squat_1rm",
+        ],
+    }
+
+    add_topic_calls = []
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = lambda d, t: add_topic_calls.append((d, t))
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    mock_cascade = AsyncMock(return_value=_cascade_decision(sent=True, composed_via="llm"))
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value=week_data), \
+         patch("core.autonomous.run_occasion_cascade", mock_cascade), \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class), \
+         patch("core.weekly_training_review._set_state"):
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    assert len(add_topic_calls) == 2
+    assert ("2026-06-07", "structural-critique:session-quality") in add_topic_calls
+    assert ("2026-06-07", "structural-critique:projection:squat_1rm") in add_topic_calls
+
+
+def test_coaching_topics_not_written_when_cascade_send_fails(monkeypatch):
+    """Pitfall 9 / write-after-send: no topic write when the cascade did not send."""
+    import asyncio
+    from unittest.mock import AsyncMock, MagicMock
+
+    monkeypatch.setenv("OCCASION_CASCADE", "true")
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    week_data = {"coaching_topics_included": ["structural-critique:session-quality"]}
+
+    add_topic_calls = []
+    mock_cts_instance = MagicMock()
+    mock_cts_instance.add_topic.side_effect = lambda d, t: add_topic_calls.append((d, t))
+    mock_cts_class = MagicMock(return_value=mock_cts_instance)
+
+    mock_cascade = AsyncMock(return_value=_cascade_decision(
+        sent=False, skipped=False, composed_via="", final_text="",
+    ))
+
+    bot = AsyncMock()
+
+    with patch("core.weekly_training_review._gather_week_data", return_value=week_data), \
+         patch("core.autonomous.run_occasion_cascade", mock_cascade), \
+         patch("memory.firestore_db.CoachingTopicStore", mock_cts_class), \
+         patch("core.weekly_training_review._set_state") as mock_set_state:
+        asyncio.run(wtr.run_weekly_review(bot, "2026-06-07"))
+
+    assert add_topic_calls == []
+    # T-33-27: the failure branch must NOT write a state doc — an absent doc
+    # is what the D-28 #3 heartbeat staleness check reads as "did not fire".
+    mock_set_state.assert_not_called()
+
+
+def test_weekly_occasion_prompt_has_directive_veto_trailer_contract():
+    """Regression guard (Task 2): the rendered weekly Layer-2 occasion prompt
+    (D-35, rendered verbatim into Layer 2 — no substitution) carries the
+    Step-0 standing-orders instruction and the literal "skip" trailer key,
+    so a prompt edit cannot silently kill the standing-directive veto."""
+    content = open("prompts/weekly_occasion.md", encoding="utf-8").read()
+    assert "standing directive" in content.lower()
+    assert '"skip"' in content

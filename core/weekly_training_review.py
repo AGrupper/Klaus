@@ -20,13 +20,55 @@ import asyncio
 import json
 import logging
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
 _TZ = ZoneInfo("Asia/Jerusalem")
+
+# Phase 33 / OCC-03 — date-keyed occasion state doc, mirrors
+# core/nightly_review.py's `_COLLECTION` + `_get_state`/`_set_state` pattern
+# (no store class — 33-PATTERNS.md is explicit that these date-keyed occasion
+# state docs use direct collection access). Lets the heartbeat (plan 33-11)
+# distinguish "sent" / "skipped_by_directive" from "never ran".
+_STATE_COLLECTION = "weekly_reviews"
+
+# Phase 33 / D-03 — run_occasion_cascade's `veto_parser` contract passes this
+# module's `_parse_review_skip` callable BY REFERENCE; `_run_cascade`
+# (core/autonomous.py) only returns the parsed (bool, str, str) tuple to
+# ITSELF, never back out through the decision dict it hands to this caller
+# (its own inline comment: "carried by the caller's own logging if it wants
+# it"). `_parse_review_skip` stashes the most recent directive-veto reason
+# here so `_run_weekly_review_cascade` can read it back immediately after
+# `run_occasion_cascade` returns — same event-loop turn, no awaits in
+# between, so there is no cross-request race in practice (the weekly review
+# fires once a week).
+_LAST_DIRECTIVE_VETO_REASON = ""
+
+
+def _make_firestore_client():
+    from memory.firestore_db import _make_firestore_client as _mfc
+    return _mfc(os.environ["GCP_PROJECT_ID"], os.getenv("FIRESTORE_DATABASE", "(default)"))
+
+
+def _get_state(target_date: str) -> dict:
+    try:
+        client = _make_firestore_client()
+        snap = client.collection(_STATE_COLLECTION).document(target_date).get()
+        return (snap.to_dict() or {}) if snap.exists else {}
+    except Exception:
+        logger.warning("weekly_review: failed to read state for %s", target_date, exc_info=True)
+        return {}
+
+
+def _set_state(target_date: str, fields: dict) -> None:
+    try:
+        client = _make_firestore_client()
+        client.collection(_STATE_COLLECTION).document(target_date).set(fields, merge=True)
+    except Exception:
+        logger.warning("weekly_review: failed to write state for %s", target_date, exc_info=True)
 
 
 def _prev_sunday(today: date) -> date:
@@ -527,7 +569,14 @@ def _parse_review_skip(text: str) -> tuple[bool, str, str]:
 
     Defaults to ``(False, "", text.strip())`` when the block is absent or malformed —
     a parse failure must never silently block the review (D-24 always-send spirit).
+
+    PHASE 33 / D-03 — this function doubles as ``run_occasion_cascade``'s
+    ``veto_parser`` hook (passed by reference, see the module-level comment on
+    ``_LAST_DIRECTIVE_VETO_REASON``). When it detects a genuine skip it also
+    stashes the reason in that module global, since the cascade's own decision
+    dict never carries it back to the caller.
     """
+    global _LAST_DIRECTIVE_VETO_REASON
     import re as _re
     if not text:
         return (False, "", "")
@@ -541,6 +590,8 @@ def _parse_review_skip(text: str) -> tuple[bool, str, str]:
     except (json.JSONDecodeError, ValueError):
         skip = False
         reason = ""
+    if skip:
+        _LAST_DIRECTIVE_VETO_REASON = reason
     polished = text[:m.start()].strip()
     return (skip, reason, polished)
 
@@ -555,6 +606,14 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     with an infra failure). The message is injected into the conversation so
     the brain can reference it in subsequent turns.
 
+    PHASE 33 / OCC-03 / D-03: behind ``OCCASION_CASCADE=true``, compose
+    routes through the shared 3-layer occasion cascade
+    (``core.autonomous.run_occasion_cascade``) in advisory-only mode —
+    Layer 1's judgment shapes the review's emphasis but never suppresses the
+    send; the weekly still never self-skips on judgment alone. Only the
+    standing-directive veto above can still silence it. With the flag unset,
+    this function's compose/send path is unmodified from pre-Phase-33.
+
     Args:
         bot:       Telegram bot instance (_application.bot).
         today_iso: YYYY-MM-DD string (Asia/Jerusalem date at cron fire time).
@@ -568,6 +627,11 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     # responsive, mirroring nightly_review.run / autonomous (Pitfall 2).
     loop = asyncio.get_running_loop()
     week_data = await loop.run_in_executor(None, _gather_week_data, today_iso)
+
+    if os.getenv("OCCASION_CASCADE", "false").lower() == "true":
+        await _run_weekly_review_cascade(bot, today_iso, week_data)
+        return
+
     message = await loop.run_in_executor(None, _compose_review, week_data, today_iso)
 
     # PHASE 31 — DIR-03 / D-21 / D-22: an active standing directive whose scope
@@ -580,6 +644,14 @@ async def run_weekly_review(bot, today_iso: str) -> None:
         logger.info(
             "weekly_review: skipped_by_directive for %s (%s)", today_iso, skip_reason
         )
+        # Phase 33 / OCC-03 — same state-doc contract as the cascade path, so
+        # the heartbeat check works identically during the flag A/B window.
+        _set_state(today_iso, {
+            "status": "skipped_by_directive",
+            "trigger": "cron",
+            "judged_at": datetime.now(_TZ).isoformat(),
+            "skip_reason": skip_reason,
+        })
         return
 
     # D-24 always send. One retry on a transient Telegram TimedOut so a single
@@ -597,11 +669,113 @@ async def run_weekly_review(bot, today_iso: str) -> None:
         await asyncio.sleep(2)
         await send_and_inject(bot, message, inject_into_conversation=True, message_class="review")
 
+    # Phase 33 / OCC-03 — record the send outcome so the heartbeat can tell
+    # "ran" from "never fired" (T-33-27). "llm" is the closest honest label —
+    # _compose_review's own two-tier brain fallback (Sonnet -> Gemini) is
+    # opaque to this caller; only the deterministic last-resort data string
+    # (never an LLM call) would be mislabeled, and that path already logs its
+    # own warning at the _compose_review call site above.
+    _set_state(today_iso, {
+        "status": "sent",
+        "trigger": "cron",
+        "sent_at": datetime.now(_TZ).isoformat(),
+        "judged_at": datetime.now(_TZ).isoformat(),
+        "composed_via": "llm",
+    })
+
     # PHASE 24 — COACH-05 / T-24-17: record any coaching topics included in this
     # review to CoachingTopicStore AFTER send succeeds — never before.
     # Write-after-send discipline mirrors morning_briefing post-send topic write
     # and OutreachLogStore.append (Phase 18 D-10). Best-effort: a write failure
     # is non-fatal (dedup just won't fire for that topic on the next cron).
+    try:
+        _topics_included = week_data.get("coaching_topics_included") or []
+        if _topics_included:
+            from memory.firestore_db import CoachingTopicStore
+            _cts = CoachingTopicStore(
+                project_id=os.environ["GCP_PROJECT_ID"],
+                database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+            )
+            for _topic in _topics_included:
+                _cts.add_topic(today_iso, _topic)
+    except Exception:
+        logger.warning("weekly_review: coaching topic record failed", exc_info=True)
+
+
+async def _run_weekly_review_cascade(bot, today_iso: str, week_data: dict) -> None:
+    """OCC-03 / D-03 — route the weekly through the shared occasion cascade.
+
+    Passes ``advisory_only`` on (D-03): Layer 1's ``should_act`` verdict only
+    shapes the draft/reason handed to Layer 2 — it never suppresses the send
+    (the weekly never self-skips). The only thing that can still silence it is the
+    Phase-31 standing-directive veto, riding ``_parse_review_skip``'s existing
+    fenced-JSON trailer via ``run_occasion_cascade``'s ``veto_parser`` hook —
+    never derived from Layer 1's ``should_act`` (T-33-25).
+    """
+    from core.autonomous import run_occasion_cascade
+
+    occasion_prompt_path = Path(__file__).parent.parent / "prompts" / "weekly_occasion.md"
+    try:
+        occasion_prompt = occasion_prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning(
+            "weekly_review: could not read prompts/weekly_occasion.md", exc_info=True
+        )
+        occasion_prompt = ""
+
+    decision = await run_occasion_cascade(
+        bot,
+        occasion="weekly_review",
+        target_date=today_iso,
+        occasion_data=week_data,
+        occasion_prompt=occasion_prompt,
+        advisory_only=True,
+        max_tokens=32000,
+        veto_parser=_parse_review_skip,
+    )
+
+    judged_at = datetime.now(_TZ).isoformat()
+
+    if decision.get("skipped") == "directive":
+        skip_reason = _LAST_DIRECTIVE_VETO_REASON
+        logger.info(
+            "weekly_review: skipped_by_directive for %s (%s)", today_iso, skip_reason
+        )
+        _set_state(today_iso, {
+            "status": "skipped_by_directive",
+            "trigger": "cron",
+            "judged_at": judged_at,
+            "skip_reason": skip_reason,
+        })
+        return
+
+    if not decision.get("sent"):
+        # Infra failure (Layer-1 exception / Layer-2+draft both empty / send
+        # failed even after _run_cascade's own transient-send retry).
+        # D-03 never silences the weekly by judgment, so this branch is
+        # always a fault, not a legitimate skip by judgment — that status
+        # value is structurally unreachable for this occasion. Leave today's state
+        # doc untouched: an absent doc is what the D-28 #3 heartbeat
+        # staleness check (plan 33-11) reads as "the weekly did not fire"
+        # (T-33-27) — writing a partial doc here would mask that signal.
+        logger.error(
+            "weekly_review: cascade did not send for %s (trail=%r)",
+            today_iso, decision.get("trail"),
+        )
+        return
+
+    _set_state(today_iso, {
+        "status": "sent",
+        "trigger": "cron",
+        "sent_at": judged_at,
+        "judged_at": judged_at,
+        "composed_via": decision.get("composed_via", ""),
+    })
+
+    # PHASE 24 — COACH-05 / T-24-17: unchanged write-after-send discipline,
+    # now gated on the cascade's own `sent` outcome instead of a bare
+    # send_and_inject await (Pitfall 9 — this machinery survives the
+    # composer replacement untouched).
     try:
         _topics_included = week_data.get("coaching_topics_included") or []
         if _topics_included:
