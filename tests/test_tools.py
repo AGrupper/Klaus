@@ -102,6 +102,10 @@ def fake_store(monkeypatch):
 class _FakeActionLogStore:
     instances: list["_FakeActionLogStore"] = []
     raise_on_append: bool = False
+    # Plan 33-09 addition: preset return for get_recent(), read by
+    # get_recent_decisions' "actions" list. Does not affect plan 33-05's
+    # tests (they never call get_recent).
+    get_recent_return: list[dict] = []
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:
         self.project_id = project_id
@@ -114,12 +118,16 @@ class _FakeActionLogStore:
             raise RuntimeError("Firestore write failed")
         self.appended.append((date_str, entry))
 
+    def get_recent(self, days: int, *, today: str | None = None) -> list[dict]:
+        return list(_FakeActionLogStore.get_recent_return)
+
 
 @pytest.fixture
 def fake_action_log(monkeypatch):
     """Patch ActionLogStore in memory.firestore_db and ensure GCP_PROJECT_ID is set."""
     _FakeActionLogStore.instances = []
     _FakeActionLogStore.raise_on_append = False
+    _FakeActionLogStore.get_recent_return = []
 
     monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
     monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
@@ -127,6 +135,71 @@ def fake_action_log(monkeypatch):
     import memory.firestore_db as firestore_db
     monkeypatch.setattr(firestore_db, "ActionLogStore", _FakeActionLogStore)
     yield _FakeActionLogStore
+
+
+# ---------------------------------------------------------------------------
+# Shared fixture: fake TickLogStore + OutreachLogStore for
+# get_recent_decisions (plan 33-09, OCC-07/D-26) tests — a dedicated
+# OutreachLogStore fake so 33-09's tests never collide with any other file's
+# OutreachLogStore monkeypatch.
+# ---------------------------------------------------------------------------
+
+class _FakeTickLogStore:
+    instances: list["_FakeTickLogStore"] = []
+    data: dict[str, list[dict]] = {}
+    raise_on_call: bool = False
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self.project_id = project_id
+        self.database = database
+        _FakeTickLogStore.instances.append(self)
+
+    def ticks_for_date(self, date_str: str) -> list[dict]:
+        if _FakeTickLogStore.raise_on_call:
+            raise RuntimeError("Firestore read failed")
+        return list(_FakeTickLogStore.data.get(date_str, []))
+
+
+class _FakeOutreachLogStoreForDecisions:
+    instances: list["_FakeOutreachLogStoreForDecisions"] = []
+    data: dict[str, list[dict]] = {}
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self.project_id = project_id
+        self.database = database
+        _FakeOutreachLogStoreForDecisions.instances.append(self)
+
+    def get_today(self, date_str: str) -> list[dict]:
+        return list(_FakeOutreachLogStoreForDecisions.data.get(date_str, []))
+
+
+@pytest.fixture
+def fake_decision_stores(monkeypatch):
+    """Patch TickLogStore/OutreachLogStore/ActionLogStore for
+    get_recent_decisions tests (plan 33-09). Yields a dict of the three fake
+    classes so a test can seed `.data`/`.get_recent_return` per date.
+    """
+    _FakeTickLogStore.instances = []
+    _FakeTickLogStore.data = {}
+    _FakeTickLogStore.raise_on_call = False
+    _FakeOutreachLogStoreForDecisions.instances = []
+    _FakeOutreachLogStoreForDecisions.data = {}
+    _FakeActionLogStore.instances = []
+    _FakeActionLogStore.raise_on_append = False
+    _FakeActionLogStore.get_recent_return = []
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    import memory.firestore_db as firestore_db
+    monkeypatch.setattr(firestore_db, "TickLogStore", _FakeTickLogStore)
+    monkeypatch.setattr(firestore_db, "OutreachLogStore", _FakeOutreachLogStoreForDecisions)
+    monkeypatch.setattr(firestore_db, "ActionLogStore", _FakeActionLogStore)
+    yield {
+        "tick": _FakeTickLogStore,
+        "outreach": _FakeOutreachLogStoreForDecisions,
+        "action": _FakeActionLogStore,
+    }
 
 
 # ===========================================================================
@@ -1930,3 +2003,213 @@ def tools_module_memory_tool(store):
     """Build a real MemoryTool wired to a fake store for handler-level tests."""
     from mcp_tools.memory import MemoryTool
     return MemoryTool(memory_store=store)
+
+
+# ===========================================================================
+# TestGetRecentDecisions — OCC-07 / D-26 (plan 33-09)
+# ===========================================================================
+
+class TestGetRecentDecisions:
+    """get_recent_decisions(days) — the single self-accountability read tool.
+
+    Covers:
+      - all four D-26 elements populated from TickLog + OutreachLog + ActionLog
+      - occasion vs. tick classification via the "occasion:<name>" doc-id
+        convention plan 33-04 established
+      - days clamping (ASVS V5): 1000 -> 30, -5 -> 1, "3" (string) -> 3
+      - ISO-safety: a value with .isoformat() inside a decision trail survives
+        json.dumps
+      - legacy tick-log entries missing new fields degrade to defaults, never
+        KeyError
+      - a raising store degrades to {"error": ...}, never propagates
+      - registration triad: SMART_AGENT_DIRECT_TOOLS, _HANDLERS, TOOL_SCHEMAS,
+        get_smart_schemas()
+    """
+
+    @staticmethod
+    def _today_and_dates(days: int) -> tuple:
+        from datetime import datetime, timedelta
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo("Asia/Jerusalem")
+        today = datetime.now(tz).date()
+        dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
+        return today, dates
+
+    def test_get_recent_decisions_returns_all_four_elements(self, fake_decision_stores):
+        today, dates = self._today_and_dates(2)
+        d0, d1 = dates[0], dates[1]
+
+        fake_decision_stores["tick"].data = {
+            d0: [
+                {
+                    "time": "14:20",
+                    "decision_trail": {
+                        "trail": [{"layer1": {"should_act": False, "reason": "quiet night"}}],
+                        "skip_cause": "nothing_happened",
+                        "sent": False,
+                        "composed_via": "",
+                        "topic_key": "",
+                    },
+                },
+            ],
+        }
+        fake_decision_stores["outreach"].data = {
+            d1: [
+                {"time": "09:05", "topic_key": "morning:" + d1,
+                 "occasion": "morning", "final": "Good morning, sir."},
+            ],
+        }
+        fake_decision_stores["action"].get_recent_return = [
+            {"id": "abc123", "action": "calendar_create",
+             "detail": "Upper Body, tomorrow 18:00", "occasion": "nightly",
+             "at": f"{d0}T22:00:00+03:00", "disclosed": False, "date": d0},
+        ]
+
+        result = json.loads(tools._handle_get_recent_decisions(2))
+
+        assert result["days"] == 2
+        assert result["dates"] == dates
+
+        decisions_row = next(r for r in result["decisions"] if r["date"] == d0)
+        assert decisions_row["reason"] == "quiet night"
+        assert decisions_row["should_act"] is False
+        from tests.occasion_helpers import SKIP_CAUSES
+        assert decisions_row["skip_cause"] in SKIP_CAUSES
+
+        sent_row = result["sent"][0]
+        assert sent_row["final"] == "Good morning, sir."
+
+        actions_row = result["actions"][0]
+        assert actions_row["detail"] == "Upper Body, tomorrow 18:00"
+
+    def test_occasion_doc_id_classified_as_occasion(self, fake_decision_stores):
+        today, dates = self._today_and_dates(2)
+        d0 = dates[0]
+        fake_decision_stores["tick"].data = {
+            d0: [
+                {
+                    "time": "occasion:nightly",
+                    "decision_trail": {
+                        "trail": [{"layer1": {"should_act": True, "reason": "wind-down"}}],
+                        "sent": True, "composed_via": "llm", "topic_key": f"nightly:{d0}",
+                        "skip_cause": "",
+                    },
+                },
+                {
+                    "time": "13:40",
+                    "decision_trail": {
+                        "trail": [{"layer1": {"should_act": True, "reason": "overdue task"}}],
+                        "sent": True, "composed_via": "llm", "topic_key": "overdue:x",
+                        "skip_cause": "",
+                    },
+                },
+            ],
+        }
+
+        result = json.loads(tools._handle_get_recent_decisions(2))
+        occasion_row = next(r for r in result["decisions"] if r["time"] == "occasion:nightly")
+        tick_row = next(r for r in result["decisions"] if r["time"] == "13:40")
+
+        assert occasion_row["kind"] == "occasion"
+        assert occasion_row["occasion"] == "nightly"
+        assert tick_row["kind"] == "tick"
+        assert tick_row["occasion"] == ""
+
+    def test_days_clamped_high_low_and_string(self, fake_decision_stores):
+        result_high = json.loads(tools._handle_get_recent_decisions(1000))
+        assert result_high["days"] == 30
+        assert len(result_high["dates"]) == 30
+
+        result_low = json.loads(tools._handle_get_recent_decisions(-5))
+        assert result_low["days"] == 1
+        assert len(result_low["dates"]) == 1
+
+        result_str = json.loads(tools._handle_get_recent_decisions("3"))
+        assert result_str["days"] == 3
+        assert len(result_str["dates"]) == 3
+
+    def test_isoformat_value_in_decision_trail_survives_json_dumps(self, fake_decision_stores):
+        from datetime import datetime, timezone
+        today, dates = self._today_and_dates(2)
+        d0 = dates[0]
+
+        class _FakeTimestamp:
+            """Mimics DatetimeWithNanoseconds — has isoformat(), not a str."""
+            def isoformat(self) -> str:
+                return "2026-07-29T22:14:05+00:00"
+
+        fake_decision_stores["tick"].data = {
+            d0: [
+                {
+                    "time": "22:00",
+                    "captured_at": _FakeTimestamp(),
+                    "decision_trail": {
+                        "trail": [{"layer1": {"should_act": True, "reason": "ok"}}],
+                        "sent": True, "composed_via": "llm", "topic_key": "x",
+                        "skip_cause": "",
+                    },
+                },
+            ],
+        }
+
+        # Must not raise, and the timestamp must round-trip as a plain string.
+        raw = tools._handle_get_recent_decisions(2)
+        parsed = json.loads(raw)
+        assert isinstance(parsed, dict)
+        assert "error" not in parsed
+
+    def test_legacy_tick_log_entry_missing_fields_degrades_gracefully(self, fake_decision_stores):
+        today, dates = self._today_and_dates(2)
+        d0 = dates[0]
+        # A pre-Phase-33 tick log: no skip_cause/composed_via/occasion keys,
+        # no "trail" list at all.
+        fake_decision_stores["tick"].data = {
+            d0: [{"time": "11:00", "decision_trail": {"sent": True}}],
+        }
+
+        result = json.loads(tools._handle_get_recent_decisions(2))
+        row = next(r for r in result["decisions"] if r["time"] == "11:00")
+        assert row["skip_cause"] == ""
+        assert row["composed_via"] == ""
+        assert row["topic_key"] == ""
+        assert row["reason"] == ""
+        assert row["should_act"] is None
+        assert row["kind"] == "tick"
+        assert row["occasion"] == ""
+
+    def test_ticks_for_date_raising_returns_error_not_propagate(self, fake_decision_stores):
+        fake_decision_stores["tick"].raise_on_call = True
+
+        raw = tools._handle_get_recent_decisions(2)
+        result = json.loads(raw)
+        assert "error" in result
+
+    # ----- Registration tests (Task 2) ----- #
+
+    def test_get_recent_decisions_in_smart_agent_direct_tools(self):
+        assert "get_recent_decisions" in tools.SMART_AGENT_DIRECT_TOOLS
+
+    def test_get_recent_decisions_in_handlers_and_dispatches(self, fake_decision_stores):
+        assert "get_recent_decisions" in tools._HANDLERS
+        raw = tools.dispatch("get_recent_decisions", {})
+        result = json.loads(raw)
+        assert "error" not in result
+
+    def test_get_recent_decisions_schema_shape(self):
+        schemas = [s for s in tools.TOOL_SCHEMAS if s["name"] == "get_recent_decisions"]
+        assert len(schemas) == 1
+        schema = schemas[0]
+        assert schema["input_schema"]["required"] == []
+        assert set(schema["input_schema"]["properties"]) == {"days"}
+        assert schema["input_schema"]["properties"]["days"]["type"] == "integer"
+
+    def test_get_recent_decisions_in_smart_schemas_with_direct_call_wording(self):
+        smart_schemas = tools.get_smart_schemas()
+        matches = [s for s in smart_schemas if s["name"] == "get_recent_decisions"]
+        assert len(matches) == 1
+        assert "do NOT delegate" in matches[0]["description"]
+
+    def test_dispatch_passes_days_kwarg_through(self, fake_decision_stores):
+        raw = tools.dispatch("get_recent_decisions", {"days": 7})
+        result = json.loads(raw)
+        assert result["days"] == 7
