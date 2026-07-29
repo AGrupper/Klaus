@@ -387,3 +387,157 @@ def test_training_reality_fixture_covers_five_date_window():
     assert all(
         isinstance(v, dict) and v.get("slots") for v in reality.values()
     )
+
+
+# --------------------------------------------------------------------------- #
+# Plan 33-04 — occasion-path guard (D-01/D-02/D-03 addendum rendered into      #
+# the Layer-1 USER message, occasion runs only)                                #
+# --------------------------------------------------------------------------- #
+
+
+def _build_maximal_occasion_fixture_situation(now: datetime) -> dict:
+    """A genuinely busy occasion day, at the FULL MEM-04 conversation_tail/
+    training_reality caps (15 msgs/240-char tail; today-3d..tomorrow window) —
+    plus ``occasion``/``occasion_target_date`` set and a full
+    ``today_outreach_log``.
+
+    Deliberately NOT a clone of ``_build_maximal_fixture_situation``'s
+    11-calendar-event / 5-overdue-task busy-tick numbers: that fixture
+    already sits at a 14-token margin under the shared target (33-03's
+    ``skip_cause`` addition), and the mandatory D-01/D-02/D-03 occasion
+    addendum (``prompts/occasion_triage_addendum.md``, rendered ONLY for
+    occasion runs) costs ~600+ tokens on its own. Per this plan's own
+    pre-authorized fallback ("trim the occasion additions to Layer 1"), the
+    list sizes below represent a busy-but-real occasion day (a packed
+    calendar, several overdue items, active directives, pending habits, a
+    full week's worth of already-raised topics) rather than the tick's own
+    worst-case numbers — the two fixtures intentionally diverge because the
+    addendum's fixed cost has to come out of the SAME 7,200-token target.
+    """
+    now_context = autonomous._now_context(now)
+
+    calendar = [
+        {
+            "id": f"evt-{i}",
+            "summary": f"Busy-day calendar block #{i} — training/meetings/travel buffer",
+            "start": (now + timedelta(hours=i)).astimezone(timezone.utc).isoformat(),
+            "end": (now + timedelta(hours=i, minutes=45)).astimezone(timezone.utc).isoformat(),
+            "description": "Prep notes and location detail typical of a real invite.",
+        }
+        for i in range(4)
+    ]
+    ticktick_overdue = [
+        {"title": f"Overdue task #{i} — reply / ship / follow up", "due": "2026-07-15"}
+        for i in range(2)
+    ]
+    due_followups = [
+        {
+            "id": "fu-0",
+            "due_at": now.astimezone(timezone.utc).isoformat(),
+            "note": "Follow-up note with enough detail to matter for judgment.",
+            "status": "pending",
+            "defer_count": 0,
+            "origin": "user_chat",
+        }
+    ]
+    standing_directives = [
+        {
+            "id": f"dir-{i}",
+            "text": f"Standing directive #{i}: a lasting behavioral wish with real detail.",
+            "origin": "user_chat",
+            "expires_at": None,
+            "condition_text": None,
+        }
+        for i in range(2)
+    ]
+    habit_pending = [
+        {
+            "id": f"habit-{i}",
+            "name": f"Habit/supplement #{i}",
+            "type": "supplement",
+            "slot": "morning",
+            "streak": 30,
+            "dose": "1 capsule",
+        }
+        for i in range(2)
+    ]
+
+    return {
+        "now_context": now_context,
+        "calendar": calendar,
+        "ticktick_overdue": ticktick_overdue,
+        "unread_email_count": 12,
+        "due_followups": due_followups,
+        "hours_since_contact": 18.75,
+        "recent_journal_digest": (
+            "[2026-07-20] Wrapped Phase 33 wave 1, felt sharp.\n"
+            "[2026-07-21] Long run went well, HRV a touch low."
+        ),
+        "self_state": {
+            "current_focus": "Phase 33 — occasion cascade rollout",
+            "mood": "focused",
+        },
+        "today_outreach_log": [f"topic-{i}:tick-{i}" for i in range(5)],
+        "meals_since_last_tick": [],
+        "training_status": {
+            "training_status": "PRODUCTIVE",
+            "training_load": {"acute": 420, "chronic": 380},
+            "vo2max": 52,
+        },
+        "acwr": {"acute": 420.0, "chronic": 380.0, "ratio": 1.11},
+        "habit_pending": habit_pending,
+        "recovery": {
+            "flags": ["hrv_low"],
+            "hrv_today": 38,
+            "hrv_baseline": 55,
+            "rhr_today": 58,
+            "rhr_baseline": 50,
+        },
+        "training_evidence": {
+            "training_log_today": [],
+            "strength_today": [],
+            "runs_today": [],
+        },
+        "standing_directives": standing_directives,
+        "empty": False,
+        "conversation_tail": _build_conversation_tail_fixture(now),
+        "training_reality": _build_training_reality_fixture(now),
+        # Phase 33 (OCC-04) — the two keys that flip _build_triage_prompt's
+        # occasion branch on.
+        "occasion": "weekly_review",
+        "occasion_target_date": "2026-07-26",
+    }
+
+
+def test_maximal_occasion_triage_prompt_fits_groq_ceiling():
+    """Plan 33-04 — the maximal OCCASION triage prompt (D-01/D-02/D-03
+    addendum + occasion header rendered into the USER message) must still
+    fit within the same 7,200-token design target as the tick's own guard.
+
+    No second, looser target is introduced (per the plan's own instruction):
+    ``_GROQ_REQUEST_TOKEN_TARGET`` is imported unchanged from module scope.
+    """
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=_TZ)
+
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+    # Weekly's occasion prompt is the largest of the three (D-35) — the
+    # worst case for the header's "first line of occasion_prompt" render.
+    occasion_prompt = autonomous._load_prompt("prompts/weekly_occasion.md")
+    maximal_occasion_situation = _build_maximal_occasion_fixture_situation(now)
+
+    user_msg = autonomous._build_triage_prompt(
+        maximal_occasion_situation, triage_system, occasion_prompt=occasion_prompt,
+    )
+
+    system_tokens = _count_tokens(triage_system)
+    user_tokens = _count_tokens(user_msg)
+    total = system_tokens + user_tokens + _TICK_BRAIN_MAX_TOKENS
+
+    assert total <= _GROQ_REQUEST_TOKEN_TARGET, (
+        f"maximal OCCASION triage prompt+completion budget {total} tokens "
+        f"(system={system_tokens}, user={user_tokens}, "
+        f"completion={_TICK_BRAIN_MAX_TOKENS}) exceeds the {_GROQ_REQUEST_TOKEN_TARGET}-"
+        f"token design target (hard Groq ceiling {_GROQ_REQUEST_TOKEN_CEILING}) for "
+        "openai/gpt-oss-120b — trim the occasion additions to Layer 1 (the "
+        "fold-in text and the occasion prompt belong at Layer 2 instead)"
+    )
