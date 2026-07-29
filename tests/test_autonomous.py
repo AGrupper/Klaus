@@ -63,6 +63,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tests.occasion_helpers import (
+    SKIP_CAUSES,
+    make_occasion_situation,
+    make_occasion_verdict,
+)
+
 
 # ---------------------------------------------------------------------------
 # sys.modules mock — installed BEFORE any core.autonomous / memory import
@@ -1452,7 +1458,7 @@ class TestPhase28HabitGather:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured_snap = {}
 
-        def _capture_args(messages, smart_sys, worker_sys):
+        def _capture_args(messages, smart_sys, worker_sys, **kwargs):
             captured_snap["content"] = messages[0]["content"]
             return "ok"
 
@@ -1532,7 +1538,7 @@ class TestRecoveryDeviationSignal:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured = {}
 
-        def _capture(messages, smart_sys, worker_sys):
+        def _capture(messages, smart_sys, worker_sys, **kwargs):
             captured["content"] = messages[0]["content"]
             return "ok"
 
@@ -1667,7 +1673,7 @@ class TestTrainingEvidence:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured = {}
 
-        def _capture(messages, smart_sys, worker_sys):
+        def _capture(messages, smart_sys, worker_sys, **kwargs):
             captured["content"] = messages[0]["content"]
             return "ok"
 
@@ -1936,7 +1942,7 @@ class TestStandingDirectivesTriageAndCompose:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured = {}
 
-        def _capture(messages, smart_sys, worker_sys):
+        def _capture(messages, smart_sys, worker_sys, **kwargs):
             captured["content"] = messages[0]["content"]
             return "ok"
 
@@ -1952,7 +1958,7 @@ class TestStandingDirectivesTriageAndCompose:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured = {}
 
-        def _capture(messages, smart_sys, worker_sys):
+        def _capture(messages, smart_sys, worker_sys, **kwargs):
             captured["content"] = messages[0]["content"]
             return "ok"
 
@@ -2241,7 +2247,7 @@ class TestConversationTailAndTrainingRealityRenders:
         fake_orchestrator.render_smart_system.side_effect = lambda t: t
         captured = {}
 
-        def _capture(messages, smart_sys, worker_sys):
+        def _capture(messages, smart_sys, worker_sys, **kwargs):
             captured["content"] = messages[0]["content"]
             return "ok"
 
@@ -2813,3 +2819,549 @@ def test_tick_skips_groq_when_signature_unchanged():
 
     assert any("signals_unchanged" in str(t) for t in decision["trail"])
     assert decision["sent"] is False
+
+
+# ---------------------------------------------------------------------------
+# Plan 33-04 Task 1 — run_occasion_cascade / shared _run_cascade body
+# ---------------------------------------------------------------------------
+
+def _occasion_verdict_yes(**overrides) -> dict:
+    base = make_occasion_verdict(should_act=True, draft="draft text", reason="worth saying")
+    base.update(overrides)
+    return base
+
+
+def test_occasion_bypasses_empty(mock_bot, fixed_now):
+    """OCC-04 — an occasion reaches Layer 1 even on a genuinely empty day."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=True)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    tb_instance.think.assert_called_once()
+    assert decision["skipped"] != "empty"
+
+
+def test_occasion_bypasses_change_detection(mock_bot, fixed_now):
+    """OCC-04 — an occasion reaches Layer 1 even with an unchanged signature,
+    and never constructs TickSignatureStore at all."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch("memory.firestore_db.TickSignatureStore") as sig_cls, \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    tb_instance.think.assert_called_once()
+    sig_cls.assert_not_called()
+    assert "signals_unchanged_since_last_tick" not in decision["trail"]
+
+
+def test_occasion_topic_key(mock_bot, fixed_now):
+    """D-18 — deterministic topic_key per occasion, shared OutreachLog namespace."""
+    for occasion, expected_prefix in (
+        ("nightly", "nightly"), ("morning", "morning"), ("weekly_review", "weekly"),
+    ):
+        sit = make_occasion_situation(fixed_now, occasion=occasion, empty=False)
+        tb_instance = MagicMock()
+        tb_instance.think.return_value = _occasion_verdict_yes()
+        ols_instance = MagicMock()
+
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+             patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+             patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance), \
+             patch("memory.firestore_db.ActionLogStore"), \
+             patch.object(autonomous, "_occasion_inflight_store"), \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_occasion_cascade(
+                mock_bot, occasion=occasion, target_date="2026-08-01", occasion_data={},
+            ))
+
+        assert decision["topic_key"] == f"{expected_prefix}:2026-08-01"
+
+
+def test_occasion_outreach_log_gated(mock_bot, fixed_now):
+    """D-10 — send failure on the occasion path MUST skip OutreachLogStore.append."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+    ols_instance = MagicMock()
+    failing_send = AsyncMock(side_effect=RuntimeError("telegram down"))
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=failing_send), \
+         patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    ols_instance.append.assert_not_called()
+    assert decision["sent"] is False
+
+
+def test_advisory_only_true_still_composes_and_sends(mock_bot, fixed_now):
+    """D-03 — advisory_only=True with should_act=False still composes + sends."""
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(should_act=False, draft="shape note")
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed") as compose, \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="weekly_review", target_date="2026-08-02",
+            occasion_data={}, advisory_only=True,
+        ))
+
+    compose.assert_called_once()
+    send.assert_called_once()
+    assert decision["sent"] is True
+
+
+def test_advisory_only_false_same_verdict_skips(mock_bot, fixed_now):
+    """Same should_act=False verdict, advisory_only=False -> neither compose nor send."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(
+        should_act=False, draft="quiet night", skip_cause="nothing_happened",
+    )
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2") as compose, \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01",
+            occasion_data={}, advisory_only=False,
+        ))
+
+    compose.assert_not_called()
+    send.assert_not_called()
+    assert decision["skipped"] == "judgment"
+    assert decision["skip_cause"] == "nothing_happened"
+    assert decision["draft"] == "quiet night"
+    assert decision["composed_via"] == ""
+
+
+def test_veto_parser_blocks_send(mock_bot, fixed_now):
+    """D-03 / Phase 31 D-21/D-22 — veto_parser can still silence an advisory
+    (weekly) occasion post-compose, and OutreachLogStore is never touched."""
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = make_occasion_verdict(should_act=False)
+    ols_instance = MagicMock()
+    veto_parser = MagicMock(return_value=(True, "directive says pause reviews", ""))
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed body"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+         patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="weekly_review", target_date="2026-08-02",
+            occasion_data={}, advisory_only=True, veto_parser=veto_parser,
+        ))
+
+    send.assert_not_called()
+    ols_instance.append.assert_not_called()
+    assert decision["skipped"] == "directive"
+    assert decision["skip_cause"] == "standing_directive"
+    assert "directive_veto" in decision["trail"]
+
+
+def test_veto_parser_strips_trailer(mock_bot, fixed_now):
+    """veto_parser's polished text (veto=False) is exactly what gets sent."""
+    sit = make_occasion_situation(fixed_now, occasion="weekly_review", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+    veto_parser = MagicMock(return_value=(False, "", "polished body"))
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2",
+                      return_value="composed body\n```json {\"skip\": false}```"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="weekly_review", target_date="2026-08-02",
+            occasion_data={}, veto_parser=veto_parser,
+        ))
+
+    args, _ = send.call_args
+    assert args[1] == "polished body"
+
+
+def test_veto_parser_default_none(mock_bot, fixed_now):
+    """veto_parser=None (default) -> no veto path ever taken, for the tick OR
+    an occasion call."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    assert decision["skipped"] != "directive"
+
+
+def test_send_timed_out_retries_once(mock_bot, fixed_now):
+    """2026-06-24 incident fix, extended to every occasion (and the tick) —
+    a single Telegram TimedOut is retried exactly once."""
+    from telegram.error import TimedOut
+
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+    ols_instance = MagicMock()
+    send = AsyncMock(side_effect=[TimedOut(), None])
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=send), \
+         patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch("asyncio.sleep", new=AsyncMock()), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    assert send.call_count == 2
+    assert decision["sent"] is True
+    ols_instance.append.assert_called_once()
+    assert "send_timed_out" in decision["trail"]
+
+
+def test_send_timed_out_twice_fails_closed(mock_bot, fixed_now):
+    """TimedOut on both attempts -> exactly 2 calls, fails closed, no log append."""
+    from telegram.error import TimedOut
+
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+    ols_instance = MagicMock()
+    send = AsyncMock(side_effect=[TimedOut(), TimedOut()])
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=send), \
+         patch("memory.firestore_db.OutreachLogStore", return_value=ols_instance), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch("asyncio.sleep", new=AsyncMock()), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    assert send.call_count == 2
+    assert decision["sent"] is False
+    ols_instance.append.assert_not_called()
+    assert "send_timed_out" in decision["trail"]
+    assert "send_failed" in decision["trail"]
+
+
+def test_write_tick_log_uses_occasion_log_key(mock_bot, fixed_now):
+    """T-33-14 — an occasion writes to tick_logs/{date}/ticks/occasion:{name}."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore"), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()) as wtl:
+        asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    assert wtl.call_args.kwargs.get("log_key") == "occasion:nightly"
+
+
+def test_run_occasion_cascade_rejects_unknown_occasion(mock_bot, fixed_now):
+    with pytest.raises(ValueError):
+        asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="bogus", target_date="2026-08-01", occasion_data={},
+        ))
+
+
+# ---------------------------------------------------------------------------
+# Plan 33-04 Task 2 — occasion context into Layer 1 / Layer 2
+# ---------------------------------------------------------------------------
+
+def test_build_triage_prompt_occasion_none_byte_identical(fixed_now):
+    """A plain tick's rendered triage prompt is untouched by the occasion
+    branch — no ``occasion`` key in situation means the new code path is
+    structurally unreachable."""
+    sit = _live_situation(fixed_now)
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+
+    before = autonomous._build_triage_prompt(sit, triage_system)
+    after = autonomous._build_triage_prompt(sit, triage_system, occasion_prompt="")
+    assert before == after
+    # No occasion addendum content leaks into a plain tick's render.
+    assert "occasion_triage_addendum" not in before
+    assert "already_covered" not in before
+
+
+def test_build_triage_prompt_occasion_adds_addendum(fixed_now):
+    """An occasion situation renders the D-01/D-02/D-03 addendum content."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    sit["occasion_target_date"] = "2026-08-01"
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+
+    prompt = autonomous._build_triage_prompt(
+        sit, triage_system, occasion_prompt="I'm Klaus doing the wind-down.",
+    )
+    assert "nightly" in prompt
+    assert "2026-08-01" in prompt
+    # The addendum's own D-02 skip-cause vocabulary must be present.
+    for cause in ("already_covered", "nothing_happened", "reaction_history"):
+        assert cause in prompt
+
+
+def test_compose_layer2_disclosure_block(fixed_now):
+    """D-25 — an undisclosed action's detail reaches the synthetic content,
+    and D-27 — no skip-record vocabulary is ever rendered."""
+    sit = _live_situation(fixed_now)
+    fake_orchestrator = MagicMock()
+    fake_orchestrator.render_smart_system.side_effect = lambda t: t
+    captured = {}
+
+    def _capture(messages, smart_sys, worker_sys, **kwargs):
+        captured["content"] = messages[0]["content"]
+        return "ok"
+
+    fake_orchestrator._run_smart_loop.side_effect = _capture
+
+    undisclosed = [
+        {"id": "a1", "action": "calendar_create", "detail": "Upper Body, tomorrow 18:00",
+         "occasion": "tick", "at": "2026-08-01T10:00:00+03:00"},
+    ]
+
+    with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator), \
+         patch("memory.firestore_db.OutreachLogStore") as ols_cls:
+        ols_cls.return_value.get_today.return_value = []
+        autonomous._compose_layer2(
+            sit, "draft", "reason", undisclosed_actions=undisclosed,
+        )
+
+    content = captured.get("content", "")
+    assert "Upper Body, tomorrow 18:00" in content
+    for forbidden in ("skipped_by_judgment", "skip_cause"):
+        assert forbidden not in content
+
+
+def test_layer2_fold_in_full_text_vs_layer1_topic_key_only(fixed_now):
+    """D-17 asymmetry — Layer 2 gets the full sent text, Layer 1 gets only
+    the topic key (never the final text)."""
+    sit = _live_situation(fixed_now, today_outreach_log=["overdue:reply-to-maya"])
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+    layer1_prompt = autonomous._build_triage_prompt(sit, triage_system)
+
+    assert "overdue:reply-to-maya" in layer1_prompt
+    assert "the full text of my earlier reply" not in layer1_prompt
+
+    fake_orchestrator = MagicMock()
+    fake_orchestrator.render_smart_system.side_effect = lambda t: t
+    captured = {}
+
+    def _capture(messages, smart_sys, worker_sys, **kwargs):
+        captured["content"] = messages[0]["content"]
+        return "ok"
+
+    fake_orchestrator._run_smart_loop.side_effect = _capture
+
+    with patch.object(autonomous, "_get_orchestrator", return_value=fake_orchestrator), \
+         patch("memory.firestore_db.OutreachLogStore") as ols_cls:
+        ols_cls.return_value.get_today.return_value = [
+            {"topic_key": "overdue:reply-to-maya", "time": "09:00",
+             "final": "the full text of my earlier reply to Maya"},
+        ]
+        autonomous._compose_layer2(sit, "draft", "reason")
+
+    layer2_content = captured.get("content", "")
+    assert "the full text of my earlier reply to Maya" in layer2_content
+    assert "overdue:reply-to-maya" in layer2_content
+
+
+def test_mark_disclosed_called_after_send_success_not_on_failure(mock_bot, fixed_now):
+    """D-25 bookkeeping — mark_disclosed fires only after a successful send,
+    with exactly the ids that were rendered."""
+    sit = make_occasion_situation(fixed_now, occasion="nightly", empty=False)
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = _occasion_verdict_yes()
+    als_instance = MagicMock()
+    als_instance.undisclosed.return_value = [
+        {"id": "a1", "action": "calendar_create", "detail": "x",
+         "occasion": "tick", "at": "t", "date": "2026-08-01"},
+    ]
+
+    # Success case.
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore", return_value=als_instance), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    als_instance.mark_disclosed.assert_called_once_with("2026-08-01", ["a1"])
+
+    # Failure case — send raises, mark_disclosed must NOT be called.
+    als_instance2 = MagicMock()
+    als_instance2.undisclosed.return_value = [
+        {"id": "a2", "action": "calendar_create", "detail": "y",
+         "occasion": "tick", "at": "t", "date": "2026-08-01"},
+    ]
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_layer2", return_value="composed"), \
+         patch("core.scheduled_message.send_and_inject",
+               new=AsyncMock(side_effect=RuntimeError("down"))), \
+         patch("memory.firestore_db.OutreachLogStore"), \
+         patch("memory.firestore_db.ActionLogStore", return_value=als_instance2), \
+         patch.object(autonomous, "_occasion_inflight_store"), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        asyncio.run(autonomous.run_occasion_cascade(
+            mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+        ))
+
+    als_instance2.mark_disclosed.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Plan 33-04 Task 3 — D-19 in-flight marker
+# ---------------------------------------------------------------------------
+
+def test_tick_yields_when_occasion_inflight(mock_bot, fixed_now):
+    sit = _live_situation(fixed_now)
+    inflight_store = MagicMock()
+    inflight_store.active.return_value = "nightly"
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch.object(autonomous, "_occasion_inflight_store", return_value=inflight_store), \
+         patch("core.tick_brain.TickBrain") as tb_cls, \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, fixed_now))
+
+    assert decision["skipped"] == "occasion_inflight"
+    assert {"yielded_to_occasion": "nightly"} in decision["trail"]
+    tb_cls.assert_not_called()
+    send.assert_not_called()
+
+
+def test_tick_proceeds_when_inflight_returns_none(mock_bot, fixed_now):
+    """active() returning None -> existing tick tests still hold (regression guard)."""
+    sit = _empty_situation(fixed_now)
+    inflight_store = MagicMock()
+    inflight_store.active.return_value = None
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch.object(autonomous, "_occasion_inflight_store", return_value=inflight_store), \
+         patch("core.tick_brain.TickBrain") as tb_cls, \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, fixed_now))
+
+    assert decision["skipped"] == "empty"
+    tb_cls.assert_not_called()
+
+
+def test_tick_proceeds_when_inflight_raises(mock_bot, fixed_now):
+    """A raising active() must not turn fail-open into fail-closed — the tick
+    still proceeds normally."""
+    sit = _empty_situation(fixed_now)
+    inflight_store = MagicMock()
+    inflight_store.active.side_effect = RuntimeError("firestore down")
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch.object(autonomous, "_occasion_inflight_store", return_value=inflight_store), \
+         patch("core.tick_brain.TickBrain") as tb_cls, \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+        decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, fixed_now))
+
+    assert decision["skipped"] == "empty"
+    tb_cls.assert_not_called()
+
+
+def test_run_occasion_cascade_marks_and_clears_inflight_even_on_exception(mock_bot, fixed_now):
+    """mark() runs before Layer 1, clear() runs even when _run_cascade raises."""
+    inflight_store = MagicMock()
+
+    with patch.object(autonomous, "_occasion_inflight_store", return_value=inflight_store), \
+         patch.object(autonomous, "gather_situation", return_value=make_occasion_situation(
+             fixed_now, occasion="nightly", empty=False,
+         )), \
+         patch.object(autonomous, "_run_cascade",
+                      new=AsyncMock(side_effect=RuntimeError("boom"))):
+        with pytest.raises(RuntimeError):
+            asyncio.run(autonomous.run_occasion_cascade(
+                mock_bot, occasion="nightly", target_date="2026-08-01", occasion_data={},
+            ))
+
+    inflight_store.mark.assert_called_once()
+    inflight_store.clear.assert_called_once()
