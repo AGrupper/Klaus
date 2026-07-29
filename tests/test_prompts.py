@@ -360,6 +360,117 @@ def test_autonomous_md_fold_around_outreach():
     assert "restate" in content or "repeat" in content
 
 
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 03 Task 3 — occasion prompts: identity + one standing
+# question each (D-35), rendered as literal text into the Layer-2 user
+# message by plan 33-04 (not through render_smart_system).
+# ---------------------------------------------------------------------------
+
+NIGHTLY_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "nightly_occasion.md")
+MORNING_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "morning_occasion.md")
+WEEKLY_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "weekly_occasion.md")
+_OCCASION_PROMPT_PATHS = (
+    NIGHTLY_OCCASION_PATH,
+    MORNING_OCCASION_PATH,
+    WEEKLY_OCCASION_PATH,
+)
+
+# Matches a real render placeholder like {self_md} or {today_date}; does NOT
+# match the weekly occasion's literal JSON illustration
+# {"skip": true, "reason": "..."} because the char right after `{` there is a
+# quote, not a letter/underscore.
+_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def test_occasion_prompts_exist_and_load_via_prompt_loader():
+    """D-35 — all three occasion prompts exist, load via the project's shared
+    prompt loader (core.prompt_loader.load_prompt), and are non-empty."""
+    from core.prompt_loader import load_prompt
+
+    for path, rel in (
+        (NIGHTLY_OCCASION_PATH, "prompts/nightly_occasion.md"),
+        (MORNING_OCCASION_PATH, "prompts/morning_occasion.md"),
+        (WEEKLY_OCCASION_PATH, "prompts/weekly_occasion.md"),
+    ):
+        assert os.path.isfile(path), f"Expected file at {path}"
+        loaded = load_prompt(rel)
+        assert loaded, f"{rel} loaded empty via load_prompt"
+
+
+def test_occasion_prompts_have_no_render_placeholders():
+    """These files are rendered as literal text into the Layer-2 user message
+    (plan 33-04), not through render_smart_system — so they must carry no
+    unsubstituted {placeholder} braces. The weekly's literal
+    {"skip": true, ...} JSON illustration must NOT trip this check."""
+    for path in _OCCASION_PROMPT_PATHS:
+        content = _read(path)
+        matches = _PLACEHOLDER_RE.findall(content)
+        assert not matches, f"{path} contains unexpected placeholders: {matches}"
+
+
+def test_occasion_prompts_body_length_bounds():
+    """D-35 — a few lines each: 4-14 non-comment/non-blank lines, except
+    weekly_occasion.md (up to 20, to accommodate the Step-0 trailer)."""
+    for path in (NIGHTLY_OCCASION_PATH, MORNING_OCCASION_PATH):
+        content = _read(path)
+        body_lines = [
+            ln for ln in content.splitlines()
+            if ln.strip() and not ln.startswith("<!--")
+        ]
+        assert 4 <= len(body_lines) <= 14, (
+            f"{path} body has {len(body_lines)} lines, expected 4-14"
+        )
+    weekly_content = _read(WEEKLY_OCCASION_PATH)
+    weekly_body_lines = [
+        ln for ln in weekly_content.splitlines()
+        if ln.strip() and not ln.startswith("<!--")
+    ]
+    assert 4 <= len(weekly_body_lines) <= 20, (
+        f"{WEEKLY_OCCASION_PATH} body has {len(weekly_body_lines)} lines, expected 4-20"
+    )
+
+
+def test_morning_occasion_defers_to_weekly():
+    """D-20 — Sunday morning stays light on training when the weekly review
+    is scheduled for later the same day."""
+    content = _read(MORNING_OCCASION_PATH)
+    assert "weekly" in content.lower()
+
+
+def test_weekly_occasion_always_fires():
+    """D-03 — weekly_review's judgment is about shape, never whether it
+    fires; 'always' framing must appear in the body (not just the comment)."""
+    content = _read(WEEKLY_OCCASION_PATH)
+    body = "\n".join(
+        ln for ln in content.splitlines() if not ln.startswith("<!--")
+    )
+    assert "always" in body.lower()
+
+
+def test_weekly_occasion_carries_directive_veto_trailer():
+    """Phase 31 D-21/D-22 preserved — the Step-0 standing-directive-veto
+    trailer instruction (parsed by
+    core.weekly_training_review._parse_review_skip) must be present so the
+    cascade's veto_parser has something to catch."""
+    content = _read(WEEKLY_OCCASION_PATH)
+    assert '"skip"' in content
+    assert '```json' in content
+
+
+def test_occasion_prompts_no_legacy_checklist_knowledge():
+    """D-33 — knowledge lives in the data, not the prompt. No fuel-plan /
+    'Week N of 16' / numbered-checklist knowledge transcribed from the
+    legacy composers."""
+    numbered_section_re = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
+    for path in _OCCASION_PROMPT_PATHS:
+        content = _read(path)
+        assert "fuel" not in content.lower(), f"{path} contains 'fuel'"
+        assert "Week N" not in content, f"{path} contains 'Week N'"
+        assert not numbered_section_re.search(content), (
+            f"{path} contains a numbered section list"
+        )
+
+
 def test_smart_agent_current_time_at_tail():
     """Prompt-caching guard: {current_time} changes every minute, so it must
     sit in the trailing ~15%% of smart_agent.md — placing it early would
