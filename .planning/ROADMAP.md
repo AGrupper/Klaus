@@ -137,9 +137,9 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 Plans:
 **Wave 1**
 
-- [ ] 33-01-PLAN.md — ActionLogStore + OccasionInFlightStore + shared occasion test scaffolding
-- [ ] 33-02-PLAN.md — Layer-2 forced final answer on iteration exhaustion + max_tokens passthrough
-- [ ] 33-03-PLAN.md — Shared cascade prompts (skip causes, fold-in, write-and-disclose) + three occasion prompts
+- [x] 33-01-PLAN.md — ActionLogStore + OccasionInFlightStore + shared occasion test scaffolding
+- [x] 33-02-PLAN.md — Layer-2 forced final answer on iteration exhaustion + max_tokens passthrough
+- [x] 33-03-PLAN.md — Shared cascade prompts (skip causes, fold-in, write-and-disclose) + three occasion prompts
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 0/? | Not started | - |
+| 33. Occasion Cascade | 3/13 | In Progress|  |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
