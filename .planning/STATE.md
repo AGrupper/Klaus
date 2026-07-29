@@ -4,8 +4,8 @@ milestone: v6.0
 milestone_name: Klaus Becomes an Agent
 status: executing
 stopped_at: Phase 33 context gathered
-last_updated: "2026-07-29T13:40:26.278Z"
-last_activity: 2026-07-29 -- Phase 33 planning complete
+last_updated: "2026-07-29T13:42:49.760Z"
+last_activity: 2026-07-29 -- Phase 33 execution started
 progress:
   total_phases: 6
   completed_phases: 3
@@ -18,10 +18,10 @@ progress:
 
 ## Current Position
 
-Phase: 33
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-29 -- Phase 33 planning complete
+Phase: 33 (occasion-cascade) — EXECUTING
+Plan: 1 of 13
+Status: Executing Phase 33
+Last activity: 2026-07-29 -- Phase 33 execution started
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 
@@ -71,7 +71,7 @@ Last activity: 2026-07-29 -- Phase 33 planning complete
 See: `.planning/PROJECT.md` (updated 2026-07-17 for v6.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 33 — occasion cascade
+**Current focus:** Phase 33 — occasion-cascade
 
 ## Architecture (current)
 
