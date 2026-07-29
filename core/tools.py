@@ -1673,9 +1673,9 @@ def _existing_event_at(
     Layer 2 can now create events far more often, without asking first. That
     raises the stakes on a check-then-act failure mode the review flagged
     (amendment B2): compose succeeds, the disclosure send fails, D-10's
-    write-after-send discipline logs nothing to `OutreachLogStore`, and the
-    next occasion re-composes from the same inputs — producing a duplicate
-    event on Amit's calendar. This lookup is the mitigation: call it
+    write-after-send discipline logs nothing to the send-gated outreach log,
+    and the next occasion re-composes from the same inputs — producing a
+    duplicate event on Amit's calendar. This lookup is the mitigation: call it
     immediately before every proactive `create_event`, narrowing the
     lookup-to-create window as much as possible (33-RESEARCH.md Pitfall 6 —
     this remains a check-then-act race without an atomic guard; `_record_action`
@@ -1701,6 +1701,63 @@ def _existing_event_at(
         return None
 
 
+def _record_action(action: str, detail: str, *, occasion: str = "chat") -> str:
+    """Append one ActionLogStore entry recording a Layer-2 calendar/task write.
+
+    D-25 (Phase 33): every calendar mutation Klaus makes must land in the
+    action audit trail the moment it happens, independent of whether the
+    occasion's disclosure message ever ships — the deliberate inverse of
+    the send-gated outreach log's D-10 write-after-send discipline (that
+    store is untouched by this function). The entry starts life undisclosed
+    (`disclosed=False`) so the next occasion's compose step can surface it
+    if this one's send fails.
+
+    Args:
+        action: One of "calendar_create" | "calendar_update" | "calendar_delete".
+        detail: Human-readable description of what changed.
+        occasion: Which occasion made the write. Defaults to "chat" — plan
+            33-04's `_run_cascade` does not currently thread an occasion
+            identifier through to this call site, and attributing an action
+            to its occasion is a nice-to-have the disclosure flow does not
+            depend on (the entry's `at` timestamp plus `disclosed=False` is
+            sufficient for D-25's "the next occasion sees I already did this
+            but never told him"). Deliberately not read from an env var —
+            that would add a cross-module global this plan doesn't need.
+
+    Returns:
+        The generated entry id (uuid4 hex), always — even if the Firestore
+        write itself failed. Never raises: a write that already happened on
+        the calendar must not be rolled back because its audit write failed,
+        but the failure must be loud (logged at ERROR).
+    """
+    import uuid
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("Asia/Jerusalem")
+    entry_id = uuid.uuid4().hex
+    entry = {
+        "id": entry_id,
+        "action": action,
+        "detail": detail,
+        "occasion": occasion,
+        "at": datetime.now(tz).isoformat(),
+        "disclosed": False,
+    }
+    try:
+        from memory.firestore_db import ActionLogStore
+        today_iso = datetime.now(tz).date().isoformat()
+        ActionLogStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        ).append(today_iso, entry)
+    except Exception:
+        logger.error(
+            "_record_action(%r, %r) failed to write ActionLogStore entry %s",
+            action, detail, entry_id, exc_info=True,
+        )
+    return entry_id
+
+
 def _handle_create_calendar_event(
     summary: str,
     start_iso: str,
@@ -1717,6 +1774,10 @@ def _handle_create_calendar_event(
     found, refuses to create a duplicate and returns a `duplicate` response
     the brain can surface on its disclosure line instead of silently
     double-booking. See `_existing_event_at` for why this exists.
+
+    D-25: a successful create is recorded in the action audit trail
+    (`_record_action`) before returning. The duplicate branch above records
+    nothing — nothing was written.
     """
     existing = _existing_event_at(start_iso, end_iso, summary, calendar_id=calendar_id)
     if existing is not None:
@@ -1737,6 +1798,10 @@ def _handle_create_calendar_event(
         is_workout=is_workout,
         calendar_id=calendar_id,
     )
+    if "error" not in result:
+        result["action_id"] = _record_action(
+            action="calendar_create", detail=f"{summary}, {start_iso}",
+        )
     return json.dumps(result)
 
 
@@ -1747,8 +1812,16 @@ def _handle_check_calendar_free(start_iso: str, end_iso: str) -> str:
 
 
 def _handle_delete_calendar_event(event_id: str, calendar_id: str | None = None) -> str:
-    """Delegate to GoogleCalendarManager.delete_event and serialise the result."""
+    """Delegate to GoogleCalendarManager.delete_event and serialise the result.
+
+    D-25: a successful delete is recorded in the action audit trail
+    (`_record_action`) before returning.
+    """
     result = _get_calendar_tool().delete_event(event_id, calendar_id=calendar_id)
+    if result.get("ok"):
+        summary = result.get("summary", "")
+        detail = f"{event_id}, {summary}" if summary else event_id
+        result["action_id"] = _record_action(action="calendar_delete", detail=detail)
     return json.dumps(result)
 
 
@@ -1760,7 +1833,11 @@ def _handle_update_calendar_event(
     end_iso: str | None = None,
     description: str | None = None,
 ) -> str:
-    """Delegate to GoogleCalendarManager.update_event and serialise the result."""
+    """Delegate to GoogleCalendarManager.update_event and serialise the result.
+
+    D-25: a successful update is recorded in the action audit trail
+    (`_record_action`) before returning, naming which fields changed.
+    """
     result = _get_calendar_tool().update_event(
         event_id,
         calendar_id=calendar_id,
@@ -1769,6 +1846,15 @@ def _handle_update_calendar_event(
         end_iso=end_iso,
         description=description,
     )
+    if result.get("ok"):
+        changed = [
+            field for field, value in (
+                ("summary", summary), ("start", start_iso),
+                ("end", end_iso), ("description", description),
+            ) if value is not None
+        ]
+        detail = f"{event_id}: {', '.join(changed)}" if changed else event_id
+        result["action_id"] = _record_action(action="calendar_update", detail=detail)
     return json.dumps(result)
 
 

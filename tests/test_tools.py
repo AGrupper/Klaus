@@ -93,6 +93,42 @@ def fake_store(monkeypatch):
     yield _FakeFollowupStore
 
 
+# ---------------------------------------------------------------------------
+# Shared fixture: a fake ActionLogStore (D-25) — records every append() call
+# without I/O, and can be told to raise so audit-write-failure paths are
+# exercisable (mirrors _FakeFollowupStore above).
+# ---------------------------------------------------------------------------
+
+class _FakeActionLogStore:
+    instances: list["_FakeActionLogStore"] = []
+    raise_on_append: bool = False
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self.project_id = project_id
+        self.database = database
+        self.appended: list[tuple[str, dict]] = []
+        _FakeActionLogStore.instances.append(self)
+
+    def append(self, date_str: str, entry: dict) -> None:
+        if _FakeActionLogStore.raise_on_append:
+            raise RuntimeError("Firestore write failed")
+        self.appended.append((date_str, entry))
+
+
+@pytest.fixture
+def fake_action_log(monkeypatch):
+    """Patch ActionLogStore in memory.firestore_db and ensure GCP_PROJECT_ID is set."""
+    _FakeActionLogStore.instances = []
+    _FakeActionLogStore.raise_on_append = False
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+
+    import memory.firestore_db as firestore_db
+    monkeypatch.setattr(firestore_db, "ActionLogStore", _FakeActionLogStore)
+    yield _FakeActionLogStore
+
+
 # ===========================================================================
 # TestFollowupTools — handler behaviour
 # ===========================================================================
@@ -1069,8 +1105,9 @@ class TestCalendarCreateIdempotency:
         assert out["existing_event_id"] == "evt-existing"
         mock_cal.create_event.assert_not_called()
 
-    def test_calendar_create_proceeds_when_window_empty(self):
-        """No matching event in the window — normal create path, unchanged result."""
+    def test_calendar_create_proceeds_when_window_empty(self, fake_action_log):
+        """No matching event in the window — normal create path, result carries
+        the manager's fields unchanged plus the D-25 action_id (Task 2)."""
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
         mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
@@ -1081,7 +1118,89 @@ class TestCalendarCreateIdempotency:
                 end_iso="2026-08-02T19:00:00+03:00",
             ))
         mock_cal.create_event.assert_called_once()
-        assert out == {"event_id": "evt-new", "summary": "Upper Body"}
+        assert out["event_id"] == "evt-new"
+        assert out["summary"] == "Upper Body"
+        assert "action_id" in out
+
+
+class TestActionAuditTrail:
+    """D-24/D-25 (Phase 33 plan 05): every calendar mutation writes one
+    undisclosed action record at action time, independent of send success.
+    `OutreachLogStore`'s send-gating (D-10) is a separate invariant and must
+    never be touched by this behaviour.
+    """
+
+    def test_successful_create_records_undisclosed_action(self, fake_action_log):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-02T18:00:00+03:00",
+                end_iso="2026-08-02T19:00:00+03:00",
+            ))
+        assert len(fake_action_log.instances) == 1
+        appended = fake_action_log.instances[0].appended
+        assert len(appended) == 1
+        date_str, entry = appended[0]
+        assert entry["action"] == "calendar_create"
+        assert entry["disclosed"] is False
+        assert isinstance(entry["id"], str) and len(entry["id"]) == 32
+        assert isinstance(entry["at"], str)
+        assert out["action_id"] == entry["id"]
+
+    def test_duplicate_create_does_not_record_action(self, fake_action_log):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-existing", "summary": "Upper Body"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-02T18:00:00+03:00",
+                end_iso="2026-08-02T19:00:00+03:00",
+            ))
+        assert out["duplicate"] is True
+        assert fake_action_log.instances == []
+
+    def test_successful_delete_records_action(self, fake_action_log):
+        mock_cal = MagicMock()
+        mock_cal.delete_event.return_value = {"ok": True, "event_id": "evt1"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._HANDLERS["delete_calendar_event"]({"event_id": "evt1"}))
+        appended = fake_action_log.instances[0].appended
+        assert len(appended) == 1
+        assert appended[0][1]["action"] == "calendar_delete"
+        assert out["action_id"] == appended[0][1]["id"]
+
+    def test_successful_update_records_action(self, fake_action_log):
+        mock_cal = MagicMock()
+        mock_cal.update_event.return_value = {"ok": True, "event_id": "evt1"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._HANDLERS["update_calendar_event"](
+                {"event_id": "evt1", "summary": "New"}
+            ))
+        appended = fake_action_log.instances[0].appended
+        assert len(appended) == 1
+        assert appended[0][1]["action"] == "calendar_update"
+        assert out["action_id"] == appended[0][1]["id"]
+
+    def test_action_log_write_failure_does_not_block_response(self, fake_action_log):
+        """The calendar write already happened — an audit-write failure is
+        logged, never rolled back or hidden from the caller."""
+        fake_action_log.raise_on_append = True
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-02T18:00:00+03:00",
+                end_iso="2026-08-02T19:00:00+03:00",
+            ))
+        assert out["event_id"] == "evt-new"
+        assert "action_id" in out  # id still generated even though the write failed
 
 
 class TestNativeHabitTools:
