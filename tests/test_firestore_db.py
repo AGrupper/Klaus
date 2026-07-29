@@ -897,6 +897,310 @@ class TestOutreachLogStore:
 
 
 # =============================================================================
+# ActionLogStore — D-25 action audit, written at action time (Phase 33)
+# =============================================================================
+
+class _ActionLogFakeSnap:
+    """Minimal Firestore document-snapshot stand-in for the fakes below."""
+
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data else {}
+
+
+class _ActionLogFakeDoc:
+    """In-memory doc-ref that understands ArrayUnion-shaped merge writes.
+
+    Unlike ``_make_mock_client_with_collection``'s bare MagicMock, this fake
+    actually accumulates ``entries`` across successive ``append()`` calls —
+    needed so ``get_recent``/``undisclosed`` tests can build multi-day,
+    multi-entry state realistically instead of hand-seeding every field.
+    """
+
+    def __init__(self, store: dict, key: str):
+        self._store = store
+        self._key = key
+
+    def get(self):
+        return _ActionLogFakeSnap(self._store.get(self._key))
+
+    def set(self, data: dict, merge: bool = False) -> None:
+        if not merge:
+            self._store[self._key] = dict(data)
+            return
+        cur = dict(self._store.get(self._key) or {})
+        for k, v in data.items():
+            if hasattr(v, "values") and not isinstance(v, (dict, list)):
+                # ArrayUnion-shaped sentinel (see local _install_firestore_mock's
+                # _ArrayUnion) — append (deduped) rather than overwrite.
+                existing = list(cur.get(k) or [])
+                for item in v.values:
+                    if item not in existing:
+                        existing.append(item)
+                cur[k] = existing
+            else:
+                cur[k] = v
+        self._store[self._key] = cur
+
+    def delete(self) -> None:
+        self._store.pop(self._key, None)
+
+
+class _ActionLogFakeCol:
+    def __init__(self, store: dict):
+        self._store = store
+
+    def document(self, key: str) -> _ActionLogFakeDoc:
+        return _ActionLogFakeDoc(self._store, key)
+
+
+class _ActionLogFakeClient:
+    def __init__(self):
+        self._data: dict = {}
+
+    def collection(self, name: str) -> _ActionLogFakeCol:
+        return _ActionLogFakeCol(self._data.setdefault(name, {}))
+
+
+class TestActionLogStore:
+    """Unit tests for ActionLogStore — D-25 per-day action audit."""
+
+    _ENTRY = {
+        "id": "abc123",
+        "action": "calendar_create",
+        "detail": "Upper Body, 2026-08-02 18:00",
+        "occasion": "nightly",
+        "at": "2026-08-01T22:14:05+03:00",
+        "disclosed": False,
+    }
+
+    def test_append_uses_array_union_atomically(self):
+        """append() must wrap the entry in firestore.ArrayUnion and merge=True
+        (mirrors OutreachLogStore.append's atomic-write contract)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            store.append("2026-08-01", self._ENTRY)
+
+        col.document.assert_called_with("2026-08-01")
+        doc_ref.set.assert_called_once()
+        args, kwargs = doc_ref.set.call_args
+        payload = args[0]
+
+        assert kwargs.get("merge") is True, "ActionLogStore.append must use merge=True"
+        assert payload["date"] == "2026-08-01"
+        entries_val = payload["entries"]
+        assert "ArrayUnion" in type(entries_val).__name__, (
+            f"entries should be wrapped in firestore.ArrayUnion, got {type(entries_val).__name__}"
+        )
+        assert entries_val.values == [self._ENTRY]
+        assert payload["updated_at"] is firestore_db.firestore.SERVER_TIMESTAMP
+
+    def test_append_raises_on_firestore_error(self):
+        """append() must log and re-raise when Firestore .set() fails — an
+        action write must never be silently dropped (D-25 no-invisible-action)."""
+        client, col = _make_mock_client_with_collection()
+        doc_ref = MagicMock()
+        doc_ref.set.side_effect = RuntimeError("simulated set failure")
+        col.document.return_value = doc_ref
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            with pytest.raises(RuntimeError):
+                store.append("2026-08-01", self._ENTRY)
+
+    def test_docstring_states_d25_and_not_send_gated(self):
+        """T-33-06 / D-25 regression guard — the class docstring must name D-25
+        and, in the same sentence as 'send', say the write is NOT gated on it
+        (the deliberate inverse of OutreachLogStore's D-10 write-after-send rule)."""
+        doc = firestore_db.ActionLogStore.__doc__ or ""
+        assert "D-25" in doc
+        found = False
+        for sentence in doc.replace("\n", " ").split("."):
+            lowered = sentence.lower()
+            if "not" in lowered and "send" in lowered:
+                found = True
+                break
+        assert found, (
+            "ActionLogStore docstring must state, in the same sentence as 'send', "
+            "that the write is NOT gated on send success (D-25)"
+        )
+
+    def test_get_recent_returns_empty_on_firestore_error(self):
+        """A .get() error on every candidate day must not raise — get_recent
+        degrades to [] so an occasion's disclosure block never blocks a compose."""
+        class _RaisingDoc:
+            def get(self):
+                raise RuntimeError("simulated outage")
+
+        class _RaisingCol:
+            def document(self, _key):
+                return _RaisingDoc()
+
+        class _RaisingClient:
+            def collection(self, _name):
+                return _RaisingCol()
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+            store = firestore_db.ActionLogStore("test-project")
+            assert store.get_recent(3, today="2026-08-01") == []
+
+    def test_get_recent_walks_dates_backward_and_flattens_entries(self):
+        """get_recent(days) collects entries across the last `days` date-keyed
+        docs, newest day first — this store is doc-per-date, not field-indexed."""
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            store.append("2026-08-01", {**self._ENTRY, "id": "day0"})
+            store.append("2026-07-31", {**self._ENTRY, "id": "day1"})
+            store.append("2026-07-29", {**self._ENTRY, "id": "day3-outside-window"})
+
+            results = store.get_recent(2, today="2026-08-01")
+
+        ids = [e["id"] for e in results]
+        assert ids == ["day0", "day1"]
+
+    def test_undisclosed_excludes_disclosed_true_includes_false(self):
+        """undisclosed() must exclude disclosed=True entries and include
+        disclosed=False (or absent) ones — feeds the D-25 disclosure block."""
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            store.append("2026-08-01", {**self._ENTRY, "id": "told-already", "disclosed": True})
+            store.append("2026-08-01", {**self._ENTRY, "id": "never-told", "disclosed": False})
+
+            result = store.undisclosed(2, today="2026-08-01")
+
+        ids = [e["id"] for e in result]
+        assert "never-told" in ids
+        assert "told-already" not in ids
+
+    def test_mark_disclosed_flips_only_matching_entry(self):
+        """mark_disclosed(date, [id]) must flip only the matching entry's
+        disclosed flag, leaving sibling entries in the same doc untouched."""
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            store.append("2026-08-01", {**self._ENTRY, "id": "flip-me", "disclosed": False})
+            store.append("2026-08-01", {**self._ENTRY, "id": "leave-me", "disclosed": False})
+
+            store.mark_disclosed("2026-08-01", ["flip-me"])
+            result = {e["id"]: e["disclosed"] for e in store.get_recent(1, today="2026-08-01")}
+
+        assert result["flip-me"] is True
+        assert result["leave-me"] is False
+
+    def test_get_recent_jsonsafe_on_datetime_like_value(self):
+        """A DatetimeWithNanoseconds-like value (any object with .isoformat())
+        inside a stored entry must come back as a str from get_recent, and the
+        result must survive json.dumps — the MealStore/TrainingLogStore trap."""
+        import json as _json
+
+        class _FakeServerTimestamp:
+            def isoformat(self):
+                return "2026-08-01T22:14:05+00:00"
+
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.ActionLogStore("test-project")
+            store.append(
+                "2026-08-01",
+                {**self._ENTRY, "id": "ts-entry", "captured_at": _FakeServerTimestamp()},
+            )
+            results = store.get_recent(1, today="2026-08-01")
+
+        entry = next(e for e in results if e["id"] == "ts-entry")
+        assert isinstance(entry["captured_at"], str)
+        assert entry["captured_at"] == "2026-08-01T22:14:05+00:00"
+        # Must not raise — this is the actual regression this test guards.
+        _json.dumps(results)
+
+
+# =============================================================================
+# OccasionInFlightStore — D-19 race marker (Phase 33)
+# =============================================================================
+
+class TestOccasionInFlightStore:
+    """Unit tests for OccasionInFlightStore — the D-19 same-minute-race marker."""
+
+    def test_mark_then_active_returns_occasion_name(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("nightly")
+            assert store.active() == "nightly"
+
+    def test_active_returns_none_when_expired(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            # Directly seed an already-expired marker (one second in the past).
+            from datetime import datetime, timedelta, timezone
+            past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+            store._col.document("current").set(
+                {"occasion": "nightly", "started_at": past, "expires_at": past},
+                merge=False,
+            )
+            assert store.active() is None
+
+    def test_active_returns_none_on_firestore_error(self):
+        class _RaisingDoc:
+            def get(self):
+                raise RuntimeError("simulated outage")
+
+        class _RaisingCol:
+            def document(self, _key):
+                return _RaisingDoc()
+
+        class _RaisingClient:
+            def collection(self, _name):
+                return _RaisingCol()
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            assert store.active() is None
+
+    def test_clear_removes_marker(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("morning")
+            assert store.active() == "morning"
+            store.clear()
+            assert store.active() is None
+
+    def test_mark_does_not_raise_when_set_fails(self):
+        class _RaisingDoc:
+            def set(self, *_a, **_k):
+                raise RuntimeError("simulated write failure")
+
+        class _RaisingCol:
+            def document(self, _key):
+                return _RaisingDoc()
+
+        class _RaisingClient:
+            def collection(self, _name):
+                return _RaisingCol()
+
+        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+            store = firestore_db.OccasionInFlightStore("test-project")
+            store.mark("weekly_review")  # must not raise
+
+    def test_collection_and_doc_id(self):
+        assert firestore_db.OccasionInFlightStore._COLLECTION == "occasion_inflight"
+        assert firestore_db.OccasionInFlightStore._DOC_ID == "current"
+
+
+# =============================================================================
 # TickLogStore — NOTE 1, D-21
 # =============================================================================
 

@@ -2220,6 +2220,216 @@ class OutreachLogStore:
         return [str(e.get("topic_key", "")) for e in entries if e.get("topic_key")]
 
 
+class ActionLogStore:
+    """Per-day audit record of every Layer-2 write action (D-25 — Phase 33).
+
+    Schema (collection: ``action_log/{YYYY-MM-DD}``):
+        date: str                   # YYYY-MM-DD (also the doc id)
+        entries: list[dict]         # each entry = {id, action, detail, occasion,
+                                     #   at, disclosed}
+        updated_at: SERVER_TIMESTAMP  # doc-level only — set by append(), NOT
+                                     # inside entries
+
+    D-25 — deliberately NOT gated on ``send_and_inject`` success. This is the
+    exact inverse of ``OutreachLogStore``'s D-10 write-after-send discipline:
+    a calendar/task write Layer 2 makes gets its own audit record the moment
+    the write happens, whether or not the occasion's message ever ships.
+    Nothing Klaus does to Amit's calendar may stay invisible just because the
+    send that would have disclosed it failed. The two logs must NEVER be
+    merged — ``OutreachLogStore`` answers "what did Klaus say and when",
+    ``ActionLogStore`` answers "what did Klaus DO", and mixing the two write
+    disciplines into one collection would blur which invariant governs which
+    write.
+
+    Reads (``get_recent``, ``undisclosed``) never raise — they return ``[]``
+    on any Firestore error so a read failure never blocks an occasion's
+    compose step. Writes (``append``) re-raise after logging, matching
+    ``OutreachLogStore.append`` — an action write failing silently would
+    defeat the D-25 no-invisible-action guarantee. ``mark_disclosed`` never
+    raises (see its own docstring for why a missed flip self-heals).
+
+    NOTE 2 (mirrors ``OutreachLogStore``) — do NOT put
+    ``firestore.SERVER_TIMESTAMP`` (or any other sentinel) inside an
+    ``entry`` dict passed to ``append()``. ``ArrayUnion`` compares list
+    elements by deep equality, and each ``SERVER_TIMESTAMP`` sentinel is a
+    freshly allocated object, so two "same" entries with embedded sentinels
+    would NEVER de-duplicate. Use a static ISO string in ``entry["at"]``
+    instead; the doc-level ``updated_at`` set inside ``append()`` is the only
+    place ``SERVER_TIMESTAMP`` appears.
+
+    Entry shape (all values JSON-primitive; NEVER firestore.SERVER_TIMESTAMP
+    inside)::
+
+        {"id": "<uuid4 hex>",
+         "action": "calendar_create" | "calendar_update" | "calendar_delete",
+         "detail": "Upper Body, 2026-08-02 18:00",
+         "occasion": "nightly" | "morning" | "weekly_review" | "tick" | "chat",
+         "at": "2026-08-01T22:14:05+03:00",
+         "disclosed": False}
+    """
+
+    _COLLECTION = "action_log"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        """
+        Args:
+            project_id: GCP project ID.
+            database:   Firestore database name (defaults to "(default)").
+        """
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def append(self, date_str: str, entry: dict) -> None:
+        """Atomically append `entry` to `date_str`'s action_log doc.
+
+        Unconditional — call this the moment a calendar/task write happens,
+        never gated on whether the occasion's message subsequently sends
+        (D-25, the deliberate inverse of ``OutreachLogStore.append``'s D-10
+        write-after-send rule). Uses ``firestore.ArrayUnion([entry])`` with
+        ``merge=True``, identical mechanics to ``OutreachLogStore.append``.
+
+        Args:
+            date_str: YYYY-MM-DD (Asia/Jerusalem calendar date).
+            entry:    Per-action record. See the class docstring's entry shape.
+
+        Raises:
+            Exception: Re-raises any Firestore write failure after logging it.
+
+        NOTE 2 — ``entry`` MUST NOT contain ``firestore.SERVER_TIMESTAMP``
+        sentinels — see the class docstring's NOTE 2 for why (ArrayUnion
+        deep-equality dedup breaks). Use a static ISO string in
+        ``entry["at"]`` instead.
+        """
+        try:
+            self._col.document(date_str).set(
+                {
+                    "date": date_str,
+                    "entries": firestore.ArrayUnion([entry]),
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.error("ActionLogStore.append(%r) failed", date_str, exc_info=True)
+            raise
+
+    def get_recent(self, days: int, *, today: str | None = None) -> list[dict]:
+        """Return entries from the last `days` calendar days, newest-first.
+
+        Iterates date keys backward from `today` (default: today's
+        Asia/Jerusalem calendar date) rather than issuing a range query —
+        this store is doc-per-date, not field-indexed, mirroring
+        ``TrainingLogStore``'s date-key access pattern. Never raises: a
+        per-day Firestore error is logged and that day is skipped, so one bad
+        day cannot blank the whole window.
+
+        Every returned entry is routed through ``_jsonsafe_doc`` (with its
+        `date` key merged in) so a SERVER_TIMESTAMP-derived `updated_at`
+        never reaches a read tool's `json.dumps` call — the same
+        MealStore/TrainingLogStore trap `get_recent_decisions` (plan 33-09)
+        would otherwise hit.
+
+        Args:
+            days:  How many calendar days back to look, inclusive of `today`.
+            today: YYYY-MM-DD to anchor the window at. Defaults to the
+                current Asia/Jerusalem calendar date.
+
+        Returns:
+            A flat list of entry dicts, each carrying its own `date` key,
+            newest day first. `[]` on any top-level failure.
+        """
+        from datetime import date as _date, datetime as _datetime, timedelta
+        from zoneinfo import ZoneInfo as _ZoneInfo
+
+        try:
+            if today is None:
+                anchor = _datetime.now(_ZoneInfo("Asia/Jerusalem")).date()
+            else:
+                anchor = _date.fromisoformat(today)
+        except Exception:
+            logger.warning("ActionLogStore.get_recent(%r) bad anchor date", today, exc_info=True)
+            return []
+
+        results: list[dict] = []
+        for offset in range(max(0, days)):
+            d_iso = (anchor - timedelta(days=offset)).isoformat()
+            try:
+                snap = self._col.document(d_iso).get()
+                if not snap.exists:
+                    continue
+                data = snap.to_dict() or {}
+                for entry in data.get("entries") or []:
+                    results.append(_jsonsafe_doc({**entry, "date": d_iso}))
+            except Exception:
+                logger.warning("ActionLogStore.get_recent day %r failed", d_iso, exc_info=True)
+                continue
+        return results
+
+    def undisclosed(self, days: int = 7, *, today: str | None = None) -> list[dict]:
+        """Return `get_recent(days)` entries not yet marked disclosed (D-25).
+
+        Feeds the Layer-2 disclosure block (plan 33-04) and the heartbeat's
+        undisclosed-actions anomaly check (plan 33-11, D-28 #4) — "I already
+        did this but never told him". Never raises — inherits
+        ``get_recent``'s fail-soft-per-day contract.
+
+        Args:
+            days:  How many calendar days back to look. Defaults to 7.
+            today: YYYY-MM-DD anchor; defaults to today (Asia/Jerusalem).
+
+        Returns:
+            The subset of `get_recent(days, today=today)` whose `disclosed`
+            field is not literally `True`.
+        """
+        return [
+            entry
+            for entry in self.get_recent(days, today=today)
+            if entry.get("disclosed") is not True
+        ]
+
+    def mark_disclosed(self, date_str: str, action_ids: list[str]) -> None:
+        """Mark the entries whose `id` is in `action_ids` as disclosed.
+
+        Read-modify-write: ``ArrayUnion`` cannot update a list element in
+        place, so this reads `date_str`'s `entries` list, sets
+        `disclosed=True` on every entry whose `id` is in `action_ids`, and
+        writes the whole list back with `set({"entries": [...]}, merge=True)`.
+
+        Last-writer-wins caveat: a concurrent read-modify-write race could
+        drop another caller's flip. Acceptable in practice — the D-19
+        in-flight marker enforces one occasion composing at a time, so two
+        concurrent callers are not expected. Never raises: a Firestore
+        failure here is logged and swallowed, since a missed disclosure flip
+        self-heals (the next occasion still sees the entry as undisclosed and
+        discloses it again, per D-25 — nothing is lost, only re-said).
+
+        Args:
+            date_str:   YYYY-MM-DD (Asia/Jerusalem calendar date) whose doc
+                holds the entries to flip.
+            action_ids: `id` values (see entry shape) to mark disclosed.
+        """
+        try:
+            snap = self._col.document(date_str).get()
+            if not snap.exists:
+                return
+            data = snap.to_dict() or {}
+            entries = list(data.get("entries") or [])
+            ids = set(action_ids)
+            changed = False
+            for entry in entries:
+                if entry.get("id") in ids and entry.get("disclosed") is not True:
+                    entry["disclosed"] = True
+                    changed = True
+            if not changed:
+                return
+            self._col.document(date_str).set({"entries": entries}, merge=True)
+        except Exception:
+            logger.warning(
+                "ActionLogStore.mark_disclosed(%r, %r) failed",
+                date_str, action_ids, exc_info=True,
+            )
+
+
 class CostTripwireLogStore:
     """Per-date once-only suppression gate for the daily cost tripwire (BRAIN-04).
 
@@ -2419,6 +2629,104 @@ class TickSignatureStore:
             )
         except Exception:
             logger.warning("TickSignatureStore.set() failed", exc_info=True)
+
+
+class OccasionInFlightStore:
+    """D-19 race marker — lets the ``*/20`` tick yield while an occasion composes.
+
+    Firestore collection: ``occasion_inflight`` (lowercase per project casing
+    invariant). Single document, id ``current``. Document fields:
+        occasion:    str   # "nightly" | "morning" | "weekly_review"
+        started_at:  str   # ISO-8601, Asia/Jerusalem
+        expires_at:  str   # ISO-8601, Asia/Jerusalem
+
+    D-19 — on a same-minute race between an occasion and the ordinary
+    ``*/20`` tick, the occasion wins and the tick yields: the occasion is the
+    more substantial message and already covers what the tick would have
+    said. A short TTL (default 900s / 15 min — comfortably longer than any
+    single occasion compose) exists so a crashed or hung occasion self-heals
+    rather than muting the tick forever.
+
+    ``active()`` is fail-open BY DESIGN: a missing doc, an absent/unparseable
+    `expires_at`, an expired `expires_at`, or ANY exception all return
+    ``None`` (no occasion in flight). A Firestore outage must never
+    permanently mute the ``*/20`` tick — the worst case of failing open here
+    is an occasional same-minute double-message, not silence. ``mark()`` and
+    ``clear()`` are likewise never-raise: an occasion must still run even if
+    this store is unreachable, mirroring ``TickSignatureStore``'s fail-open
+    posture (the closest existing analog — single-doc, never-raises-on-read).
+    """
+
+    _COLLECTION = "occasion_inflight"
+    _DOC_ID = "current"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def mark(self, occasion: str, *, ttl_seconds: int = 900) -> None:
+        """Record that `occasion` has started composing, expiring in `ttl_seconds`.
+
+        Uses ``merge=False`` so a stale prior marker (a different occasion,
+        or an earlier `expires_at`) is fully replaced rather than merged.
+        Never raises (logs at WARNING and returns) — an occasion must still
+        run even if this store is unreachable; D-19 is a nice-to-have race
+        mitigation, not a correctness gate.
+        """
+        try:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+
+            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+            expires_at = now + timedelta(seconds=ttl_seconds)
+            self._col.document(self._DOC_ID).set(
+                {
+                    "occasion": occasion,
+                    "started_at": now.isoformat(),
+                    "expires_at": expires_at.isoformat(),
+                },
+                merge=False,
+            )
+        except Exception:
+            logger.warning("OccasionInFlightStore.mark(%r) failed", occasion, exc_info=True)
+
+    def active(self) -> str | None:
+        """Return the in-flight occasion's name, or None (also None on ANY error).
+
+        Fail-open by design (see class docstring): a missing doc, an
+        absent/unparseable `expires_at`, an expired `expires_at`, or any
+        exception all return None so a poisoned or orphaned marker can never
+        mute the ``*/20`` tick beyond `ttl_seconds`.
+        """
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+
+            snap = self._col.document(self._DOC_ID).get()
+            if not snap.exists:
+                return None
+            data = snap.to_dict() or {}
+            expires_raw = data.get("expires_at")
+            if not expires_raw:
+                return None
+            expires_at = datetime.fromisoformat(str(expires_raw))
+            now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=ZoneInfo("Asia/Jerusalem"))
+            if expires_at <= now:
+                return None
+            occasion = data.get("occasion")
+            return str(occasion) if occasion else None
+        except Exception:
+            logger.warning("OccasionInFlightStore.active() failed", exc_info=True)
+            return None
+
+    def clear(self) -> None:
+        """Remove the in-flight marker. Never raises."""
+        try:
+            self._col.document(self._DOC_ID).delete()
+        except Exception:
+            logger.warning("OccasionInFlightStore.clear() failed", exc_info=True)
 
 
 class CoachingTopicStore:
