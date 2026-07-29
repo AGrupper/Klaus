@@ -75,9 +75,19 @@ def _set_state(target_date: str, fields: dict) -> None:
         logger.warning("nightly_review: failed to write state for %s", target_date, exc_info=True)
 
 
+_TERMINAL_STATUSES = frozenset({"sent", "skipped_by_judgment"})
+
+
 def was_sent(target_date: str) -> bool:
-    """True if the nightly review already sent for this date (idempotency gate)."""
-    return _get_state(target_date).get("status") == "sent"
+    """True if the nightly review already reached a terminal outcome for this date.
+
+    "Terminal", not "sent" (D-04/D-12): a judgment skip is just as final as an
+    actual send — the 01:00 backstop must never re-litigate a night Klaus
+    already decided to stay quiet on, and any second trigger for the same
+    date (a snoozed Sleep-Focus toggle, a retried backstop) is a no-op either
+    way. It only judges nights where nothing ran at all.
+    """
+    return _get_state(target_date).get("status") in _TERMINAL_STATUSES
 
 
 # ------------------------------------------------------------------ #
@@ -229,8 +239,20 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
 # Composition                                                        #
 # ------------------------------------------------------------------ #
 
-def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> str:
-    """Compose the nightly message via the brain, with a plain-text fallback."""
+def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> tuple[str, str]:
+    """Compose the nightly message via the brain, with a plain-text fallback.
+
+    Legacy (OCCASION_CASCADE=false) composer — untouched apart from this
+    return-shape change (Task 2, D-30's byte-identical-legacy-path contract
+    covers everything upstream of this signature).
+
+    Returns:
+        ``(text, composed_via)`` where ``composed_via`` is ``"llm"`` when the
+        primary or Gemini-fallback compose produced the text, or
+        ``"plain_text_fallback"`` when the deterministic template did. SC-1:
+        a total LLM failure must still SEND while being greppable as
+        degraded — this tuple is how the caller learns which happened.
+    """
     prompt_path = Path(__file__).parent.parent / "prompts" / "nightly_review.md"
     try:
         from core.autonomous import _get_orchestrator
@@ -246,7 +268,7 @@ def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> 
         )
     except OSError:
         logger.warning("nightly_review: prompt file missing — using fallback")
-        return _plain_text_fallback(journal, tomorrow)
+        return _plain_text_fallback(journal, tomorrow), "plain_text_fallback"
 
     # Phase 31 (DIR-03/DIR-06/DIR-07) — two distinct directive-related keys:
     #   - standing_directives_block: the RAW active directives, rendered via
@@ -287,7 +309,7 @@ def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> 
         )
         text = (response.get("text") or "").strip()
         if text:
-            return text
+            return text, "llm"
     except Exception:
         logger.warning("nightly_review: LLM composition failed", exc_info=True)
 
@@ -309,11 +331,11 @@ def _compose_nightly(journal: dict | None, tomorrow: dict, target_date: str) -> 
         )
         text_fb = (response_fb.get("text") or "").strip()
         if text_fb:
-            return text_fb
+            return text_fb, "llm"
     except Exception:
         logger.warning("nightly_review: LLM fallback composition failed", exc_info=True)
 
-    return _plain_text_fallback(journal, tomorrow)
+    return _plain_text_fallback(journal, tomorrow), "plain_text_fallback"
 
 
 def _plain_text_fallback(journal: dict | None, tomorrow: dict) -> str:
@@ -357,57 +379,176 @@ def _plain_text_fallback(journal: dict | None, tomorrow: dict) -> str:
 # Build (blocking) + run (async send)                                #
 # ------------------------------------------------------------------ #
 
-def _build_nightly(target_date: str) -> dict:
-    """Blocking build: guarantee memory, gather tomorrow, compose. Run in executor."""
-    journal = _ensure_reflection(target_date)
-    tomorrow_iso = (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
-    tomorrow = _gather_tomorrow(tomorrow_iso)
-    text = _compose_nightly(journal, tomorrow, target_date)
-    structured = {
+def _structured_from_tomorrow(tomorrow_iso: str, tomorrow: dict) -> dict:
+    """Build the /api/today `structured` snapshot from a _gather_tomorrow() result.
+
+    Shared by the legacy and cascade branches of ``run_nightly`` (D-05) — one
+    source of truth for the exact snapshot shape the Hub reads, whether or
+    not the nightly ends up sending anything.
+    """
+    return {
         "tomorrow_date": tomorrow_iso,
         "tomorrow_events": tomorrow.get("calendar") or [],
         "tomorrow_tasks_overdue": (tomorrow.get("tasks") or {}).get("overdue", []),
         "tomorrow_tasks_today": (tomorrow.get("tasks") or {}).get("today", []),
         "planned_workouts": tomorrow.get("planned_workouts") or {},
     }
-    return {"text": text, "structured": structured}
+
+
+def _build_nightly(target_date: str) -> dict:
+    """Blocking build: guarantee memory, gather tomorrow, compose. Run in executor.
+
+    Legacy (OCCASION_CASCADE=false) path only — untouched apart from the
+    `_compose_nightly`/`_structured_from_tomorrow` plumbing (Task 2).
+    """
+    journal = _ensure_reflection(target_date)
+    tomorrow_iso = (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
+    tomorrow = _gather_tomorrow(tomorrow_iso)
+    text, composed_via = _compose_nightly(journal, tomorrow, target_date)
+    structured = _structured_from_tomorrow(tomorrow_iso, tomorrow)
+    return {"text": text, "structured": structured, "composed_via": composed_via}
+
+
+def _gather_for_cascade(target_date: str) -> dict:
+    """Blocking pre-cascade gather (OCCASION_CASCADE=true path).
+
+    D-07: the journal (`_ensure_reflection`) runs FIRST, unconditionally,
+    before any judgment reaches Layer 1/2 — choosing not to interrupt Amit
+    must not give Klaus amnesia about the day. Run in the executor exactly
+    like `_build_nightly` does today (blocking Firestore/Calendar/weather
+    calls have no place on the event loop).
+    """
+    journal = _ensure_reflection(target_date)
+    tomorrow_iso = (date.fromisoformat(target_date) + timedelta(days=1)).isoformat()
+    tomorrow = _gather_tomorrow(tomorrow_iso)
+    return {"journal": journal, "tomorrow": tomorrow, "tomorrow_iso": tomorrow_iso}
 
 
 async def run_nightly(bot: Bot, target_date: str, *, trigger: str, dedup: bool = True) -> bool:
     """Compose and send the nightly review for target_date.
 
-    Idempotent: if already sent today, returns False without sending (the backstop
-    relies on this so it never double-sends after the Sleep-Focus trigger fired).
+    Idempotent: if the date already reached a terminal status (`was_sent`,
+    now "sent" OR "skipped_by_judgment" — D-04/D-12), returns False without
+    running anything, so a later trigger/backstop for the same date is a
+    no-op either way.
+
+    Two branches behind the `OCCASION_CASCADE` env flag (D-30):
+      - **Flag off** (control arm): the untouched legacy `_build_nightly` ->
+        `_compose_nightly` two-tier LLM composer, always sends.
+      - **Flag on**: routes through the shared occasion cascade in
+        `core.autonomous` (occasion="nightly") — Klaus can legitimately
+        decide the night isn't worth interrupting Amit for
+        (`skipped_by_judgment`, OCC-01).
+
+    On both branches, the journal (D-07) and the tomorrow `structured`
+    snapshot (D-05) are written unconditionally — sent or skipped — before
+    any branch-specific state write, so the Hub's `/api/today` and Klaus's
+    own continuity never depend on whether he decided to speak.
 
     Args:
         bot:         Telegram Bot instance.
         target_date: YYYY-MM-DD the wind-down belongs to (see nightly_target_date).
         trigger:     "focus" | "backstop" — recorded for observability.
-        dedup:       If True, skip when already sent. If False, always fire.
+        dedup:       If True, skip when already terminal. If False, always fire.
 
     Returns:
-        True if a message was sent, False if skipped (already sent).
+        True if a message was sent, False otherwise (dedup short-circuit,
+        judgment skip, or an infra failure that produced neither).
     """
     if dedup and was_sent(target_date):
-        logger.info("nightly_review: already sent for %s — skipping (%s)", target_date, trigger)
+        logger.info("nightly_review: already terminal for %s — skipping (%s)", target_date, trigger)
         return False
 
     loop = asyncio.get_running_loop()
-    built = await loop.run_in_executor(None, _build_nightly, target_date)
+    _cascade_on = os.getenv("OCCASION_CASCADE", "false").lower() == "true"
 
-    from core.scheduled_message import send_and_inject
-    # WR-02 / D-07: reviews carry the "review" push class (24h TTL).
-    await send_and_inject(bot, built["text"], inject_into_conversation=True, message_class="review")
+    if not _cascade_on:
+        # Legacy path — the A/B's control arm, byte-identical to pre-Phase-33
+        # behavior apart from the D-05 snapshot-write split below.
+        built = await loop.run_in_executor(None, _build_nightly, target_date)
 
-    # Mark sent + persist tomorrow snapshot AFTER the send succeeds (write-after-send).
-    _set_state(target_date, {
-        "status": "sent",
-        "trigger": trigger,
-        "sent_at": datetime.now(_TZ).isoformat(),
-        "structured": built["structured"],
-    })
-    logger.info("nightly_review: sent and injected for %s (%s)", target_date, trigger)
-    return True
+        from core.scheduled_message import send_and_inject
+        # WR-02 / D-07: reviews carry the "review" push class (24h TTL).
+        await send_and_inject(bot, built["text"], inject_into_conversation=True, message_class="review")
+
+        judged_at = datetime.now(_TZ).isoformat()
+        # D-05 — structured snapshot written unconditionally; here that is
+        # always alongside a send, but the write is split in two so the
+        # payload shape stays consistent with the cascade branch below.
+        _set_state(target_date, {"structured": built["structured"], "judged_at": judged_at})
+        _set_state(target_date, {
+            "status": "sent",
+            "trigger": trigger,
+            "sent_at": judged_at,
+            "composed_via": built["composed_via"],
+        })
+        logger.info("nightly_review: sent and injected for %s (%s)", target_date, trigger)
+        return True
+
+    # Cascade path (OCCASION_CASCADE=true) — Klaus judges whether tonight is
+    # worth interrupting Amit for.
+    pre = await loop.run_in_executor(None, _gather_for_cascade, target_date)
+    journal = pre["journal"]
+    tomorrow = pre["tomorrow"]
+    tomorrow_iso = pre["tomorrow_iso"]
+    structured = _structured_from_tomorrow(tomorrow_iso, tomorrow)
+
+    from core import autonomous as _autonomous
+    occasion_prompt = _autonomous._load_prompt("prompts/nightly_occasion.md")
+    decision = await _autonomous.run_occasion_cascade(
+        bot,
+        occasion="nightly",
+        target_date=target_date,
+        occasion_data={"journal": journal, "tomorrow": tomorrow, **structured},
+        occasion_prompt=occasion_prompt,
+        advisory_only=False,
+    )
+
+    judged_at = datetime.now(_TZ).isoformat()
+    # D-05 — the tomorrow snapshot is written unconditionally, sent or
+    # skipped, so /api/today always has its day summary.
+    _set_state(target_date, {"structured": structured, "judged_at": judged_at})
+
+    if decision.get("sent"):
+        _set_state(target_date, {
+            "status": "sent",
+            "trigger": trigger,
+            "sent_at": judged_at,
+            # composed_via is "llm" on a normal compose, "draft_fallback" if
+            # Layer 2 failed and the Layer-1 draft was sent instead (D-19) —
+            # either way a send, never absent.
+            "composed_via": decision.get("composed_via") or "llm",
+        })
+        logger.info("nightly_review: sent (cascade) for %s (%s)", target_date, trigger)
+        return True
+
+    if decision.get("skipped") == "judgment":
+        # T-33-19 — a judgment skip writes NO composed_via key at all (absent
+        # means "no compose was attempted"), keeping it structurally
+        # distinguishable from the infra-degraded-but-sent path (SC-1).
+        _set_state(target_date, {
+            "status": "skipped_by_judgment",
+            "trigger": trigger,
+            "skip_cause": decision.get("skip_cause", ""),
+            # D-06 — Layer 1's own free draft, Klaus's own one-liner for the
+            # night he judged wasn't worth interrupting Amit over.
+            "draft": decision.get("draft", ""),
+        })
+        logger.info(
+            "nightly_review: skipped_by_judgment for %s (%s, cause=%s)",
+            target_date, trigger, decision.get("skip_cause", ""),
+        )
+        return False
+
+    # Cascade infra failure (Layer-1 exception, empty draft+compose, a send
+    # that failed outright) — NOT a judgment skip (mislabeling it would
+    # defeat SC-1's whole point) and NOT written as a terminal status, so a
+    # later trigger or the 01:00 backstop can still retry the same date.
+    logger.warning(
+        "nightly_review: cascade produced neither a send nor a judgment skip "
+        "for %s (%s) — trail=%s", target_date, trigger, decision.get("trail"),
+    )
+    return False
 
 
 # ------------------------------------------------------------------ #
