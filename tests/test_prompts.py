@@ -286,6 +286,191 @@ def test_current_time_placeholder_present_in_brain_prompts():
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 03 — occasion cascade: shared-prompt occasion judgment
+# ---------------------------------------------------------------------------
+
+OCCASION_ADDENDUM_PATH = os.path.join(REPO_ROOT, "prompts", "occasion_triage_addendum.md")
+
+
+def test_triage_skip_cause_in_output_contract():
+    """D-02 / output-contract extension — skip_cause is part of the JSON
+    verdict schema so TickBrain._parse_response's shape stays one place."""
+    content = _read(TRIAGE_PATH)
+    assert "skip_cause" in content
+
+
+def test_triage_references_occasion_addendum():
+    """Token-budget arbitration (Task 1) — the maximal triage prompt has only
+    ~14 tokens of margin under the Groq admission ceiling, so the full D-01/
+    D-02/D-03 occasion-judgment block lives in the sibling addendum file
+    instead of inline; autonomous_triage.md must still point at it by name so
+    plan 33-04 knows where to render it from (D-36's "one shared file")."""
+    content = _read(TRIAGE_PATH)
+    assert "occasion_triage_addendum.md" in content
+
+
+def test_occasion_addendum_exists():
+    assert os.path.isfile(OCCASION_ADDENDUM_PATH), (
+        f"Expected file at {OCCASION_ADDENDUM_PATH}"
+    )
+
+
+def test_occasion_addendum_four_skip_causes():
+    """D-02 — exactly four legitimate skip causes, all named."""
+    content = _read(OCCASION_ADDENDUM_PATH)
+    for cause in ("directive", "already_covered", "nothing_happened", "reaction_history"):
+        assert cause in content, (
+            f"occasion_triage_addendum.md missing skip cause {cause!r}"
+        )
+
+
+def test_occasion_addendum_weekly_never_self_skips():
+    """D-03 — weekly_review's judgment governs shape/emphasis, never whether
+    it fires; only the Step-0 standing-directive veto can silence it."""
+    content = _read(OCCASION_ADDENDUM_PATH).lower()
+    assert "weekly_review" in content
+    assert "shape" in content
+
+
+def test_autonomous_md_max_tool_iterations_corrected():
+    """Task 2(d) — the real constant in core/main.py:50 is 12, not the stale
+    8 documented previously."""
+    content = _read(AUTONOMOUS_PATH)
+    assert "MAX_TOOL_ITERATIONS = 8" not in content
+    assert "MAX_TOOL_ITERATIONS = 12" in content
+
+
+def test_autonomous_md_write_and_disclose():
+    """D-23/D-24 — write-and-disclose contract: all three action-line
+    prefixes plus the surviving standing-directive veto."""
+    content = _read(AUTONOMOUS_PATH)
+    for prefix in ("Created: ", "Moved: ", "Deleted: "):
+        assert prefix in content, (
+            f"autonomous.md missing disclosure prefix {prefix!r}"
+        )
+    assert "standing directive" in content
+
+
+def test_autonomous_md_fold_around_outreach():
+    """D-16/D-17 — fold-around-recent-outreach instruction (compose around
+    prior outreach, reference rather than restate/repeat it)."""
+    content = _read(AUTONOMOUS_PATH).lower()
+    assert "already" in content
+    assert "restate" in content or "repeat" in content
+
+
+# ---------------------------------------------------------------------------
+# Phase 33 Plan 03 Task 3 — occasion prompts: identity + one standing
+# question each (D-35), rendered as literal text into the Layer-2 user
+# message by plan 33-04 (not through render_smart_system).
+# ---------------------------------------------------------------------------
+
+NIGHTLY_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "nightly_occasion.md")
+MORNING_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "morning_occasion.md")
+WEEKLY_OCCASION_PATH = os.path.join(REPO_ROOT, "prompts", "weekly_occasion.md")
+_OCCASION_PROMPT_PATHS = (
+    NIGHTLY_OCCASION_PATH,
+    MORNING_OCCASION_PATH,
+    WEEKLY_OCCASION_PATH,
+)
+
+# Matches a real render placeholder like {self_md} or {today_date}; does NOT
+# match the weekly occasion's literal JSON illustration
+# {"skip": true, "reason": "..."} because the char right after `{` there is a
+# quote, not a letter/underscore.
+_PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def test_occasion_prompts_exist_and_load_via_prompt_loader():
+    """D-35 — all three occasion prompts exist, load via the project's shared
+    prompt loader (core.prompt_loader.load_prompt), and are non-empty."""
+    from core.prompt_loader import load_prompt
+
+    for path, rel in (
+        (NIGHTLY_OCCASION_PATH, "prompts/nightly_occasion.md"),
+        (MORNING_OCCASION_PATH, "prompts/morning_occasion.md"),
+        (WEEKLY_OCCASION_PATH, "prompts/weekly_occasion.md"),
+    ):
+        assert os.path.isfile(path), f"Expected file at {path}"
+        loaded = load_prompt(rel)
+        assert loaded, f"{rel} loaded empty via load_prompt"
+
+
+def test_occasion_prompts_have_no_render_placeholders():
+    """These files are rendered as literal text into the Layer-2 user message
+    (plan 33-04), not through render_smart_system — so they must carry no
+    unsubstituted {placeholder} braces. The weekly's literal
+    {"skip": true, ...} JSON illustration must NOT trip this check."""
+    for path in _OCCASION_PROMPT_PATHS:
+        content = _read(path)
+        matches = _PLACEHOLDER_RE.findall(content)
+        assert not matches, f"{path} contains unexpected placeholders: {matches}"
+
+
+def test_occasion_prompts_body_length_bounds():
+    """D-35 — a few lines each: 4-14 non-comment/non-blank lines, except
+    weekly_occasion.md (up to 20, to accommodate the Step-0 trailer)."""
+    for path in (NIGHTLY_OCCASION_PATH, MORNING_OCCASION_PATH):
+        content = _read(path)
+        body_lines = [
+            ln for ln in content.splitlines()
+            if ln.strip() and not ln.startswith("<!--")
+        ]
+        assert 4 <= len(body_lines) <= 14, (
+            f"{path} body has {len(body_lines)} lines, expected 4-14"
+        )
+    weekly_content = _read(WEEKLY_OCCASION_PATH)
+    weekly_body_lines = [
+        ln for ln in weekly_content.splitlines()
+        if ln.strip() and not ln.startswith("<!--")
+    ]
+    assert 4 <= len(weekly_body_lines) <= 20, (
+        f"{WEEKLY_OCCASION_PATH} body has {len(weekly_body_lines)} lines, expected 4-20"
+    )
+
+
+def test_morning_occasion_defers_to_weekly():
+    """D-20 — Sunday morning stays light on training when the weekly review
+    is scheduled for later the same day."""
+    content = _read(MORNING_OCCASION_PATH)
+    assert "weekly" in content.lower()
+
+
+def test_weekly_occasion_always_fires():
+    """D-03 — weekly_review's judgment is about shape, never whether it
+    fires; 'always' framing must appear in the body (not just the comment)."""
+    content = _read(WEEKLY_OCCASION_PATH)
+    body = "\n".join(
+        ln for ln in content.splitlines() if not ln.startswith("<!--")
+    )
+    assert "always" in body.lower()
+
+
+def test_weekly_occasion_carries_directive_veto_trailer():
+    """Phase 31 D-21/D-22 preserved — the Step-0 standing-directive-veto
+    trailer instruction (parsed by
+    core.weekly_training_review._parse_review_skip) must be present so the
+    cascade's veto_parser has something to catch."""
+    content = _read(WEEKLY_OCCASION_PATH)
+    assert '"skip"' in content
+    assert '```json' in content
+
+
+def test_occasion_prompts_no_legacy_checklist_knowledge():
+    """D-33 — knowledge lives in the data, not the prompt. No fuel-plan /
+    'Week N of 16' / numbered-checklist knowledge transcribed from the
+    legacy composers."""
+    numbered_section_re = re.compile(r"^\s*\d+\.\s+", re.MULTILINE)
+    for path in _OCCASION_PROMPT_PATHS:
+        content = _read(path)
+        assert "fuel" not in content.lower(), f"{path} contains 'fuel'"
+        assert "Week N" not in content, f"{path} contains 'Week N'"
+        assert not numbered_section_re.search(content), (
+            f"{path} contains a numbered section list"
+        )
+
+
 def test_smart_agent_current_time_at_tail():
     """Prompt-caching guard: {current_time} changes every minute, so it must
     sit in the trailing ~15%% of smart_agent.md — placing it early would

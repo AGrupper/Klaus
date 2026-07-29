@@ -88,7 +88,8 @@ Schema:
   "should_act": true | false,
   "reason": "<one-sentence explanation of my judgment>",
   "draft": "<short message draft if should_act is true; omit or empty string if false>",
-  "topic_key": "<short slug categorising this outreach — see examples below>"
+  "topic_key": "<short slug categorising this outreach — see examples below>",
+  "skip_cause": "<empty normally; on an occasion skip: directive, already_covered, nothing_happened, or reaction_history — full rules in occasion_triage_addendum.md>"
 }
 ```
 
