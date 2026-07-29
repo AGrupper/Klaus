@@ -228,6 +228,206 @@ async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) 
 
 
 # ------------------------------------------------------------------ #
+# Phase 33 Plan 07 — push-triggered, cascade-only entry point        #
+# (D-08/D-09/D-11/D-12/D-13/D-14/D-30)                                #
+# ------------------------------------------------------------------ #
+
+_TERMINAL_STATUSES = frozenset(
+    {"sent", "manual", "skipped_by_judgment", "skipped_by_directive"}
+)
+
+
+async def run_morning_briefing_triggered(
+    bot: Bot, today_iso: str, *, trigger: str, dedup: bool = True
+) -> bool:
+    """Push-triggered, cascade-only morning briefing entry point (D-08/D-09/D-30).
+
+    Fires immediately with no Garmin gate, no hour cutoff, and no time floor —
+    the iOS Sleep-Focus-off Shortcut (or a manual "brief me") is the only
+    trigger. Sleep data becomes briefing *content*; when today's sync hasn't
+    landed yet, Klaus composes without it and names the gap rather than
+    fabricating or silently omitting it (D-11). Modelled on
+    ``core.nightly_review.run_nightly``'s trigger-string + dedup-via-state-doc
+    shape, NOT on this module's own legacy ``handle_tick`` polling machine.
+
+    D-30: morning ships cascade-only — there is no feature-flag A/B branch
+    here, unlike nightly/weekly's rollout. ``handle_tick`` /
+    ``run_morning_briefing`` survive completely untouched alongside this
+    function for the D-31 dark-ship window (deleted only in plan 33-12, after
+    Amit's Sleep-Focus-off Shortcut is confirmed firing).
+
+    Args:
+        bot:       Telegram Bot instance.
+        today_iso: YYYY-MM-DD date to compose the briefing for.
+        trigger:   ``"focus"`` | ``"manual"`` — mirrors ``run_nightly``'s
+            ``"focus"`` | ``"backstop"``; recorded for observability only,
+            never gates behavior.
+        dedup:     If True (default), any terminal status already stored for
+            today short-circuits every later trigger the same day (D-12) — a
+            snooze, a second alarm, Sleep Focus toggled off/on/off. If False
+            (D-14's manual "brief me" path), always fires.
+
+    Returns:
+        True if a message actually went out (LLM/draft compose, or the SC-1
+        plain-text fallback below). False otherwise — a dedup no-op or a
+        Layer-1 judgment skip.
+    """
+    import asyncio
+
+    if dedup:
+        state = _get_state(today_iso)
+        status = state.get("status")
+        if status in _TERMINAL_STATUSES:
+            logger.info(
+                "morning_briefing: dedup — already %s for %s (trigger=%s)",
+                status, today_iso, trigger,
+            )
+            return False
+
+    loop = asyncio.get_running_loop()
+    today_data = await loop.run_in_executor(None, _gather_data, today_iso)
+
+    # D-11: _gather_data's existing garmin={"state": 2} fallback already IS
+    # "no sync yet" — this just makes the signal explicit and impossible for
+    # the compose layer to silently drop.
+    if (today_data.get("garmin") or {}).get("state") == 2:
+        today_data["garmin_missing"] = True
+
+    prompt_path = Path(__file__).parent.parent / "prompts" / "morning_occasion.md"
+    try:
+        occasion_prompt = prompt_path.read_text(encoding="utf-8")
+    except OSError:
+        logger.warning(
+            "morning_briefing: prompts/morning_occasion.md missing — "
+            "proceeding with no occasion identity"
+        )
+        occasion_prompt = ""
+
+    now_iso = datetime.now(_TZ).isoformat()
+
+    # D-30 — no feature-flag A/B branch here: morning is cascade-only.
+    try:
+        from core.autonomous import run_occasion_cascade
+        decision = await run_occasion_cascade(
+            bot,
+            occasion="morning",
+            target_date=today_iso,
+            occasion_data=today_data,
+            occasion_prompt=occasion_prompt,
+            advisory_only=False,
+        )
+    except Exception:
+        # SC-1 — the cascade raised outside its own internal try/excepts
+        # (e.g. gather_situation() itself). Never leave the morning silent:
+        # fall back to the deterministic plain-text template and send it
+        # directly, mirroring the legacy composer's own last-resort path.
+        logger.error(
+            "morning_briefing: run_occasion_cascade raised — SC-1 plain-text "
+            "fallback for %s", today_iso, exc_info=True,
+        )
+        decision = {
+            "sent": False, "skipped": False, "draft": "",
+            "final_text": "", "composed_via": "", "skip_cause": "",
+        }
+        fallback_text = _plain_text_fallback(today_data, today_iso)
+        try:
+            from core.scheduled_message import send_and_inject
+            await send_and_inject(
+                bot, fallback_text, inject_into_conversation=True,
+                message_class="briefing",
+            )
+            decision["sent"] = True
+            decision["final_text"] = fallback_text
+            decision["composed_via"] = "plain_text_fallback"
+        except Exception:
+            logger.error(
+                "morning_briefing: SC-1 plain-text fallback send also failed "
+                "for %s", today_iso, exc_info=True,
+            )
+
+    # D-05 — the structured snapshot is written unconditionally: sent,
+    # skipped, or the SC-1 fallback above. The Hub's /api/today depends on
+    # "Klaus perceived the day", never on "Klaus decided to speak".
+    _set_state(today_iso, {
+        "structured": {
+            "events": today_data.get("calendar") or [],
+            "tasks_today": (today_data.get("tasks") or {}).get("today", []),
+            "tasks_overdue": (today_data.get("tasks") or {}).get("overdue", []),
+        },
+        "judged_at": now_iso,
+    })
+
+    sent = bool(decision.get("sent"))
+
+    # D-06 — daily_note is also written unconditionally; its SOURCE depends
+    # on the branch: the first non-empty line of what actually went out on a
+    # send (identical to the legacy one-liner logic), or Layer 1's own free
+    # draft verbatim on a skip — the one-liner Klaus judged wasn't worth
+    # interrupting Amit over. daily_note_date stays today_iso either way —
+    # the existing /api/today guard (_today_coach_note) is unchanged.
+    if sent:
+        daily_note = next(
+            (line.strip() for line in (decision.get("final_text") or "").splitlines()
+             if line.strip()),
+            "",
+        )
+    else:
+        daily_note = decision.get("draft", "")
+    try:
+        from memory.firestore_db import SelfStateStore
+        _sss = SelfStateStore(
+            project_id=os.environ["GCP_PROJECT_ID"],
+            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+        )
+        _sss.set({"daily_note": daily_note, "daily_note_date": today_iso})
+    except Exception:
+        logger.warning(
+            "morning_briefing: daily_note write to SelfStateStore failed — "
+            "non-fatal", exc_info=True,
+        )
+
+    if sent:
+        _set_state(today_iso, {
+            "status": "sent",
+            "trigger": trigger,
+            "sent_at": now_iso,
+            "composed_via": decision.get("composed_via", ""),
+        })
+        # Write-after-send discipline unchanged from the legacy composer —
+        # only fires once a message actually went out (T-24-17).
+        try:
+            _topics_included = today_data.get("coaching_topics_included") or []
+            if _topics_included:
+                from memory.firestore_db import CoachingTopicStore
+                _cts = CoachingTopicStore(
+                    project_id=os.environ["GCP_PROJECT_ID"],
+                    database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+                )
+                for _topic in _topics_included:
+                    _cts.add_topic(today_iso, _topic)
+        except Exception:
+            logger.warning(
+                "morning_briefing: coaching topic record failed", exc_info=True
+            )
+        logger.info(
+            "morning_briefing: sent and injected for %s (%s)", today_iso, trigger
+        )
+    else:
+        _set_state(today_iso, {
+            "status": "skipped_by_judgment",
+            "trigger": trigger,
+            "skip_cause": decision.get("skip_cause", ""),
+            "draft": decision.get("draft", ""),
+        })
+        logger.info(
+            "morning_briefing: skipped_by_judgment for %s (%s, cause=%s)",
+            today_iso, trigger, decision.get("skip_cause", ""),
+        )
+
+    return sent
+
+
+# ------------------------------------------------------------------ #
 # Data gathering                                                     #
 # ------------------------------------------------------------------ #
 
@@ -325,8 +525,63 @@ def _gather_data(today_iso: str) -> dict:
         structured = nightly.get("structured") if nightly else None
         if structured:
             data["since_last_night"] = structured
+
+        # D-15 — if last night's nightly never ran (no wind-down trigger, no
+        # 01:00 backstop), widen the window so the pair doesn't lose a day:
+        # gather yesterday's calendar + tasks alongside today's. A terminal
+        # nightly status ("sent" or, once 33-06 lands, "skipped_by_judgment")
+        # means the night was already handled — no widening needed.
+        nightly_ran = bool(nightly) and nightly.get("status") in {"sent", "skipped_by_judgment"}
+        data["nightly_ran"] = nightly_ran
+        if not nightly_ran:
+            yesterday_data: dict = {}
+            try:
+                from core.tools import _get_calendar_tool
+                y_start = datetime.fromisoformat(yesterday_iso).replace(tzinfo=_TZ)
+                y_end = datetime(y_start.year, y_start.month, y_start.day, 23, 59, 59, tzinfo=_TZ)
+                yesterday_data["calendar"] = _get_calendar_tool().list_events(
+                    y_start.isoformat(), y_end.isoformat(), max_results=20,
+                )
+            except Exception:
+                logger.warning(
+                    "morning_briefing: D-15 yesterday calendar fetch failed", exc_info=True
+                )
+            try:
+                from memory.firestore_db import TaskStore
+                _ts_yesterday = TaskStore(
+                    project_id=os.environ["GCP_PROJECT_ID"],
+                    database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+                )
+                yesterday_data["tasks"] = _ts_yesterday.get_today_and_overdue(yesterday_iso)
+            except Exception:
+                logger.warning(
+                    "morning_briefing: D-15 yesterday task fetch failed", exc_info=True
+                )
+            data["yesterday"] = yesterday_data
     except Exception:
         logger.warning("morning_briefing: nightly snapshot read failed", exc_info=True)
+
+    # D-20 — on a Sunday with the weekly review still to come this same day,
+    # signal the compose layer to stay light on training: orientation only,
+    # leaving the scorecard/projection to the 10:00 weekly. Detected via the
+    # shared OutreachLogStore namespace (D-18) rather than a new state doc —
+    # a "weekly:<date>" topic_key already lands there the moment the weekly
+    # occasion sends. Fail-open: a lookup failure never blocks the briefing.
+    try:
+        if date.fromisoformat(today_iso).isoweekday() == 7:  # Sunday
+            from memory.firestore_db import OutreachLogStore
+            _ols = OutreachLogStore(
+                project_id=os.environ["GCP_PROJECT_ID"],
+                database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
+            )
+            weekly_sent_today = any(
+                t.startswith("weekly:") for t in _ols.topics_today(today_iso)
+            )
+            data["weekly_review_due_today"] = not weekly_sent_today
+    except Exception:
+        logger.warning(
+            "morning_briefing: weekly_review_due_today computation failed", exc_info=True
+        )
 
     # Garmin
     try:

@@ -2034,7 +2034,13 @@ def _handle_forget_memory(vector_id: str) -> str:
 
 
 def _handle_run_morning_briefing() -> str:
-    """Trigger run_morning_briefing as a background task on the running event loop."""
+    """Trigger the push-triggered cascade morning briefing (D-14) as a
+    background task on the running event loop.
+
+    Phase 33 Plan 07: repointed from the legacy ``run_morning_briefing`` at
+    ``run_morning_briefing_triggered(..., trigger="manual", dedup=False)`` —
+    a manual "brief me" in chat runs the occasion cascade and ignores dedup.
+    """
     import asyncio
     from datetime import datetime
     from zoneinfo import ZoneInfo
@@ -2044,8 +2050,10 @@ def _handle_run_morning_briefing() -> str:
             return json.dumps({"error": "Application not initialised — use CLI smoke test instead."})
         today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
         loop = asyncio.get_event_loop()
-        from core.morning_briefing import run_morning_briefing
-        loop.create_task(run_morning_briefing(_application.bot, today_iso, dedup=False))
+        from core.morning_briefing import run_morning_briefing_triggered
+        loop.create_task(run_morning_briefing_triggered(
+            _application.bot, today_iso, trigger="manual", dedup=False,
+        ))
         # Mark as manual trigger in Firestore so dedup knows it was user-triggered.
         from core.morning_briefing import _set_state
         _set_state(today_iso, {"status": "manual", "trigger": "manual",
