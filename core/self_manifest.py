@@ -576,6 +576,23 @@ def _render_manifest(root: Path, sha: str) -> str:
     ]
 
     # ----- §7 Current Limits ---------------------------------------------
+    # Phase 33 Plan 02: read the live MAX_TOOL_ITERATIONS constant instead of
+    # hardcoding it, so this line can never desync from core/main.py again
+    # (it previously drifted to a stale "8" after the cap was raised to 12).
+    # Lazy import, matching _load_tool_data's convention above — core.main
+    # transitively pulls in core/tools.py + memory/firestore_db.py, which
+    # require the full Google/Firestore dependency stack that isn't
+    # guaranteed present in a dev/CI dry-run; Cloud Run always has it.
+    try:
+        from core.main import MAX_TOOL_ITERATIONS
+        max_tool_iterations = MAX_TOOL_ITERATIONS
+    except Exception as exc:
+        logger.warning(
+            "_render_manifest: core.main import failed (%s) — using fallback "
+            "MAX_TOOL_ITERATIONS", exc,
+        )
+        max_tool_iterations = 12  # must match core/main.py's MAX_TOOL_ITERATIONS
+
     lines += [
         "## Current Limits",
         "",
@@ -587,7 +604,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         "- **Outbound messages:** Telegram-only. No email send. No WhatsApp autonomous outbound.",
         "- **Gmail is read-only** — Klaus cannot send emails via any tool.",
         "- **Pinecone valid `kind` values:** `fact`, `chunk`, `chat`, `self`. (`self` = Klaus's own journal entries.)",
-        "- **Max tool iterations per conversation:** 8 (`MAX_TOOL_ITERATIONS` in `core/main.py`)",
+        f"- **Max tool iterations per conversation:** {max_tool_iterations} (`MAX_TOOL_ITERATIONS` in `core/main.py`)",
         "- **Conversation context reset:** every ~6 hours (Cloud Run container lifecycle)",
         "- **Autonomous proactive outreach:** not yet implemented (Phase 18)",
         "",
