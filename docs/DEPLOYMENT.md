@@ -1098,6 +1098,12 @@ are in `Asia/Jerusalem`.
 | 11 | klaus-nightly-backstop      | `0 1 * * *`           | `/cron/nightly-backstop`          | Nightly (WS2)  |
 | 12 | klaus-biometric-sync        | `30 5 * * *`          | `/cron/biometric-sync`            | Biometrics     |
 
+**Row 1 retirement note (Phase 33 / D-31):** `klaus-morning-briefing` is scheduled for
+retirement — the morning briefing is moving to a push-driven trigger (`/trigger/morning`,
+§22) mirroring the nightly's Sleep-Focus automation. The job stays in the inventory and
+keeps running unmodified until plan 33-13 confirms the new Sleep-Focus-off Shortcut is
+live and explicitly retires it. Do not delete this row or the job early.
+
 Nightly review (WS2): there is intentionally **no fixed-time send job** — the nightly
 review fires organically from the iOS Sleep-Focus automation hitting `/trigger/nightly`
 (shared-secret, see §22). `klaus-nightly-backstop` (01:00) is the safety net: it sends
@@ -1356,12 +1362,25 @@ in `core/heartbeat.py`) still monitors these via `_log_cron_run`.
 |----------|--------|------|-------|
 | `/cron/healthkit-sync` | iPhone Shortcut (Personal Automation) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | 19.1 |
 | `/trigger/nightly` | iPhone Personal Automation ("When Sleep Focus turns On") | shared-secret bearer (`NIGHTLY_TRIGGER_TOKEN`) | Nightly (WS2) |
+| `/trigger/morning` | iPhone Personal Automation ("When Sleep Focus turns Off") | shared-secret bearer (`MORNING_TRIGGER_TOKEN`) | 33 (D-08/D-13/D-31) |
 
 **iOS setup for `/trigger/nightly`:** Shortcuts → Automation → new Personal Automation →
 "When [Sleep Focus] turns On" → Run a Shortcut that does a `Get Contents of URL`:
 POST `${SERVICE_URL}/trigger/nightly`, header `Authorization: Bearer <NIGHTLY_TRIGGER_TOKEN>`.
 A dedicated token (not the HealthKit one) so a leak of either credential can't be used to
 drive the other endpoint (least privilege).
+
+**iOS setup for `/trigger/morning`:** the exact mirror, but triggered on the opposite Focus
+transition — Shortcuts → Automation → new Personal Automation → "When [Sleep Focus] turns
+Off" → `Get Contents of URL`: POST `${SERVICE_URL}/trigger/morning`, header
+`Authorization: Bearer <MORNING_TRIGGER_TOKEN>`. Full build procedure with troubleshooting:
+`docs/sleep_focus_off_shortcut.md`. Auth via a dedicated `MORNING_TRIGGER_TOKEN` — no
+fallback to `NIGHTLY_TRIGGER_TOKEN` (D-13). The route enqueues to Cloud Tasks and returns
+202 immediately (it does not compose the briefing in-request); 503 if the Cloud Tasks
+dispatch is unavailable, in which case the iOS Shortcut may retry. **Dark-shipped (D-31):**
+this route deploys and does nothing until Amit's Sleep-Focus-off Shortcut starts hitting
+it — `klaus-morning-briefing` (§19) keeps running unchanged until plan 33-13 confirms the
+Shortcut is live and retires it.
 
 ---
 
@@ -1412,6 +1431,64 @@ HEALTHKIT_WEBHOOK_TOKEN, separate value (least privilege).
 substituting the secret name and pasting the new token into the iOS Sleep-Focus
 Shortcut's `Authorization: Bearer …` header. The route refuses all requests (500) when
 the env is unset, so a missing mount fails closed rather than open.
+
+### MORNING_TRIGGER_TOKEN Secret (Phase 33 / D-08 / D-13 / D-31)
+
+Static shared-secret bearer for `/trigger/morning` (§22) — same shape as
+NIGHTLY_TRIGGER_TOKEN, but a **distinct** value (D-13 least privilege): a compromise
+of one proactive surface's token must not unlock the other.
+
+**Secret name:** `klaus-morning-trigger-token`
+
+**Create and populate (mirrors §6/§23 shape):**
+
+```bash
+gcloud secrets create klaus-morning-trigger-token \
+  --replication-policy=automatic \
+  --project=${PROJECT_ID}
+
+TOKEN=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+printf '%s' "$TOKEN" | gcloud secrets versions add klaus-morning-trigger-token \
+  --data-file=- --project=${PROJECT_ID}
+
+gcloud secrets add-iam-policy-binding klaus-morning-trigger-token \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --project=${PROJECT_ID}
+
+# SAVE THIS — you will paste it into the iOS Shortcut's Authorization header
+echo "Save this: MORNING_TRIGGER_TOKEN=${TOKEN}"
+```
+
+**Cloud Run binding:** `--set-secrets=MORNING_TRIGGER_TOKEN=klaus-morning-trigger-token:latest`
+(declared in `deploy.yml`'s `--update-secrets`, immediately after
+`NIGHTLY_TRIGGER_TOKEN=klaus-nightly-trigger-token:latest` — declaring it in the workflow
+is what stops the next deploy's `--set-env-vars`/`--update-secrets` clobber from silently
+unmounting an out-of-band value, per the Phase 29 web-push incident).
+
+**Route behavior until the secret exists:** `POST /trigger/morning` returns HTTP 500
+("Server misconfigured") — refuse-all, not fail-open — because
+`_verify_morning_trigger_request` treats an unset `MORNING_TRIGGER_TOKEN` env as a hard
+refusal rather than an open gate.
+
+**Mint / rotate / kill-switch:** identical commands to HEALTHKIT_WEBHOOK_TOKEN above,
+substituting the secret name and pasting the new token into the Sleep-Focus-off Shortcut's
+`Authorization: Bearer …` header (build procedure: `docs/sleep_focus_off_shortcut.md`).
+
+### OCCASION_CASCADE flag (Phase 33 / D-30)
+
+Operator-flippable Cloud Run env var (plain `--set-env-vars`, not a secret) gating the
+nightly + weekly judgment-driven occasion cascade in `core/nightly_review.py` and
+`core/weekly_training_review.py`. Morning is cascade-only and is not gated by this flag.
+Ships `false` (declared in `deploy.yml` so it is not clobbered by the next
+`--set-env-vars` deploy); an operator step (plan 33-13) flips it to `true` after
+`/trigger/morning` is confirmed live, opening the observation window before the legacy
+composer is deleted in Phase 35.
+
+```bash
+gcloud run services update klaus-agent --region=me-west1 \
+  --update-env-vars=OCCASION_CASCADE=true
+```
 
 ---
 
