@@ -1362,7 +1362,7 @@ in `core/heartbeat.py`) still monitors these via `_log_cron_run`.
 |----------|--------|------|-------|
 | `/cron/healthkit-sync` | iPhone Shortcut (Personal Automation) | shared-secret bearer (`HEALTHKIT_WEBHOOK_TOKEN`) | 19.1 |
 | `/trigger/nightly` | iPhone Personal Automation ("When Sleep Focus turns On") | shared-secret bearer (`NIGHTLY_TRIGGER_TOKEN`) | Nightly (WS2) |
-| `/trigger/morning` | iPhone Personal Automation ("When Sleep Focus turns Off") | shared-secret bearer (`MORNING_TRIGGER_TOKEN`) | 33 (D-08/D-13/D-31) |
+| `/trigger/morning` | iPhone Personal Automation (wake-up; exact trigger varies by iOS version — see `docs/sleep_focus_off_shortcut.md` §3.0) | shared-secret bearer (`MORNING_TRIGGER_TOKEN`) | 33 (D-08/D-13/D-31) |
 
 **iOS setup for `/trigger/nightly`:** Shortcuts → Automation → new Personal Automation →
 "When [Sleep Focus] turns On" → Run a Shortcut that does a `Get Contents of URL`:

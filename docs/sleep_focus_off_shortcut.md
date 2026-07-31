@@ -3,12 +3,18 @@
 **Phase 33 (D-08 / D-13 / D-31)** — closes OCC-02's live trigger by bridging Amit's
 iPhone waking up (Sleep Focus turning off) into Klaus's morning briefing.
 
-This is the **exact mirror** of the existing Sleep-Focus-**ON** → `/trigger/nightly`
-automation (`docs/DEPLOYMENT.md` § 22), triggered on the opposite Focus transition.
-Code, auth, and the Cloud Tasks dispatch path all shipped in plan 33-10; this runbook
-is the operator-facing build guide for the one hard human prerequisite (D-31) — Amit
-has to build this automation himself, on his own phone, before `/trigger/morning`
-does anything.
+Intended as the mirror of the existing Sleep-Focus-**ON** → `/trigger/nightly`
+automation (`docs/DEPLOYMENT.md` § 22), triggered on the opposite transition. Code,
+auth, and the Cloud Tasks dispatch path all shipped in plan 33-10; this runbook is the
+operator-facing build guide for the one hard human prerequisite (D-31) — Amit has to
+build this automation himself, on his own phone, before `/trigger/morning` does
+anything.
+
+> **Correction (2026-07-31, from live setup).** The original version of this runbook
+> instructed "Focus → Sleep → Is Turned Off" as though it were universally available.
+> It is not: Apple excluded Sleep from the Focus automation trigger list until iOS 26.
+> On an older iOS the step is impossible to follow as written. §3.0 now selects the
+> trigger by iOS version. The filename is kept for stable inbound links.
 
 **There is no backstop for this trigger (D-09).** Unlike the nightly review (which has
 `klaus-nightly-backstop` at 01:00 as a safety net), the morning briefing has none — if
@@ -25,9 +31,14 @@ the same tracked-request path every occasion (nightly/morning/weekly) now uses
 (`core/task_dispatch.py::enqueue_occasion`, CLAUDE.md invariant: never a Starlette
 BackgroundTask).
 
-The trigger fires when Sleep Focus turns **Off** — i.e. Amit's phone leaves the
-overnight Focus mode, whether from an alarm, a manual toggle, or waking up before an
-alarm. This is functionally "wake-up detection" without any new hardware or app.
+The goal is wake-up detection without new hardware or an app: the phone tells Klaus
+that Amit is up, and the briefing composes from that moment. Which iOS event stands in
+for "Amit is up" depends on the iOS version — see §3.0. Ideally it is Sleep Focus
+turning **off** (covers alarm, manual toggle, and waking before an alarm); on older iOS
+it is the alarm being dismissed, or the Sleep Schedule's Wake Up event.
+
+Whatever the trigger, the route contract is identical — a bearer-authenticated POST
+with an empty body, deduped server-side per day.
 
 ## 2. Required permissions
 
@@ -36,10 +47,43 @@ No HealthKit permissions are needed for this automation (contrast with
 request to run automations "without asking" — grant it, or every morning will show
 a confirmation banner instead of running silently.
 
-## 3. Build: the Sleep-Focus-OFF Personal Automation
+## 3. Build: the wake-up Personal Automation
 
-Shortcuts → Automation tab → "+" (top right) → **Create Personal Automation** →
-**Focus** → select **Sleep** → set the trigger to **Is Turned Off** → Next.
+### 3.0 Choosing the trigger (READ FIRST — the obvious one may not exist)
+
+Sleep is not an ordinary Focus. Apple historically **excluded Sleep Focus from the
+personal-automation Focus trigger list** — every other Focus (Personal, Work, Do Not
+Disturb) could be automated on turn-on/turn-off, but Sleep could not. **iOS 26 lifted
+this restriction** and brought Sleep to parity with the other Focus modes.
+
+So the trigger you can use depends on the iOS version on the phone:
+
+| iOS version | Use this trigger | Notes |
+|---|---|---|
+| 26 or later | **Focus → Sleep → Is Turned Off** | Preferred. Fires on *any* end of Sleep Focus — alarm, manual toggle, or waking early. |
+| Before 26 | **Alarm → Is Stopped** | Best fallback. Fires when the alarm is dismissed, i.e. the same moment Sleep Focus ends. A first-class trigger, not schedule-derived. |
+| Any | **Wake Up** | Last resort. Tied to the Sleep Schedule, so it may not fire on a night with no schedule set, a disabled alarm, or an early wake. |
+
+Check the version at Settings → General → About → iOS Version. If Sleep does not appear
+under the Focus trigger list despite being on 26+, fall back to **Alarm → Is Stopped**.
+
+**Why this matters more than it looks (D-09).** Plan 33-13 retires the
+`morning-briefing-tick` cron, after which the morning briefing has **no backstop**. A
+trigger that silently stops firing means no briefing that day and nothing to catch it
+except the heartbeat's occasion-health check noticing after the fact. Prefer the
+widest-firing trigger the phone supports; the ranking in the table above is by
+coverage, not convenience.
+
+**Redundancy is safe.** Two automations pointing at `/trigger/morning` cannot produce
+two briefings — `run_morning_briefing_triggered` dedupes on the
+`morning_briefings/{date}` state doc (`_TERMINAL_STATUSES`), so whichever request
+arrives first wins and the second is a logged no-op. If the phone supports more than
+one of the triggers above, building two is strictly safer than building one.
+
+### 3.1 Build steps
+
+Shortcuts → Automation tab → "+" (top right) → **Create Personal Automation** → pick
+the trigger chosen in §3.0 → Next.
 
 Add one action: **Get Contents of URL**.
 
