@@ -12,9 +12,12 @@ anything.
 
 > **Correction (2026-07-31, from live setup).** The original version of this runbook
 > instructed "Focus → Sleep → Is Turned Off" as though it were universally available.
-> It is not: Apple excluded Sleep from the Focus automation trigger list until iOS 26.
-> On an older iOS the step is impossible to follow as written. §3.0 now selects the
-> trigger by iOS version. The filename is kept for stable inbound links.
+> It is not: Apple excludes Sleep from the Focus automation trigger list, and the
+> parity that shipped in an iOS 26 developer beta did not survive to public release —
+> it landed in iOS 27. Confirmed absent on iOS 26.5.2. The step is impossible to follow
+> as written on any current public iOS. §3.0 now selects the trigger by version; the
+> working trigger today is **Alarm → Is Stopped**. The filename is kept for stable
+> inbound links.
 
 **There is no backstop for this trigger (D-09).** Unlike the nightly review (which has
 `klaus-nightly-backstop` at 01:00 as a safety net), the morning briefing has none — if
@@ -51,21 +54,20 @@ a confirmation banner instead of running silently.
 
 ### 3.0 Choosing the trigger (READ FIRST — the obvious one may not exist)
 
-Sleep is not an ordinary Focus. Apple historically **excluded Sleep Focus from the
+Sleep is not an ordinary Focus. Apple **excludes Sleep Focus from the
 personal-automation Focus trigger list** — every other Focus (Personal, Work, Do Not
-Disturb) could be automated on turn-on/turn-off, but Sleep could not. **iOS 26 lifted
-this restriction** and brought Sleep to parity with the other Focus modes.
+Disturb) can be automated on turn-on/turn-off, but Sleep cannot. Parity appeared in an
+iOS 26 developer beta and was **not** kept for the public release; it landed in iOS 27.
 
-So the trigger you can use depends on the iOS version on the phone:
+**Verified on the actual device (2026-07-31): iOS 26.5.2 — Sleep is NOT in the Focus
+automation list.** Do not trust blog posts claiming iOS 26 fixed this; they are
+describing the beta. Check the phone before planning around it.
 
-| iOS version | Use this trigger | Notes |
+| Phone's iOS | Use this trigger | Notes |
 |---|---|---|
-| 26 or later | **Focus → Sleep → Is Turned Off** | Preferred. Fires on *any* end of Sleep Focus — alarm, manual toggle, or waking early. |
-| Before 26 | **Alarm → Is Stopped** | Best fallback. Fires when the alarm is dismissed, i.e. the same moment Sleep Focus ends. A first-class trigger, not schedule-derived. |
+| 27 or later | **Focus → Sleep → Is Turned Off** | Preferred. Fires on *any* end of Sleep Focus — alarm, manual toggle, or waking early. On iOS 27 the automation may need to be authored on iPadOS 27 / macOS Tahoe and then enabled on the phone. |
+| 26 or earlier | **Alarm → Is Stopped** | The working choice today. Fires when the alarm is dismissed — the same moment Sleep Focus ends. First-class trigger, not schedule-derived. |
 | Any | **Wake Up** | Last resort. Tied to the Sleep Schedule, so it may not fire on a night with no schedule set, a disabled alarm, or an early wake. |
-
-Check the version at Settings → General → About → iOS Version. If Sleep does not appear
-under the Focus trigger list despite being on 26+, fall back to **Alarm → Is Stopped**.
 
 **Why this matters more than it looks (D-09).** Plan 33-13 retires the
 `morning-briefing-tick` cron, after which the morning briefing has **no backstop**. A
