@@ -133,3 +133,47 @@ None — no bugs, missing critical functionality, or blocking issues were found 
 ---
 *Phase: 33-occasion-cascade*
 *Completed: 2026-07-30 (Task 1 of 2 — Task 2 blocked on human action)*
+
+## Task 2 — Operator checkpoint RESOLVED (2026-08-01)
+
+Human-action checkpoint closed. Evidence from production:
+
+| Step | Result |
+|------|--------|
+| `klaus-morning-trigger-token` secret | Created; v1 held the literal string `<value>` (paste error) and was replaced by v2 + disabled. Final token length 44. |
+| IAM grant to `klaus-runtime@` | Applied |
+| Deploy | Revision above `klaus-agent-00173` serving |
+| `POST /trigger/morning` no header | **401** `Missing or malformed Authorization header` |
+| `POST /trigger/morning` bad bearer | **403** `Invalid token` |
+| `POST /trigger/morning` valid bearer | **202** `{"accepted": true}` |
+| iOS automation | Built on the **Wake Up** trigger (see below) |
+| Live wake-up (2026-08-01) | `07:00:23Z /trigger/morning 202` → `07:00:24Z /internal/process-occasion 200` → `morning_briefing: skipped_by_judgment for 2026-08-01 (focus, cause=)` |
+
+### Deviation from the planned trigger (D-08)
+
+The plan and runbook specified **Focus → Sleep → Is Turned Off**. That trigger does not
+exist on current public iOS: Apple excludes Sleep from the Focus automation list, and
+the parity reported online shipped only in an iOS 26 developer beta — it landed in
+iOS 27. Verified absent on the device (iOS 26.5.2). The automation uses the **Wake Up**
+trigger instead; `docs/sleep_focus_off_shortcut.md` §3.0 now selects by iOS version and
+records the device evidence.
+
+Coverage consequence: Wake Up is tied to the Sleep Schedule, so it may not fire on a
+night with no schedule set or an unusually early wake. **Alarm → Is Stopped** was
+offered as a redundant second trigger and declined — Amit has daytime alarms, and with
+the per-day dedupe an afternoon alarm on a no-alarm morning would fire the briefing at
+the wrong time. Sound reasoning; single trigger accepted.
+
+Amit chose **option one** for 33-13: retire `morning-briefing-tick` outright, no
+backstop, per D-09.
+
+### Observations carried forward
+
+1. **Empty `skip_cause`** — both observed cascade runs (2026-07-31, 2026-08-01) logged
+   `cause=` empty. `verdict.get("skip_cause", "")` is not being populated by the
+   tick-brain. Non-breaking (heartbeat skip-streak counts statuses), but it degrades
+   the audit trail the observation window depends on. → Phase 35.
+2. **Legacy cron was already not delivering** — on 2026-07-31 `morning-briefing-tick`
+   ran 24 times without passing its Garmin gate; on 2026-08-01 it produced no briefing
+   either. The backstop being retired has not been delivering, which makes option one
+   low-cost but suggests a pre-existing morning-briefing gap worth separate review.
