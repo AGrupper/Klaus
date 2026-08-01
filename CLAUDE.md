@@ -70,7 +70,7 @@ Klaus/
 │   ├── pricing.py          # MODEL_PRICING dict + compute_cost(model, in, out)
 │   ├── heartbeat.py        # Hourly cron: stale-cron detection, SELF.md SHA, tick-brain reasoning
 │   ├── proactive_alerts.py # 21:30 nightly: weather/overload/travel-time alerts
-│   ├── morning_briefing.py # */10 6-10: Garmin-anchored daily briefing state machine
+│   ├── morning_briefing.py # Push-triggered (POST /trigger/morning, no cron): Garmin-anchored daily briefing
 │   ├── reflection.py       # Daily 22:00: gather day → journal entry → self_state update
 │   ├── nightly_review.py   # Sleep-Focus-triggered nightly review + tomorrow prep (01:00 backstop)
 │   ├── autonomous.py       # */20 7-21: 3-layer gather → tick-brain triage → brain compose
@@ -134,7 +134,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **Cloud Scheduler jobs:** heartbeat (hourly), morning-briefing-tick (*/10 6-10, now a light note), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-nightly-backstop (01:00, writes journal/self_state + sends the nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly` (the nightly flow writes the journal via `_ensure_reflection`). **Retired:** proactive-alerts (21:30) and reflect (22:00) — folded into the nightly review. **In transition (Phase 33, D-08/D-31):** the morning briefing is moving from `morning-briefing-tick`'s poll to a push trigger, `POST /trigger/morning`, fired by an iOS Sleep-Focus-*off* automation — the mirror of the nightly's Sleep-Focus-*on* trigger. It ships dark and `morning-briefing-tick` keeps running unchanged until the Shortcut is built and confirmed live, at which point the legacy cron retires (plan 33-13).
+- **Cloud Scheduler jobs:** heartbeat (hourly), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-nightly-backstop (01:00, writes journal/self_state + sends the nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly` (the nightly flow writes the journal via `_ensure_reflection`); the morning briefing is triggered the same way, by an iOS wake-up automation → `POST /trigger/morning` (Phase 33, D-08/D-31 — exact trigger mechanism varies by iOS version, see `docs/sleep_focus_off_shortcut.md` §3.0), with no cron backstop by design (D-09). **Retired:** proactive-alerts (21:30) and reflect (22:00) — folded into the nightly review; the morning's polling cron (*/10 6-10) — retired in plan 33-13 once the wake-up trigger was confirmed live in production (2026-08-01).
 
 ## 6. Invariants
 

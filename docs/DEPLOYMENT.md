@@ -1081,13 +1081,12 @@ Note: Google Takeout supports scheduled automatic exports for Gemini (takeout.go
 
 ## 19. Cloud Scheduler — Full Job Inventory
 
-The following 10 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
+The following 9 Cloud Scheduler HTTP jobs invoke Klaus's Cloud Run cron endpoints. All
 use OIDC bearer-token authentication via `${CLOUD_SCHEDULER_SA_EMAIL}`. All schedules
 are in `Asia/Jerusalem`.
 
 | # | Job ID                       | Schedule              | Endpoint                          | Phase          |
 |---|------------------------------|-----------------------|-----------------------------------|----------------|
-| 1 | klaus-morning-briefing       | `*/10 6-10 * * *`     | `/cron/morning-briefing-tick`     | Earlier        |
 | 3 | klaus-heartbeat              | `0 * * * *`           | `/cron/heartbeat`                 | Earlier        |
 | 4 | klaus-ingest-chats           | `0 4 * * *`           | `/cron/ingest-chats`              | 12             |
 | 5 | klaus-ingest-chat-exports    | `30 4 * * *`          | `/cron/ingest-chat-exports`       | 13             |
@@ -1098,11 +1097,15 @@ are in `Asia/Jerusalem`.
 | 11 | klaus-nightly-backstop      | `0 1 * * *`           | `/cron/nightly-backstop`          | Nightly (WS2)  |
 | 12 | klaus-biometric-sync        | `30 5 * * *`          | `/cron/biometric-sync`            | Biometrics     |
 
-**Row 1 retirement note (Phase 33 / D-31):** `klaus-morning-briefing` is scheduled for
-retirement — the morning briefing is moving to a push-driven trigger (`/trigger/morning`,
-§22) mirroring the nightly's Sleep-Focus automation. The job stays in the inventory and
-keeps running unmodified until plan 33-13 confirms the new Sleep-Focus-off Shortcut is
-live and explicitly retires it. Do not delete this row or the job early.
+**Row 1 retired (Phase 33 / D-09/D-10/D-31, plan 33-13):** `klaus-morning-briefing`
+(`*/10 6-10 * * *`, the polling route deleted alongside it) is retired — the morning
+briefing moved to the push-driven trigger `/trigger/morning` (§22), confirmed live in production
+2026-08-01 (plan 33-12). Per D-09, there is no cron backstop for the morning: the
+operator step for this plan retires the Cloud Scheduler job
+(`gcloud scheduler jobs delete klaus-morning-briefing --location="${REGION}"
+--project="${PROJECT_ID}"`, or `pause` to keep it recoverable) in the same change window
+as the code deploy that removes the route — see the plan 33-13 checkpoint for the exact
+sequencing and verification commands.
 
 Nightly review (WS2): there is intentionally **no fixed-time send job** — the nightly
 review fires organically from the iOS Sleep-Focus automation hitting `/trigger/nightly`
@@ -1370,17 +1373,19 @@ POST `${SERVICE_URL}/trigger/nightly`, header `Authorization: Bearer <NIGHTLY_TR
 A dedicated token (not the HealthKit one) so a leak of either credential can't be used to
 drive the other endpoint (least privilege).
 
-**iOS setup for `/trigger/morning`:** the exact mirror, but triggered on the opposite Focus
-transition — Shortcuts → Automation → new Personal Automation → "When [Sleep Focus] turns
-Off" → `Get Contents of URL`: POST `${SERVICE_URL}/trigger/morning`, header
-`Authorization: Bearer <MORNING_TRIGGER_TOKEN>`. Full build procedure with troubleshooting:
-`docs/sleep_focus_off_shortcut.md`. Auth via a dedicated `MORNING_TRIGGER_TOKEN` — no
-fallback to `NIGHTLY_TRIGGER_TOKEN` (D-13). The route enqueues to Cloud Tasks and returns
-202 immediately (it does not compose the briefing in-request); 503 if the Cloud Tasks
-dispatch is unavailable, in which case the iOS Shortcut may retry. **Dark-shipped (D-31):**
-this route deploys and does nothing until Amit's Sleep-Focus-off Shortcut starts hitting
-it — `klaus-morning-briefing` (§19) keeps running unchanged until plan 33-13 confirms the
-Shortcut is live and retires it.
+**iOS setup for `/trigger/morning`:** the mirror of the nightly trigger, but on waking up
+rather than winding down — Shortcuts → Automation → new Personal Automation, trigger
+selected by iOS version (Wake Up on public iOS before 27, Sleep Focus turning Off from
+iOS 27 — the "Sleep Focus off" trigger is not available as a personal-automation trigger
+on public iOS before 27) → `Get Contents of URL`: POST `${SERVICE_URL}/trigger/morning`,
+header `Authorization: Bearer <MORNING_TRIGGER_TOKEN>`. Full build procedure with
+troubleshooting: `docs/sleep_focus_off_shortcut.md` §3.0. Auth via a dedicated
+`MORNING_TRIGGER_TOKEN` — no fallback to `NIGHTLY_TRIGGER_TOKEN` (D-13). The route enqueues
+to Cloud Tasks and returns 202 immediately (it does not compose the briefing in-request);
+503 if the Cloud Tasks dispatch is unavailable, in which case the iOS Shortcut may retry.
+**Live (confirmed 2026-08-01, plan 33-12):** this is now the sole morning trigger —
+`klaus-morning-briefing` (§19) was retired in plan 33-13 once the wake-up automation was
+confirmed firing in production.
 
 ---
 

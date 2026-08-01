@@ -1,8 +1,16 @@
 # core/morning_briefing.py
-"""Morning briefing — Garmin-sync-anchored daily briefing via Telegram.
+"""Morning briefing — Garmin-anchored daily briefing via Telegram.
 
-Cloud Scheduler polls every 10 min (06:00–10:15 Asia/Jerusalem):
-  POST /cron/morning-briefing-tick
+Phase 33 / D-08/D-09/D-31: the morning is push-triggered only — there is
+no polling cron and no backstop. The live entry point is
+``run_morning_briefing_triggered``, fired by ``POST /trigger/morning``
+(the iOS wake-up automation, or a manual "brief me"). The legacy
+``morning-briefing-tick`` polling cron and its ``handle_tick`` state
+machine were retired in plan 33-13.
+
+``run_morning_briefing`` (the legacy LLM composer) is kept only as a
+shared helper for the CLI smoke test below and is deleted in Phase 35
+alongside the other legacy composers.
 
 Local smoke test:
   python -m core.morning_briefing --dry-run --date 2026-05-12
@@ -52,81 +60,11 @@ def _set_state(today_iso: str, fields: dict) -> None:
 
 
 # ------------------------------------------------------------------ #
-# Cron tick handler                                                  #
+# Legacy composer entry point (Phase 35: delete with the other       #
+# legacy composers)                                                  #
 # ------------------------------------------------------------------ #
 
-async def handle_tick(bot: Bot) -> None:
-    """Called by /cron/morning-briefing-tick every 10 min.
-
-    State machine:
-      pending       → check Garmin; if sync found, set sync_detected
-      sync_detected → fire the briefing (next tick after detection)
-      sent/manual   → exit silently (already done today)
-    """
-    now = datetime.now(_TZ)
-    today_iso = now.date().isoformat()
-
-    # Hard cutoff: ticks past 10:15 are no-ops.
-    if (now.hour, now.minute) > (10, 15):
-        logger.debug("morning_briefing: past 10:15 cutoff — skipping tick")
-        return
-
-    state = _get_state(today_iso)
-    status = state.get("status", "pending")
-
-    if status in {"sent", "manual"}:
-        logger.debug("morning_briefing: already done for %s (%s)", today_iso, status)
-        return
-
-    if status == "pending":
-        sleep_data = _fetch_garmin_safe(today_iso)
-        if not sleep_data:
-            logger.debug("morning_briefing: Garmin sync not detected yet")
-            return
-
-        # Garmin sync detected. Should we fire now or wait one tick?
-        next_tick = now + timedelta(minutes=10)
-        if (next_tick.hour, next_tick.minute) > (10, 15):
-            # Fast-path: firing now because next tick would be past cutoff.
-            logger.info("morning_briefing: fast-path fire for %s", today_iso)
-            skipped_by_directive = await run_morning_briefing(bot, today_iso, dedup=False)
-            # PHASE 31 — DIR-03: don't clobber the "skipped_by_directive" status
-            # run_morning_briefing already wrote — only mark "sent" when it
-            # actually sent.
-            if not skipped_by_directive:
-                _set_state(today_iso, {"status": "sent", "trigger": "cron_fast_path",
-                                       "sent_at": now.isoformat()})
-        else:
-            logger.info("morning_briefing: Garmin sync detected for %s — will fire next tick", today_iso)
-            _set_state(today_iso, {"status": "sync_detected",
-                                   "sync_detected_at": now.isoformat()})
-        return
-
-    if status == "sync_detected":
-        retry_count = state.get("retry_count", 0)
-        if retry_count >= 3:
-            logger.error("morning_briefing: max retries reached for %s — giving up", today_iso)
-            _set_state(today_iso, {"status": "failed"})
-            return
-        try:
-            logger.info("morning_briefing: firing briefing for %s (retry=%d)", today_iso, retry_count)
-            skipped_by_directive = await run_morning_briefing(bot, today_iso, dedup=False)
-            # PHASE 31 — DIR-03: don't clobber the "skipped_by_directive" status
-            # run_morning_briefing already wrote — only mark "sent" when it
-            # actually sent.
-            if not skipped_by_directive:
-                _set_state(today_iso, {"status": "sent", "trigger": "cron",
-                                       "sent_at": datetime.now(_TZ).isoformat()})
-        except Exception:
-            logger.warning("morning_briefing: send failed for %s — will retry next tick",
-                           today_iso, exc_info=True)
-            _set_state(today_iso, {"retry_count": retry_count + 1})
-
-
-# ------------------------------------------------------------------ #
-# Main entry point (cron + manual tool)                              #
-# ------------------------------------------------------------------ #
-
+# Phase 35: delete with the other legacy composers.
 async def run_morning_briefing(bot: Bot, today_iso: str, *, dedup: bool = True) -> bool:
     """Compose and send the morning briefing for today_iso.
 
@@ -243,18 +181,23 @@ async def run_morning_briefing_triggered(
     """Push-triggered, cascade-only morning briefing entry point (D-08/D-09/D-30).
 
     Fires immediately with no Garmin gate, no hour cutoff, and no time floor —
-    the iOS Sleep-Focus-off Shortcut (or a manual "brief me") is the only
-    trigger. Sleep data becomes briefing *content*; when today's sync hasn't
-    landed yet, Klaus composes without it and names the gap rather than
-    fabricating or silently omitting it (D-11). Modelled on
+    the iOS wake-up automation (or a manual "brief me") is the only trigger;
+    the mechanism varies by iOS version (see docs/sleep_focus_off_shortcut.md
+    §3.0 — Wake Up on public iOS before 27, Sleep Focus from iOS 27). Sleep
+    data becomes briefing *content*; when today's sync hasn't landed yet,
+    Klaus composes without it and names the gap rather than fabricating or
+    silently omitting it (D-11). Modelled on
     ``core.nightly_review.run_nightly``'s trigger-string + dedup-via-state-doc
-    shape, NOT on this module's own legacy ``handle_tick`` polling machine.
+    shape, NOT on this module's own legacy ``handle_tick`` polling machine
+    (retired in plan 33-13).
 
     D-30: morning ships cascade-only — there is no feature-flag A/B branch
-    here, unlike nightly/weekly's rollout. ``handle_tick`` /
-    ``run_morning_briefing`` survive completely untouched alongside this
-    function for the D-31 dark-ship window (deleted only in plan 33-12, after
-    Amit's Sleep-Focus-off Shortcut is confirmed firing).
+    here, unlike nightly/weekly's rollout. The legacy ``handle_tick`` /
+    ``run_morning_briefing`` pair survived alongside this function only for
+    the D-31 dark-ship window; ``handle_tick`` (and its cron route) was
+    deleted in plan 33-13 once the live trigger was confirmed.
+    ``run_morning_briefing`` itself is retained until Phase 35's legacy-
+    composer deletion (it still backs the CLI smoke test).
 
     Args:
         bot:       Telegram Bot instance.
@@ -782,9 +725,10 @@ def _gather_data(today_iso: str) -> dict:
 
 
 # ------------------------------------------------------------------ #
-# LLM composition                                                    #
+# LLM composition (Phase 35: delete with the other legacy composers) #
 # ------------------------------------------------------------------ #
 
+# Phase 35: delete with the other legacy composers.
 def _compose_briefing(today_data: dict, today_iso: str) -> str:
     """Compose the briefing via LLM with plain-text fallback."""
     prompt_path = Path(__file__).parent.parent / "prompts" / "morning_briefing.md"
@@ -881,6 +825,9 @@ def _compose_briefing(today_data: dict, today_iso: str) -> str:
     return _plain_text_fallback(today_data, today_iso)
 
 
+# Phase 35: delete with the other legacy composers (only caller is the
+# legacy run_morning_briefing above; run_morning_briefing_triggered has its
+# own cascade-native skip path).
 def _parse_briefing_skip(text: str) -> tuple[bool, str, str]:
     """Parse a trailing directive-skip verdict from a composed briefing.
 

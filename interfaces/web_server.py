@@ -672,20 +672,21 @@ def nightly_target_date_now() -> str:
     return _nightly.nightly_target_date(datetime.now(ZoneInfo("Asia/Jerusalem")))
 
 
-# D-31 dark-ship sequencing: this route deploys and does NOTHING until Amit's
-# Sleep-Focus-off iOS Shortcut starts hitting it. morning-briefing-tick
-# (*/10 6-10) keeps running unchanged until that trigger is confirmed firing
-# live — retired only then, in plan 33-12. Do not retire the legacy cron
-# early just because this route exists.
+# D-31 dark-ship sequencing (closed in plan 33-12/33-13): this route shipped
+# dark until Amit's iOS wake-up automation was confirmed firing live in
+# production; the legacy */10 6-10 polling cron then retired in plan 33-13
+# once that confirmation landed — this is now the sole morning trigger, with
+# no cron backstop (D-09).
 @app.post("/trigger/morning")
 async def trigger_morning(request: Request) -> JSONResponse:
-    """Receive the iOS Sleep-Focus-off automation and enqueue the morning briefing.
+    """Receive the iOS wake-up automation and enqueue the morning briefing.
 
-    Triggered when Amit's phone exits Sleep Focus (alarm fires, or he
-    disables it manually) — the mirror of the existing Sleep-Focus-on →
-    /trigger/nightly automation (D-08). Authenticated via the dedicated
-    MORNING_TRIGGER_TOKEN (D-13 — least privilege, no shared secret with the
-    nightly trigger).
+    Triggered on Amit's phone waking up — the mirror of the existing
+    Sleep-Focus-on → /trigger/nightly automation (D-08). The exact iOS
+    mechanism varies by version (Wake Up on public iOS before 27, Sleep
+    Focus from iOS 27 — see docs/sleep_focus_off_shortcut.md §3.0).
+    Authenticated via the dedicated MORNING_TRIGGER_TOKEN (D-13 — least
+    privilege, no shared secret with the nightly trigger).
 
     Acknowledges immediately (202) and enqueues the compose via Cloud Tasks
     (core.task_dispatch.enqueue_occasion) — never a Starlette BackgroundTask
@@ -766,7 +767,7 @@ async def cron_autonomous_tick(request: Request) -> JSONResponse:
     Flow (Phase 18 — AUTO-06):
       1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
       2. Guard: _application must be initialised (mirrors cron_proactive_alerts
-         and cron_morning_briefing_tick — the bot is required to send).
+         — the bot is required to send).
       3. Delegate to core.autonomous.run_autonomous_tick, which runs the full
          3-layer pipeline (gather → triage → compose) and only on success
          appends to outreach_log (D-10).
@@ -902,29 +903,6 @@ async def cron_healthkit_sync(request: Request) -> JSONResponse:
         _log_cron_run("healthkit-sync", ok=False)
         raise
     return JSONResponse(content={"upserted": result["upserted_count"]})
-
-
-@app.post("/cron/morning-briefing-tick")
-async def cron_morning_briefing_tick(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler 10-min tick and run the Garmin-sync detection logic.
-
-    Schedule: */10 6-10 * * *  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    await _verify_cron_request(request)
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.morning_briefing as _morning
-    try:
-        await _morning.handle_tick(_application.bot)
-        _log_cron_run("morning-briefing", ok=True)
-    except Exception:
-        _log_cron_run("morning-briefing", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
 
 
 @app.post("/cron/ingest-chats")

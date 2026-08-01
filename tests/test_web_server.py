@@ -135,7 +135,7 @@ class TestCronAutonomousTick:
                 resp = client.post("/cron/autonomous-tick")
 
         assert resp.status_code == 500
-        # Detail body shape mirrors cron_proactive_alerts / cron_morning_briefing_tick.
+        # Detail body shape mirrors cron_proactive_alerts.
         body = resp.json()
         assert "detail" in body
         # detail is either {"error": "..."} dict or a string — either is fine

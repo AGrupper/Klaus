@@ -517,8 +517,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         "## Cron Jobs",
         "",
         (
-            "9 scheduled jobs (Asia/Jerusalem): heartbeat (hourly, `/cron/heartbeat`) · "
-            "morning-briefing-tick (*/10 6-10, `/cron/morning-briefing-tick`) · "
+            "8 scheduled jobs (Asia/Jerusalem): heartbeat (hourly, `/cron/heartbeat`) · "
             "chat-ingest (04:00, `/cron/ingest-chats`) · "
             "chat-export-ingest (04:30, `/cron/ingest-chat-exports`) · "
             "nightly-backstop (01:00, `/cron/nightly-backstop`) · "
