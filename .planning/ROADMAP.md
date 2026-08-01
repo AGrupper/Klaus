@@ -160,7 +160,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 33-12-PLAN.md — Deploy config, docs, Sleep-Focus-off Shortcut + operator trigger confirmation
+- [x] 33-12-PLAN.md — Deploy config, docs, Sleep-Focus-off Shortcut + operator trigger confirmation
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 11/13 | In Progress|  |
+| 33. Occasion Cascade | 12/13 | In Progress|  |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
