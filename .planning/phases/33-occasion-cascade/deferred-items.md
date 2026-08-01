@@ -20,3 +20,19 @@ Pre-existing, unrelated to plan 33-09's `get_recent_decisions` change
 Not fixed here — out of scope per the SCOPE BOUNDARY rule (only auto-fix
 issues directly caused by the current task's changes). Flag for a future
 cleanup plan.
+
+## Tick-brain `skip_cause` arriving empty on every observed cascade run (found during plan 33-12/33-13)
+
+Both production cascade runs observed during the 33-12 operator checkpoint
+(2026-07-31 and 2026-08-01) logged `morning_briefing: skipped_by_judgment
+for <date> (focus, cause=)` — `verdict.get("skip_cause", "")` is not being
+populated by the tick-brain layer on a skip verdict. Non-breaking:
+`check_occasion_health`'s anomaly #1/#2 key off `composed_via`/`status`
+presence, not `skip_cause` content, so no false alert results. But it
+degrades the audit trail the D-29/D-30 observation window (plan 33-13 Task 3)
+depends on — Amit reading "why didn't Klaus speak today" loses the one-line
+reason. Not fixed here — plan 33-13 explicitly scopes this as a "record,
+don't fix" item (prior_wave_context) and it isn't in any task's `<action>`.
+Candidate for Phase 35 (or a `prompts/autonomous_triage.md` prompt-tuning
+pass): the tick-brain triage prompt likely isn't emitting the `skip_cause`
+field the compose layer expects, or the parse site is reading the wrong key.

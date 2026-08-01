@@ -251,59 +251,6 @@ def test_fetch_garmin_safe_returns_data_when_sleep_score_present():
     assert result["sleep_score"] == 78
 
 
-# --- State machine tests ---
-
-@pytest.mark.skip(reason="datetime mocking complexity — covered by CLI smoke test")
-def test_handle_tick_skips_when_already_sent(bot):
-    """Tick exits silently if today's briefing is already sent."""
-    from datetime import datetime as real_dt
-    from zoneinfo import ZoneInfo
-    now = real_dt(2026, 5, 12, 7, 30, tzinfo=ZoneInfo("Asia/Jerusalem"))
-    with patch("core.morning_briefing._get_state", return_value={"status": "sent"}), \
-         patch("core.morning_briefing.datetime") as mock_dt, \
-         patch("core.morning_briefing._set_state") as mock_set:
-        mock_dt.now.return_value = now
-        from core.morning_briefing import handle_tick
-        asyncio.run(handle_tick(bot))
-    mock_set.assert_not_called()
-    bot.send_message.assert_not_called()
-
-
-@pytest.mark.skip(reason="datetime mocking complexity — covered by CLI smoke test")
-def test_handle_tick_pending_no_garmin_does_nothing(bot):
-    """If Garmin hasn't synced yet, tick exits without setting state."""
-    from datetime import datetime as real_dt, timedelta as real_td
-    from zoneinfo import ZoneInfo
-    now = real_dt(2026, 5, 12, 7, 0, tzinfo=ZoneInfo("Asia/Jerusalem"))
-    with patch("core.morning_briefing._get_state", return_value={"status": "pending"}), \
-         patch("core.morning_briefing._set_state") as mock_set, \
-         patch("core.morning_briefing._fetch_garmin_safe", return_value=None), \
-         patch("core.morning_briefing.datetime") as mock_dt, \
-         patch("core.morning_briefing.timedelta", real_td):
-        mock_dt.now.return_value = now
-        from core.morning_briefing import handle_tick
-        asyncio.run(handle_tick(bot))
-    mock_set.assert_not_called()
-
-
-@pytest.mark.skip(reason="datetime mocking complexity — covered by CLI smoke test")
-def test_handle_tick_sync_detected_fires_briefing(bot):
-    """If state is sync_detected, the briefing fires and state is set to sent."""
-    from datetime import datetime as real_dt
-    from zoneinfo import ZoneInfo
-    now = real_dt(2026, 5, 12, 7, 10, tzinfo=ZoneInfo("Asia/Jerusalem"))
-    with patch("core.morning_briefing._get_state", return_value={"status": "sync_detected", "retry_count": 0}), \
-         patch("core.morning_briefing._set_state") as mock_set, \
-         patch("core.morning_briefing.run_morning_briefing", new_callable=AsyncMock) as mock_run, \
-         patch("core.morning_briefing.datetime") as mock_dt:
-        mock_dt.now.return_value = now
-        from core.morning_briefing import handle_tick
-        asyncio.run(handle_tick(bot))
-    mock_run.assert_called_once()
-    set_calls = mock_set.call_args_list
-    assert any(call[0][1].get("status") == "sent" for call in set_calls)
-
-
 def test_manual_trigger_bypasses_dedup(bot):
     """run_morning_briefing with dedup=False fires even if state is 'sent'."""
     # send_and_inject is a lazy import inside run_morning_briefing; patch at its source.

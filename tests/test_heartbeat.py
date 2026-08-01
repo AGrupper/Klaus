@@ -61,10 +61,10 @@ def test_check_cron_health_flags_stale(monkeypatch):
     from datetime import timezone, timedelta
     stale = datetime.now(timezone.utc) - timedelta(hours=40)
     monkeypatch.setattr(heartbeat, "_read_cron_ledger", lambda: {
-        "morning-briefing": {"last_run_at": stale, "consecutive_failures": 0, "last_ok": True},
+        "ingest-chats": {"last_run_at": stale, "consecutive_failures": 0, "last_ok": True},
     })
     signals = heartbeat.check_cron_health()
-    assert any(s.fingerprint == "cron:morning-briefing:stale" for s in signals)
+    assert any(s.fingerprint == "cron:ingest-chats:stale" for s in signals)
     assert all(s.severity == heartbeat.SEVERITY_CRITICAL for s in signals)
 
 
@@ -223,14 +223,16 @@ def test_all_cron_jobs_have_staleness_entry():
     from core.heartbeat import _CRON_MAX_STALENESS_HOURS
     # WS2: proactive-alerts + reflect were retired (folded into the nightly review);
     # nightly-backstop is the daily journal/nightly guarantee that replaced reflect.
+    # Phase 33 Plan 13: morning-briefing-tick retired (D-09/D-10/D-31) — the
+    # morning is push-triggered only now, with no cron backstop.
     expected_subset = {
-        "morning-briefing", "ingest-chats", "ingest-chat-exports",
+        "ingest-chats", "ingest-chat-exports",
         "nightly-backstop", "autonomous-tick", "run-sync", "biometric-sync",
     }
     missing = expected_subset - set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not missing, f"Missing staleness entries: {missing}"
     # The retired jobs must NOT linger in the staleness list (they'd false-alarm).
-    retired = {"proactive-alerts", "reflect"} & set(_CRON_MAX_STALENESS_HOURS.keys())
+    retired = {"proactive-alerts", "reflect", "morning-briefing"} & set(_CRON_MAX_STALENESS_HOURS.keys())
     assert not retired, f"Retired jobs still monitored (will false-alarm): {retired}"
     # All thresholds should be reasonable (0 < h <= 200 covers weekly crons up to 8d slack).
     for job_id, hours in _CRON_MAX_STALENESS_HOURS.items():
@@ -1319,8 +1321,10 @@ def test_check_occasion_health_registered_in_collect_signals(monkeypatch):
 # ---------------------------------------------------------------------------
 # Phase 33 Plan 11 — check_occasion_health (D-28, OCC-06)
 #
-# Task 2: Anomaly #3 (weekly not firing) + Anomaly #4 (undisclosed actions)
-# + the morning-briefing staleness-key retirement TODO annotation.
+# Task 2: Anomaly #3 (weekly not firing) + Anomaly #4 (undisclosed actions).
+# (The morning-briefing staleness-key dark-ship TODO this section originally
+# pinned was resolved in plan 33-13 — the key and its annotation are gone;
+# see test_morning_briefing_staleness_key_retired below.)
 # ---------------------------------------------------------------------------
 
 # 2026-05-24 is a Sunday; 2026-05-25 (Monday) is "any day after" it, so a
@@ -1453,26 +1457,20 @@ def test_check_occasion_health_no_undisclosed_actions_no_signal(monkeypatch):
     assert not any(s.fingerprint == "occasion:actions_undisclosed" for s in signals)
 
 
-def test_morning_briefing_staleness_key_has_retirement_todo():
-    """RESEARCH Assumption A3 — the dangling morning-briefing staleness key
-    must be annotated with its plan-33-12 removal point, not silently left
-    to misfire once morning-briefing-tick retires."""
-    from pathlib import Path
-    from core import heartbeat
-    src = Path(heartbeat.__file__).read_text(encoding="utf-8")
-    for line in src.splitlines():
-        if '"morning-briefing": 26' in line:
-            assert "TODO(33-12" in line
-            return
-    raise AssertionError('"morning-briefing": 26 entry not found in core/heartbeat.py')
+def test_morning_briefing_staleness_key_retired():
+    """Phase 33 Plan 13 (D-09/D-10/D-31) — the morning-briefing-tick cron and
+    its staleness key are retired together; the dangling key from the
+    dark-ship window (plan 33-11's TODO(33-12/D-10) annotation) must not
+    linger, or it will misfire a permanent false 'stale' critical now that
+    the polling cron no longer runs."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert "morning-briefing" not in _CRON_MAX_STALENESS_HOURS
 
 
 def test_morning_trigger_never_added_to_staleness_map():
     """D-09: the push-triggered morning is user-driven and may legitimately
-    not fire on a given day, like nightly-trigger — never staleness-monitored."""
-    from pathlib import Path
-    from core import heartbeat
-    src = Path(heartbeat.__file__).read_text(encoding="utf-8")
-    assert '"morning-trigger"' not in src
-    assert "'morning-trigger'" not in src
+    not fire on a given day, like nightly-trigger — never staleness-monitored
+    (it is not a key in _CRON_MAX_STALENESS_HOURS)."""
+    from core.heartbeat import _CRON_MAX_STALENESS_HOURS
+    assert "morning-trigger" not in _CRON_MAX_STALENESS_HOURS
 

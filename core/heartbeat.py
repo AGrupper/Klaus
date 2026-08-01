@@ -106,7 +106,6 @@ def _tiers_for_now(config: dict, now: datetime) -> set[str]:
 
 
 _CRON_MAX_STALENESS_HOURS = {
-    "morning-briefing": 26,  # TODO(33-12/D-10): remove once morning-briefing-tick cron is retired (D-31 dark-ship window — do not remove early, it still guards the polling cron while it runs)
     "ingest-chats": 26,
     "ingest-chat-exports": 26,
     "nightly-backstop": 26,       # WS2 — 01:00 daily journal+nightly guarantee, 26h tolerance
@@ -116,9 +115,15 @@ _CRON_MAX_STALENESS_HOURS = {
     "run-sync": 26,               # Garmin per-run detail pull, 05:15; 26h tolerance
     "biometric-sync": 26,         # Garmin daily HRV/RHR pull, 05:30; 26h tolerance
 }
-# NOTE: nightly-trigger (iOS Sleep-Focus) is intentionally NOT monitored — it is
-# user-driven and may not fire on a given day; nightly-backstop is the daily guarantee.
+# NOTE: nightly-trigger (iOS Sleep-Focus) and morning-trigger (iOS wake-up
+# automation) are intentionally NOT monitored — both are user-driven and may
+# legitimately not fire on a given day; nightly-backstop is the nightly's
+# daily guarantee, and the morning has no backstop by design (D-09) —
+# check_occasion_health's anomaly #1 already covers a morning that ran and
+# went wrong.
 # proactive-alerts + reflect retired in WS2 (folded into the nightly review).
+# morning-briefing-tick retired in plan 33-13 (D-09/D-10/D-31) — the morning
+# is push-triggered only now, with no cron backstop.
 _CRON_FAILURE_STREAK_THRESHOLD = 3
 
 # Batch-processing crons that should NOT alert when their backlog is fully
