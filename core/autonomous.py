@@ -1939,6 +1939,8 @@ async def _run_cascade(
     max_tokens: int | None,
     log_key: str,
     veto_parser: "Callable[[str], tuple[bool, str, str]] | None" = None,
+    prior_trail: list | None = None,
+    followup_sent: bool = False,
 ) -> dict:
     """Shared Layer-1 -> Layer-2 -> send -> log body (plan 33-04).
 
@@ -1949,6 +1951,23 @@ async def _run_cascade(
     all of which default to the tick's no-op values, so a plain tick's path
     through this function is byte-identical in behavior to the pre-Phase-33
     ``run_autonomous_tick``.
+
+    Args (WR-09 additions):
+        prior_trail: decision-trail entries the CALLER already accumulated
+            before delegating here (the tick's D-13 follow-up outcomes). Seeded
+            into this call's own trail so ``_write_tick_log`` persists one
+            complete record. Previously the caller merged its entries into the
+            RETURN value, long after the log had already been written from the
+            cascade-only trail — so the Firestore record (the sole backing store
+            for ``get_recent_decisions``, D-26) never showed that a follow-up
+            fired.
+        followup_sent: True when the caller already delivered a message on this
+            tick. Recorded as its own key rather than folded into ``sent``,
+            whose contract ("this cascade composed and sent") several callers
+            and tests depend on — but it means a persisted
+            ``{"skipped": "judgment", "sent": false}`` is no longer read as
+            "Klaus said nothing this tick", which is exactly the question OCC-07
+            exists to answer.
     """
     import asyncio as _asyncio
 
@@ -1962,8 +1981,10 @@ async def _run_cascade(
         "skip_cause": "",
         "composed_via": "",
         "final_text": "",
-        "trail": [],
+        "trail": list(prior_trail or []),
     }
+    if followup_sent:
+        decision["followup_sent"] = True
 
     # Layer 1 — triage. Byte-identical call shape to the tick's pre-existing
     # one; only the CONTENT of triage_user_msg differs (occasion_prompt +
@@ -2332,10 +2353,13 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
 
     # D-13 follow-up path — skip tick-brain entirely for due follow-ups.
     due_followups = situation.get("due_followups") or []
+    followup_sent = False
     if due_followups:
         for fu in due_followups:
             fu_outcome = await _compose_followup(bot, fu, situation, now)
             decision["trail"].append({"followup": fu.get("id"), "outcome": fu_outcome})
+            if fu_outcome in ("sent", "force_fired"):
+                followup_sent = True
         # D-13 intent: follow-up firing does NOT preclude same-tick triage. The
         # follow-up path skipped tick-brain for ITS send (Layer-2 only); Layer 1
         # still runs below so an overdue/silence escalation can also fire on
@@ -2363,14 +2387,19 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     # own topic_key fallback chain lives inside _run_cascade, gated on an
     # empty decision["topic_key"] (always true for the tick, since
     # topic_key=None here).
+    # WR-09 — the follow-up outcomes accumulated above are handed to
+    # _run_cascade as prior_trail rather than merged into its RETURN value.
+    # _run_cascade writes the tick log from its own decision dict, so merging
+    # afterwards meant the persisted record — the sole backing store for
+    # get_recent_decisions (D-26) — never showed that a follow-up fired, and a
+    # tick that sent a follow-up but then triaged to silence was persisted as
+    # {"skipped": "judgment", "sent": false}.
     cascade_decision = await _run_cascade(
         bot, now, situation,
         occasion=None, topic_key=None, advisory_only=False,
         occasion_prompt="", max_tokens=None,
         log_key=now.astimezone(_TZ).strftime("%H:%M"),
+        prior_trail=decision["trail"],
+        followup_sent=followup_sent,
     )
-    # The follow-up trail entries were appended above, before the cascade
-    # ran — prepend them onto the cascade's own trail (built fresh inside
-    # _run_cascade) so both are visible in the returned decision.
-    cascade_decision["trail"] = decision["trail"] + cascade_decision["trail"]
     return cascade_decision

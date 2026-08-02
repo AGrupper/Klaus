@@ -915,6 +915,113 @@ def test_followup_fire_skips_tick_brain(mock_bot, fixed_now):
     assert compose_fu.call_args[0][1] is fu
 
 
+def _followup_tick_log(mock_bot, fixed_now, *, fu_outcome: str):
+    """Run a tick with one due follow-up and return the decision dict that was
+    actually PERSISTED by _write_tick_log (not the one returned to the caller)."""
+    fu = {
+        "id": "fu-log",
+        "due_at": (fixed_now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(),
+        "note": "remember groceries",
+        "defer_count": 0,
+    }
+    sit = _live_situation(fixed_now, ticktick_overdue=[], due_followups=[fu])
+    sit["empty"] = False
+
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = {"should_act": False, "reason": "all quiet"}
+
+    written: list = []
+
+    async def _capture(now, situation, decision, **kwargs):
+        # Deep-ish copy: _run_cascade keeps mutating its own trail afterwards.
+        written.append({**decision, "trail": list(decision["trail"])})
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_compose_followup",
+                      new=AsyncMock(return_value=fu_outcome)), \
+         patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+         patch.object(autonomous, "_write_tick_log", new=_capture):
+        asyncio.run(autonomous.run_autonomous_tick(mock_bot, fixed_now))
+
+    assert len(written) == 1
+    return written[0]
+
+
+def test_persisted_tick_log_includes_followup_outcomes(mock_bot, fixed_now):
+    """WR-09 — the follow-up entries were merged into the RETURN value only
+    after _write_tick_log had already persisted the cascade-only trail, so the
+    Firestore record (the sole backing store for get_recent_decisions, D-26)
+    never showed that a follow-up fired."""
+    persisted = _followup_tick_log(mock_bot, fixed_now, fu_outcome="sent")
+    assert any(
+        isinstance(entry, dict) and entry.get("followup") == "fu-log"
+        for entry in persisted["trail"]
+    ), persisted["trail"]
+
+
+def test_persisted_tick_log_marks_a_tick_that_sent_a_followup(mock_bot, fixed_now):
+    """WR-09 — a tick that sent a follow-up and then triaged to silence was
+    persisted as {"skipped": "judgment", "sent": false}, i.e. "Klaus said
+    nothing" — the exact question OCC-07 exists to answer, answered wrongly."""
+    persisted = _followup_tick_log(mock_bot, fixed_now, fu_outcome="sent")
+    assert persisted["skipped"] == "judgment"
+    assert persisted["followup_sent"] is True
+
+
+def test_persisted_tick_log_force_fired_counts_as_sent(mock_bot, fixed_now):
+    """D-14 force-fire delivers a message just like "sent"."""
+    persisted = _followup_tick_log(mock_bot, fixed_now, fu_outcome="force_fired")
+    assert persisted["followup_sent"] is True
+
+
+@pytest.mark.parametrize("outcome", ["deferred", "cancelled", "failed"])
+def test_persisted_tick_log_no_followup_sent_flag_when_nothing_shipped(
+    mock_bot, fixed_now, outcome
+):
+    """A deferred/cancelled/failed follow-up delivers nothing — the flag must
+    stay absent so it can't be mistaken for a send."""
+    persisted = _followup_tick_log(mock_bot, fixed_now, fu_outcome=outcome)
+    assert "followup_sent" not in persisted
+    # The outcome is still on the trail either way.
+    assert any(
+        isinstance(entry, dict) and entry.get("outcome") == outcome
+        for entry in persisted["trail"]
+    )
+
+
+def test_tick_without_followups_persists_no_followup_key(mock_bot, fixed_now):
+    """WR-09 must not change the plain tick's persisted shape."""
+    sit = _live_situation(fixed_now, due_followups=[])
+    tb_instance = MagicMock()
+    tb_instance.think.return_value = {"should_act": False, "reason": "all quiet"}
+    written: list = []
+
+    async def _capture(now, situation, decision, **kwargs):
+        written.append({**decision, "trail": list(decision["trail"])})
+
+    inflight = MagicMock()
+    inflight.active.return_value = None
+    sig_store = MagicMock()
+    sig_store.get.return_value = None
+
+    with patch.object(autonomous, "gather_situation", return_value=sit), \
+         patch("core.tick_brain.TickBrain", return_value=tb_instance), \
+         patch.object(autonomous, "_tick_signature_store", return_value=sig_store), \
+         patch.object(autonomous, "_occasion_inflight_store", return_value=inflight), \
+         patch.object(autonomous, "_write_tick_log", new=_capture):
+        asyncio.run(autonomous.run_autonomous_tick(mock_bot, fixed_now))
+
+    assert len(written) == 1
+    assert "followup_sent" not in written[0]
+    # No follow-up entries prepended — the trail starts at Layer 1, exactly as
+    # it did before prior_trail existed.
+    assert written[0]["trail"] == [
+        {"layer1": {"should_act": False, "reason": "all quiet"}},
+        "layer1_no_act",
+    ]
+
+
 def test_layer2_followup_send_action_marks_done(mock_bot, fixed_now):
     """Layer-2 returns action=send => mark_done + send + outreach_log."""
     fu = {
