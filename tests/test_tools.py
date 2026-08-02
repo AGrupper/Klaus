@@ -1196,6 +1196,116 @@ class TestCalendarCreateIdempotency:
         assert "action_id" in out
 
 
+class TestCalendarDuplicateCheckScoping:
+    """WR-05 — the D-23 pre-check accepted `calendar_id` and never used it, and
+    refused interactive creates with no override path."""
+
+    def test_calendar_id_scopes_the_lookup(self):
+        """A same-titled event on ANOTHER calendar must not suppress a create
+        on the pinned one."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-personal", "summary": "Upper Body",
+             "calendar_id": "personal_cal_id"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00",
+                "Upper Body", calendar_id="training_cal_id",
+            )
+        assert found is None
+
+    def test_calendar_id_matches_within_its_own_calendar(self):
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-personal", "summary": "Upper Body",
+             "calendar_id": "personal_cal_id"},
+            {"id": "evt-training", "summary": "Upper Body",
+             "calendar_id": "training_cal_id"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00",
+                "Upper Body", calendar_id="training_cal_id",
+            )
+        assert found is not None
+        assert found["id"] == "evt-training"
+
+    def test_no_calendar_id_stays_broad(self):
+        """With no pinned calendar the destination is ambiguous (create_event
+        routes to primary or Training by is_workout), so the lookup stays
+        deliberately broad — the conservative choice."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-anywhere", "summary": "Upper Body",
+             "calendar_id": "some_other_cal"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            found = tools._existing_event_at(
+                "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
+            )
+        assert found is not None
+
+    def test_lookup_raises_the_per_calendar_result_cap(self):
+        """list_all_events caps PER CALENDAR; the default 20 could truncate
+        past the match on a busy multi-day window."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            tools._existing_event_at(
+                "2026-08-02T00:00:00+03:00", "2026-08-05T00:00:00+03:00", "Upper Body",
+            )
+        assert mock_cal.list_all_events.call_args.kwargs["max_results"] == 50
+
+    def test_allow_duplicate_overrides_the_refusal(self, fake_action_log):
+        """A user explicitly asking for a second same-titled event must not be
+        silently refused."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-existing", "summary": "Standup"},
+        ]
+        mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Standup"}
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Standup",
+                start_iso="2026-08-03T14:00:00+03:00",
+                end_iso="2026-08-03T14:30:00+03:00",
+                allow_duplicate=True,
+            ))
+        mock_cal.create_event.assert_called_once()
+        # The lookup is skipped entirely — no point paying for it.
+        mock_cal.list_all_events.assert_not_called()
+        assert out["event_id"] == "evt-new"
+        assert "action_id" in out
+
+    def test_default_still_refuses_and_names_the_override(self):
+        """Proactive creates are unchanged, but the refusal now tells the brain
+        how to proceed when the user's intent is explicit."""
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = [
+            {"id": "evt-existing", "summary": "Standup"},
+        ]
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Standup",
+                start_iso="2026-08-03T14:00:00+03:00",
+                end_iso="2026-08-03T14:30:00+03:00",
+            ))
+        assert out["created"] is False
+        assert out["duplicate"] is True
+        assert "allow_duplicate" in out["override"]
+        mock_cal.create_event.assert_not_called()
+
+    def test_allow_duplicate_is_declared_in_the_tool_schema(self):
+        """The brain can only use the override if it is advertised."""
+        schema = next(
+            t for t in tools.TOOL_SCHEMAS if t["name"] == "create_calendar_event"
+        )
+        prop = schema["input_schema"]["properties"]["allow_duplicate"]
+        assert prop["type"] == "boolean"
+        assert "allow_duplicate" not in schema["input_schema"]["required"]
+
+
 class TestActionAuditTrail:
     """D-24/D-25 (Phase 33 plan 05): every calendar mutation writes one
     undisclosed action record at action time, independent of send success.

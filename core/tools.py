@@ -164,6 +164,16 @@ TOOL_SCHEMAS: list[dict] = [
                         "to a specific calendar (e.g. Personal). Omit to use the default routing."
                     ),
                 },
+                "allow_duplicate": {
+                    "type": "boolean",
+                    "description": (
+                        "Optional, default false. Creates normally refuse when an event with the "
+                        "same title already overlaps that window, to stop you double-booking the "
+                        "user proactively. Set this to true ONLY when the user explicitly asked "
+                        "for the event and you already got the duplicate refusal — never on your "
+                        "own initiative."
+                    ),
+                },
             },
             "required": ["summary", "start_iso", "end_iso"],
         },
@@ -1681,6 +1691,12 @@ def _handle_list_calendar_events(time_min_iso: str, time_max_iso: str) -> str:
     return json.dumps({"events": events, "count": len(events)})
 
 
+# WR-05 — list_all_events caps results PER CALENDAR (default 20). The
+# duplicate lookup runs over a caller-chosen window that can span days, so the
+# default risked truncating past the very event it is looking for.
+_DUPLICATE_LOOKUP_MAX_RESULTS = 50
+
+
 def _existing_event_at(
     start_iso: str,
     end_iso: str,
@@ -1703,14 +1719,34 @@ def _existing_event_at(
     this remains a check-then-act race without an atomic guard; `_record_action`
     is the after-the-fact detector for the residual race).
 
+    Args:
+        start_iso: Window start (RFC 3339 / ISO 8601).
+        end_iso:   Window end.
+        summary:   Title to match, case- and whitespace-insensitively.
+        calendar_id: WR-05 — when given, the match is SCOPED to that calendar.
+            The parameter was previously accepted and silently ignored, so a
+            same-titled event on ANY writable calendar suppressed a create on
+            the Training calendar (and vice-versa). When None the caller has
+            not pinned a calendar — `create_event` then routes to primary or
+            Training depending on `is_workout`, which this function cannot
+            know, so the lookup deliberately stays broad (checking everywhere
+            is the conservative choice when the destination is ambiguous).
+
     Never raises — a Calendar API hiccup on the lookup must not block a
     legitimate create (fail-open): any exception here is logged and `None` is
     returned so the caller proceeds exactly as if no duplicate were found.
     """
     try:
         target = " ".join(summary.split()).casefold()
-        events = _get_calendar_tool().list_all_events(start_iso, end_iso)
+        # WR-05 — max_results is PER CALENDAR and defaulted to 20; a busy
+        # multi-day window could truncate before reaching the match, silently
+        # weakening the check exactly when the calendar is fullest.
+        events = _get_calendar_tool().list_all_events(
+            start_iso, end_iso, max_results=_DUPLICATE_LOOKUP_MAX_RESULTS,
+        )
         for event in events:
+            if calendar_id is not None and event.get("calendar_id") != calendar_id:
+                continue
             existing_summary = event.get("summary", "") or ""
             if " ".join(existing_summary.split()).casefold() == target:
                 return event
@@ -1788,6 +1824,7 @@ def _handle_create_calendar_event(
     travel_minutes_each_way: int | None = None,
     is_workout: bool | None = None,
     calendar_id: str | None = None,
+    allow_duplicate: bool = False,
 ) -> str:
     """Delegate to GoogleCalendarManager.create_event and serialise the result.
 
@@ -1797,19 +1834,35 @@ def _handle_create_calendar_event(
     the brain can surface on its disclosure line instead of silently
     double-booking. See `_existing_event_at` for why this exists.
 
+    WR-05 — the pre-check guards PROACTIVE creates (its docstring says so), but
+    it is wired into every create, including interactive ones. Amit asking "add
+    a second Standup at 14:00 tomorrow" when a "Standup" already overlaps got a
+    flat `{"created": false, "duplicate": true}` with no way through, and the
+    brain had to explain a refusal he did not ask for. `allow_duplicate` is that
+    way through: the refusal response now names it, so the brain can retry
+    within the same turn when the user's intent is explicit. The default stays
+    False, so proactive Layer-2 creates behave exactly as before.
+
     D-25: a successful create is recorded in the action audit trail
     (`_record_action`) before returning. The duplicate branch above records
     nothing — nothing was written.
     """
-    existing = _existing_event_at(start_iso, end_iso, summary, calendar_id=calendar_id)
-    if existing is not None:
-        return json.dumps({
-            "created": False,
-            "duplicate": True,
-            "existing_event_id": existing.get("id", ""),
-            "existing_summary": existing.get("summary", ""),
-            "reason": "An event with this summary already exists in that window",
-        })
+    if not allow_duplicate:
+        existing = _existing_event_at(
+            start_iso, end_iso, summary, calendar_id=calendar_id,
+        )
+        if existing is not None:
+            return json.dumps({
+                "created": False,
+                "duplicate": True,
+                "existing_event_id": existing.get("id", ""),
+                "existing_summary": existing.get("summary", ""),
+                "reason": "An event with this summary already exists in that window",
+                "override": (
+                    "If the user explicitly asked for this event anyway, call "
+                    "create_calendar_event again with allow_duplicate=true."
+                ),
+            })
 
     result = _get_calendar_tool().create_event(
         summary=summary,
