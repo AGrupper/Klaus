@@ -1144,36 +1144,83 @@ class TestTriggerMorningEntryPoint:
 
 
 class TestHandleRunMorningBriefingRepoint:
-    """D-14: the manual chat tool now runs the triggered cascade entry point."""
+    """D-14 / CR-04: the manual chat tool dispatches the triggered cascade
+    through Cloud Tasks, not loop.create_task.
 
-    def test_schedules_triggered_with_manual_trigger_and_dedup_false(self):
-        from core.tools import _handle_run_morning_briefing
-        fake_app = MagicMock()
-        fake_app.bot = MagicMock()
-        # _handle_run_morning_briefing calls asyncio.get_event_loop() as a sync
-        # tool handler; in production it always runs inside a live request's
-        # running loop. A prior test's asyncio.run() in this SAME process can
-        # leave no thread-local loop set, so give this test its own loop
-        # (matching production's "a loop is always present" invariant) —
-        # test-environment setup, not a production behavior change.
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        try:
-            with patch("interfaces.web_server._application", fake_app), \
-                 patch("core.morning_briefing.run_morning_briefing_triggered",
-                       new_callable=AsyncMock) as mock_run, \
-                 patch("core.morning_briefing._set_state"):
-                result = _handle_run_morning_briefing()
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
-        mock_run.assert_called_once()
-        _, kwargs = mock_run.call_args
-        assert kwargs.get("trigger") == "manual"
-        assert kwargs.get("dedup") is False
+    The previous implementation called asyncio.get_event_loop() from a sync
+    tool handler. Production runs tool handlers in a ThreadPoolExecutor worker
+    (AgentOrchestrator._run_smart_loop under asyncio.to_thread), where that
+    raises RuntimeError — swallowed into {"error": ...}, so "brief me" never
+    worked. The old test only passed because it installed a loop on the test's
+    own (main) thread, which production never does.
+    """
+
+    def test_enqueues_morning_occasion_with_manual_trigger(self):
         import json as _json
+        from datetime import datetime as _dt
+        from zoneinfo import ZoneInfo as _ZI
+        from core.tools import _handle_run_morning_briefing
+        with patch("core.task_dispatch.enqueue_occasion",
+                   return_value=True) as mock_enqueue, \
+             patch("core.morning_briefing._set_state") as mock_set_state:
+            result = _handle_run_morning_briefing()
+
+        mock_enqueue.assert_called_once()
+        args, kwargs = mock_enqueue.call_args
+        assert args[0] == "morning"
+        assert kwargs["trigger"] == "manual"
+        assert kwargs["target_date"] == _dt.now(_ZI("Asia/Jerusalem")).date().isoformat()
+
         parsed = _json.loads(result)
-        assert parsed["status"] == "composing"
+        assert parsed["status"] == "queued"
+        assert "error" not in parsed
+
+        # CR-04: no terminal "status" is written up front — "manual" is a
+        # member of _TERMINAL_STATUSES and would dedup away the very run this
+        # tool just requested.
+        from core.morning_briefing import _TERMINAL_STATUSES
+        fields = mock_set_state.call_args.args[1]
+        assert fields.get("status") not in _TERMINAL_STATUSES
+        assert "status" not in fields
+        assert fields["trigger"] == "manual"
+
+    def test_works_from_a_worker_thread_with_no_event_loop(self):
+        """CR-04 regression guard: reproduce production's actual call context —
+        a ThreadPoolExecutor worker with no event loop set. The old
+        asyncio.get_event_loop() implementation raised RuntimeError here."""
+        import json as _json
+        from concurrent.futures import ThreadPoolExecutor
+        from core.tools import _handle_run_morning_briefing
+
+        with patch("core.task_dispatch.enqueue_occasion", return_value=True), \
+             patch("core.morning_briefing._set_state"):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(_handle_run_morning_briefing).result()
+
+        parsed = _json.loads(result)
+        assert parsed["status"] == "queued", parsed
+
+    def test_enqueue_failure_surfaces_an_error_and_writes_no_state(self):
+        import json as _json
+        from core.tools import _handle_run_morning_briefing
+        with patch("core.task_dispatch.enqueue_occasion", return_value=False), \
+             patch("core.morning_briefing._set_state") as mock_set_state:
+            result = _handle_run_morning_briefing()
+
+        parsed = _json.loads(result)
+        assert "error" in parsed
+        mock_set_state.assert_not_called()
+
+    def test_never_runs_the_cascade_inline(self):
+        """CLAUDE.md invariant: an agent turn's tool handler must not start the
+        3-layer cascade as fire-and-forget work outliving the request."""
+        from core.tools import _handle_run_morning_briefing
+        with patch("core.task_dispatch.enqueue_occasion", return_value=True), \
+             patch("core.morning_briefing._set_state"), \
+             patch("core.morning_briefing.run_morning_briefing_triggered",
+                   new_callable=AsyncMock) as mock_run:
+            _handle_run_morning_briefing()
+        mock_run.assert_not_called()
 
 
 # ====================================================================== #

@@ -368,8 +368,14 @@ async def internal_process_occasion(request: Request) -> JSONResponse:
         elif occasion == "morning":
             import core.morning_briefing as _morning
             date = target_date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            # CR-04 — a manual "brief me" (the D-14 chat tool) must ignore
+            # dedup: Amit asking explicitly overrides any terminal status
+            # already recorded for today. Derived from the trigger rather
+            # than carried as its own payload field so the enqueue side stays
+            # a single source of truth.
             await _morning.run_morning_briefing_triggered(
                 _application.bot, date, trigger=trigger,
+                dedup=(trigger != "manual"),
             )
         else:  # "weekly_review"
             import core.weekly_training_review as _review

@@ -1102,6 +1102,27 @@ class TestInternalProcessOccasion:
         assert args[0] is ws._application.bot
         assert args[1] == "2026-08-01"
         assert kwargs.get("trigger") == "focus"
+        # CR-04: a scheduled/focus trigger keeps D-12 dedup on.
+        assert kwargs.get("dedup") is True
+
+    def test_process_occasion_morning_manual_trigger_disables_dedup(self, _ws_module):
+        """CR-04 / D-14: a manual "brief me" must override any terminal status
+        already recorded for today — Amit asking explicitly beats dedup."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_mock = AsyncMock(return_value=True)
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.morning_briefing.run_morning_briefing_triggered", run_mock):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "morning", "trigger": "manual",
+                      "target_date": "2026-08-01"},
+            )
+        assert resp.status_code == 200
+        _args, kwargs = run_mock.await_args
+        assert kwargs.get("trigger") == "manual"
+        assert kwargs.get("dedup") is False
 
     def test_process_occasion_nightly_calls_run_nightly(self, _ws_module):
         ws = _ws_module

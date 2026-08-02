@@ -2056,31 +2056,55 @@ def _handle_forget_memory(vector_id: str) -> str:
 
 
 def _handle_run_morning_briefing() -> str:
-    """Trigger the push-triggered cascade morning briefing (D-14) as a
-    background task on the running event loop.
+    """Trigger the push-triggered cascade morning briefing (D-14) via Cloud Tasks.
 
     Phase 33 Plan 07: repointed from the legacy ``run_morning_briefing`` at
     ``run_morning_briefing_triggered(..., trigger="manual", dedup=False)`` —
     a manual "brief me" in chat runs the occasion cascade and ignores dedup.
+
+    CR-04 — dispatch goes through ``core.task_dispatch.enqueue_occasion``, NOT
+    ``loop.create_task``. Two independent reasons:
+
+    1. Tool handlers run inside ``AgentOrchestrator._run_smart_loop``, which is
+       synchronous and is invoked via ``asyncio.to_thread`` from the router.
+       ``asyncio.get_event_loop()`` only auto-creates a loop on the MAIN thread;
+       from a ThreadPoolExecutor worker with no loop set it raises
+       ``RuntimeError("There is no current event loop in thread 'asyncio_N'")``,
+       which the ``except`` below swallowed into ``{"error": ...}``. A manual
+       "brief me" produced an apology, never a briefing.
+    2. Even with a valid loop, ``create_task`` would run the full 3-layer
+       cascade as fire-and-forget work outliving the /internal/process-update
+       response — the exact CPU-throttling failure mode CLAUDE.md forbids.
+       ``enqueue_occasion`` is the tracked-request path plan 33-10 built for it.
+
+    No ``status`` is written up front: "manual" is a member of
+    ``morning_briefing._TERMINAL_STATUSES``, so writing it here would dedup away
+    the very run just requested if the enqueued task later retried. The trigger
+    is recorded without a status instead. ``/internal/process-occasion`` derives
+    ``dedup=False`` from ``trigger == "manual"``.
     """
-    import asyncio
     from datetime import datetime
     from zoneinfo import ZoneInfo
     try:
-        from interfaces.web_server import _application
-        if _application is None:
-            return json.dumps({"error": "Application not initialised — use CLI smoke test instead."})
-        today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        loop = asyncio.get_event_loop()
-        from core.morning_briefing import run_morning_briefing_triggered
-        loop.create_task(run_morning_briefing_triggered(
-            _application.bot, today_iso, trigger="manual", dedup=False,
-        ))
-        # Mark as manual trigger in Firestore so dedup knows it was user-triggered.
+        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+        today_iso = now.date().isoformat()
+
+        from core.task_dispatch import enqueue_occasion
+        if not enqueue_occasion("morning", trigger="manual", target_date=today_iso):
+            return json.dumps({
+                "error": "Dispatch unavailable — could not enqueue the briefing.",
+            })
+
+        # Non-terminal breadcrumb only (no "status" key) — records that Amit
+        # asked, without blocking the run it just requested.
         from core.morning_briefing import _set_state
-        _set_state(today_iso, {"status": "manual", "trigger": "manual",
-                               "sent_at": datetime.now(ZoneInfo("Asia/Jerusalem")).isoformat()})
-        return json.dumps({"status": "composing", "message": "Composing your morning briefing now, sir — it will arrive in Telegram shortly."})
+        _set_state(today_iso, {"trigger": "manual", "requested_at": now.isoformat()})
+
+        return json.dumps({
+            "status": "queued",
+            "date": today_iso,
+            "message": "Composing your morning briefing now, sir — it will arrive shortly.",
+        })
     except Exception as exc:
         logger.warning("run_morning_briefing tool error: %s", exc)
         return json.dumps({"error": str(exc)})
