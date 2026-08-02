@@ -25,7 +25,7 @@ import logging
 import os
 from collections import OrderedDict
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import date as _date_cls, datetime, timedelta
 from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
@@ -336,7 +336,7 @@ async def internal_process_occasion(request: Request) -> JSONResponse:
     Raises:
         HTTPException 401/403: OIDC verification failed.
         HTTPException 500: Singletons not initialised (Cloud Tasks retries).
-        HTTPException 400: Unknown occasion value.
+        HTTPException 400: Unknown occasion value, or a malformed target_date.
     """
     await _verify_cron_request(request)
 
@@ -357,30 +357,59 @@ async def internal_process_occasion(request: Request) -> JSONResponse:
             status_code=400, detail={"error": f"unknown occasion: {occasion!r}"},
         )
 
+    # WR-07 — T-33-13 ("a caller-supplied string never reaches a Firestore
+    # document id unvalidated") was only half enforced: `occasion` was
+    # whitelisted, `target_date` went straight from the request JSON into
+    # was_sent(target_date) -> collection("nightly_reviews").document(<value>)
+    # and into date.fromisoformat() in the weekly. A value containing "/" splits
+    # the Firestore path; a non-date string raises an uncaught ValueError, which
+    # this handler's `except: raise` turns into a 500 -> Cloud Tasks retry ->
+    # dead-letter rather than a terminal 400.
+    if target_date is not None:
+        try:
+            _date_cls.fromisoformat(str(target_date))
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=400,
+                detail={"error": f"invalid target_date: {target_date!r}"},
+            )
+        target_date = str(target_date)
+
     # WHY lazy imports: every other cron route in this file imports its
     # target module inside the handler, not at module load time, to keep
     # /health cold-start fast.
+    # WR-07 — named `resolved_date`, not `date`: the old local shadowed the
+    # conventional `datetime.date` name and would have collided the moment
+    # anyone imported it into this module (which the validation above now does).
     try:
         if occasion == "nightly":
             import core.nightly_review as _nightly
-            date = target_date or nightly_target_date_now()
-            await _nightly.run_nightly(_application.bot, date, trigger=trigger)
+            resolved_date = target_date or nightly_target_date_now()
+            await _nightly.run_nightly(
+                _application.bot, resolved_date, trigger=trigger,
+            )
         elif occasion == "morning":
             import core.morning_briefing as _morning
-            date = target_date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            resolved_date = (
+                target_date
+                or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            )
             # CR-04 — a manual "brief me" (the D-14 chat tool) must ignore
             # dedup: Amit asking explicitly overrides any terminal status
             # already recorded for today. Derived from the trigger rather
             # than carried as its own payload field so the enqueue side stays
             # a single source of truth.
             await _morning.run_morning_briefing_triggered(
-                _application.bot, date, trigger=trigger,
+                _application.bot, resolved_date, trigger=trigger,
                 dedup=(trigger != "manual"),
             )
         else:  # "weekly_review"
             import core.weekly_training_review as _review
-            date = target_date or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-            await _review.run_weekly_review(_application.bot, date)
+            resolved_date = (
+                target_date
+                or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+            )
+            await _review.run_weekly_review(_application.bot, resolved_date)
         _log_cron_run(f"occasion-{occasion}", ok=True)
     except Exception:
         _log_cron_run(f"occasion-{occasion}", ok=False)

@@ -1159,6 +1159,59 @@ class TestInternalProcessOccasion:
         assert args[0] is ws._application.bot
         assert args[1] == "2026-08-02"
 
+    @pytest.mark.parametrize(
+        "bad_date",
+        [
+            "../../../etc/passwd",          # path traversal via Firestore doc id
+            "nightly_reviews/2026-08-01",   # "/" splits the Firestore path
+            "not-a-date",                   # uncaught ValueError in the weekly
+            "",                             # empty document id
+            123,                            # wrong type
+        ],
+    )
+    def test_process_occasion_rejects_malformed_target_date(self, _ws_module, bad_date):
+        """WR-07 — target_date reaches a Firestore document id and
+        date.fromisoformat(); a malformed value must terminate as a 400, not a
+        500 that Cloud Tasks retries into the dead-letter queue."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_nightly = AsyncMock()
+        run_morning = AsyncMock()
+        run_weekly = AsyncMock()
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.nightly_review.run_nightly", run_nightly), \
+             patch("core.morning_briefing.run_morning_briefing_triggered", run_morning), \
+             patch("core.weekly_training_review.run_weekly_review", run_weekly):
+            client = TestClient(ws.app, raise_server_exceptions=False)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "nightly", "trigger": "cron",
+                      "target_date": bad_date},
+            )
+        assert resp.status_code == 400
+        run_nightly.assert_not_awaited()
+        run_morning.assert_not_awaited()
+        run_weekly.assert_not_awaited()
+
+    def test_process_occasion_absent_target_date_still_derives_today(self, _ws_module):
+        """WR-07 must not break the documented "omit target_date and let the
+        endpoint derive it" contract."""
+        ws = _ws_module
+        from fastapi.testclient import TestClient  # noqa: PLC0415
+        run_mock = AsyncMock(return_value=None)
+        with patch.dict(os.environ, _BASE_ENV), \
+             patch("core.weekly_training_review.run_weekly_review", run_mock):
+            client = TestClient(ws.app, raise_server_exceptions=True)
+            resp = client.post(
+                "/internal/process-occasion",
+                json={"occasion": "weekly_review", "trigger": "cron"},
+            )
+        assert resp.status_code == 200
+        args, _kwargs = run_mock.await_args
+        # A real ISO date was derived, not None.
+        from datetime import date as _d
+        _d.fromisoformat(args[1])
+
     def test_process_occasion_bogus_returns_400_without_calling_anything(self, _ws_module):
         ws = _ws_module
         from fastapi.testclient import TestClient  # noqa: PLC0415
