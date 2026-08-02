@@ -355,7 +355,7 @@ async def run_morning_briefing_triggered(
         logger.info(
             "morning_briefing: sent and injected for %s (%s)", today_iso, trigger
         )
-    else:
+    elif decision.get("skipped") == "judgment":
         _set_state(today_iso, {
             "status": "skipped_by_judgment",
             "trigger": trigger,
@@ -366,6 +366,48 @@ async def run_morning_briefing_triggered(
             "morning_briefing: skipped_by_judgment for %s (%s, cause=%s)",
             today_iso, trigger, decision.get("skip_cause", ""),
         )
+    else:
+        # CR-02 — the cascade returned without sending AND without a Layer-1
+        # judgment skip: an infra fault it caught internally (layer1_exception,
+        # layer2_and_draft_both_empty, send_failed). Recording that as
+        # "skipped_by_judgment" would (a) lie about whose decision it was and
+        # (b) write a _TERMINAL_STATUSES value, deduping away every later
+        # trigger for a morning that has no cron backstop (D-09).
+        #
+        # core.nightly_review.run_nightly handles the same case by writing no
+        # terminal status so its 01:00 backstop can retry. The morning has no
+        # backstop, so it additionally takes the SC-1 plain-text fallback here
+        # — the same last-resort send the `except` branch above uses.
+        logger.error(
+            "morning_briefing: cascade produced neither a send nor a judgment "
+            "skip for %s (%s) — trail=%r — SC-1 plain-text fallback",
+            today_iso, trigger, decision.get("trail"),
+        )
+        try:
+            from core.scheduled_message import send_and_inject
+            fallback_text = _plain_text_fallback(today_data, today_iso)
+            await send_and_inject(
+                bot, fallback_text, inject_into_conversation=True,
+                message_class="briefing",
+            )
+        except Exception:
+            logger.error(
+                "morning_briefing: SC-1 plain-text fallback send failed for %s "
+                "— no terminal status written, a later trigger can still retry",
+                today_iso, exc_info=True,
+            )
+            return False
+        _set_state(today_iso, {
+            "status": "sent",
+            "trigger": trigger,
+            "sent_at": now_iso,
+            "composed_via": "plain_text_fallback",
+        })
+        logger.info(
+            "morning_briefing: SC-1 plain-text fallback sent for %s (%s)",
+            today_iso, trigger,
+        )
+        return True
 
     return sent
 

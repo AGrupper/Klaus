@@ -1045,6 +1045,104 @@ class TestTriggerMorningEntryPoint:
         )
 
 
+    def test_infra_failure_is_not_recorded_as_judgment_skip(self, bot):
+        """CR-02: run_occasion_cascade swallows layer1_exception /
+        layer2_and_draft_both_empty / send_failed and returns sent=False,
+        skipped=False. That is an infra fault, NOT Klaus's judgment — it must
+        not be written as the terminal status skipped_by_judgment (which would
+        dedup away every later trigger for a morning that has no backstop)."""
+        decision = _cascade_decision(
+            sent=False, skipped=False, draft="", final_text="", composed_via="",
+            skip_cause="", trail=["layer1_exception"],
+        )
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 2}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("core.scheduled_message.send_and_inject",
+                   new_callable=AsyncMock) as mock_send, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert not any(
+            c.args[1]["status"] == "skipped_by_judgment" for c in status_calls
+        )
+        # SC-1: the morning has no cron backstop (D-09), so the infra branch
+        # sends the deterministic plain-text template rather than going silent.
+        mock_send.assert_called_once()
+        assert any(
+            c.args[1]["status"] == "sent"
+            and c.args[1].get("composed_via") == "plain_text_fallback"
+            for c in status_calls
+        )
+        assert result is True
+
+    def test_infra_failure_with_failed_fallback_writes_no_terminal_status(self, bot):
+        """CR-02: if even the SC-1 fallback send fails, NO terminal status is
+        written — a later trigger (snooze, second alarm, manual retry) must
+        still be able to run the same morning."""
+        decision = _cascade_decision(
+            sent=False, skipped=False, draft="", final_text="", composed_via="",
+            skip_cause="", trail=["send_failed"],
+        )
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 2}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("core.scheduled_message.send_and_inject",
+                   new_callable=AsyncMock, side_effect=RuntimeError("telegram down")), \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+
+        assert result is False
+        from core.morning_briefing import _TERMINAL_STATUSES
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert not any(
+            c.args[1]["status"] in _TERMINAL_STATUSES for c in status_calls
+        )
+
+    def test_judgment_skip_still_writes_terminal_status(self, bot):
+        """CR-02 regression guard: a genuine Layer-1 judgment skip
+        (skipped="judgment") keeps its terminal skipped_by_judgment status."""
+        decision = _cascade_decision(
+            sent=False, skipped="judgment", draft="Quiet one.", final_text="",
+            composed_via="", skip_cause="nothing_happened",
+        )
+        with patch("core.morning_briefing._get_state", return_value={}), \
+             patch("core.morning_briefing._set_state") as mock_set, \
+             patch("core.morning_briefing._gather_data",
+                   return_value={"calendar": [], "tasks": {}, "garmin": {"state": 1}}), \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock, return_value=decision), \
+             patch("core.scheduled_message.send_and_inject",
+                   new_callable=AsyncMock) as mock_send, \
+             patch("memory.firestore_db.SelfStateStore"):
+            from core.morning_briefing import run_morning_briefing_triggered
+            result = asyncio.run(
+                run_morning_briefing_triggered(bot, "2026-07-20", trigger="focus")
+            )
+
+        assert result is False
+        mock_send.assert_not_called()
+        status_calls = [c for c in mock_set.call_args_list if c.args[1].get("status")]
+        assert any(
+            c.args[1]["status"] == "skipped_by_judgment"
+            and c.args[1].get("skip_cause") == "nothing_happened"
+            for c in status_calls
+        )
+
+
 class TestHandleRunMorningBriefingRepoint:
     """D-14: the manual chat tool now runs the triggered cascade entry point."""
 
