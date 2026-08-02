@@ -40,10 +40,10 @@ files_reviewed_list:
   - tests/test_web_server.py
   - tests/test_weekly_training_review.py
 findings:
-  critical: 4
+  critical: 5
   warning: 12
   info: 0
-  total: 16
+  total: 17
 status: issues_found
 ---
 
@@ -88,6 +88,31 @@ re-filed; the orphaned dead `return` near `core/tools.py:2033` is not re-filed p
 ## Critical Issues
 
 ### CR-01: Every occasion's gathered data is silently dropped before it reaches the LLM
+
+> **PRODUCTION CORRECTION (2026-08-02, orchestrator).** The defect below is REAL and
+> re-verified — `occasion_data` is merged at `:2244` and read by nothing; both prompt
+> builders use fixed whitelists; `occasion_prompt` is the raw `*_occasion.md` text with
+> no data interpolation. **But the stated consequence — that occasions compose blind —
+> is contradicted by production evidence and is NOT what happens.**
+>
+> Layer 2 is agentic (D-21/D-22): it has tools and fetches what it needs. Evidence from
+> the live run: the 2026-08-02 weekly review (`status: sent`, `composed_via: llm`) named
+> specific per-day sessions across the whole week, and the 2026-08-01 nightly created
+> three calendar events via tool calls. Neither is possible if the compose layer were
+> blind.
+>
+> **Revised impact, split by layer:**
+> - **Layer 2 (compose): waste, not blindness.** The gather is computed then discarded and
+>   the brain re-fetches via tools. The weekly's `_gather_week_data` pays a ~28s blocking
+>   Garmin login + Postgres query for nothing. Cost/latency bug, not a correctness bug.
+> - **Layer 1 (triage): genuinely blind.** The tick-brain has NO tools, so it truly judges
+>   occasions on generic tick signals only. This is the part that matters. The weekly is
+>   `advisory_only=True` (Layer 1 cannot suppress it) and the nightly sent on both observed
+>   nights — but the morning IS gated by Layer 1 judgment and has now skipped 3/3 days
+>   (2026-07-31, 08-01, 08-02) with an empty cause. Prime suspect for the morning silence.
+>
+> **Fix priority follows from this:** rendering occasion data into the **Layer 1** payload
+> is the high-value change. The Layer 2 render is a waste/latency cleanup, not urgent.
 
 **File:** `core/autonomous.py:2244` (merge), `core/autonomous.py:1225-1248` (triage render),
 `core/autonomous.py:1514-1539` (compose render)
@@ -220,6 +245,25 @@ else:
 ---
 
 ### CR-03: The weekly review has no dedup guard on a now-retryable dispatch path — duplicate send
+
+> **PRODUCTION NOTE (2026-08-02).** Latent, not yet realized. The 2026-08-02 Sunday run
+> did produce TWO dispatches of `/cron/weekly-training-review` (`07:00:01Z` and
+> `07:00:37Z`) but only ONE send (`weekly_reviews/2026-08-02` has a single `sent_at` at
+> `07:01:29Z`, and Amit confirmed receiving exactly one review). So the window is real and
+> was entered, but did not produce a duplicate this time. Keep the severity — the guard is
+> still missing and the next slower compose can land inside it.
+
+**NEW — CR-05: `check_occasion_health`'s weekly check races the weekly send (false CRITICAL).**
+Observed live 2026-08-02: the heartbeat emitted `CRITICAL — Weekly review did not fire for
+2026-08-02 — no weekly_reviews state doc` at `07:00:39Z`, while the weekly actually sent at
+`07:01:29Z` — the alert fired ~50s BEFORE the send it was checking for. The Sunday check
+runs against a state doc that the cascade has not written yet because it is still composing
+(32K-token Sonnet compose, plus a ~28s blocking gather). Amit was also paged repeatedly for
+`2026-07-26` across 2026-08-01, which is the known stale-counter pattern. Net effect: the
+observability surface built to make the rollout watchable is emitting false criticals into
+the user's chat. Fix alongside CR-03 — either gate the Sunday check behind an in-flight
+marker (`OccasionInFlightStore` already exists) or push the check window past the compose
+deadline.
 
 **File:** `core/weekly_training_review.py:599-635`, `core/weekly_training_review.py:705-735`;
 `interfaces/web_server.py:319-380`; `docs/DEPLOYMENT.md:1591-1593`
