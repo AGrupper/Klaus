@@ -355,6 +355,44 @@ _OCCASION_UNDISCLOSED_STALE_HOURS = 24
 # plain-text-fallback send is logged ok=True and would otherwise pass silently).
 _OCCASION_ERRORED_COMPOSED_VIA = {"plain_text_fallback", "draft_fallback"}
 
+# CR-05 — the Sunday weekly-review check must not read the state doc while the
+# weekly is still composing. The cron fires at 10:00 Asia/Jerusalem and the
+# heartbeat cron fires hourly on the hour, so the two land in the same minute;
+# the original guard `(now.hour, now.minute) < (10, 0)` expired the instant the
+# weekly started. Observed live 2026-08-02: CRITICAL "Weekly review did not fire"
+# emitted at 07:00:39Z for a review that sent at 07:01:29Z — the alert fired ~50s
+# BEFORE the send it was checking for.
+#
+# The grace window is sized off the real deadline chain, not off observed
+# latency: Cloud Tasks' dispatch_deadline is 540s (9 min), so a weekly that is
+# going to complete at all has completed by 10:09. 10:20 leaves 11 minutes of
+# margin. The heartbeat runs hourly on the hour, so the first check of a given
+# Sunday now happens at 11:00 rather than 10:00 — one hour later for a genuinely
+# dead weekly, in exchange for never paging Amit about a review that is mid-send.
+_OCCASION_WEEKLY_CHECK_AFTER = (10, 20)
+
+
+def _occasion_in_flight() -> str | None:
+    """Return the occasion currently mid-cascade, or None (never raises).
+
+    CR-05 — defense in depth for the weekly check below. ``OccasionInFlightStore``
+    is fail-open by design (a missing/expired doc or ANY error reads as None), so
+    this can only ever suppress an alert while a marker is genuinely live; it can
+    never mute the check because Firestore is unreachable. It is not sufficient on
+    its own — the weekly marks itself in flight only after ``_gather_week_data``
+    (~28s) plus ``gather_situation()``, so the first ~40s of a weekly run carry no
+    marker at all. That is what ``_OCCASION_WEEKLY_CHECK_AFTER`` covers.
+    """
+    try:
+        from memory.firestore_db import OccasionInFlightStore
+        return OccasionInFlightStore(
+            project_id=os.environ.get("GCP_PROJECT_ID", ""),
+            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
+        ).active()
+    except Exception:
+        logger.warning("heartbeat: OccasionInFlightStore read failed", exc_info=True)
+        return None
+
 
 def _read_occasion_state(collection: str, date_str: str) -> dict:
     """Read a date-keyed occasion state doc directly.
@@ -513,13 +551,25 @@ def check_occasion_health(now: datetime | None = None) -> list[Signal]:
     sunday = _most_recent_sunday(today)
     sunday_iso = sunday.isoformat()
     is_today_sunday = sunday == today
-    before_cron_fires = is_today_sunday and (now.hour, now.minute) < (10, 0)
+    # CR-05 — the old guard was `< (10, 0)`, i.e. it expired at the exact minute
+    # the weekly cron fires, so the check raced the compose it was checking for.
+    # Wait out the full Cloud Tasks dispatch deadline plus margin instead.
+    before_cron_fires = (
+        is_today_sunday and (now.hour, now.minute) < _OCCASION_WEEKLY_CHECK_AFTER
+    )
     if not before_cron_fires:
         weekly_state = _read_occasion_state(
             _OCCASION_STATE_COLLECTIONS["weekly_review"], sunday_iso,
         )
         status = weekly_state.get("status")
-        if not weekly_state:
+        if not weekly_state and is_today_sunday and _occasion_in_flight() == "weekly_review":
+            # CR-05 — the doc is absent because the weekly is provably still
+            # composing right now, not because it failed. Never page for this.
+            logger.info(
+                "heartbeat: weekly review for %s is still in flight — "
+                "suppressing the not-fired check", sunday_iso,
+            )
+        elif not weekly_state:
             signals.append(Signal(
                 fingerprint=f"occasion:weekly_review:not_fired:{sunday_iso}",
                 severity=SEVERITY_CRITICAL, area="occasion",

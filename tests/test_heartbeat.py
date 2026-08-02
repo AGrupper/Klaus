@@ -7,6 +7,8 @@ os.environ.setdefault("GCP_PROJECT_ID", "klaus-agent")
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 
 def _dt(hour, minute, isoweekday=2):
     # 2026-05-18 is a Monday (isoweekday 1); offset to hit the requested weekday.
@@ -1389,9 +1391,12 @@ def test_check_occasion_health_weekly_no_signal_before_sunday_cron_fires(monkeyp
 
 
 def test_check_occasion_health_weekly_checked_on_sunday_after_cron_fires(monkeypatch):
-    """On Sunday at/after 10:00, an absent doc DOES trip the check."""
+    """On Sunday past the grace window, an absent doc DOES trip the check."""
     from core import heartbeat
     monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    # CR-05 — the in-flight gate is consulted on Sundays; stub it so this test
+    # doesn't reach Firestore. Test-environment setup, not a behavior change.
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: None)
     signals = heartbeat.check_occasion_health(now=_SUNDAY_AFTER_CRON)
     matches = [
         s for s in signals
@@ -1399,6 +1404,103 @@ def test_check_occasion_health_weekly_checked_on_sunday_after_cron_fires(monkeyp
     ]
     assert len(matches) == 1
     assert matches[0].severity == heartbeat.SEVERITY_CRITICAL
+
+
+# ---------------------------------------------------------------------------
+# CR-05 — the Sunday weekly check must not race the weekly send.
+#
+# Observed live 2026-08-02: CRITICAL "Weekly review did not fire for 2026-08-02
+# — no weekly_reviews state doc" emitted at 07:00:39Z, while the review actually
+# sent at 07:01:29Z. The alert fired ~50s BEFORE the send it was checking for,
+# because the old guard expired at exactly (10, 0) local — the same minute the
+# weekly cron fires — and the cascade needs a ~28s blocking gather plus a
+# 32K-token Sonnet compose before it can write its state doc.
+# ---------------------------------------------------------------------------
+
+# 10:00:39 local — the exact clock position of the observed false CRITICAL.
+_SUNDAY_AT_CRON_MINUTE = datetime(2026, 5, 24, 10, 0, 39, tzinfo=ZoneInfo("Asia/Jerusalem"))
+# 10:09 local — the Cloud Tasks dispatch_deadline (540s) has not yet expired.
+_SUNDAY_WITHIN_DISPATCH_DEADLINE = datetime(2026, 5, 24, 10, 9, tzinfo=ZoneInfo("Asia/Jerusalem"))
+
+
+@pytest.mark.parametrize(
+    "now", [_SUNDAY_AT_CRON_MINUTE, _SUNDAY_WITHIN_DISPATCH_DEADLINE]
+)
+def test_check_occasion_health_weekly_no_critical_while_compose_window_open(
+    monkeypatch, now
+):
+    """CR-05: no not-fired CRITICAL inside the weekly's own compose window,
+    even with an absent state doc and no in-flight marker (the weekly only
+    marks itself in flight after ~40s of gathering)."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: None)
+    signals = heartbeat.check_occasion_health(now=now)
+    assert not any(
+        s.fingerprint.startswith("occasion:weekly_review:not_fired:") for s in signals
+    )
+
+
+def test_check_occasion_health_weekly_grace_window_covers_dispatch_deadline():
+    """The grace window must outlast the Cloud Tasks dispatch deadline (540s
+    from the 10:00 cron), or the race reopens."""
+    from core import heartbeat
+    from core.task_dispatch import _DISPATCH_DEADLINE_SECONDS
+    hour, minute = heartbeat._OCCASION_WEEKLY_CHECK_AFTER
+    grace_seconds = (hour - 10) * 3600 + minute * 60
+    assert grace_seconds > _DISPATCH_DEADLINE_SECONDS
+
+
+def test_check_occasion_health_weekly_in_flight_marker_suppresses_critical(monkeypatch):
+    """CR-05 defense in depth: even past the grace window, a live
+    OccasionInFlightStore marker for weekly_review suppresses the alert."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: "weekly_review")
+    signals = heartbeat.check_occasion_health(now=_SUNDAY_AFTER_CRON)
+    assert not any(
+        s.fingerprint.startswith("occasion:weekly_review:not_fired:") for s in signals
+    )
+
+
+def test_check_occasion_health_weekly_other_occasion_in_flight_still_alerts(monkeypatch):
+    """A nightly/morning marker must NOT suppress the weekly's own alert."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: "morning")
+    signals = heartbeat.check_occasion_health(now=_SUNDAY_AFTER_CRON)
+    assert any(
+        s.fingerprint == f"occasion:weekly_review:not_fired:{_SUNDAY_ISO}"
+        for s in signals
+    )
+
+
+def test_check_occasion_health_in_flight_gate_not_consulted_off_sunday(monkeypatch):
+    """The in-flight read is a Firestore call — it must only happen on the
+    Sunday itself, never on the Monday-after check."""
+    from core import heartbeat
+    calls = []
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(
+        heartbeat, "_occasion_in_flight", lambda: calls.append(1) or None
+    )
+    signals = heartbeat.check_occasion_health(now=_MONDAY_AFTER)
+    assert calls == []
+    assert any(
+        s.fingerprint == f"occasion:weekly_review:not_fired:{_SUNDAY_ISO}"
+        for s in signals
+    )
+
+
+def test_occasion_in_flight_fails_open_on_store_error(monkeypatch):
+    """_occasion_in_flight never raises and never suppresses on error — a
+    Firestore outage must not mute the not-fired check."""
+    from unittest.mock import patch as _patch
+    from core import heartbeat
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    with _patch("memory.firestore_db.OccasionInFlightStore",
+                side_effect=RuntimeError("firestore down")):
+        assert heartbeat._occasion_in_flight() is None
 
 
 def _mock_action_log_store(monkeypatch, undisclosed_entries):
