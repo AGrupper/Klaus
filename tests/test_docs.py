@@ -163,6 +163,53 @@ def test_self_md_lists_healthkit_push_endpoint():
     assert "shared-secret bearer" in content
 
 
+def test_self_md_does_not_advertise_the_retired_morning_briefing_tick():
+    """WR-10 — plan 33-13 deleted /cron/morning-briefing-tick and updated
+    core/self_manifest.py, but the COMMITTED docs/SELF.md predated that change
+    and still advertised the route. SELF.md is injected into the brain's system
+    prompt ({self_md}) and served verbatim by read_own_source, so a stale copy
+    makes Klaus describe a cron that 404s. CI regenerates it on deploy, which is
+    why only local runs and human readers saw the drift — hence this guard."""
+    with open(SELF_MD_PATH, encoding="utf-8") as f:
+        content = f.read()
+    assert "/cron/morning-briefing-tick" not in content
+    assert "morning-briefing-tick" not in content
+    assert "8 scheduled jobs" in content
+
+
+def test_self_md_does_not_claim_autonomous_outreach_is_unimplemented():
+    """WR-10 — "Autonomous proactive outreach: not yet implemented (Phase 18)"
+    survived in the GENERATOR long after Phase 18 shipped it, so regenerating
+    could not fix it. Klaus must not assert a falsehood about himself."""
+    with open(SELF_MD_PATH, encoding="utf-8") as f:
+        content = f.read()
+    assert "not yet implemented (Phase 18)" not in content
+
+
+def test_self_md_cron_section_matches_the_generator():
+    """WR-10 root cause — the committed SELF.md drifted from what
+    core/self_manifest.py emits, because CI only regenerates on deploy. Pin the
+    Cron Jobs section (the part that actually went stale) against a fresh
+    render, without comparing the whole file: the model-name rows are
+    env-derived and legitimately differ between a laptop and the deploy runner."""
+    from pathlib import Path
+    from core.self_manifest import _get_source_root, _render_manifest
+
+    with open(SELF_MD_PATH, encoding="utf-8") as f:
+        committed = f.read()
+    root = _get_source_root()
+    fresh = _render_manifest(root, "0" * 40)
+
+    def _cron_section(text: str) -> str:
+        return text.split("## Cron Jobs", 1)[1].split("\n## ", 1)[0].strip()
+
+    assert _cron_section(committed) == _cron_section(fresh), (
+        "docs/SELF.md Cron Jobs section is stale — "
+        "run `python core/self_manifest.py` and commit the result."
+    )
+    assert Path(root, "docs", "SELF.md").exists()
+
+
 def test_deployment_md_section_22_push_endpoints():
     """RESEARCH.md Q10 — DEPLOYMENT.md ends at §21; this phase adds §22 + §23 (NOT §23 + §24)."""
     with open(DEPLOYMENT_PATH, encoding="utf-8") as f:

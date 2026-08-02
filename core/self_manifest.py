@@ -605,7 +605,16 @@ def _render_manifest(root: Path, sha: str) -> str:
         "- **Pinecone valid `kind` values:** `fact`, `chunk`, `chat`, `self`. (`self` = Klaus's own journal entries.)",
         f"- **Max tool iterations per conversation:** {max_tool_iterations} (`MAX_TOOL_ITERATIONS` in `core/main.py`)",
         "- **Conversation context reset:** every ~6 hours (Cloud Run container lifecycle)",
-        "- **Autonomous proactive outreach:** not yet implemented (Phase 18)",
+        # WR-10 — this line said "not yet implemented (Phase 18)" long after
+        # Phase 18 shipped the autonomous tick and Phase 33 generalised it into
+        # the occasion cascade. SELF.md is injected into the brain's system
+        # prompt via {self_md}, so a stale limit here is Klaus asserting a
+        # falsehood about himself.
+        (
+            "- **Autonomous proactive outreach:** live — the `*/20 7-21` tick and "
+            "the nightly/morning/weekly occasion cascade both reach out unprompted, "
+            "gated by Layer-1 judgment."
+        ),
         "",
     ]
 
