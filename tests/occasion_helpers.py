@@ -32,6 +32,12 @@ from zoneinfo import ZoneInfo
 # D-02 (33-CONTEXT.md) — the four legitimate occasion skip causes, plus the
 # empty string for "not a skip" / "should_act=True". Exported as the single
 # source of truth every downstream occasion test asserts against.
+#
+# WR-01 — the four real causes now also live in production as
+# ``core.tick_brain.SKIP_CAUSES`` (the parser validates against them). This set
+# is that set plus "", which is an accepted ARGUMENT to make_occasion_verdict
+# meaning "no skip cause" but is never emitted as a key.
+# tests/test_tick_brain.py asserts the two stay in sync.
 SKIP_CAUSES: frozenset[str] = frozenset(
     {"", "directive", "already_covered", "nothing_happened", "reaction_history"}
 )
@@ -155,18 +161,29 @@ def make_occasion_verdict(
         ValueError: if ``skip_cause`` is not a member of ``SKIP_CAUSES`` — this
             keeps every downstream test asserting against the same vocabulary
             (33-01-PLAN.md Task 1).
+
+    WR-01 — the returned dict must be a shape ``TickBrain._parse_response`` can
+    ACTUALLY emit. The original version always included ``draft``,
+    ``topic_key`` and ``skip_cause`` keys, even when empty; the real parser
+    omits every falsy optional field. That divergence is why nothing in the
+    suite caught the parser dropping ``skip_cause`` entirely — every occasion
+    test asserted against a fiction. ``tests/test_tick_brain.py`` now pins this
+    helper's output against the real parser so the two cannot drift again.
     """
     if skip_cause not in SKIP_CAUSES:
         raise ValueError(
             f"skip_cause must be one of {sorted(SKIP_CAUSES)!r}, got {skip_cause!r}"
         )
-    return {
+    verdict: dict = {
         "should_act": should_act,
         "reason": reason,
-        "draft": draft,
-        "topic_key": "",
-        "skip_cause": skip_cause,
     }
+    # Falsy optionals are OMITTED, exactly as TickBrain._parse_response does.
+    if draft:
+        verdict["draft"] = draft
+    if skip_cause:
+        verdict["skip_cause"] = skip_cause
+    return verdict
 
 
 # ---------------------------------------------------------------------------

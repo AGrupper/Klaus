@@ -78,6 +78,16 @@ _DEFAULT_FALLBACK_MODEL   = "gemini-3.5-flash"
 # primary. 80%-warning threshold lives in core/heartbeat.py::check_groq_budget.
 _GROQ_DAILY_TOKEN_CAP = 200_000
 
+# D-02 / WR-01 — the occasion skip-cause taxonomy, defined in
+# prompts/occasion_triage_addendum.md and consumed by
+# core/autonomous.py::_run_cascade -> each occasion's Firestore state doc ->
+# core/heartbeat.py::_occasion_skip_streak. This is the production source of
+# truth; tests/occasion_helpers.py::SKIP_CAUSES mirrors it (minus the empty
+# string, which means "not a skip" and is never emitted as a key).
+SKIP_CAUSES: frozenset[str] = frozenset(
+    {"directive", "already_covered", "nothing_happened", "reaction_history"}
+)
+
 
 def _get_groq_ledger():
     """Construct a GroqTokenLedgerStore for this call. Returns None on any
@@ -348,4 +358,29 @@ class TickBrain:
         # (core/autonomous.py) synthesises a fallback slug when absent.
         if "topic_key" in data and data["topic_key"]:
             result["topic_key"] = str(data["topic_key"])
+        # WR-01 / D-02 — pass through the occasion skip_cause taxonomy.
+        # prompts/autonomous_triage.md declares this field and
+        # prompts/occasion_triage_addendum.md defines its four values, and
+        # core/autonomous.py:_run_cascade reads verdict.get("skip_cause", "")
+        # on a judgment skip — but this whitelist dropped it, so it was
+        # STRUCTURALLY impossible for the field to be non-empty. Confirmed
+        # empty on all three observed production runs; it degraded
+        # nightly_reviews/morning_briefings skip_cause to "" and
+        # heartbeat._occasion_skip_streak's alert detail to
+        # "unknown, unknown, unknown".
+        #
+        # Validated against SKIP_CAUSES rather than passed through raw: this
+        # value lands in a Firestore state doc and in a heartbeat alert, and a
+        # hallucinated cause is worse than an absent one (D-02 exists precisely
+        # to distinguish nothing_happened from reaction_history).
+        skip_cause = data.get("skip_cause")
+        if skip_cause:
+            skip_cause = str(skip_cause).strip().lower()
+            if skip_cause in SKIP_CAUSES:
+                result["skip_cause"] = skip_cause
+            else:
+                logger.warning(
+                    "tick-brain: ignoring off-vocabulary skip_cause %.60r "
+                    "(expected one of %s)", skip_cause, sorted(SKIP_CAUSES),
+                )
         return result

@@ -718,6 +718,98 @@ class TestSystemOverrideAndTopicKey(unittest.TestCase):
         )
         self.assertEqual(result["topic_key"], "123")
 
+    # ---- WR-01: _parse_response must not whitelist skip_cause away ----
+    #
+    # prompts/autonomous_triage.md declares skip_cause and
+    # prompts/occasion_triage_addendum.md defines the D-02 taxonomy, but the
+    # parser built its return dict from a hard-coded whitelist that omitted it,
+    # so core/autonomous.py's verdict.get("skip_cause", "") could never be
+    # non-empty. These tests feed RAW MODEL JSON (not a hand-built dict), which
+    # is the only shape that can catch a parser-level drop.
+
+    def test_skip_cause_survives_the_parser(self):
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": false, "reason": "quiet night", '
+            '"draft": "Nothing much today.", "skip_cause": "nothing_happened"}'
+        )
+        self.assertEqual(result["skip_cause"], "nothing_happened")
+        self.assertFalse(result["should_act"])
+
+    def test_every_taxonomy_value_survives_the_parser(self):
+        from core.tick_brain import TickBrain, SKIP_CAUSES
+        for cause in sorted(SKIP_CAUSES):
+            with self.subTest(cause=cause):
+                result = TickBrain._parse_response(
+                    '{"should_act": false, "reason": "x", "skip_cause": "%s"}' % cause
+                )
+                self.assertEqual(result["skip_cause"], cause)
+
+    def test_skip_cause_absent_when_missing_from_json(self):
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response('{"should_act": true, "reason": "x"}')
+        self.assertNotIn("skip_cause", result)
+
+    def test_skip_cause_absent_when_empty_string(self):
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": true, "reason": "x", "skip_cause": ""}'
+        )
+        self.assertNotIn("skip_cause", result)
+
+    def test_off_vocabulary_skip_cause_is_dropped(self):
+        """A hallucinated cause is worse than an absent one — it lands in a
+        Firestore state doc and in a heartbeat alert detail."""
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": false, "reason": "x", "skip_cause": "i just didnt feel like it"}'
+        )
+        self.assertNotIn("skip_cause", result)
+
+    def test_skip_cause_is_normalised_before_validation(self):
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response(
+            '{"should_act": false, "reason": "x", "skip_cause": "  Reaction_History  "}'
+        )
+        self.assertEqual(result["skip_cause"], "reaction_history")
+
+    def test_skip_cause_absent_from_parse_failure_safe_mode(self):
+        from core.tick_brain import TickBrain
+        result = TickBrain._parse_response("not json")
+        self.assertNotIn("skip_cause", result)
+
+    def test_production_taxonomy_matches_the_test_helper_vocabulary(self):
+        """WR-01 — tests/occasion_helpers.SKIP_CAUSES is the fixture vocabulary
+        every occasion test asserts against; it must not drift from the set the
+        production parser actually validates."""
+        from core.tick_brain import SKIP_CAUSES as PROD_CAUSES
+        from tests.occasion_helpers import SKIP_CAUSES as TEST_CAUSES
+        self.assertEqual(TEST_CAUSES, PROD_CAUSES | {""})
+
+    def test_make_occasion_verdict_matches_a_real_parsed_verdict(self):
+        """WR-01 root cause — the shared fake fabricated a verdict shape the
+        production parser can never emit (it always included draft/topic_key/
+        skip_cause keys, even empty). Pin the fake to the real parser output."""
+        import json as _json
+        from core.tick_brain import TickBrain
+        from tests.occasion_helpers import make_occasion_verdict
+
+        for raw in (
+            {"should_act": False, "reason": "quiet night",
+             "draft": "Nothing much.", "skip_cause": "nothing_happened"},
+            {"should_act": True, "reason": "worth saying", "draft": "draft text"},
+            {"should_act": False, "reason": "no draft"},
+        ):
+            with self.subTest(raw=raw):
+                parsed = TickBrain._parse_response(_json.dumps(raw))
+                faked = make_occasion_verdict(
+                    should_act=raw["should_act"],
+                    reason=raw["reason"],
+                    draft=raw.get("draft", ""),
+                    skip_cause=raw.get("skip_cause", ""),
+                )
+                self.assertEqual(faked, parsed)
+
 
 class TestGroqTokenLedgerStore(unittest.TestCase):
     """GroqTokenLedgerStore — date-keyed Groq daily-token counter (MEM-06,
