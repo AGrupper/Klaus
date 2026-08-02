@@ -497,7 +497,18 @@ def check_occasion_health(now: datetime | None = None) -> list[Signal]:
     a signal here — that is the feature working as designed, not a fault.
     """
     signals: list[Signal] = []
+    # WR-12 — normalise to Asia/Jerusalem on entry. Every date and clock
+    # comparison below (today, _most_recent_sunday, the 10:20 weekly grace
+    # window) is defined in local time, but UTC is this module's convention for
+    # a caller-supplied `now` (check_cron_health uses datetime.now(timezone.utc)).
+    # Without this, a UTC `now` evaluated the Jerusalem-local guard against the
+    # wrong clock — spuriously alerting "Weekly review did not fire" for up to
+    # three hours every Sunday morning — and `now.date()` could select the wrong
+    # Sunday entirely across the UTC/local midnight boundary.
+    # A naive `now` is assumed to already be Jerusalem-local (astimezone would
+    # otherwise silently reinterpret it as the host's system zone).
     now = now or datetime.now(_TZ)
+    now = now.replace(tzinfo=_TZ) if now.tzinfo is None else now.astimezone(_TZ)
     today = now.date()
 
     # --- Anomaly #1: errored occasion (D-28 #1, SC-1) ---

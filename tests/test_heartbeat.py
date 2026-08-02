@@ -1492,6 +1492,57 @@ def test_check_occasion_health_in_flight_gate_not_consulted_off_sunday(monkeypat
     )
 
 
+# ---------------------------------------------------------------------------
+# WR-12 — check_occasion_health must normalise a caller-supplied `now`.
+# UTC is this module's convention for an injected clock (check_cron_health uses
+# datetime.now(timezone.utc)), but every comparison in check_occasion_health is
+# defined in Asia/Jerusalem local time.
+# ---------------------------------------------------------------------------
+
+def test_check_occasion_health_normalises_utc_now_for_the_weekly_window(monkeypatch):
+    """Sunday 06:00 UTC is 09:00 Jerusalem — before the weekly cron fires, so
+    an absent doc must NOT alert. Read as 06:00 local it would."""
+    from datetime import timezone
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: None)
+    utc_now = datetime(2026, 5, 24, 6, 0, tzinfo=timezone.utc)
+    signals = heartbeat.check_occasion_health(now=utc_now)
+    assert not any(
+        s.fingerprint.startswith("occasion:weekly_review:not_fired:") for s in signals
+    )
+
+
+def test_check_occasion_health_normalises_utc_now_across_the_date_boundary(monkeypatch):
+    """2026-05-24 21:30 UTC is 2026-05-25 00:30 Jerusalem — the Monday AFTER
+    the Sunday. `today` must resolve locally or the wrong Sunday is checked."""
+    from datetime import timezone
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: None)
+    utc_now = datetime(2026, 5, 24, 21, 30, tzinfo=timezone.utc)
+    signals = heartbeat.check_occasion_health(now=utc_now)
+    matches = [
+        s for s in signals
+        if s.fingerprint.startswith("occasion:weekly_review:not_fired:")
+    ]
+    assert len(matches) == 1
+    # 2026-05-24 is the most recent Sunday relative to Monday 2026-05-25 local.
+    assert matches[0].fingerprint.endswith(_SUNDAY_ISO)
+
+
+def test_check_occasion_health_naive_now_is_treated_as_local(monkeypatch):
+    """A naive `now` is assumed Jerusalem-local, not reinterpreted as the
+    host's system zone (which would vary by machine)."""
+    from core import heartbeat
+    monkeypatch.setattr(heartbeat, "_read_occasion_state", _occasion_state_reader({}))
+    monkeypatch.setattr(heartbeat, "_occasion_in_flight", lambda: None)
+    signals = heartbeat.check_occasion_health(now=datetime(2026, 5, 24, 9, 0))
+    assert not any(
+        s.fingerprint.startswith("occasion:weekly_review:not_fired:") for s in signals
+    )
+
+
 def test_occasion_in_flight_fails_open_on_store_error(monkeypatch):
     """_occasion_in_flight never raises and never suppresses on error — a
     Firestore outage must not mute the not-fired check."""
