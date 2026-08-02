@@ -69,12 +69,17 @@ before the addendum shipped, which is the right order of operations.
 The damage is concentrated exactly where the phase context predicted: the seams between
 independently-written plans. The single largest defect is that **every occasion's specialised
 Layer-0 gather is merged into `situation` and then never rendered into either prompt** — both
-prompt builders read a fixed key whitelist inherited from the tick. Under
-`OCCASION_CASCADE=true` (live right now) the nightly composes without the journal that D-07
-exists to guarantee, the morning composes without sleep/tasks/weather, and the weekly composes
-without the week. Nine parallel agents each merged their data into the shared dict and each
-assumed a different agent had wired the render; nobody did, and every test passes
-`occasion_data={}` so nothing caught it.
+prompt builders read a fixed key whitelist inherited from the tick. Nine parallel agents each
+merged their data into the shared dict and each assumed a different agent had wired the render;
+nobody did, and every test passes `occasion_data={}` so nothing caught it.
+
+**Corrected 2026-08-02 against production behaviour — read the CR-01 correction block before
+planning any fix.** The original phrasing of this paragraph (that the occasions therefore
+compose blind) is wrong. Layer 2 is agentic and tool-fetches what it needs, which live output
+confirms. The real split is: **waste** at Layer 2 (expensive gathers computed then discarded),
+**genuine blindness** at Layer 1 (the tick-brain has no tools). The morning — the only occasion
+gated by Layer 1 judgment — has skipped 3/3 days, which is the symptom that matters. Fix
+Layer 1's render first; Layer 2's is a latency/cost cleanup.
 
 Three other Critical findings: the morning writes a *terminal* `skipped_by_judgment` status
 on cascade infra failure (mislabeling a fault as judgment and locking out the whole day, with
