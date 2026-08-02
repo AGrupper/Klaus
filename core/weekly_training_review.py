@@ -47,6 +47,16 @@ _STATE_COLLECTION = "weekly_reviews"
 # fires once a week).
 _LAST_DIRECTIVE_VETO_REASON = ""
 
+# CR-03 — statuses that mean "this Sunday is done, do not run again".
+# Mirrors core/morning_briefing.py's `_TERMINAL_STATUSES` and
+# core/nightly_review.py's `was_sent()` guard. Needed because Phase 33 moved
+# the weekly onto Cloud Tasks (`enqueue_occasion` -> /internal/process-occasion),
+# which re-raises on any exception and is created with --max-attempts=2 — so
+# every 5xx or exceeded dispatch_deadline (540s) is retried once. Without this
+# read, a retry after a successful send re-runs the whole weekly (another ~28s
+# Garmin login, another 32K-token compose) and Amit gets the review twice.
+_WEEKLY_TERMINAL_STATUSES = frozenset({"sent", "skipped_by_directive"})
+
 
 def _make_firestore_client():
     from memory.firestore_db import _make_firestore_client as _mfc
@@ -596,7 +606,7 @@ def _parse_review_skip(text: str) -> tuple[bool, str, str]:
     return (skip, reason, polished)
 
 
-async def run_weekly_review(bot, today_iso: str) -> None:
+async def run_weekly_review(bot, today_iso: str, *, dedup: bool = True) -> None:
     """Entry point called by the /cron/weekly-training-review route.
 
     D-24: always sends even when the week is sparse or data is unavailable —
@@ -617,7 +627,24 @@ async def run_weekly_review(bot, today_iso: str) -> None:
     Args:
         bot:       Telegram bot instance (_application.bot).
         today_iso: YYYY-MM-DD string (Asia/Jerusalem date at cron fire time).
+        dedup:     CR-03 — when True (default), a terminal status already
+            recorded for ``today_iso`` short-circuits the whole run. The
+            Cloud Tasks dispatch path retries once on any 5xx or exceeded
+            dispatch_deadline, and the weekly is the heaviest compose in the
+            system; without this the retry re-gathers, re-composes and sends
+            Amit a second copy of the same review.
     """
+    # CR-03 — idempotency guard, read BEFORE the expensive gather so a retry
+    # costs nothing. Same contract as nightly (`was_sent`) and morning
+    # (`_TERMINAL_STATUSES`); the weekly was the one occasion with no guard.
+    if dedup:
+        status = _get_state(today_iso).get("status")
+        if status in _WEEKLY_TERMINAL_STATUSES:
+            logger.info(
+                "weekly_review: dedup — already %s for %s, skipping", status, today_iso
+            )
+            return
+
     # WHY run_in_executor: _gather_week_data does a blocking Garmin login (~28s) +
     # a synchronous requests-based activities fetch (15s read-timeout) + Postgres +
     # Firestore reads, and _compose_review makes a blocking brain-LLM call. Running

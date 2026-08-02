@@ -1089,6 +1089,95 @@ def _cascade_decision(
     }
 
 
+class TestWeeklyReviewDedup:
+    """CR-03 — the weekly is dispatched through Cloud Tasks (--max-attempts=2),
+    so every 5xx / exceeded dispatch_deadline is retried once. Without an
+    idempotency read the retry re-gathers, re-composes and double-sends."""
+
+    @pytest.mark.parametrize("status", ["sent", "skipped_by_directive"])
+    def test_dedup_noops_on_terminal_status(self, monkeypatch, status):
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setenv("OCCASION_CASCADE", "true")
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        with patch("core.weekly_training_review._get_state",
+                   return_value={"status": status}), \
+             patch("core.weekly_training_review._gather_week_data") as mock_gather, \
+             patch("core.weekly_training_review._compose_review") as mock_compose, \
+             patch("core.autonomous.run_occasion_cascade",
+                   new_callable=AsyncMock) as mock_cascade, \
+             patch("core.scheduled_message.send_and_inject",
+                   new_callable=AsyncMock) as mock_send, \
+             patch("core.weekly_training_review._set_state") as mock_set_state:
+            asyncio.run(wtr.run_weekly_review(object(), "2026-08-02"))
+
+        # The guard is read BEFORE the ~28s Garmin gather, so a retry is free.
+        mock_gather.assert_not_called()
+        mock_compose.assert_not_called()
+        mock_cascade.assert_not_called()
+        mock_send.assert_not_called()
+        mock_set_state.assert_not_called()
+
+    def test_dedup_does_not_block_a_non_terminal_state(self, monkeypatch):
+        """An absent doc (or a non-terminal one) must still run — a retry after
+        an eviction mid-compose has to be able to finish the Sunday."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setenv("OCCASION_CASCADE", "true")
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        mock_cascade = AsyncMock(return_value=_cascade_decision())
+        with patch("core.weekly_training_review._get_state", return_value={}), \
+             patch("core.weekly_training_review._gather_week_data", return_value={}), \
+             patch("core.autonomous.run_occasion_cascade", mock_cascade), \
+             patch("core.weekly_training_review._set_state"):
+            asyncio.run(wtr.run_weekly_review(object(), "2026-08-02"))
+
+        mock_cascade.assert_called_once()
+
+    def test_dedup_false_always_runs(self, monkeypatch):
+        """dedup=False is the explicit force-rerun escape hatch."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        monkeypatch.setenv("OCCASION_CASCADE", "true")
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        mock_cascade = AsyncMock(return_value=_cascade_decision())
+        with patch("core.weekly_training_review._get_state",
+                   return_value={"status": "sent"}), \
+             patch("core.weekly_training_review._gather_week_data", return_value={}), \
+             patch("core.autonomous.run_occasion_cascade", mock_cascade), \
+             patch("core.weekly_training_review._set_state"):
+            asyncio.run(wtr.run_weekly_review(object(), "2026-08-02", dedup=False))
+
+        mock_cascade.assert_called_once()
+
+    def test_dedup_guard_fails_open_on_legacy_path_too(self, monkeypatch):
+        """The guard sits above the OCCASION_CASCADE branch, so it protects the
+        legacy arm identically."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        monkeypatch.delenv("OCCASION_CASCADE", raising=False)
+        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+
+        with patch("core.weekly_training_review._get_state",
+                   return_value={"status": "sent"}), \
+             patch("core.weekly_training_review._gather_week_data") as mock_gather, \
+             patch("core.weekly_training_review._compose_review") as mock_compose, \
+             patch("core.scheduled_message.send_and_inject",
+                   new_callable=AsyncMock) as mock_send:
+            asyncio.run(wtr.run_weekly_review(object(), "2026-08-02"))
+
+        mock_gather.assert_not_called()
+        mock_compose.assert_not_called()
+        mock_send.assert_not_called()
+
+
 def test_occasion_cascade_flag_off_uses_legacy_compose(monkeypatch):
     """OCC-06 / D-30: flag unset -> _compose_review runs; run_occasion_cascade
     is never called (the byte-identical legacy arm)."""
