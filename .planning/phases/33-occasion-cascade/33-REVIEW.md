@@ -183,6 +183,37 @@ Then extend `test_maximal_occasion_triage_prompt_fits_groq_ceiling` with a reali
 `occasion_data` (weekly is the worst case) and add a test asserting the nightly's `journal`
 summary and the weekly's `projections` appear in the Layer-2 user message.
 
+> **RESOLUTION (2026-08-03).** Fixed for Layer 1 only, per the production-correction's own
+> priority ordering — Layer 2's render stays out of scope (waste/latency cleanup, not
+> blindness; unchanged here). Shipped as a capped `_occasion_digest(occasion, situation)` in
+> `core/autonomous.py`, rendered into `_build_triage_prompt`'s existing occasion branch (never
+> on the plain tick path — verified byte-for-byte unaffected by
+> `test_tick_path_token_total_unchanged_by_cr01`). Per-occasion mapping: `morning` reads
+> `garmin`/`garmin_missing` (D-11 — the gap is named, not silently omitted), `tasks` counts, a
+> one-line `weather` summary, the earliest `calendar` event's local time, and
+> `weekly_review_due_today` (D-20). `nightly` reads journal *presence* only (D-07 — never
+> content), `planned_workouts` am/pm modality labels, the earliest `tomorrow_events`/
+> `tomorrow.calendar` commitment, and `tomorrow_tasks_today`/`_overdue` counts. `weekly_review`
+> reads a `training_log` session count, an on-track/tracked ratio over the projection facets,
+> and the first `coaching_topics_included` entry as the flagged anomaly. Every field is a count
+> or a hard-clamped (`_clamp_text`, ≤80 chars) scalar — never a raw gather or nested-structure
+> dump — plus a defense-in-depth 700-char cap on the assembled digest
+> (`_OCCASION_DIGEST_MAX_CHARS`), so the render cost is fixed regardless of how much data exists
+> on a busy day (`test_digest_hard_cap_regardless_of_source_size`,
+> `test_digest_hard_cap_morning_pathological` feed 300–10,000-element pathological inputs and
+> assert the cap holds). The three genuinely tick-only keys (`meals_since_last_tick`,
+> `hours_since_contact`, `unread_email_count` — meaningless outside the `*/20` cadence) are now
+> dropped from the occasion snapshot rather than merely left unused
+> (`test_occasion_path_drops_tick_only_keys`); the tick path keeps all three unchanged.
+> Measured: the maximal occasion triage fixture (weekly, the worst case) went from 6,634 to
+> 6,604 tokens after dropping the tick-only keys (baseline had no digest content to render), and
+> to 6,644 tokens with a deliberately pathological `occasion_data` (300 training-log entries,
+> 500 projection facets, 50 long coaching-topic strings) merged in and the digest fully
+> populated — 556 tokens of spare margin under the unchanged 7,200-token
+> `_GROQ_REQUEST_TOKEN_TARGET`. The tick path's own maximal fixture is unchanged at 7,186 tokens
+> (14-token margin, as before). Full suite: 2,406 passed (baseline 2,386 + 20 new tests for the
+> digest itself, the cap, the drop, and the two token-budget guards).
+
 ---
 
 ### CR-02: A morning cascade infra failure is recorded as a terminal judgment skip, silently killing the day's briefing

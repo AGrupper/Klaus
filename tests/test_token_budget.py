@@ -541,3 +541,133 @@ def test_maximal_occasion_triage_prompt_fits_groq_ceiling():
         "openai/gpt-oss-120b — trim the occasion additions to Layer 1 (the "
         "fold-in text and the occasion prompt belong at Layer 2 instead)"
     )
+
+
+# --------------------------------------------------------------------------- #
+# CR-01 (33-REVIEW.md) — the occasion digest fix: occasion_data (the weekly's #
+# full week_data) is now rendered, capped, into the Layer-1 prompt. This must #
+# still fit inside the SAME 7,200-token target, and a PATHOLOGICALLY large    #
+# occasion_data (hundreds of training_log entries) must not blow it — the    #
+# digest is count/scalar-based, not a dump of the source lists.              #
+# --------------------------------------------------------------------------- #
+
+
+def _build_pathological_weekly_occasion_data(n_sessions: int = 300) -> dict:
+    """A deliberately oversized ``week_data``-shaped occasion_data — WAY past
+    anything a real week could produce (a real week has <= ~14 sessions) — to
+    prove the digest's cost does NOT scale with source-data size."""
+    training_log = [
+        {
+            "date": "2026-07-20",
+            "quality": "grind" if i % 3 == 0 else "solid",
+            "session_id": f"sess-{i}",
+            "modality": "run",
+            "notes": "A " * 100,  # pathologically long free-text field
+        }
+        for i in range(n_sessions)
+    ]
+    projections = {
+        facet: {
+            "facet": facet,
+            "confidence": "high",
+            "data_point_count": 10,
+            "on_track": i % 2 == 0,
+            "gap": 1.23,
+            "projected_value": 100.0,
+            "target_value": 105.0,
+            "target_date": "2026-12-31",
+            "unit": "kg",
+            "confidence_label": "high confidence",
+        }
+        for i, facet in enumerate(
+            ["bench_press_1rm", "squat_1rm", "threshold_pace", "push_ups", "pull_ups"]
+        )
+    }
+    coaching_topics_included = [
+        f"structural-critique:{'x' * 200}:{i}" for i in range(50)  # pathologically long keys
+    ]
+    return {
+        "training_log": training_log,
+        "training_log_error": False,
+        "projections": projections,
+        "coaching_topics_included": coaching_topics_included,
+    }
+
+
+def test_maximal_occasion_triage_prompt_with_digest_fits_groq_ceiling():
+    """CR-01 — with a PATHOLOGICALLY oversized occasion_data merged in (far
+    beyond any real week), the rendered digest must still keep the maximal
+    occasion triage prompt under the same 7,200-token design target."""
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=_TZ)
+
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+    occasion_prompt = autonomous._load_prompt("prompts/weekly_occasion.md")
+    situation = _build_maximal_occasion_fixture_situation(now)
+    situation.update(_build_pathological_weekly_occasion_data())
+
+    user_msg = autonomous._build_triage_prompt(
+        situation, triage_system, occasion_prompt=occasion_prompt,
+    )
+
+    assert "Occasion digest:" in user_msg
+
+    system_tokens = _count_tokens(triage_system)
+    user_tokens = _count_tokens(user_msg)
+    total = system_tokens + user_tokens + _TICK_BRAIN_MAX_TOKENS
+
+    assert total <= _GROQ_REQUEST_TOKEN_TARGET, (
+        f"maximal OCCASION triage prompt+completion budget {total} tokens "
+        f"(system={system_tokens}, user={user_tokens}, "
+        f"completion={_TICK_BRAIN_MAX_TOKENS}) exceeds the {_GROQ_REQUEST_TOKEN_TARGET}-"
+        f"token design target with the CR-01 occasion digest rendered — the "
+        "digest must be shrunk, never the 7,200 target raised"
+    )
+
+
+def test_tick_path_token_total_unchanged_by_cr01():
+    """CR-01 — a plain */20 tick (no ``occasion`` key) must render a
+    byte-identical prompt after the CR-01 fix; its token total is unchanged."""
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=_TZ)
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+    tick_situation = _build_maximal_fixture_situation(now)
+
+    user_msg = autonomous._build_triage_prompt(tick_situation, triage_system)
+
+    assert "Occasion digest:" not in user_msg
+    system_tokens = _count_tokens(triage_system)
+    user_tokens = _count_tokens(user_msg)
+    total = system_tokens + user_tokens + _TICK_BRAIN_MAX_TOKENS
+
+    # Same assertion/target as test_maximal_triage_prompt_fits_groq_ceiling —
+    # this test's purpose is the *unchanged* claim, verified by the
+    # unconditional presence of the three tick-only keys below.
+    assert total <= _GROQ_REQUEST_TOKEN_TARGET
+
+    for key in ("unread_email_count", "meals_since_last_tick", "hours_since_contact"):
+        assert f'"{key}"' in user_msg, (
+            f"tick path must still render {key!r} — CR-01 only drops it on occasion runs"
+        )
+
+
+def test_occasion_path_drops_tick_only_keys():
+    """CR-01 — the three tick-only keys (meaningless on a scheduled occasion)
+    are absent from the occasion snapshot, present on the tick path."""
+    now = datetime(2026, 7, 22, 14, 0, tzinfo=_TZ)
+    triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+
+    occasion_situation = _build_maximal_occasion_fixture_situation(now)
+    occasion_prompt = autonomous._load_prompt("prompts/weekly_occasion.md")
+    occasion_user_msg = autonomous._build_triage_prompt(
+        occasion_situation, triage_system, occasion_prompt=occasion_prompt,
+    )
+
+    for key in ("unread_email_count", "meals_since_last_tick", "hours_since_contact"):
+        assert f'"{key}"' not in occasion_user_msg, (
+            f"{key!r} must be dropped from the occasion snapshot — meaningless "
+            "outside the */20 tick cadence"
+        )
+
+    tick_situation = _build_maximal_fixture_situation(now)
+    tick_user_msg = autonomous._build_triage_prompt(tick_situation, triage_system)
+    for key in ("unread_email_count", "meals_since_last_tick", "hours_since_contact"):
+        assert f'"{key}"' in tick_user_msg

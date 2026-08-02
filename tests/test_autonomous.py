@@ -3472,3 +3472,186 @@ def test_run_occasion_cascade_marks_and_clears_inflight_even_on_exception(mock_b
 
     inflight_store.mark.assert_called_once()
     inflight_store.clear.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# CR-01 (33-REVIEW.md) — _occasion_digest: capped per-occasion digest for
+# the Layer-1 (tick-brain) triage prompt.
+# ---------------------------------------------------------------------------
+
+class TestOccasionDigest:
+    """_occasion_digest(occasion, situation) — per-occasion field mapping,
+    absent-key omission, unknown-occasion no-op, and the hard token cap."""
+
+    def test_unknown_occasion_returns_empty_string(self, fixed_now):
+        assert autonomous._occasion_digest("bogus", {}) == ""
+
+    def test_no_data_returns_empty_string(self, fixed_now):
+        """Every occasion, given a situation with none of its source keys,
+        renders nothing — same discipline as conversation_tail/training_reality."""
+        for occasion in ("morning", "nightly", "weekly_review"):
+            assert autonomous._occasion_digest(occasion, {}) == ""
+
+    # -- morning -------------------------------------------------------- #
+
+    def test_morning_digest_renders_expected_fields(self, fixed_now):
+        situation = {
+            "garmin": {"sleep_score": 72, "sleep_hours": 7.5},
+            "garmin_missing": False,
+            "tasks": {"today": [{"id": "t1"}], "overdue": [{"id": "t2"}, {"id": "t3"}]},
+            "weather": {"current": {"condition": "Sunny", "temp_c": 28}},
+            "calendar": [
+                {"summary": "Later", "start": "2026-05-21T09:00:00+03:00"},
+                {"summary": "Earlier", "start": "2026-05-21T07:30:00+03:00"},
+            ],
+            "weekly_review_due_today": True,
+        }
+        digest = autonomous._occasion_digest("morning", situation)
+        assert digest.startswith("\nOccasion digest:\n")
+        assert "sleep: score=72 hours=7.5" in digest
+        assert "tasks: 1 today, 2 overdue" in digest
+        assert "weather: Sunny, 28°C" in digest
+        assert "first calendar event: 07:30" in digest  # earliest, not first-in-list
+        assert "weekly review due today: True" in digest
+
+    def test_morning_digest_names_garmin_missing_gap(self, fixed_now):
+        """D-11 — the whole point of garmin_missing is that Klaus NAMES the
+        gap rather than silently omitting it."""
+        situation = {"garmin": {"state": 2}, "garmin_missing": True}
+        digest = autonomous._occasion_digest("morning", situation)
+        assert "sleep: Garmin data unavailable today" in digest
+
+    def test_morning_digest_omits_absent_fields(self, fixed_now):
+        """Only tasks present -> only the tasks line renders."""
+        situation = {"tasks": {"today": [], "overdue": []}}
+        digest = autonomous._occasion_digest("morning", situation)
+        assert "tasks: 0 today, 0 overdue" in digest
+        assert "sleep" not in digest
+        assert "weather" not in digest
+        assert "first calendar event" not in digest
+        assert "weekly review due today" not in digest
+
+    # -- nightly ---------------------------------------------------------- #
+
+    def test_nightly_digest_renders_expected_fields(self, fixed_now):
+        situation = {
+            "journal": {"summary": "Good day", "highlights": []},
+            "planned_workouts": {"weekday": "Friday", "am": {"modality": "run"}, "pm": {"modality": "rest"}},
+            "tomorrow_events": [
+                {"summary": "Standup", "start": "2026-05-22T09:00:00+03:00"},
+                {"summary": "Dentist", "start": "2026-05-22T08:00:00+03:00"},
+            ],
+            "tomorrow_tasks_today": [{"id": "a"}],
+            "tomorrow_tasks_overdue": [{"id": "b"}, {"id": "c"}],
+        }
+        digest = autonomous._occasion_digest("nightly", situation)
+        assert "journal: written" in digest
+        assert "tomorrow planned: am=run" in digest
+        assert "tomorrow's first commitment: 08:00 Dentist" in digest
+        assert "tomorrow tasks: 1 due, 2 overdue" in digest
+
+    def test_nightly_digest_journal_presence_only_not_content(self, fixed_now):
+        """D-07 — presence, not content: the summary text itself never
+        appears verbatim in the digest."""
+        situation = {"journal": {"summary": "a very private detail"}}
+        digest = autonomous._occasion_digest("nightly", situation)
+        assert "journal: written" in digest
+        assert "a very private detail" not in digest
+
+    def test_nightly_digest_missing_journal(self, fixed_now):
+        situation = {"journal": None}
+        digest = autonomous._occasion_digest("nightly", situation)
+        assert "journal: missing" in digest
+
+    def test_nightly_digest_rest_only_plan_renders_rest_none(self, fixed_now):
+        situation = {
+            "planned_workouts": {"weekday": "Saturday", "am": {"modality": "rest"}, "pm": {}},
+        }
+        digest = autonomous._occasion_digest("nightly", situation)
+        assert "tomorrow planned: rest/none" in digest
+
+    def test_nightly_digest_omits_absent_fields(self, fixed_now):
+        situation = {"journal": {"summary": "x"}}
+        digest = autonomous._occasion_digest("nightly", situation)
+        assert "journal: written" in digest
+        assert "tomorrow planned" not in digest
+        assert "tomorrow's first commitment" not in digest
+        assert "tomorrow tasks" not in digest
+
+    # -- weekly_review ------------------------------------------------ #
+
+    def test_weekly_digest_renders_expected_fields(self, fixed_now):
+        situation = {
+            "training_log": [{"quality": "solid"}, {"quality": "grind"}, {"quality": "solid"}],
+            "projections": {
+                "bench_press_1rm": {"confidence": "high", "on_track": True},
+                "squat_1rm": {"confidence": "high", "on_track": False},
+                "threshold_pace": {"confidence": "no_data"},
+            },
+            "coaching_topics_included": ["structural-critique:session-quality"],
+        }
+        digest = autonomous._occasion_digest("weekly_review", situation)
+        assert "sessions logged this week: 3" in digest
+        assert "projections: 1/2 facets on track" in digest
+        assert "flagged: structural-critique:session-quality" in digest
+
+    def test_weekly_digest_training_log_error(self, fixed_now):
+        situation = {"training_log": None, "training_log_error": True}
+        digest = autonomous._occasion_digest("weekly_review", situation)
+        assert "sessions logged this week: unavailable" in digest
+
+    def test_weekly_digest_omits_absent_fields(self, fixed_now):
+        situation = {"training_log": []}
+        digest = autonomous._occasion_digest("weekly_review", situation)
+        assert "sessions logged this week: 0" in digest
+        assert "projections" not in digest
+        assert "flagged" not in digest
+
+    # -- hard cap -------------------------------------------------------- #
+
+    def test_digest_hard_cap_regardless_of_source_size(self, fixed_now):
+        """A pathologically large occasion_data (a huge training_log, many
+        long-text coaching topics) must still render a digest under the
+        module's hard char cap — the cost must not scale with a busy day."""
+        situation = {
+            "training_log": [{"quality": "solid", "notes": "x" * 500} for _ in range(500)],
+            "projections": {
+                f"facet_{i}": {"confidence": "high", "on_track": i % 2 == 0}
+                for i in range(500)
+            },
+            "coaching_topics_included": [f"topic-{'y' * 500}-{i}" for i in range(500)],
+        }
+        digest = autonomous._occasion_digest("weekly_review", situation)
+        assert len(digest) <= autonomous._OCCASION_DIGEST_MAX_CHARS + len("\nOccasion digest:\n\n")
+
+    def test_digest_hard_cap_morning_pathological(self, fixed_now):
+        situation = {
+            "tasks": {"today": [{"id": i} for i in range(10_000)], "overdue": []},
+            "weather": {"current": {"condition": "x" * 5000, "temp_c": 1}},
+            "calendar": [
+                {"summary": "y" * 5000, "start": f"2026-05-21T{h:02d}:00:00+03:00"}
+                for h in range(0, 23)
+            ],
+        }
+        digest = autonomous._occasion_digest("morning", situation)
+        assert len(digest) <= autonomous._OCCASION_DIGEST_MAX_CHARS + len("\nOccasion digest:\n\n")
+
+    def test_digest_only_renders_on_occasion_runs(self, fixed_now):
+        """A plain tick's _build_triage_prompt render never calls
+        _occasion_digest — verified indirectly via the absence of the
+        'Occasion digest:' heading."""
+        sit = _live_situation(fixed_now)
+        triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+        prompt = autonomous._build_triage_prompt(sit, triage_system)
+        assert "Occasion digest:" not in prompt
+
+    def test_digest_renders_inside_build_triage_prompt_for_occasion(self, fixed_now):
+        sit = make_occasion_situation(fixed_now, occasion="morning", empty=False)
+        sit["occasion_target_date"] = "2026-05-22"
+        sit["garmin"] = {"sleep_score": 80, "sleep_hours": 8.0}
+        triage_system = autonomous._load_prompt("prompts/autonomous_triage.md")
+        prompt = autonomous._build_triage_prompt(
+            sit, triage_system, occasion_prompt="I'm Klaus with your morning note.",
+        )
+        assert "Occasion digest:" in prompt
+        assert "sleep: score=80 hours=8.0" in prompt

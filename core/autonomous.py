@@ -1198,6 +1198,213 @@ def _first_prompt_line(text: str) -> str:
     return ""
 
 
+# --------------------------------------------------------------------------- #
+# CR-01 (33-REVIEW.md) — capped per-occasion digest for the Layer-1 (tick-    #
+# brain) triage prompt. The tick-brain has NO tools, so it genuinely cannot   #
+# see anything occasion-specific unless it is rendered here; Layer 2 is       #
+# agentic and tool-fetches what it needs (out of scope for this fix — see    #
+# the review's PRODUCTION CORRECTION block).                                 #
+# --------------------------------------------------------------------------- #
+
+# Defense-in-depth hard cap: the per-field clamps below already keep the
+# digest's cost FIXED regardless of source-data size (counts instead of full
+# lists, single clamped strings instead of free-text dumps) — this final
+# char cap is a backstop, not the primary mechanism, so a future field added
+# without a clamp still cannot blow the Groq budget (test_token_budget.py).
+_OCCASION_DIGEST_MAX_CHARS = 700
+
+
+def _clamp_text(value, max_chars: int = 80) -> str:
+    """Coerce ``value`` to a single-line string, hard-clamped to ``max_chars``.
+
+    Collapses internal whitespace/newlines so one field can never smuggle in
+    a multi-line block. Every free-text field in the occasion digest (a
+    calendar summary, a coaching-topic key) goes through this.
+    """
+    text = " ".join(str(value or "").split())
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 1].rstrip() + "…"
+
+
+def _earliest_event(events: "list[dict] | None") -> "dict | None":
+    """Return the calendar event with the earliest ``start`` (ISO 8601).
+
+    Best-effort: a missing/unparseable ``start`` sorts last rather than
+    raising — a malformed upstream event must never break the digest.
+    """
+    if not events:
+        return None
+
+    def _key(evt: dict) -> datetime:
+        start = (evt or {}).get("start") or ""
+        try:
+            return datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        except ValueError:
+            return datetime.max.replace(tzinfo=timezone.utc)
+
+    return min(events, key=_key)
+
+
+def _format_event_time(event: "dict | None") -> str:
+    """Render an event's local HH:MM start time, or ``""`` if unparseable/absent."""
+    if not event:
+        return ""
+    start = event.get("start") or ""
+    try:
+        dt = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        return dt.astimezone(_TZ).strftime("%H:%M")
+    except ValueError:
+        return ""
+
+
+def _digest_morning(situation: dict) -> "list[str]":
+    """CR-01 morning digest lines — source: ``morning_briefing._gather_data``'s
+    ``today_data`` (merged flat into ``situation`` by ``run_occasion_cascade``).
+    """
+    lines: list[str] = []
+    garmin = situation.get("garmin")
+    if garmin is not None:
+        if situation.get("garmin_missing"):
+            # D-11 — name the gap, never silently omit it.
+            lines.append("sleep: Garmin data unavailable today")
+        else:
+            sleep_score = garmin.get("sleep_score")
+            sleep_hours = garmin.get("sleep_hours")
+            if sleep_score is not None or sleep_hours is not None:
+                lines.append(f"sleep: score={sleep_score} hours={sleep_hours}")
+    tasks = situation.get("tasks")
+    if isinstance(tasks, dict) and ("today" in tasks or "overdue" in tasks):
+        lines.append(
+            f"tasks: {len(tasks.get('today') or [])} today, "
+            f"{len(tasks.get('overdue') or [])} overdue"
+        )
+    weather = situation.get("weather")
+    if weather:
+        current = weather.get("current") or {}
+        if current:
+            lines.append(
+                "weather: " + _clamp_text(
+                    f"{current.get('condition', '')}, {current.get('temp_c', '')}°C",
+                    60,
+                )
+            )
+    first_time = _format_event_time(_earliest_event(situation.get("calendar")))
+    if first_time:
+        lines.append(f"first calendar event: {first_time}")
+    if "weekly_review_due_today" in situation:
+        # D-20 — "stay light on training, the weekly is at 10:00" signal.
+        lines.append(
+            f"weekly review due today: {bool(situation.get('weekly_review_due_today'))}"
+        )
+    return lines
+
+
+def _digest_nightly(situation: dict) -> "list[str]":
+    """CR-01 nightly digest lines — source: nightly_review's
+    ``{"journal": journal, "tomorrow": tomorrow, **structured}`` (merged flat
+    into ``situation`` by ``run_occasion_cascade``).
+    """
+    lines: list[str] = []
+    if "journal" in situation:
+        # D-07 — presence only, never content (the journal is private memory).
+        lines.append(f"journal: {'written' if situation.get('journal') else 'missing'}")
+    tomorrow = situation.get("tomorrow") or {}
+    planned = situation.get("planned_workouts") or tomorrow.get("planned_workouts") or {}
+    if planned:
+        slot_labels = []
+        for slot in ("am", "pm"):
+            entry = planned.get(slot) or {}
+            modality = entry.get("modality") or entry.get("type")
+            if modality and str(modality).strip().lower() not in ("", "rest", "off"):
+                slot_labels.append(f"{slot}={_clamp_text(modality, 30)}")
+        lines.append(
+            "tomorrow planned: " + (", ".join(slot_labels) if slot_labels else "rest/none")
+        )
+    tomorrow_events = situation.get("tomorrow_events")
+    if tomorrow_events is None:
+        tomorrow_events = tomorrow.get("calendar")
+    first_event = _earliest_event(tomorrow_events)
+    if first_event:
+        first_time = _format_event_time(first_event)
+        first_summary = _clamp_text(first_event.get("summary"), 50)
+        detail = " ".join(part for part in (first_time, first_summary) if part)
+        if detail:
+            lines.append(f"tomorrow's first commitment: {detail}")
+    if "tomorrow_tasks_today" in situation or "tomorrow_tasks_overdue" in situation:
+        lines.append(
+            f"tomorrow tasks: {len(situation.get('tomorrow_tasks_today') or [])} due, "
+            f"{len(situation.get('tomorrow_tasks_overdue') or [])} overdue"
+        )
+    return lines
+
+
+# The five projection facets _gather_week_data always computes (never
+# data-dependent), so counting "tracked" facets here is itself a bounded,
+# fixed-size operation regardless of how much history exists per facet.
+_WEEKLY_PROJECTION_FACETS = (
+    "bench_press_1rm", "squat_1rm", "threshold_pace", "push_ups", "pull_ups",
+)
+
+
+def _digest_weekly(situation: dict) -> "list[str]":
+    """CR-01 weekly_review digest lines — source: the full ``week_data``
+    (merged flat into ``situation`` by ``run_occasion_cascade``; advisory_only
+    so Layer 1 cannot suppress the send, but the digest still shapes the
+    draft it hands to Layer 2).
+    """
+    lines: list[str] = []
+    training_log = situation.get("training_log")
+    if training_log is not None:
+        lines.append(f"sessions logged this week: {len(training_log)}")
+    elif situation.get("training_log_error"):
+        lines.append("sessions logged this week: unavailable (TrainingLogStore error)")
+    projections = situation.get("projections")
+    if projections:
+        tracked = [
+            result for facet, result in projections.items()
+            if facet in _WEEKLY_PROJECTION_FACETS
+            and isinstance(result, dict) and result.get("confidence") != "no_data"
+        ]
+        if tracked:
+            on_track = sum(1 for result in tracked if result.get("on_track"))
+            lines.append(f"projections: {on_track}/{len(tracked)} facets on track")
+    anomalies = situation.get("coaching_topics_included")
+    if anomalies:
+        lines.append("flagged: " + _clamp_text(anomalies[0], 70))
+    return lines
+
+
+_OCCASION_DIGEST_BUILDERS = {
+    "morning": _digest_morning,
+    "nightly": _digest_nightly,
+    "weekly_review": _digest_weekly,
+}
+
+
+def _occasion_digest(occasion: str, situation: dict) -> str:
+    """CR-01 (33-REVIEW.md) — a SHORT, capped, human-readable digest of the
+    occasion's own Layer-0 gather, rendered into the Layer-1 triage prompt
+    ONLY on occasion runs (a plain ``*/20`` tick never carries an
+    ``occasion`` key, so this is structurally unreachable for it and the
+    tick's token total is unaffected — see test_token_budget.py).
+
+    Returns ``""`` for an unknown occasion or when the occasion contributed
+    no renderable fields — same "no data -> no block" discipline as the
+    ``conversation_tail``/``training_reality`` blocks above.
+    """
+    builder = _OCCASION_DIGEST_BUILDERS.get(occasion)
+    if builder is None:
+        return ""
+    lines = builder(situation)
+    if not lines:
+        return ""
+    body = "\n".join(lines)
+    if len(body) > _OCCASION_DIGEST_MAX_CHARS:
+        body = body[: _OCCASION_DIGEST_MAX_CHARS - 1].rstrip() + "…"
+    return f"\nOccasion digest:\n{body}\n"
+
+
 def _build_triage_prompt(
     situation: dict, triage_system: str, *, occasion_prompt: str = "",
 ) -> str:
@@ -1221,15 +1428,18 @@ def _build_triage_prompt(
     # indirectly via other call sites) — mirrors the Plan 03 convention.
     from core.tools import render_standing_directives_block
 
+    # CR-01 (33-REVIEW.md) — determined up-front (not just at the addendum
+    # branch below) so the tick-only keys can be dropped from `snap` on an
+    # occasion run before it's serialized.
+    occasion = situation.get("occasion")
+
     standing_directives = situation.get("standing_directives") or []
     snap = {
         "calendar": situation.get("calendar", []),
         "ticktick_overdue": situation.get("ticktick_overdue", []),
-        "unread_email_count": situation.get("unread_email_count", 0),
         "due_followups": situation.get("due_followups", []),
         # PHASE 19 — new context surfaces (must stay in sync with
         # _compose_layer2 and tests/test_evals.py::TestFixtureSchema).
-        "meals_since_last_tick": situation.get("meals_since_last_tick", []),
         "training_status": situation.get("training_status", {}),
         "acwr": situation.get("acwr", {"ratio": None}),
         # Phase 28 Plan 03 (HABIT-05 / D-15/D-16): pending habit/supplement adherence
@@ -1246,8 +1456,16 @@ def _build_triage_prompt(
             render_standing_directives_block(standing_directives, style="json")
         ),
     }
-    hsc = situation.get("hours_since_contact")
-    snap["hours_since_contact"] = "unknown" if hsc is None else hsc
+    if not occasion:
+        # CR-01 — these three keys are meaningless on a scheduled occasion
+        # ("since last tick" has no meaning outside the */20 cadence); drop
+        # them so the tick-only budget doesn't fund context an occasion
+        # can't use. Correctness/tidiness (~36 tokens total), NOT the
+        # occasion digest's funding source below.
+        snap["unread_email_count"] = situation.get("unread_email_count", 0)
+        snap["meals_since_last_tick"] = situation.get("meals_since_last_tick", [])
+        hsc = situation.get("hours_since_contact")
+        snap["hours_since_contact"] = "unknown" if hsc is None else hsc
     snap_json = json.dumps(snap, indent=2, ensure_ascii=False)
 
     self_state = situation.get("self_state") or {}
@@ -1327,8 +1545,8 @@ def _build_triage_prompt(
     # ``situation`` never carries an ``occasion`` key, so this branch is
     # structurally unreachable for it (33-03's token-budget arbitration kept
     # this content off the always-on Groq system-prompt path — see
-    # prompts/occasion_triage_addendum.md's header comment).
-    occasion = situation.get("occasion")
+    # prompts/occasion_triage_addendum.md's header comment). ``occasion`` is
+    # already resolved near the top of this function (CR-01, 33-REVIEW.md).
     if not occasion:
         return base_prompt
 
@@ -1348,7 +1566,12 @@ def _build_triage_prompt(
     ) or ""
     reaction_line = f"\nReaction pattern: {reaction_note}" if reaction_note else ""
 
-    return f"{base_prompt}\n\n{header}{reaction_line}\n\n{addendum}"
+    # CR-01 (33-REVIEW.md) — the occasion's own capped Layer-0 digest. This
+    # is the actual fix: without it, Layer 1 (no tools) judges every
+    # occasion on the SAME generic tick signals a plain */20 tick sees.
+    digest_block = _occasion_digest(occasion, situation)
+
+    return f"{base_prompt}\n\n{header}{reaction_line}{digest_block}\n\n{addendum}"
 
 
 # --------------------------------------------------------------------------- #
