@@ -16,6 +16,21 @@ from core.auth_google import GoogleAuthManager
 
 logger = logging.getLogger(__name__)
 
+# WHY (HttpError, OSError): mirrors mcp_tools/calendar_tool.py — a stalled or
+# reset Gmail API socket read raises TimeoutError/ssl.SSLError/ConnectionError
+# (all OSError subclasses), not an HttpError (which only covers responses the
+# server actually sent). Catching both keeps every method's documented
+# "returns an error/empty sentinel on API failure" contract true for a
+# network-level timeout too (core/auth_google.py sets the bounded, explicit
+# GOOGLE_API_TIMEOUT_SECONDS socket timeout that makes these fail fast).
+_TRANSIENT_ERRORS = (HttpError, OSError)
+
+# One bounded retry on read-only calls only — see calendar_tool.py for the
+# same rationale. Not applied to mark_read (a write), even though removing an
+# already-removed label is idempotent, to keep write paths retry-free by
+# convention.
+_READ_NUM_RETRIES = 1
+
 
 class GmailTool:
     """Authenticated wrapper around the Gmail v1 REST API.
@@ -169,9 +184,9 @@ class GmailTool:
                 service.users()
                 .messages()
                 .list(userId="me", q="is:unread", maxResults=max_results)
-                .execute()
+                .execute(num_retries=_READ_NUM_RETRIES)
             )
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error("Gmail list_unread failed during messages.list: %s", exc)
             return []
 
@@ -195,9 +210,9 @@ class GmailTool:
                         format="metadata",
                         metadataHeaders=["From", "Subject", "Date"],
                     )
-                    .execute()
+                    .execute(num_retries=_READ_NUM_RETRIES)
                 )
-            except HttpError as exc:
+            except _TRANSIENT_ERRORS as exc:
                 logger.error(
                     "Gmail list_unread failed during messages.get for id=%s: %s",
                     msg_id,
@@ -246,9 +261,9 @@ class GmailTool:
                 service.users()
                 .messages()
                 .get(userId="me", id=message_id, format="full")
-                .execute()
+                .execute(num_retries=_READ_NUM_RETRIES)
             )
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Gmail get_message failed for id=%s: %s", message_id, exc
             )
@@ -287,7 +302,7 @@ class GmailTool:
                 id=message_id,
                 body={"removeLabelIds": ["UNREAD"]},
             ).execute()
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Gmail mark_read failed for id=%s: %s", message_id, exc
             )

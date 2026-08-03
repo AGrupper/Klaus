@@ -19,6 +19,26 @@ from core.auth_google import GoogleAuthManager
 
 logger = logging.getLogger(__name__)
 
+# WHY (HttpError, OSError): a stalled/reset Google API socket read raises
+# TimeoutError, ssl.SSLError, or ConnectionError — none of which are an
+# HttpError (that only covers responses the server actually sent). All three
+# subclass OSError, so this tuple catches "the call didn't come back" the
+# same way HttpError catches "the call came back with an error status".
+# Every read method below is documented to return an empty/error sentinel on
+# API failure — this keeps that contract true for a network-level timeout too
+# (observed recurring in production 2026-08-01..03, GOOGLE_API_TIMEOUT_SECONDS
+# now bounds it to a fast failure instead of a long hang; core/auth_google.py).
+_TRANSIENT_ERRORS = (HttpError, OSError)
+
+# WHY num_retries=1 on read-only calls only: googleapiclient's own retry
+# machinery (used when num_retries > 0) already treats socket/timeout errors
+# as retryable with a short backoff. One bounded retry absorbs a single
+# transient blip without turning a stalled call into an unbounded wait —
+# GOOGLE_API_TIMEOUT_SECONDS still caps each individual attempt. Deliberately
+# NOT applied to insert/patch/delete calls: retrying a write whose response
+# was merely lost (not the request) risks a duplicate side effect.
+_READ_NUM_RETRIES = 1
+
 
 class GoogleCalendarManager:
     """Authenticated wrapper around the Google Calendar v3 API.
@@ -108,7 +128,7 @@ class GoogleCalendarManager:
                     orderBy="startTime",
                     maxResults=max_results,
                 )
-                .execute()
+                .execute(num_retries=_READ_NUM_RETRIES)
             )
 
             events: list[dict] = []
@@ -135,7 +155,7 @@ class GoogleCalendarManager:
 
             return events
 
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Calendar API error in list_events(%s, %s): %s",
                 time_min_iso,
@@ -167,7 +187,9 @@ class GoogleCalendarManager:
                 kwargs: dict = {}
                 if page_token:
                     kwargs["pageToken"] = page_token
-                result = service.calendarList().list(**kwargs).execute()
+                result = service.calendarList().list(**kwargs).execute(
+                    num_retries=_READ_NUM_RETRIES
+                )
                 for item in result.get("items", []):
                     if item.get("summary", "").strip() == name:
                         return item.get("id")
@@ -207,7 +229,9 @@ class GoogleCalendarManager:
                 kwargs: dict = {}
                 if page_token:
                     kwargs["pageToken"] = page_token
-                result = service.calendarList().list(**kwargs).execute()
+                result = service.calendarList().list(**kwargs).execute(
+                    num_retries=_READ_NUM_RETRIES
+                )
                 for item in result.get("items", []):
                     access_role = item.get("accessRole", "")
                     if access_role not in self._WRITABLE_ACCESS_ROLES:
@@ -283,7 +307,7 @@ class GoogleCalendarManager:
                         orderBy="startTime",
                         maxResults=max_results,
                     )
-                    .execute()
+                    .execute(num_retries=_READ_NUM_RETRIES)
                 )
                 for item in result.get("items", []):
                     start_field = item.get("start", {})
@@ -304,7 +328,7 @@ class GoogleCalendarManager:
                     )
             merged.sort(key=lambda e: e.get("start") or "")
             return merged
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Calendar API error in list_all_events(%s, %s): %s",
                 time_min_iso,
@@ -354,7 +378,7 @@ class GoogleCalendarManager:
                     orderBy="startTime",
                     maxResults=max_results,
                 )
-                .execute()
+                .execute(num_retries=_READ_NUM_RETRIES)
             )
             events: list[dict] = []
             for item in result.get("items", []):
@@ -434,7 +458,7 @@ class GoogleCalendarManager:
                         "items": items,
                     }
                 )
-                .execute()
+                .execute(num_retries=_READ_NUM_RETRIES)
             )
 
             # Busy if ANY queried calendar reports a busy interval.
@@ -456,7 +480,7 @@ class GoogleCalendarManager:
 
             return {"is_free": False, "conflicting_event": conflicting_title}
 
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Calendar API error in is_free(%s, %s): %s",
                 start_iso,
@@ -699,7 +723,7 @@ class GoogleCalendarManager:
 
             return result
 
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error(
                 "Calendar API error in create_event('%s', %s, %s): %s",
                 summary,
@@ -724,9 +748,11 @@ class GoogleCalendarManager:
         for cal in self.list_writable_calendars():
             cal_id = cal["id"]
             try:
-                service.events().get(calendarId=cal_id, eventId=event_id).execute()
+                service.events().get(calendarId=cal_id, eventId=event_id).execute(
+                    num_retries=_READ_NUM_RETRIES
+                )
                 return cal_id
-            except HttpError:
+            except _TRANSIENT_ERRORS:
                 continue
         return None
 
@@ -775,9 +801,12 @@ class GoogleCalendarManager:
                 "event_id": event_id,
                 "confirmation": f"Event {event_id} deleted.",
             }
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             # WHY: 410 Gone means the event is already absent — treat as success.
-            if exc.resp.status == 410:
+            # Only an HttpError carries a `.resp` — a socket/timeout error
+            # (OSError) has no HTTP response to inspect, so it always falls
+            # through to the generic failure branch below.
+            if isinstance(exc, HttpError) and exc.resp.status == 410:
                 logger.info("Calendar event already deleted (410): %s", event_id)
                 return {
                     "ok": True,
@@ -859,6 +888,6 @@ class GoogleCalendarManager:
                 "event_id": event_id,
                 "confirmation": f"Event {event_id} updated.",
             }
-        except HttpError as exc:
+        except _TRANSIENT_ERRORS as exc:
             logger.error("Calendar API error in update_event('%s'): %s", event_id, exc)
             return {"ok": False, "event_id": event_id, "error": str(exc)}

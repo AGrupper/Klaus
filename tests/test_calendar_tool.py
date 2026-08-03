@@ -377,3 +377,65 @@ def test_is_free_busy_if_any_calendar_busy():
     assert result["conflicting_event"] == "Leg Day"
     # Both calendars were queried.
     assert {i["id"] for i in fb_body["items"]} == {"primary", "training_cal_id"}
+
+
+# ---------------------------------------------------------------------------
+# Timeout degradation — production fix for recurring
+# `TimeoutError: The read operation timed out` calendar-gather failures
+# (2026-08-01..03). Every read/write method must degrade to its documented
+# error sentinel rather than let the raw socket-level exception propagate.
+# ---------------------------------------------------------------------------
+
+def test_list_events_degrades_gracefully_on_timeout_error():
+    """A raw TimeoutError (not an HttpError — the socket read itself stalled)
+    must be caught and degrade to [] like any other API error, not propagate
+    up and crash the caller (core/autonomous.py's gather layer, or a direct
+    brain tool call)."""
+    m = _mgr()
+    service = MagicMock()
+    service.events.return_value.list.return_value = _chain(TimeoutError("The read operation timed out"))
+    with patch.object(m, "_get_service", return_value=service):
+        result = m.list_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
+    assert result == []
+
+
+def test_list_events_passes_bounded_num_retries():
+    """A single bounded retry (not unbounded) is requested on the read call."""
+    m = _mgr()
+    service = MagicMock()
+    chain = _chain({"items": []})
+    service.events.return_value.list.return_value = chain
+    with patch.object(m, "_get_service", return_value=service):
+        m.list_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
+    chain.execute.assert_called_once_with(num_retries=1)
+
+
+def test_is_free_degrades_gracefully_on_ssl_timeout():
+    """ssl.SSLError (a socket-level failure, subclass of OSError) must also
+    be caught — not just the base TimeoutError."""
+    import ssl
+
+    m = _mgr()
+    service = MagicMock()
+    service.freebusy.return_value.query.return_value = _chain(
+        ssl.SSLError("record layer failure")
+    )
+    with patch.object(m, "_get_service", return_value=service), \
+         patch.object(m, "list_writable_calendars", return_value=[]):
+        result = m.is_free("2026-07-01T07:00:00+03:00", "2026-07-01T08:00:00+03:00")
+    assert result["is_free"] is False
+    assert "error" in result
+
+
+def test_delete_event_degrades_gracefully_on_timeout_error():
+    """A write path (delete) must also fail soft on a socket timeout —
+    returning {"ok": False, ...} rather than raising."""
+    m = _mgr()
+    service = MagicMock()
+    service.events.return_value.delete.return_value = _chain(
+        TimeoutError("The read operation timed out")
+    )
+    with patch.object(m, "_get_service", return_value=service):
+        result = m.delete_event("evt_1", calendar_id="primary")
+    assert result["ok"] is False
+    assert "error" in result

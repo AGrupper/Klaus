@@ -26,14 +26,29 @@ import logging
 import os
 from typing import Any, Protocol, runtime_checkable
 
+import httplib2
 from google.auth.exceptions import GoogleAuthError, RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google_auth_httplib2 import AuthorizedHttp
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 logger = logging.getLogger(__name__)
+
+# WHY explicit + configurable: googleapiclient's own build_http() already sets
+# a 60s httplib2 socket timeout when nothing else is specified, but that
+# default is buried in the library and not something Klaus's operator can see
+# or tune. Mirrors the LLM_TIMEOUT_SECONDS invariant (CLAUDE.md §6): every
+# outbound client Klaus owns gets an explicit, bounded, env-driven timeout
+# rather than relying on an SDK default. 30s keeps a single stalled Calendar/
+# Gmail read well under the Cloud Run request deadline instead of eating up
+# to 60s of it (observed recurring in production 2026-08-01..03 as
+# `TimeoutError: The read operation timed out` from httplib2/ssl during
+# calendar gather).
+_GOOGLE_API_TIMEOUT_ENV = "GOOGLE_API_TIMEOUT_SECONDS"
+_GOOGLE_API_TIMEOUT_DEFAULT = "30"
 
 
 # OAuth scopes the agent needs.
@@ -273,13 +288,30 @@ class GoogleAuthManager:
         """Return an authenticated Gmail v1 service resource."""
         # cache_discovery=False silences a noisy warning on Cloud Run where
         # the local discovery cache directory isn't writable.
-        return build("gmail", "v1", credentials=self.get_credentials(),
+        return build("gmail", "v1", http=self._authorized_http(),
                      cache_discovery=False)
 
     def calendar_service(self) -> Any:
         """Return an authenticated Calendar v3 service resource."""
-        return build("calendar", "v3", credentials=self.get_credentials(),
+        return build("calendar", "v3", http=self._authorized_http(),
                      cache_discovery=False)
+
+    def _authorized_http(self) -> AuthorizedHttp:
+        """Build an authenticated http client with an explicit socket timeout.
+
+        WHY `http=` instead of `credentials=`: `build()` builds an equivalent
+        `AuthorizedHttp(credentials, http=httplib2.Http())` internally when
+        given `credentials=`, but that inner `httplib2.Http()` only gets a
+        timeout via googleapiclient's own (undocumented-to-us) default. Doing
+        it ourselves makes the timeout explicit, env-configurable, and
+        consistent with `LLM_TIMEOUT_SECONDS` (CLAUDE.md invariant).
+        """
+        timeout = float(
+            os.getenv(_GOOGLE_API_TIMEOUT_ENV, _GOOGLE_API_TIMEOUT_DEFAULT)
+        )
+        return AuthorizedHttp(
+            self.get_credentials(), http=httplib2.Http(timeout=timeout)
+        )
 
     # ------------------------------------------------------------------ #
     # Internal helpers                                                   #
