@@ -300,5 +300,77 @@ def test_txn_append_stamps_ts_on_new_messages(monkeypatch, isolated_modules):
     assert stored_msg["role"] == "user"
     assert stored_msg["content"] == "hello"
     assert "ts" in stored_msg
-    # Must parse as a valid ISO timestamp.
-    datetime.fromisoformat(stored_msg["ts"])
+    # Must parse as a valid, tz-aware (Asia/Jerusalem) ISO timestamp.
+    parsed = datetime.fromisoformat(stored_msg["ts"])
+    assert parsed.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# get_last_user_timestamp — per-message ts (production fix: docstring/impl
+# previously claimed "per-message timestamps are not stored", which is now
+# stale since _txn_append has stamped every message with `ts` since Phase 31).
+# ---------------------------------------------------------------------------
+
+def test_get_last_user_timestamp_prefers_per_message_ts_over_doc_updated_at(
+    monkeypatch, isolated_modules,
+):
+    """updated_at reflects the LAST write to the doc (which could be a later
+    assistant reply) — the per-message ts on the actual user message is the
+    correct signal and must win when both are present."""
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    user_ts = (_NOW - timedelta(hours=5)).isoformat()
+    store = _store_with_doc({
+        "messages": [
+            {"role": "user", "content": "hi", "ts": user_ts},
+            {"role": "assistant", "content": "hello!", "ts": _NOW.isoformat()},
+        ],
+        # updated_at reflects the assistant's later write, NOT the user's.
+        "updated_at": _NOW,
+    })
+
+    result = store.get_last_user_timestamp(1)
+
+    assert result == datetime.fromisoformat(user_ts)
+    assert result != _NOW
+
+
+def test_get_last_user_timestamp_falls_back_to_updated_at_for_legacy_message(
+    monkeypatch, isolated_modules,
+):
+    """A legacy user message with no `ts` field must not crash — falls back
+    to the document-level updated_at, matching pre-fix behaviour."""
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store = _store_with_doc({
+        "messages": [{"role": "user", "content": "legacy_no_ts"}],
+        "updated_at": _RECENT,
+    })
+
+    assert store.get_last_user_timestamp(1) == _RECENT
+
+
+def test_get_last_user_timestamp_tolerates_malformed_ts(monkeypatch, isolated_modules):
+    """A malformed ts string on the message must not raise — falls back to
+    updated_at instead of propagating a ValueError."""
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store = _store_with_doc({
+        "messages": [{"role": "user", "content": "bad", "ts": "not-a-timestamp"}],
+        "updated_at": _RECENT,
+    })
+
+    assert store.get_last_user_timestamp(1) == _RECENT
+
+
+def test_get_last_user_timestamp_returns_none_when_no_user_message(
+    monkeypatch, isolated_modules,
+):
+    monkeypatch.delenv("FIRESTORE_CREDENTIALS", raising=False)
+    _install_firestore_mock()
+    store = _store_with_doc({
+        "messages": [{"role": "assistant", "content": "hello", "ts": _NOW.isoformat()}],
+        "updated_at": _RECENT,
+    })
+
+    assert store.get_last_user_timestamp(1) is None

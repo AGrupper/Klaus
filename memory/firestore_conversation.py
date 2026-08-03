@@ -7,8 +7,17 @@ Document layout:
     collection: conversations  (FIRESTORE_COLLECTION_CONVERSATIONS env var)
     doc id:     "<telegram_user_id>"   (string)
     fields:
-        messages:    [{"role": "user"|"assistant", "content": str}, ...]
-        updated_at:  Firestore server timestamp
+        messages:    [{"role": "user"|"assistant", "content": str,
+                        "ts": str (ISO-8601, Asia/Jerusalem)}, ...]
+                     `ts` is stamped on every message by `_txn_append`. It is
+                     an ISO string, never `firestore.SERVER_TIMESTAMP` — a
+                     Firestore `DatetimeWithNanoseconds` breaks `json.dumps`
+                     on read (same bug class fixed for MealStore /
+                     TrainingLogStore). Messages written before this field
+                     existed have no `ts` — readers must tolerate a missing
+                     or malformed value, never crash on it.
+        updated_at:  Firestore server timestamp (document-level; tracks the
+                     last write to the doc, not any single message's time)
 
 The `messages` array is capped at `max_messages` entries (oldest are dropped
 first). Writes are wrapped in a Firestore transaction to prevent lost updates
@@ -19,11 +28,21 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from google.api_core.exceptions import GoogleAPICallError
 from google.cloud import firestore
 
 logger = logging.getLogger(__name__)
+
+# WHY Asia/Jerusalem, not UTC: per-message `ts` values are for humans (hub
+# display, autonomous-tick "hours since contact" reasoning) — storing them in
+# the user's own timezone matches every other Klaus-authored ISO timestamp
+# convention (TZ=Asia/Jerusalem, CLAUDE.md). The string still carries an
+# explicit UTC offset, so `datetime.fromisoformat` parses it as tz-aware and
+# every existing comparison (`ts >= cutoff`, `astimezone(timezone.utc)`)
+# continues to work unchanged regardless of which offset was stored.
+_TZ = ZoneInfo("Asia/Jerusalem")
 
 # Default cap matches InMemoryConversationStore (50 turns × 2 messages).
 _DEFAULT_MAX_MESSAGES = 100
@@ -54,7 +73,13 @@ def _txn_append(
     messages.append({
         "role": role,
         "content": content,
-        "ts": datetime.now(timezone.utc).isoformat(),
+        # ISO-8601 string (NOT firestore.SERVER_TIMESTAMP) — a Firestore
+        # DatetimeWithNanoseconds breaks json.dumps on read (the same class
+        # of bug fixed for MealStore/TrainingLogStore). Every message gets a
+        # timestamp on append, so a "some messages have ts, some don't"
+        # split only ever happens for pre-existing legacy records written
+        # before this field existed — readers must still tolerate those.
+        "ts": datetime.now(_TZ).isoformat(),
     })
     if len(messages) > max_messages:
         # WHY: keep the newest messages — they carry the most relevant context.
@@ -292,17 +317,22 @@ class FirestoreConversationStore:
     def get_last_user_timestamp(self, user_id: int) -> datetime | None:
         """Return the timestamp of the most recent user-role message for ``user_id``.
 
-        Per-message timestamps are not stored; the closest signal we have is the
-        document-level ``updated_at`` field, written on every append. We return
-        ``updated_at`` when the most-recent (or any) message in the array is
-        ``role == "user"``, else ``None`` — meaning no user message is stored in
-        this session window.
+        Every message written by ``append`` now carries its own per-message
+        ``ts`` (ISO-8601 string, Asia/Jerusalem) — see ``_txn_append``. We
+        prefer that: it's the actual moment the message arrived, not the
+        moment the *document* was last touched (which ``updated_at`` tracks
+        and can be a later, unrelated write — e.g. an assistant reply
+        appended after the user's turn). Legacy messages written before this
+        field existed have no ``ts``; for those we fall back to the
+        document-level ``updated_at`` (the previous behaviour), which is
+        still correct for a document whose only messages predate ``ts``.
 
-        Returns ``None`` on empty/expired conversation OR on Firestore error.
-        Never raises.
+        Returns ``None`` on empty/expired conversation, on Firestore error,
+        or when no user message exists in the array. Never raises.
 
         Added in Phase 18 (Plan 06) for the autonomous tick's
-        ``hours_since_contact`` signal (BLOCKER 1 fix).
+        ``hours_since_contact`` signal (BLOCKER 1 fix). Updated to read
+        per-message timestamps once they became available.
         """
         doc_ref = self._col.document(str(user_id))
         try:
@@ -321,9 +351,17 @@ class FirestoreConversationStore:
         messages = data.get("messages") or []
         if not messages:
             return None
-        # Per-message timestamps don't exist; the doc-level ``updated_at`` is
-        # the closest signal. Return it iff any user message exists in the array.
         for msg in reversed(messages):
-            if msg.get("role") == "user":
-                return updated_at if isinstance(updated_at, datetime) else None
+            if msg.get("role") != "user":
+                continue
+            ts_raw = msg.get("ts")
+            if ts_raw:
+                try:
+                    return datetime.fromisoformat(ts_raw)
+                except (ValueError, TypeError):
+                    # Malformed ts on this message — fall through to the
+                    # doc-level signal rather than crashing (tolerate, don't
+                    # raise, matching get_recent_window's leniency).
+                    pass
+            return updated_at if isinstance(updated_at, datetime) else None
         return None
