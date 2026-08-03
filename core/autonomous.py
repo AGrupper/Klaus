@@ -2101,6 +2101,65 @@ def _occasion_inflight_store():
     )
 
 
+# Design decision 2026-08-03 — the autonomous tick must hold off until the
+# morning briefing has reached a terminal status for the day, so the
+# briefing owns the start of the day and the tick owns everything after
+# (see ``_morning_gate_holds``). Default backstop hour (local Asia/Jerusalem)
+# past which the tick proceeds REGARDLESS of morning status.
+_MORNING_GATE_DEFAULT_UNTIL_HOUR = 11
+
+
+def _morning_gate_holds(now: datetime) -> bool:
+    """Design decision 2026-08-03 — should ``run_autonomous_tick`` hold off?
+
+    Amit's iPhone wake trigger (Sleep-Schedule "Wake Up") fires around
+    10:00, well after the tick's 07:00 window start, so the tick was
+    greeting him first every morning and the morning briefing then
+    correctly judged itself ``already_covered`` and stayed silent (4
+    consecutive mornings, 2026-07-31..2026-08-03 — the briefing has never
+    actually delivered). This inverts the order: the briefing gets first
+    crack at the day; the tick holds until it has reached a terminal status
+    (``core.morning_briefing._TERMINAL_STATUSES``) OR the
+    ``TICK_MORNING_GATE_UNTIL_HOUR`` backstop (default 11, Asia/Jerusalem)
+    is reached — whichever comes first.
+
+    The backstop is load-bearing (mirrors D-09's no-backstop trap): the
+    wake trigger does NOT fire on a day with no Sleep Schedule set, so
+    without a release valve a dead trigger would silence Klaus for the
+    entire day. A dead trigger must cost a late start, never a silent day.
+
+    Fails OPEN — returns ``False`` (tick proceeds) on any error reading the
+    morning briefing's state (Firestore down, missing collection, etc.). A
+    broken state read must never be able to silence Klaus.
+
+    ``now`` is normalised to Asia/Jerusalem before the hour comparison so a
+    caller-supplied ``now`` in a different tz (e.g. a naive UTC datetime
+    from a test) is handled correctly — this codebase was bitten by exactly
+    this class of bug once already (heartbeat WR-12).
+    """
+    try:
+        local = now.astimezone(_TZ)
+        until_hour = int(os.environ.get(
+            "TICK_MORNING_GATE_UNTIL_HOUR", str(_MORNING_GATE_DEFAULT_UNTIL_HOUR)
+        ))
+        if local.hour >= until_hour:
+            return False  # backstop reached — proceed regardless of status
+
+        # Lazy import — avoids a module-load-time cycle (core.morning_briefing
+        # already lazy-imports core.autonomous the same way, e.g.
+        # ``derive_current_location`` / ``run_occasion_cascade``).
+        from core.morning_briefing import _get_state, _TERMINAL_STATUSES
+        today_iso = local.date().isoformat()
+        status = _get_state(today_iso).get("status")
+        return status not in _TERMINAL_STATUSES
+    except Exception:
+        logger.warning(
+            "autonomous: morning gate check failed; proceeding (fail-open)",
+            exc_info=True,
+        )
+        return False
+
+
 def _compute_signal_signature(situation: dict) -> str:
     """Stable hash over the salient TRIGGER signals (the set ``_is_empty_signals``
     keys on) PLUS active ``standing_directives`` identities. Context-only
@@ -2531,12 +2590,17 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     signature — unchanged by plan 33-04):
       1. ``gather_situation`` (Layer 0) — fast, no LLM
       2. D-19 (plan 33-04) — yield if an occasion is mid-compose.
-      3. If empty signals → return early (D-11 gate; cost control SC-3)
-      4. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain
-         FOR THE FOLLOW-UP SEND). Execution then continues into step 5 — a
+      3. Design decision 2026-08-03 — hold off until the morning briefing
+         has reached a terminal status for the day, or the
+         ``TICK_MORNING_GATE_UNTIL_HOUR`` backstop is reached (see
+         ``_morning_gate_holds``): the briefing owns the start of the day,
+         the tick owns everything after.
+      4. If empty signals → return early (D-11 gate; cost control SC-3)
+      5. Due follow-ups (D-13) → dedicated Layer-2 compose loop (no tick-brain
+         FOR THE FOLLOW-UP SEND). Execution then continues into step 6 — a
          follow-up firing does NOT short-circuit the rest of the tick.
-      5. Layer 0.5 — change-detection gate (MEM-05 efficiency).
-      6. Delegates the remaining Triage -> Compose -> Send -> Log steps to
+      6. Layer 0.5 — change-detection gate (MEM-05 efficiency).
+      7. Delegates the remaining Triage -> Compose -> Send -> Log steps to
          ``_run_cascade`` (plan 33-04) with ``occasion=None`` — the exact
          same 3-layer body every occasion now shares.
 
@@ -2564,6 +2628,18 @@ async def run_autonomous_tick(bot, now: datetime | None = None) -> dict:
     if _inflight_occasion:
         decision["skipped"] = "occasion_inflight"
         decision["trail"].append({"yielded_to_occasion": _inflight_occasion})
+        await _write_tick_log(now, situation, decision)
+        return decision
+
+    # Design decision 2026-08-03 — hold off until the morning briefing has
+    # run for today (see _morning_gate_holds docstring for the backstop
+    # rationale). Checked unconditionally, ahead of the empty-signals gate,
+    # because the hold must apply even on a tick with real signals to judge
+    # — the briefing gets first crack at the day regardless of what else is
+    # going on.
+    if _morning_gate_holds(now):
+        decision["skipped"] = "morning_gate"
+        decision["trail"].append("layer0_morning_gate_hold")
         await _write_tick_log(now, situation, decision)
         return decision
 

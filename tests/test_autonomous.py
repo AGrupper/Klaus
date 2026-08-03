@@ -195,6 +195,24 @@ def fixed_now():
     return datetime(2026, 5, 21, 10, 20, tzinfo=_TZ)
 
 
+@pytest.fixture(autouse=True)
+def _bypass_morning_gate(request, reset_orchestrator_singleton):
+    """Design decision 2026-08-03 added ``_morning_gate_holds`` as a new
+    early gate in ``run_autonomous_tick``. ``fixed_now`` (10:20) is before
+    the default 11:00 backstop with no morning-briefing Firestore state
+    mocked, so every PRE-EXISTING ``run_autonomous_tick`` test would
+    otherwise trip the new gate and short-circuit before exercising what it
+    actually tests. Default every test to gate-not-holding; the dedicated
+    morning-gate tests opt out via the ``morning_gate_live`` marker to
+    exercise the real function.
+    """
+    if request.node.get_closest_marker("morning_gate_live"):
+        yield
+        return
+    with patch.object(autonomous, "_morning_gate_holds", return_value=False):
+        yield
+
+
 def _empty_situation(now: datetime) -> dict:
     """Build an explicitly empty situation dict (Layer-0 quiet)."""
     return {
@@ -3655,3 +3673,199 @@ class TestOccasionDigest:
         )
         assert "Occasion digest:" in prompt
         assert "sleep: score=80 hours=8.0" in prompt
+
+
+# ---------------------------------------------------------------------------
+# Design decision 2026-08-03 — morning gate (_morning_gate_holds)
+#
+# The autonomous tick must hold off until today's morning briefing has
+# reached a terminal status, so the briefing owns the start of the day and
+# the tick owns everything after. These tests opt out of the
+# _bypass_morning_gate autouse fixture via the morning_gate_live marker so
+# they exercise the REAL _morning_gate_holds function (the fixture defaults
+# every other test in this file to gate-not-holding — see its docstring).
+# ---------------------------------------------------------------------------
+
+class TestMorningGateHolds:
+    """Unit coverage for autonomous._morning_gate_holds."""
+
+    @pytest.mark.morning_gate_live
+    def test_holds_before_backstop_when_status_not_terminal(self, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now) is True
+
+    @pytest.mark.morning_gate_live
+    def test_holds_before_backstop_when_no_state_recorded_yet(self, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state", return_value={}):
+            assert autonomous._morning_gate_holds(now) is True
+
+    @pytest.mark.morning_gate_live
+    @pytest.mark.parametrize(
+        "status", ["sent", "manual", "skipped_by_judgment", "skipped_by_directive"]
+    )
+    def test_releases_when_status_terminal(self, status, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state", return_value={"status": status}):
+            assert autonomous._morning_gate_holds(now) is False
+
+    @pytest.mark.morning_gate_live
+    def test_backstop_releases_regardless_of_status(self, monkeypatch):
+        """At the default backstop hour (11:00), the tick must proceed even
+        though the morning status is non-terminal — the backstop is checked
+        FIRST and short-circuits before even reading morning state (T-33-like
+        no-backstop trap avoidance, D-09)."""
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 11, 0, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state",
+                    return_value={"status": "pending"}) as get_state:
+            assert autonomous._morning_gate_holds(now) is False
+        get_state.assert_not_called()
+
+    @pytest.mark.morning_gate_live
+    def test_backstop_still_holds_one_minute_before(self, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 10, 59, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now) is True
+
+    @pytest.mark.morning_gate_live
+    def test_fail_open_on_get_state_raising(self, monkeypatch):
+        """A broken state read must never be able to silence Klaus — the
+        gate must fail OPEN (proceed), not closed."""
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        with patch("core.morning_briefing._get_state",
+                    side_effect=RuntimeError("firestore down")):
+            assert autonomous._morning_gate_holds(now) is False
+
+    @pytest.mark.morning_gate_live
+    def test_env_override_of_backstop_hour_releases_at_new_hour(self, monkeypatch):
+        monkeypatch.setenv("TICK_MORNING_GATE_UNTIL_HOUR", "9")
+        now = datetime(2026, 8, 3, 9, 30, tzinfo=_TZ)  # past the overridden backstop
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now) is False
+
+    @pytest.mark.morning_gate_live
+    def test_env_override_still_holds_before_overridden_backstop(self, monkeypatch):
+        monkeypatch.setenv("TICK_MORNING_GATE_UNTIL_HOUR", "9")
+        now = datetime(2026, 8, 3, 8, 30, tzinfo=_TZ)  # before the overridden backstop
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now) is True
+
+    @pytest.mark.morning_gate_live
+    def test_timezone_normalisation_releases_when_local_past_backstop(self, monkeypatch):
+        """A caller-supplied `now` in a different tz must be normalised to
+        Asia/Jerusalem before the hour comparison (mirrors heartbeat WR-12).
+        UTC 09:00 on 2026-08-03 == Asia/Jerusalem 12:00 (IDT, UTC+3) — past
+        the default 11:00 backstop, so the gate must release even though the
+        raw UTC hour (9) is < 11."""
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now_utc = datetime(2026, 8, 3, 9, 0, tzinfo=timezone.utc)
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now_utc) is False
+
+    @pytest.mark.morning_gate_live
+    def test_timezone_normalisation_still_holds_when_local_before_backstop(self, monkeypatch):
+        """UTC 06:00 on 2026-08-03 == Asia/Jerusalem 09:00 (IDT) — before the
+        backstop, so the gate must still hold."""
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now_utc = datetime(2026, 8, 3, 6, 0, tzinfo=timezone.utc)
+        with patch("core.morning_briefing._get_state", return_value={"status": "pending"}):
+            assert autonomous._morning_gate_holds(now_utc) is True
+
+
+class TestMorningGateWiredIntoTick:
+    """Integration coverage — the gate's placement inside run_autonomous_tick
+    (checked unconditionally, right after D-19, ahead of the empty-signals
+    gate), the decision/trail shape it writes, and that a hold skips Layer 1
+    and the send entirely."""
+
+    @pytest.mark.morning_gate_live
+    def test_tick_holds_when_morning_gate_active(self, mock_bot, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        sit = _live_situation(now)
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.morning_briefing._get_state", return_value={"status": "pending"}), \
+             patch("core.tick_brain.TickBrain") as tb_cls, \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, now))
+
+        assert decision["skipped"] == "morning_gate"
+        assert "layer0_morning_gate_hold" in decision["trail"]
+        tb_cls.assert_not_called()
+        send.assert_not_called()
+
+    @pytest.mark.morning_gate_live
+    def test_tick_gate_checked_before_empty_signals_gate(self, mock_bot, monkeypatch):
+        """Even a tick with real signals to judge (an overdue task) must hold
+        if the morning briefing hasn't run yet — the gate is unconditional,
+        not nested inside the empty-signals branch."""
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        sit = _live_situation(now)  # non-empty — overdue task present
+        assert sit["empty"] is False
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.morning_briefing._get_state", return_value={"status": "pending"}), \
+             patch("core.tick_brain.TickBrain") as tb_cls, \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()) as send, \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, now))
+
+        assert decision["skipped"] == "morning_gate"
+        tb_cls.assert_not_called()
+        send.assert_not_called()
+
+    @pytest.mark.morning_gate_live
+    def test_tick_proceeds_when_morning_status_terminal(self, mock_bot, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        # Empty situation so falling through lands on the pre-existing
+        # empty-signals gate, proving the morning gate did NOT hold it.
+        sit = _empty_situation(now)
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.morning_briefing._get_state", return_value={"status": "sent"}), \
+             patch("core.tick_brain.TickBrain") as tb_cls, \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, now))
+
+        assert decision["skipped"] == "empty"
+        tb_cls.assert_not_called()
+
+    @pytest.mark.morning_gate_live
+    def test_tick_proceeds_past_backstop_regardless_of_morning_status(self, mock_bot, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 11, 0, tzinfo=_TZ)  # backstop hour
+        sit = _empty_situation(now)
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.morning_briefing._get_state", return_value={"status": "pending"}), \
+             patch("core.tick_brain.TickBrain") as tb_cls, \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, now))
+
+        assert decision["skipped"] == "empty"
+        tb_cls.assert_not_called()
+
+    @pytest.mark.morning_gate_live
+    def test_tick_proceeds_when_get_state_raises_fail_open(self, mock_bot, monkeypatch):
+        monkeypatch.delenv("TICK_MORNING_GATE_UNTIL_HOUR", raising=False)
+        now = datetime(2026, 8, 3, 9, 0, tzinfo=_TZ)
+        sit = _empty_situation(now)
+        with patch.object(autonomous, "gather_situation", return_value=sit), \
+             patch("core.morning_briefing._get_state",
+                   side_effect=RuntimeError("firestore down")), \
+             patch("core.tick_brain.TickBrain") as tb_cls, \
+             patch("core.scheduled_message.send_and_inject", new=AsyncMock()), \
+             patch.object(autonomous, "_write_tick_log", new=AsyncMock()):
+            decision = asyncio.run(autonomous.run_autonomous_tick(mock_bot, now))
+
+        assert decision["skipped"] == "empty"
+        tb_cls.assert_not_called()
