@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: executing
-stopped_at: Phase 33 context gathered
-last_updated: "2026-07-29T13:42:49.760Z"
-last_activity: 2026-07-29 -- Phase 33 execution started
+status: awaiting_human_verification
+stopped_at: Phase 33 executed, reviewed, fixed and deployed — blocking on the D-29 observation window
+last_updated: "2026-08-03T17:10:00+03:00"
+last_activity: 2026-08-03 -- Phase 33 verified (human_needed); observation window restarts 2026-08-04
 progress:
   total_phases: 6
   completed_phases: 3
   total_plans: 35
-  completed_plans: 22
+  completed_plans: 35
   percent: 50
 ---
 
@@ -18,10 +18,50 @@ progress:
 
 ## Current Position
 
-Phase: 33 (occasion-cascade) — EXECUTING
-Plan: 1 of 13
-Status: Executing Phase 33
-Last activity: 2026-07-29 -- Phase 33 execution started
+Phase: 33 (occasion-cascade) — EXECUTED + DEPLOYED, awaiting human verification
+Plan: 13 of 13 executed
+Status: Blocked on the D-29 observation window (human judgment, not code)
+Last activity: 2026-08-03 -- verification run (`human_needed`), UAT items persisted
+
+### Phase 33 handoff (read this first in a new session)
+
+**Do NOT re-plan or re-execute Phase 33.** All 13 plans are executed, code-reviewed,
+fixed and live in production (`klaus-agent-00178-5wb`, `OCCASION_CASCADE=true`).
+Full suite: **2442 passing**.
+
+What remains is in `.planning/phases/33-occasion-cascade/33-HUMAN-UAT.md` (1 of 3 done):
+1. **PENDING (blocking)** — the 3-4 day D-29 observation window. It effectively
+   **restarts 2026-08-04**: the morning briefing self-skipped `already_covered` on
+   4/4 days (07-31..08-03) because the autonomous tick spoke hours before the wake
+   trigger. Fixed 2026-08-03 (`30d8f45`, `_morning_gate_holds`, backstop 11:00).
+   The intended end-state — a cascade-composed briefing actually reaching Amit on
+   wake — has **not been observed once**. Amit closes this by judgment, not metric.
+2. **PENDING** — live UAT of `get_recent_decisions`: ask Klaus "why didn't you
+   message me yesterday?" in a real chat turn. 30 seconds, doable any time.
+3. **PASSED** 2026-08-03 — D-24 calendar-write disclosure audit (6 writes, all
+   disclosed, cross-checked against the delivered message text).
+
+Only after item 1 closes: mark Phase 33 complete, then Phase 35 may delete the
+legacy composers (that deletion is what the window exists to justify).
+
+**Phase 34 does NOT depend on the window** — it needs Phase 33's occasion machinery
+(built and deployed), not the observation. `/gsd:discuss-phase 34` is safe to start
+in a separate session right now.
+
+**Carried forward to Phase 35** (see `33-REVIEW.md`, 6 deferred warnings):
+- **WR-04** is the notable one — it touches SC-5. `core/main.py:1051` passes
+  `tools=None` to the D-22 forced-final call while the history can carry `tool_use`
+  blocks; Anthropic likely 400s, the error is swallowed, and it falls through to the
+  older fallback chain. So D-22 may be a silent no-op in production. Verify against
+  a live call before trusting it.
+- **WR-11** — timeout chain inverted (13 × 120s vs a 540s dispatch deadline).
+  CR-03's new guard treats the symptom, not the cause.
+- WR-02, WR-03, WR-06, WR-08 — each needs a policy/design decision, not a mechanical fix.
+
+**Open, unrelated to this phase:** a recurring **Garmin cold-start segfault/abort**
+seen in the same log windows as `/cron/autonomous-tick` 503s. The 503s themselves are
+cold-start scale-from-zero races (verified — NOT the calendar timeouts, that
+hypothesis was checked and disproved). The segfault is unexplained and untouched.
 
 ## Post-v4.0 Increments (out-of-band, not a GSD milestone)
 

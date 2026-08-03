@@ -26,15 +26,26 @@ result: [pending]
 ### 3. Audit Layer-2 calendar write disclosure (D-24 / T-33-02b)
 expected: Every calendar write Klaus made during the window appeared as a scannable `Created:` / `Moved:` / `Deleted:` line in the message that made it. None appeared silently. `check_occasion_health` anomaly #4 (undisclosed actions >24h) never fires.
 why_human: First live exercise of D-23's ungated write authority; the plan's own threat register names this human audit as the mitigation.
-note: At least one real instance already exists to check — the 2026-08-01 nightly created three Studio Shift events and disclosed them on `Created:` lines.
-result: [pending]
+result: **PASSED** (2026-08-03, audited by orchestrator against live Firestore + the sent message text)
+evidence: |
+  `action_log` documents for 2026-07-27..2026-08-03 contain 6 write entries, **all
+  `disclosed=True`, zero undisclosed**:
+    2026-08-01 — calendar_create × 4 (Upper Body Day; Studio Shift 8/5, 8/6, 8/8)
+    2026-07-30 — calendar_update × 1, calendar_delete × 1
+  Cross-checked against the delivered message rather than trusting the flag: the
+  2026-08-01 nightly review ends with scannable `Created: Studio Shift, Wed 8/5
+  17:00–23:30` lines matching the logged entries one-for-one. Both halves of D-24
+  hold — the write was recorded AND disclosed in the message that made it.
+  `check_occasion_health` anomaly #4 (undisclosed >24h) has not fired.
+  Note: ActionLogStore reads by explicit document id (no `order_by`), so it needs
+  no composite Firestore index — unlike the ad-hoc audit query, which did.
 
 ## Summary
 
 total: 3
-passed: 0
+passed: 1
 issues: 0
-pending: 3
+pending: 2
 skipped: 0
 blocked: 0
 
