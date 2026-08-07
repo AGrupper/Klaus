@@ -72,3 +72,62 @@ independent of `state`. Keep `state == 2` as one input, not the only one.
 only a `state` document — no dated docs at all. If the 05:30 `klaus-biometric-sync`
 cron is not landing daily records, sleep may be absent most mornings rather than
 just this one. Diagnose the sync before tuning the flag.
+
+## Observation-window findings (2026-07-31 → 2026-08-08) — Phase 35 input
+
+Recorded at window close. All three are **judgment/observability quality**, not
+breakage: every occasion that decided to speak did so successfully, no send
+failed, no infra fault was mislabeled, disclosure stayed clean.
+
+### 1. `already_covered` is not a credible skip cause
+
+Layer 1 emitted `skip_cause="already_covered"` when nothing had covered anything:
+
+| date | occasion | hours_since_contact | verdict |
+|---|---|---|---|
+| 2026-08-07 | morning | **18.52** | `skipped_by_judgment`, cause `already_covered` |
+| 2026-08-06 | nightly | **10.62** | `skipped_by_judgment`, cause `already_covered` |
+| 2026-08-05 | morning | ~5 (nightly at 00:43, trigger 06:00) | `already_covered` — arguable here |
+| 2026-08-03 | morning | — | `already_covered` — the tick HAD spoken; correct |
+
+Only the 08-03 case is defensible. A cause that is confidently wrong is worse
+than WR-01's empty cause: an empty one is visibly useless, a wrong one looks like
+an answer and will mislead both Amit and `get_recent_decisions`.
+
+Hypothesis to test in Phase 35: `already_covered` is acting as a plausible
+default the model reaches for, rather than a conclusion drawn from
+`hours_since_contact` / `today_outreach_log`. A HARD eval fixture — "18h silence,
+no prior contact, occasion=morning" — should assert the cause is NOT
+`already_covered`. This is exactly the judgment-quality dimension HARD-01's
+fixtures exist to measure.
+
+### 2. Occasion verdicts are not persisted to the tick log
+
+`tick_logs/{date}/ticks/occasion:{nightly,morning}` documents contain only
+`captured_at`, `decision_trail` and `situation_snapshot`. The verdict fields —
+`triage_reason`, `skipped`, `sent`, `skip_cause`, `final_text` — are all `None`,
+whereas ordinary `HH:MM` tick docs persist them in full (verified by direct
+Firestore read, 2026-08-08).
+
+Consequence: it is impossible to reconstruct *why* an occasion skipped from the
+audit trail. The 2026-08-06 nightly skip could not be explained after the fact.
+This directly weakens OCC-07 / `get_recent_decisions` for exactly the events it
+was built to explain, and it is why finding #1 above had to be inferred from
+`hours_since_contact` rather than read off the record.
+
+Related to the deferred **WR-09** (tick log completeness) but distinct: WR-09 was
+about follow-up outcomes on the tick path; this is the occasion path persisting a
+structurally different, thinner record.
+
+### 3. The morning trigger time varies by ~4 hours
+
+Observed `/trigger/morning` firing times: 10:00 (08-04), 06:00 (08-05), 09:50
+(08-06), 06:05 (08-07). The iOS **Wake Up** automation follows the Sleep Schedule,
+not actual wake, so on early days the nightly review is only ~5h old and a
+`already_covered` skip is at least arguable.
+
+**Deferred by Amit's decision (2026-08-04): he does not want sleep-anchored
+morning briefings — he uses a separate app.** Recorded as context for the
+post-milestone overhaul, alongside the D-11 `garmin_missing` finding above. If the
+morning occasion is kept, resolve the trigger-time variance before tuning
+judgment; if it is retired, findings #1 and #2 still apply to nightly/weekly.
