@@ -1,14 +1,14 @@
 ---
-status: partial
+status: complete
 phase: 33-occasion-cascade
 source: [33-VERIFICATION.md]
 started: 2026-08-03T16:45:00+03:00
-updated: 2026-08-04T00:35:00+03:00
+updated: 2026-08-08T00:30:00+03:00
 ---
 
 ## Current Test
 
-[awaiting human testing — item 1 is the blocking gate; items 2 and 3 can be done any time during the window]
+[all items closed 2026-08-08 — window closed by Amit]
 
 ## Tests
 
@@ -16,7 +16,25 @@ updated: 2026-08-04T00:35:00+03:00
 expected: Amit has lived with cascade-composed nightly/morning/weekly output for 3-4 days, with the morning-gate fix (`30d8f45`) actually in effect, and replies either "window closed — proceed to Phase 35" or "keep the legacy path" plus what needs fixing.
 why_human: D-29 is explicit that no metric or checklist answers this — it is Amit's own judgment from daily use.
 note: The window nominally opened 2026-08-01, but the morning briefing self-skipped `already_covered` on 4/4 days (07-31, 08-01, 08-02, 08-03) because the autonomous tick spoke hours before the wake trigger. Fixed 2026-08-03 (`30d8f45`, `_morning_gate_holds`, backstop 11:00), deployed as `klaus-agent-00178-5wb`. **The intended end-state — a cascade-composed briefing actually reaching Amit on wake — has not been observed even once.** The clock effectively restarts 2026-08-04.
-result: [pending]
+result: **PASSED / window closed** (2026-08-08, Amit's judgment per D-29)
+evidence: |
+  Window ran 2026-07-31 → 2026-08-08. Outcomes: nightly **sent 6 of 7 nights**
+  (07-31…08-05) with the 01:00 backstop correctly standing down every time;
+  weekly **sent** 08-02 with substantive per-day content; morning **sent** 08-04
+  (the first day the tick gate was in effect) and skipped otherwise. No failed
+  send, no infra fault mislabeled as judgment, no false CRITICAL after the CR-05
+  fix, and calendar-write disclosure clean throughout.
+
+  The tick gate (`30d8f45`) was verified working by direct read of
+  `tick_logs/{date}/ticks/*` — it releases only after the morning writes its
+  terminal status, exactly as designed.
+
+  Closed with three known quality gaps carried to Phase 35 (see
+  `deferred-items.md`): `already_covered` emitted after 18.5h of silence is not a
+  credible cause; occasion verdicts are not persisted to the tick log, so a skip
+  cannot be explained after the fact; and the morning trigger time varies ~4h.
+  Amit accepted these as tuning rather than breakage, having already decided
+  (2026-08-04) to overhaul the morning surface after the milestone.
 
 ### 2. Live UAT of `get_recent_decisions` (OCC-07)
 expected: Ask Klaus "why didn't you message me yesterday?" and "did you change anything on my calendar?" in a real chat turn. He returns specific answers drawn from TickLogStore / OutreachLogStore / ActionLogStore for the requested range — not a hedge or an apology.
@@ -62,9 +80,9 @@ evidence: |
 ## Summary
 
 total: 3
-passed: 2
+passed: 3
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 

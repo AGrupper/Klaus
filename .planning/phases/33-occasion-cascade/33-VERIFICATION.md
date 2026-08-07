@@ -1,10 +1,11 @@
 ---
 phase: 33-occasion-cascade
 verified: 2026-08-03T16:45:00+03:00
-status: human_needed
+status: passed
 score: 6/7 roadmap success criteria fully verified in code+production; 1/7 (OCC-06's observation window) is an open human-judgment checkpoint
 overrides_applied: 0
 re_verification: false
+human_gate_closed: 2026-08-08 — D-29 observation window closed by Amit; all 3 UAT items passed (33-HUMAN-UAT.md)
 human_verification:
   - test: "Close plan 33-13 Task 3 — the 3-4 day observation window (D-29)"
     expected: "Amit has lived with cascade-composed nightly/morning/weekly output for 3-4 days (with today's morning-gate fix, 30d8f45, actually in effect) and replies either 'window closed — proceed to Phase 35' or 'keep the legacy path' plus what needs fixing."
