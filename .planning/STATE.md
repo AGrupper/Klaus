@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v6.0
 milestone_name: Klaus Becomes an Agent
-status: awaiting_human_verification
-stopped_at: Phase 33 executed, reviewed, fixed and deployed — blocking on the D-29 observation window
-last_updated: "2026-08-03T17:10:00+03:00"
-last_activity: 2026-08-03 -- Phase 33 verified (human_needed); observation window restarts 2026-08-04
+status: ready_to_plan
+stopped_at: Phase 33 complete (13/13) — ready to discuss Phase 34
+last_updated: 2026-08-07T21:21:02.855Z
+last_activity: 2026-08-08 -- Phase 33 COMPLETE; observation window closed, ready to discuss Phase 34
 progress:
   total_phases: 6
   completed_phases: 3
@@ -18,37 +18,44 @@ progress:
 
 ## Current Position
 
-Phase: 33 (occasion-cascade) — EXECUTED + DEPLOYED, awaiting human verification
-Plan: 13 of 13 executed
-Status: Blocked on the D-29 observation window (human judgment, not code)
-Last activity: 2026-08-03 -- verification run (`human_needed`), UAT items persisted
+Phase: 34
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-08-08 -- Phase 33 closed
 
-### Phase 33 handoff (read this first in a new session)
+### Phase 33 — COMPLETE (2026-08-08)
 
-**Do NOT re-plan or re-execute Phase 33.** All 13 plans are executed, code-reviewed,
-fixed and live in production (`klaus-agent-00178-5wb`, `OCCASION_CASCADE=true`).
-Full suite: **2442 passing**.
+13/13 plans executed, code-reviewed, fixed, deployed and verified. Live in
+production (`klaus-agent-00178-5wb`, `OCCASION_CASCADE=true`). Suite **2442 passing**.
+Verification `passed`; all 3 UAT items closed; D-29 observation window closed by
+Amit 2026-08-08. **Do not re-plan or re-execute it.**
 
-What remains is in `.planning/phases/33-occasion-cascade/33-HUMAN-UAT.md` (1 of 3 done):
-1. **PENDING (blocking)** — the 3-4 day D-29 observation window. It effectively
-   **restarts 2026-08-04**: the morning briefing self-skipped `already_covered` on
-   4/4 days (07-31..08-03) because the autonomous tick spoke hours before the wake
-   trigger. Fixed 2026-08-03 (`30d8f45`, `_morning_gate_holds`, backstop 11:00).
-   The intended end-state — a cascade-composed briefing actually reaching Amit on
-   wake — has **not been observed once**. Amit closes this by judgment, not metric.
-2. **PENDING** — live UAT of `get_recent_decisions`: ask Klaus "why didn't you
-   message me yesterday?" in a real chat turn. 30 seconds, doable any time.
-3. **PASSED** 2026-08-03 — D-24 calendar-write disclosure audit (6 writes, all
-   disclosed, cross-checked against the delivered message text).
+Window results (2026-07-31 → 08-08): nightly sent 6/7 nights with the 01:00
+backstop correctly standing down each time; weekly sent 08-02; morning sent 08-04
+(first day the tick gate was live). Zero failed sends, zero infra faults mislabeled
+as judgment, disclosure clean throughout. Code review: 11 of 17 findings fixed,
+6 deferred with reasons.
 
-Only after item 1 closes: mark Phase 33 complete, then Phase 35 may delete the
-legacy composers (that deletion is what the window exists to justify).
+**Phase 35 is now unblocked to delete the legacy composers** — that deletion is
+what this window existed to justify.
 
-**Phase 34 does NOT depend on the window** — it needs Phase 33's occasion machinery
-(built and deployed), not the observation. `/gsd:discuss-phase 34` is safe to start
-in a separate session right now.
+**Carried forward to Phase 35 — observation-window findings** (full detail in
+`33-occasion-cascade/deferred-items.md`):
+- **`already_covered` is not a credible skip cause.** Emitted after 18.5h of
+  silence (08-07 morning) and 10.6h (08-06 nightly). A confidently wrong cause is
+  worse than WR-01's empty one. Needs a HARD-01 eval fixture asserting it.
+- **Occasion verdicts are not persisted.** `tick_logs/{date}/ticks/occasion:*` keep
+  only the situation snapshot — `triage_reason`/`skipped`/`sent` are all `None`,
+  unlike ordinary ticks. A skip cannot be explained after the fact, which
+  undercuts OCC-07 for exactly the events it was built to explain.
+- **Morning trigger time varies ~4h** (06:00–10:00; iOS Wake Up follows the Sleep
+  Schedule, not actual wake). Deferred — Amit does not want sleep-anchored morning
+  briefings (separate app); post-milestone overhaul.
+- **D-11 `garmin_missing` never fires on a null-sleep record** — only checks
+  `state == 2`; a `state == 1` record with all sleep fields null slips through.
+  Deferred with the above.
 
-**Carried forward to Phase 35** (see `33-REVIEW.md`, 6 deferred warnings):
+**Carried forward to Phase 35 — code review** (see `33-REVIEW.md`, 6 deferred):
 - **WR-04** is the notable one — it touches SC-5. `core/main.py:1051` passes
   `tools=None` to the D-22 forced-final call while the history can carry `tool_use`
   blocks; Anthropic likely 400s, the error is swallowed, and it falls through to the
@@ -111,7 +118,7 @@ hypothesis was checked and disproved). The segfault is unexplained and untouched
 See: `.planning/PROJECT.md` (updated 2026-07-17 for v6.0)
 
 **Core value:** Klaus should surface the right thing at the right time — while knowing exactly what he is and what he can do.
-**Current focus:** Phase 33 — occasion-cascade
+**Current focus:** Phase 34 — write backs
 
 ## Architecture (current)
 

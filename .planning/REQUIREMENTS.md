@@ -42,13 +42,13 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 
 ### Occasion Cascade (Phase 33)
 
-- [ ] **OCC-01**: The nightly review runs as `occasion="nightly"` through the 3-layer cascade — fully skippable by judgment (silence = decision, recorded as `skipped_by_judgment`); total infra failure still sends the deterministic plain-text fallback (failure-skip ≠ judgment-skip)
-- [ ] **OCC-02**: The morning briefing runs as `occasion="morning"` through the cascade — Garmin wake-up anchor and 10:15 cutoff kept; `structured` snapshot + `daily_note` written only on actual send (hub `/api/today` contract); skips recorded
-- [ ] **OCC-03**: The Sunday weekly training review runs as `occasion="weekly_review"` through the cascade — the last legacy composer retired
-- [ ] **OCC-04**: Occasions bypass the empty gate (an occasion always gets a free triage judgment) with short occasion-guidance prompts — no mandated sections, no scheduling scripts; OutreachLog topic keys `nightly:<date>` / `morning:<date>` / `weekly:<date>`, append still gated on send success (D-10)
-- [ ] **OCC-05**: Layer 2 is agentic within a bounded tool-call budget; directive-gated proactive calendar writes check for an existing planned row / Training-calendar event for that date+slot before creating (idempotent under compose-retry)
-- [ ] **OCC-06**: Rollout behind `OCCASION_CASCADE=1` for one deploy cycle with no Cloud Scheduler changes; after a 3-4 day observation window, legacy composers + `prompts/nightly_review.md` / `morning_briefing.md` / `weekly_training_review.md` + the flag are deleted
-- [ ] **OCC-07**: Klaus can explain his own decisions — brain-direct `get_recent_decisions(days)` returns recent tick/occasion verdicts, triage reasoning, and outreach topics from `TickLogStore` + `OutreachLogStore` ("why didn't you message me yesterday?" gets a real answer)
+- [x] **OCC-01**: The nightly review runs as `occasion="nightly"` through the 3-layer cascade — fully skippable by judgment (silence = decision, recorded as `skipped_by_judgment`); total infra failure still sends the deterministic plain-text fallback (failure-skip ≠ judgment-skip)
+- [x] **OCC-02**: The morning briefing runs as `occasion="morning"` through the cascade — Garmin wake-up anchor and 10:15 cutoff kept; `structured` snapshot + `daily_note` written only on actual send (hub `/api/today` contract); skips recorded
+- [x] **OCC-03**: The Sunday weekly training review runs as `occasion="weekly_review"` through the cascade — the last legacy composer retired
+- [x] **OCC-04**: Occasions bypass the empty gate (an occasion always gets a free triage judgment) with short occasion-guidance prompts — no mandated sections, no scheduling scripts; OutreachLog topic keys `nightly:<date>` / `morning:<date>` / `weekly:<date>`, append still gated on send success (D-10)
+- [x] **OCC-05**: Layer 2 is agentic within a bounded tool-call budget; directive-gated proactive calendar writes check for an existing planned row / Training-calendar event for that date+slot before creating (idempotent under compose-retry)
+- [x] **OCC-06**: Rollout behind `OCCASION_CASCADE=1` for one deploy cycle with no Cloud Scheduler changes; after a 3-4 day observation window, legacy composers + `prompts/nightly_review.md` / `morning_briefing.md` / `weekly_training_review.md` + the flag are deleted
+- [x] **OCC-07**: Klaus can explain his own decisions — brain-direct `get_recent_decisions(days)` returns recent tick/occasion verdicts, triage reasoning, and outreach topics from `TickLogStore` + `OutreachLogStore` ("why didn't you message me yesterday?" gets a real answer)
 
 ### Write-Backs (Phase 34)
 
@@ -118,13 +118,13 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | MEM-05 | Phase 32 | Complete |
 | MEM-06 | Phase 32 | Complete |
 | MEM-07 | Phase 32 | Complete |
-| OCC-01 | Phase 33 | Pending |
-| OCC-02 | Phase 33 | Pending |
-| OCC-03 | Phase 33 | Pending |
-| OCC-04 | Phase 33 | Pending |
-| OCC-05 | Phase 33 | Pending |
-| OCC-06 | Phase 33 | Pending |
-| OCC-07 | Phase 33 | Pending |
+| OCC-01 | Phase 33 | Complete |
+| OCC-02 | Phase 33 | Complete |
+| OCC-03 | Phase 33 | Complete |
+| OCC-04 | Phase 33 | Complete |
+| OCC-05 | Phase 33 | Complete |
+| OCC-06 | Phase 33 | Complete |
+| OCC-07 | Phase 33 | Complete |
 | WB-01 | Phase 34 | Pending |
 | WB-02 | Phase 34 | Pending |
 | WB-03 | Phase 34 | Pending |

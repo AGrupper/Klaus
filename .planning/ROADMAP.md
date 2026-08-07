@@ -39,7 +39,7 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] **Phase 30.5: Brain Upgrade (Sonnet 5)** — Smart brain moves to `claude-sonnet-5` with prompt caching, truthful cache-token metering, a decoupled tick-brain fallback shipped before the flip, a daily-spend tripwire, and a slimmed always-on prompt (completed 2026-07-19)
 - [x] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop (2 verification gaps closed 2026-07-22 — DIR-05 supersede link via 31-07 + DIR-07 vetoed anti-lesson via 31-08; re-verified 7/7) (completed 2026-07-22)
 - [x] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate (completed 2026-07-22)
-- [ ] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome
+- [x] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome (completed 2026-08-07)
 - [ ] **Phase 34: Write-Backs** — Calendar workout actions and chat-reported training changes mechanically and idempotently update the single training-reality source of truth
 - [ ] **Phase 35: Hardening & Subtraction** — New judgment eval fixtures, a token-budget guard test, dead-code deletion, and updated invariants close the milestone
 
@@ -164,7 +164,7 @@ Plans:
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 33-13-PLAN.md — Retire morning-briefing-tick, flip the flag, 3-4 day observation window
+- [x] 33-13-PLAN.md — Retire morning-briefing-tick, flip the flag, 3-4 day observation window
 
 ### Phase 34: Write-Backs
 
@@ -204,7 +204,7 @@ Plans:
 | 30.5. Brain Upgrade (Sonnet 5) | 6/6 | Complete    | 2026-07-19 |
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
-| 33. Occasion Cascade | 12/13 | In Progress|  |
+| 33. Occasion Cascade | 13/13 | Complete    | 2026-08-07 |
 | 34. Write-Backs | 0/? | Not started | - |
 | 35. Hardening & Subtraction | 0/? | Not started | - |
 
