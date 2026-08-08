@@ -199,6 +199,30 @@ class TestEnqueueOccasion:
         assert enqueue_occasion("nightly", trigger="focus") is False
 
 
+class TestEnqueueRoutineFallback:
+
+    def test_delayed_fallback_targets_internal_endpoint_with_oidc(
+        self, monkeypatch, fake_tasks_v2,
+    ):
+        from core.task_dispatch import enqueue_routine_fallback
+
+        for key, value in _ENV.items():
+            monkeypatch.setenv(key, value)
+
+        assert enqueue_routine_fallback("correlation-123", 600) is True
+
+        fake_client = fake_tasks_v2[1]
+        _, kwargs = fake_client.create_task.call_args
+        request = kwargs.get("request") or fake_client.create_task.call_args[0][0]
+        task = request["task"]
+        assert task["http_request"]["url"].endswith("/internal/routine-fallback")
+        assert json.loads(task["http_request"]["body"].decode()) == {
+            "correlation_id": "correlation-123"
+        }
+        assert task["schedule_time"]["seconds"] > 0
+        assert task["http_request"]["oidc_token"]["audience"] == _ENV["CLOUD_RUN_URL"]
+
+
 class TestEnqueueHubMessage:
 
     def test_enqueue_hub_message_targets_correct_url(self, monkeypatch, fake_tasks_v2):

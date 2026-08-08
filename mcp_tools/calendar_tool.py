@@ -337,6 +337,34 @@ class GoogleCalendarManager:
             )
             return []
 
+    def is_klaus_owned(self, event_id: str, calendar_id: str | None = None) -> bool:
+        """Return true only for events created by Klaus's action engine.
+
+        Routines use this marker as a hard server-side gate before moving or
+        deleting an event. Missing/unreadable metadata fails closed.
+        """
+        target_cal = calendar_id or "primary"
+        try:
+            service = self._get_service()
+            try:
+                event = service.events().get(
+                    calendarId=target_cal, eventId=event_id
+                ).execute(num_retries=_READ_NUM_RETRIES)
+            except HttpError as exc:
+                if exc.resp.status != 404:
+                    raise
+                found = self._find_calendar_for_event(event_id)
+                if not found:
+                    return False
+                event = service.events().get(
+                    calendarId=found, eventId=event_id
+                ).execute(num_retries=_READ_NUM_RETRIES)
+            private = (event.get("extendedProperties") or {}).get("private") or {}
+            return private.get("klaus_owned") == "true"
+        except _TRANSIENT_ERRORS:
+            logger.warning("Could not verify Klaus ownership for event %s", event_id)
+            return False
+
     def list_training_events(
         self,
         time_min_iso: str,
@@ -623,6 +651,9 @@ class GoogleCalendarManager:
             event_body: dict = {
                 "summary": summary,
                 "description": description,
+                "extendedProperties": {
+                    "private": {"klaus_owned": "true", "klaus_version": "7"},
+                },
                 "start": {
                     "dateTime": buffered_start.isoformat(),
                     # WHY explicit timeZone: even though the dateTime string is
@@ -659,6 +690,9 @@ class GoogleCalendarManager:
                 get_ready_body: dict = {
                     "summary": f"Get Ready: {summary}",
                     "description": "Pre-workout prep block (per personal routine).",
+                    "extendedProperties": {
+                        "private": {"klaus_owned": "true", "klaus_version": "7"},
+                    },
                     "start": {
                         "dateTime": get_ready_start.isoformat(),
                         "timeZone": "Asia/Jerusalem",

@@ -35,7 +35,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: 'Today', path: '/', icon: CalendarDays },
   { label: 'Tasks', path: '/tasks', icon: CheckSquare },
-  { label: 'Klaus', path: '/klaus', icon: MessageCircle },
+  { label: 'Ask Claude', path: '/klaus', icon: MessageCircle },
   { label: 'Habits', path: '/habits', icon: Activity },
   { label: 'Health', path: '/health', icon: Heart },
   { label: 'Settings', path: '/settings', icon: Settings },

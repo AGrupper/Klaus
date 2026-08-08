@@ -1339,6 +1339,24 @@ def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
     return [s for s in raw if s.severity in tiers]
 
 
+def collect_deterministic_signals(now: datetime | None = None) -> list[Signal]:
+    """Run the configured infrastructure checks without any model call.
+
+    This v7 entry point preserves cron, credential, degradation, deployment,
+    push, occasion, and weekly code-manifest checks while leaving alert
+    selection and wording fully deterministic.
+    """
+    current = now or datetime.now(_TZ)
+    config = _load_config()
+    if not config.get("enabled", True):
+        return []
+    tiers = _tiers_for_now(config, current)
+    return _collect_signals(
+        tiers=tiers,
+        weekly=SEVERITY_FYI in tiers,
+    )
+
+
 def _register_incidents(critical_signals: list[Signal], config: dict) -> list[Signal]:
     """Record open incidents; return those that should trigger a ping."""
     from memory.firestore_db import IncidentStore

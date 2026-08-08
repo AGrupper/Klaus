@@ -14,6 +14,7 @@ safety net — it does NOT regenerate the file.
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import logging
 import os
@@ -103,113 +104,44 @@ def _first_sentence(description: str) -> str:
 
 
 def _load_tool_data(root: Path) -> list[dict]:
-    """Dynamically import TOOL_SCHEMAS and SMART_AGENT_DIRECT_TOOLS from core/tools.py.
+    """Read TOOL_SCHEMAS and SMART_AGENT_DIRECT_TOOLS from ``core/tools.py``.
 
     Returns a list of dicts with keys: name, routing, purpose.
 
-    Falls back to a hardcoded minimal list if the import fails (e.g. missing
-    Google API credentials in CI), so generate_manifest() can still succeed.
+    The source is parsed with :mod:`ast` instead of imported.  Manifest
+    generation therefore cannot initialize an SDK, load local credentials, or
+    drift according to which optional dependencies happen to be installed in
+    CI.  It falls back to a hardcoded minimal list if the source stops being
+    statically evaluable.
     """
     try:
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "core.tools", root / "core" / "tools.py"
-        )
-        if spec is None or spec.loader is None:
-            raise ImportError("Could not load core/tools.py spec")
-        # We must avoid executing module-level side-effects that require
-        # credentials. We patch sys.modules so relative imports don't fail.
-        import types
-        # Provide stub modules for dependencies that require credentials at import.
-        # This allows the manifest generator to run in environments without the full
-        # dependency stack (e.g. local dev without pip install). Cloud Run has all
-        # deps so live imports succeed; the fallback is only for dev/CI dry-runs.
-        _stubs: dict[str, types.ModuleType] = {}
-
-        def _ensure_stub(mod_name: str) -> types.ModuleType:
-            """Register a stub module if not already present."""
-            if mod_name not in sys.modules:
-                stub = types.ModuleType(mod_name)
-                sys.modules[mod_name] = stub
-                _stubs[mod_name] = stub
-                return stub
-            return sys.modules[mod_name]
-
-        # Ensure the project root is on sys.path so "core" package is found.
-        # This is needed when running self_manifest.py directly (not via gunicorn).
         root_str = str(root)
         if root_str not in sys.path:
             sys.path.insert(0, root_str)
+        source_path = root / "core" / "tools.py"
+        tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        schemas: list[dict] | None = None
+        direct_tools: frozenset[str] | None = None
+        for node in tree.body:
+            target = node.target if isinstance(node, ast.AnnAssign) else None
+            if not isinstance(target, ast.Name) or node.value is None:
+                continue
+            if target.id == "TOOL_SCHEMAS":
+                schemas = ast.literal_eval(node.value)
+            elif target.id == "SMART_AGENT_DIRECT_TOOLS":
+                value = node.value
+                if (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id == "frozenset"
+                    and len(value.args) == 1
+                ):
+                    direct_tools = frozenset(ast.literal_eval(value.args[0]))
+                else:
+                    direct_tools = frozenset(ast.literal_eval(value))
 
-        # googleapiclient and sub-modules
-        gclient_stub = _ensure_stub("googleapiclient")
-        errors_stub = _ensure_stub("googleapiclient.errors")
-        errors_stub.HttpError = Exception  # type: ignore[attr-defined]
-        gclient_stub.errors = errors_stub  # type: ignore[attr-defined]
-        discovery_stub = _ensure_stub("googleapiclient.discovery")
-        if not hasattr(discovery_stub, "build"):
-            discovery_stub.build = lambda *a, **k: None  # type: ignore[attr-defined]
-
-        # google-cloud-firestore stubs
-        _ensure_stub("google")
-        _ensure_stub("google.cloud")
-        _ensure_stub("google.cloud.firestore")
-        _ensure_stub("google.api_core")
-        api_core_exc_stub = _ensure_stub("google.api_core.exceptions")
-        for _name in (
-            "GoogleAPICallError", "NotFound", "AlreadyExists", "PermissionDenied",
-            "InvalidArgument", "FailedPrecondition", "DeadlineExceeded",
-            "ResourceExhausted", "Aborted", "Unknown", "Cancelled",
-        ):
-            if not hasattr(api_core_exc_stub, _name):
-                setattr(api_core_exc_stub, _name, Exception)
-        _ensure_stub("google.oauth2")
-        _ensure_stub("google.oauth2.service_account")
-        _ensure_stub("google.oauth2.credentials")
-        # google-auth + oauthlib stubs (transitively imported by core.auth_google
-        # via core.tools — needed so the manifest generator's live import path
-        # works in local dev where google-auth isn't installed).
-        _ensure_stub("google.auth")
-        auth_exc_stub = _ensure_stub("google.auth.exceptions")
-        # core.auth_google does `from google.auth.exceptions import GoogleAuthError`
-        # — attach the symbol to the stub so the live-import path succeeds in
-        # environments without the real google-auth library installed.
-        if not hasattr(auth_exc_stub, "GoogleAuthError"):
-            auth_exc_stub.GoogleAuthError = Exception  # type: ignore[attr-defined]
-        if not hasattr(auth_exc_stub, "RefreshError"):
-            auth_exc_stub.RefreshError = Exception  # type: ignore[attr-defined]
-        _ensure_stub("google.auth.transport")
-        auth_req_stub = _ensure_stub("google.auth.transport.requests")
-        if not hasattr(auth_req_stub, "Request"):
-            auth_req_stub.Request = type("Request", (), {})  # type: ignore[attr-defined]
-        _ensure_stub("google_auth_oauthlib")
-        oauthlib_flow_stub = _ensure_stub("google_auth_oauthlib.flow")
-        if not hasattr(oauthlib_flow_stub, "InstalledAppFlow"):
-            oauthlib_flow_stub.InstalledAppFlow = type(  # type: ignore[attr-defined]
-                "InstalledAppFlow", (), {}
-            )
-        oauth2_creds_stub = sys.modules.get("google.oauth2.credentials")
-        if oauth2_creds_stub is not None and not hasattr(oauth2_creds_stub, "Credentials"):
-            oauth2_creds_stub.Credentials = type(  # type: ignore[attr-defined]
-                "Credentials", (), {}
-            )
-
-        # dotenv stub — provide load_dotenv shim so core.* imports work.
-        dotenv_stub = _ensure_stub("dotenv")
-        if not hasattr(dotenv_stub, "load_dotenv"):
-            dotenv_stub.load_dotenv = lambda *a, **k: None  # type: ignore[attr-defined]
-
-        module = importlib.util.module_from_spec(spec)
-        try:
-            spec.loader.exec_module(module)  # type: ignore[union-attr]
-        except Exception:
-            # Clean up stubs on failure
-            for mod_name in _stubs:
-                sys.modules.pop(mod_name, None)
-            raise
-
-        schemas: list[dict] = getattr(module, "TOOL_SCHEMAS", [])
-        direct_tools: frozenset = getattr(module, "SMART_AGENT_DIRECT_TOOLS", frozenset())
+        if schemas is None or direct_tools is None:
+            raise ValueError("tool registry assignments were not found")
 
         rows = []
         for schema in schemas:
@@ -475,6 +407,23 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
     ]
 
+    lines += [
+        "## Subscription-First Transition",
+        "",
+        (
+            "Klaus v7 is dark-shipped behind independent capability and cutover flags. "
+            "The supported target is a Claude Project as the conversation surface, "
+            "with scoped OAuth/MCP access to this Cloud Run backend. Firestore, "
+            "Postgres, Pinecone, directives, journal, and self-state remain authoritative. "
+            "The legacy generative/Telegram runtime remains only for proof, rollback, "
+            "and a seven-day observation; Gemini remains in the target runtime solely "
+            "for gemini-embedding-2."
+        ),
+        "",
+        "MCP resources: `/mcp/interactive` and `/mcp/routine`. Expected Claude skill version: `7.0.0`.",
+        "",
+    ]
+
     # ----- §2 Model Map --------------------------------------------------
     lines += [
         "## Model Map",
@@ -546,6 +495,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         "",
         "| Channel | Access | Notes |",
         "|---------|--------|-------|",
+        "| Claude Project + Klaus MCP | Scoped Read/Write | v7 primary conversation target; capability-gated during rollout |",
         "| Telegram | Read + Write | Sends messages to Amit's Telegram account (primary interface) |",
         "| Google Calendar | Read + Write | Create, delete, list events |",
         "| Tasks (native) | Read + Write | Klaus Hub TaskStore — create, list, complete, reschedule, edit, delete |",
@@ -601,6 +551,7 @@ def _render_manifest(root: Path, sha: str) -> str:
         ),
         "",
         "- **Outbound messages:** Telegram-only. No email send. No WhatsApp autonomous outbound.",
+        "- **v7 cutover:** Web Push replaces Telegram delivery after live UAT; legacy claims above remain true until that flag flip.",
         "- **Gmail is read-only** — Klaus cannot send emails via any tool.",
         "- **Pinecone valid `kind` values:** `fact`, `chunk`, `chat`, `self`. (`self` = Klaus's own journal entries.)",
         f"- **Max tool iterations per conversation:** {max_tool_iterations} (`MAX_TOOL_ITERATIONS` in `core/main.py`)",

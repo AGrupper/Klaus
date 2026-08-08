@@ -63,6 +63,14 @@ CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
 FITNESS_NUTRITION_READ_SCOPE = "https://www.googleapis.com/auth/fitness.nutrition.read"
 
 
+def required_google_scopes() -> list[str]:
+    """Return the least-privilege scopes for the active runtime mode."""
+    legacy_enabled = os.environ.get(
+        "KLAUS_LEGACY_RUNTIME_ENABLED", "true"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    return [GMAIL_SCOPE, CALENDAR_SCOPE] if legacy_enabled else [CALENDAR_SCOPE]
+
+
 # ------------------------------------------------------------------ #
 # Token storage protocol and backends                                #
 # ------------------------------------------------------------------ #
@@ -221,6 +229,7 @@ class GoogleAuthManager:
         """
         self.credentials_path = credentials_path
         self._token_storage = token_storage
+        self.scopes = required_google_scopes()
         # Lazy: don't authenticate at construction — caller decides when.
         self._creds: Credentials | None = None
 
@@ -327,7 +336,7 @@ class GoogleAuthManager:
             # JSON string. This is storage-backend-agnostic — it works whether
             # the payload came from a file, Secret Manager, or any other source.
             return Credentials.from_authorized_user_info(
-                json.loads(payload), self.SCOPES
+                json.loads(payload), self.scopes
             )
         except (ValueError, GoogleAuthError) as exc:
             # WHY: a corrupt token should not crash the whole agent —
@@ -352,7 +361,7 @@ class GoogleAuthManager:
             )
 
         flow = InstalledAppFlow.from_client_secrets_file(
-            self.credentials_path, self.SCOPES
+            self.credentials_path, self.scopes
         )
         # port=0 → OS picks a free port. Avoids conflicts on shared dev machines.
         return flow.run_local_server(port=0)

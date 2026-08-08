@@ -41,6 +41,25 @@ _BASE_ENV = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _no_real_cron_ledger_writes():
+    """Route tests must never reach the configured Firestore project."""
+    with patch("memory.firestore_db.record_cron_run"):
+        yield
+
+
+def test_legacy_hub_chat_gate_fails_closed(monkeypatch):
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws
+
+        monkeypatch.setenv("KLAUS_HUB_CHAT_ENABLED", "false")
+        with pytest.raises(HTTPException) as exc_info:
+            ws._require_legacy_hub_chat()
+
+    assert exc_info.value.status_code == 410
+
+
 def _stub_web_server_imports() -> dict:
     """Return a sys.modules-stubs dict that lets interfaces.web_server import
     without real telegram / google-auth / core.main dependencies.
@@ -100,6 +119,61 @@ class TestCronAutonomousTick:
         # First positional arg must be _application.bot
         args, _kwargs = async_mock.await_args
         assert args[0] is fake_app.bot, "run_autonomous_tick must receive _application.bot"
+
+    def test_subscription_cutover_uses_no_model_rule_evaluator_without_telegram(self):
+        stubs = _stub_web_server_imports()
+        deterministic = MagicMock()
+        deterministic.run_rule_evaluator = AsyncMock(return_value={"evaluated": 1, "sent": 1})
+        stubs["core.deterministic_alerts"] = deterministic
+
+        env = {
+            **_BASE_ENV,
+            "KLAUS_DETERMINISTIC_ALERTS_ENABLED": "true",
+            "KLAUS_LEGACY_RUNTIME_ENABLED": "false",
+        }
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws
+            from fastapi.testclient import TestClient
+
+            with patch.dict(os.environ, env):
+                ws._application = None
+                ws._log_cron_run = MagicMock()
+                client = TestClient(ws.app, raise_server_exceptions=True)
+                response = client.post("/cron/autonomous-tick")
+
+        assert response.status_code == 200
+        assert response.json() == {"ok": True, "evaluated": 1, "sent": 1}
+        deterministic.run_rule_evaluator.assert_awaited_once()
+
+    def test_subscription_heartbeat_supplies_full_infrastructure_loader(self):
+        stubs = _stub_web_server_imports()
+        deterministic = MagicMock()
+        deterministic.run_rule_evaluator = AsyncMock(
+            return_value={"evaluated": 1, "sent": 0}
+        )
+        heartbeat = MagicMock()
+        heartbeat.collect_deterministic_signals = MagicMock(return_value=[])
+        stubs["core.deterministic_alerts"] = deterministic
+        stubs["core.heartbeat"] = heartbeat
+
+        env = {
+            **_BASE_ENV,
+            "KLAUS_DETERMINISTIC_ALERTS_ENABLED": "true",
+            "KLAUS_LEGACY_RUNTIME_ENABLED": "false",
+        }
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws
+            from fastapi.testclient import TestClient
+
+            with patch.dict(os.environ, env):
+                ws._application = None
+                ws._log_cron_run = MagicMock()
+                response = TestClient(ws.app).post("/cron/heartbeat")
+
+        assert response.status_code == 200
+        deterministic.run_rule_evaluator.assert_awaited_once_with(
+            infrastructure_loader=heartbeat.collect_deterministic_signals
+        )
 
     def test_returns_401_without_bearer(self, monkeypatch):
         """No bypass + no Authorization header → 401 from _verify_cron_request."""
@@ -1476,6 +1550,38 @@ class TestTaskRoutes:
         assert "id" in body
         assert body["title"] == "Buy groceries"
 
+    def test_post_tasks_accepts_v7_planning_fields(self):
+        """The task API forwards optional subscription-era planning metadata."""
+        task_store = _make_task_store_mock(
+            created={"id": "task-v7", "title": "Deep work", "status": "active"}
+        )
+        payload = {
+            "title": "Deep work",
+            "estimated_minutes": 90,
+            "hard_deadline_at": "2026-08-12T17:00:00+03:00",
+            "auto_schedule": True,
+            "manual_lock": False,
+            "calendar_event_id": "event-123",
+        }
+        for client, _ws, _ha in self._build_client(task_store=task_store):
+            resp = client.post("/api/tasks", json=payload)
+
+        assert resp.status_code == 200, resp.text
+        stored = task_store.create.call_args.args[0]
+        assert stored["estimated_minutes"] == 90
+        assert stored["hard_deadline_at"] == "2026-08-12T17:00:00+03:00"
+        assert stored["auto_schedule"] is True
+        assert stored["manual_lock"] is False
+        assert stored["calendar_event_id"] == "event-123"
+
+    def test_post_tasks_rejects_non_positive_estimate(self):
+        """Scheduling duration must be a useful positive number of minutes."""
+        for client, _ws, _ha in self._build_client():
+            resp = client.post(
+                "/api/tasks", json={"title": "Impossible", "estimated_minutes": 0}
+            )
+        assert resp.status_code == 422
+
     def test_post_tasks_empty_title_rejected(self):
         """POST /api/tasks with title='' → 422 (Pydantic min_length=1 violated)."""
         for client, _ws, _ha in self._build_client():
@@ -1539,6 +1645,25 @@ class TestTaskRoutes:
             resp = client.patch("/api/tasks/task-abc", json={"title": "New title"})
         assert resp.status_code == 200, resp.text
         assert resp.json().get("title") == "New title"
+
+    def test_patch_tasks_accepts_v7_planning_fields(self):
+        """PATCH keeps the new fields backward-compatible and optional."""
+        task_store = _make_task_store_mock(
+            updated={"id": "task-abc", "title": "Task", "manual_lock": True}
+        )
+        for client, _ws, _ha in self._build_client(task_store=task_store):
+            resp = client.patch(
+                "/api/tasks/task-abc",
+                json={"estimated_minutes": 30, "manual_lock": True, "auto_schedule": False},
+            )
+
+        assert resp.status_code == 200, resp.text
+        patch_arg = task_store.update.call_args.args[1]
+        assert patch_arg == {
+            "estimated_minutes": 30,
+            "auto_schedule": False,
+            "manual_lock": True,
+        }
 
     def test_post_tasks_complete_returns_next_id(self):
         """POST /api/tasks/{id}/complete → {next_id: str|None}."""
@@ -1687,4 +1812,7 @@ class TestAuthGoogleCookie:
             f"sign-in did not emit the session cookie header: {dict(resp.headers)!r}"
         )
         assert "httponly" in set_cookie.lower()
-        assert "samesite=strict" in set_cookie.lower()
+        # OAuth authorization starts as a cross-site top-level GET from Claude.
+        # Lax sends the Hub identity cookie for that safe navigation while still
+        # withholding it from cross-site POST writes.
+        assert "samesite=lax" in set_cookie.lower()

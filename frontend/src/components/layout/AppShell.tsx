@@ -32,7 +32,7 @@ import type { ReactNode } from 'react'
 import { Sidebar } from './Sidebar'
 import { BottomTabs } from './BottomTabs'
 import { GlanceRail } from './GlanceRail'
-import { DockChat } from './DockChat'
+import { ClaudeLaunchPanel } from './ClaudeLaunchPanel'
 import { OfflineIndicator } from '../shared/OfflineIndicator'
 import { InstallBanner } from '../shared/InstallBanner'
 import { UpdatePrompt } from '../shared/UpdatePrompt'
@@ -79,8 +79,8 @@ export function AppShell({ children }: AppShellProps) {
       {/* Desktop only glance rail — 280px right column */}
       <GlanceRail />
 
-      {/* Desktop only dock chat — 360px collapsible right panel */}
-      <DockChat />
+      {/* Desktop only Claude Project launcher — no embedded API-backed chat */}
+      <ClaudeLaunchPanel />
 
       {/* Phone only bottom tab bar — fixed 64px, shown above safe-area inset */}
       <BottomTabs />

@@ -1003,6 +1003,62 @@ class TestNativeTaskTools:
         assert passed["due_date"] == "2026-06-25"
         assert _json.loads(result)["title"] == "Call dentist"
 
+    def test_task_create_handler_forwards_v7_planning_fields(self, monkeypatch):
+        """Claude/MCP can populate task duration, locking, and calendar linkage."""
+        from core import tools
+
+        mock_store = MagicMock()
+        mock_store.create.return_value = {"id": "t-v7", "title": "Deep work"}
+        with patch("core.tools._get_task_store", return_value=mock_store):
+            tools._handle_task_create(
+                title="Deep work",
+                estimated_minutes=90,
+                hard_deadline_at="2026-08-12T17:00:00+03:00",
+                auto_schedule=True,
+                manual_lock=False,
+                calendar_event_id="event-123",
+            )
+
+        assert mock_store.create.call_args.args[0] == {
+            "title": "Deep work",
+            "estimated_minutes": 90,
+            "hard_deadline_at": "2026-08-12T17:00:00+03:00",
+            "auto_schedule": True,
+            "manual_lock": False,
+            "calendar_event_id": "event-123",
+        }
+
+    def test_task_schemas_expose_v7_planning_fields(self):
+        """The provider-neutral tool contract exposes every new optional field."""
+        from core.tools import TOOL_SCHEMAS
+
+        expected = {
+            "estimated_minutes", "hard_deadline_at", "auto_schedule",
+            "manual_lock", "calendar_event_id",
+        }
+        schemas = {item["name"]: item for item in TOOL_SCHEMAS}
+        create_props = set(schemas["task_create"]["input_schema"]["properties"])
+        edit_props = set(schemas["task_edit"]["input_schema"]["properties"])
+        assert expected <= create_props
+        assert expected <= edit_props
+
+    def test_task_reschedule_handler_passes_single_patch_dict(self):
+        """TaskStore.update accepts ``(task_id, fields)``, not keyword fields."""
+        from core import tools
+
+        mock_store = MagicMock()
+        mock_store.update.return_value = {"id": "t1", "due_date": "2026-08-14"}
+        with patch("core.tools._get_task_store", return_value=mock_store):
+            tools._handle_task_reschedule(
+                task_id="t1",
+                due_date="2026-08-14",
+                due_time="09:30",
+            )
+
+        mock_store.update.assert_called_once_with(
+            "t1", {"due_date": "2026-08-14", "due_time": "09:30"}
+        )
+
     def test_task_list_schema_registered_in_tool_schemas(self):
         """TOOL_SCHEMAS must contain a schema named 'task_list'."""
         assert "task_list" in self._schema_names()
@@ -1096,7 +1152,7 @@ class TestUpdateCalendarEventRegistration:
         names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
         assert "update_calendar_event" in names
 
-    def test_update_calendar_event_dispatches_to_manager(self):
+    def test_update_calendar_event_dispatches_to_manager(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.update_event.return_value = {"ok": True, "event_id": "evt1"}
         with patch("core.tools._get_calendar_tool", return_value=mock_cal):
@@ -1113,7 +1169,7 @@ class TestUpdateCalendarEventRegistration:
             description=None,
         )
 
-    def test_delete_calendar_event_forwards_calendar_id(self):
+    def test_delete_calendar_event_forwards_calendar_id(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.delete_event.return_value = {"ok": True, "event_id": "evt1"}
         with patch("core.tools._get_calendar_tool", return_value=mock_cal):
@@ -1368,6 +1424,70 @@ class TestActionAuditTrail:
         assert len(appended) == 1
         assert appended[0][1]["action"] == "calendar_update"
         assert out["action_id"] == appended[0][1]["id"]
+
+
+class TestTrainingCalendarWriteBack:
+    def test_workout_create_best_effort_logs_planned_session(self, fake_action_log, monkeypatch):
+        monkeypatch.setenv("KLAUS_TRAINING_WRITEBACK_ENABLED", "true")
+        mock_cal = MagicMock()
+        mock_cal.list_all_events.return_value = []
+        mock_cal.create_event.return_value = {"event_id": "workout-1", "summary": "Upper Body"}
+        training = MagicMock()
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+            "memory.firestore_db.TrainingLogStore", return_value=training
+        ):
+            out = json.loads(tools._handle_create_calendar_event(
+                summary="Upper Body",
+                start_iso="2026-08-08T18:00:00+03:00",
+                end_iso="2026-08-08T19:00:00+03:00",
+                is_workout=True,
+            ))
+
+        assert out["event_id"] == "workout-1"
+        training.log_session.assert_called_once_with(
+            date="2026-08-08",
+            slot="workout-1",
+            session_type="Upper Body",
+            planned=True,
+            completed=False,
+            source="calendar",
+            calendar_event_id="workout-1",
+            plan_status="planned",
+        )
+
+    def test_workout_move_marks_old_row_and_creates_new_date(self, fake_action_log, monkeypatch):
+        monkeypatch.setenv("KLAUS_TRAINING_WRITEBACK_ENABLED", "true")
+        mock_cal = MagicMock()
+        mock_cal.update_event.return_value = {"ok": True, "event_id": "workout-1"}
+        training = MagicMock()
+        training.get_by_slot.return_value = {
+            "date": "2026-08-08", "slot": "workout-1", "type": "Upper Body"
+        }
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+            "memory.firestore_db.TrainingLogStore", return_value=training
+        ):
+            json.loads(tools._handle_update_calendar_event(
+                "workout-1", start_iso="2026-08-09T18:00:00+03:00"
+            ))
+
+        assert training.log_session.call_count == 2
+        assert training.log_session.call_args_list[0].kwargs["plan_status"] == "moved"
+        assert training.log_session.call_args_list[1].kwargs["date"] == "2026-08-09"
+
+    def test_workout_delete_marks_plan_deleted(self, fake_action_log, monkeypatch):
+        monkeypatch.setenv("KLAUS_TRAINING_WRITEBACK_ENABLED", "true")
+        mock_cal = MagicMock()
+        mock_cal.delete_event.return_value = {"ok": True, "event_id": "workout-1"}
+        training = MagicMock()
+        training.get_by_slot.return_value = {
+            "date": "2026-08-08", "slot": "workout-1", "type": "Upper Body"
+        }
+        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+            "memory.firestore_db.TrainingLogStore", return_value=training
+        ):
+            json.loads(tools._handle_delete_calendar_event("workout-1"))
+
+        assert training.log_session.call_args.kwargs["plan_status"] == "deleted"
 
     def test_action_log_write_failure_does_not_block_response(self, fake_action_log):
         """The calendar write already happened — an audit-write failure is

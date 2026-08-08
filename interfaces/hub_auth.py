@@ -12,7 +12,8 @@ Security controls implemented here (RESEARCH.md STRIDE register):
   T-26-03-01 — verify_oauth2_token validates GIS signature + exp + audience.
   T-26-03-02 — allowlist check in BOTH verify_google_id_token AND verify_session_cookie.
   T-26-03-03 — httpOnly=True on the cookie; cookie value never logged in full.
-  T-26-03-04 — samesite="strict" primary CSRF control (same-origin architecture).
+  T-26-03-04 — samesite="lax" permits the OAuth top-level authorization GET
+               while withholding the cookie from cross-site mutation requests.
   T-26-03-05 — session_version counter; /api/auth/revoke-all bumps it (D-02).
   T-26-03-06 — itsdangerous TimestampSigner HMAC-SHA256; tamper → BadSignature.
   T-26-03-07 — refuse-all-on-unset-env for HUB_SESSION_SECRET (Shared Pattern 7).

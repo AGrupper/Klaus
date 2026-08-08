@@ -75,6 +75,7 @@ def _install_firestore_mock() -> None:
     firestore_mock.Increment = _Increment
     firestore_mock.ArrayUnion = _ArrayUnion
     firestore_mock.SERVER_TIMESTAMP = object()
+    firestore_mock.transactional = lambda function: function
 
     sys.modules["google.cloud.firestore"] = firestore_mock
     google_cloud_mod.firestore = firestore_mock
@@ -82,6 +83,9 @@ def _install_firestore_mock() -> None:
     # google.api_core.exceptions — only GoogleAPICallError is consumed.
     exc_mod = sys.modules.get("google.api_core.exceptions", MagicMock())
     exc_mod.GoogleAPICallError = Exception
+    class _AlreadyExists(Exception):
+        pass
+    exc_mod.AlreadyExists = _AlreadyExists
     sys.modules["google.api_core.exceptions"] = exc_mod
     if "google.api_core" in sys.modules:
         sys.modules["google.api_core"].exceptions = exc_mod
@@ -927,8 +931,15 @@ class _ActionLogFakeDoc:
         self._store = store
         self._key = key
 
-    def get(self):
+    def get(self, transaction=None):
         return _ActionLogFakeSnap(self._store.get(self._key))
+
+    def create(self, data: dict) -> None:
+        from google.api_core.exceptions import AlreadyExists
+
+        if self._key in self._store:
+            raise AlreadyExists("document exists")
+        self._store[self._key] = dict(data)
 
     def set(self, data: dict, merge: bool = False) -> None:
         if not merge:
@@ -963,9 +974,20 @@ class _ActionLogFakeCol:
 class _ActionLogFakeClient:
     def __init__(self):
         self._data: dict = {}
+        self.transaction_calls = 0
 
     def collection(self, name: str) -> _ActionLogFakeCol:
         return _ActionLogFakeCol(self._data.setdefault(name, {}))
+
+    def transaction(self):
+        self.transaction_calls += 1
+
+        class _Transaction:
+            @staticmethod
+            def update(doc_ref, patch):
+                doc_ref.set(patch, merge=True)
+
+        return _Transaction()
 
 
 class TestActionLogStore:
@@ -1123,6 +1145,230 @@ class TestActionLogStore:
         assert entry["captured_at"] == "2026-08-01T22:14:05+00:00"
         # Must not raise — this is the actual regression this test guards.
         _json.dumps(results)
+
+
+# =============================================================================
+# Subscription-first provider-neutral records (v7)
+# =============================================================================
+
+class TestPendingApprovalStore:
+    """Prepared high-risk actions are immutable, expiring, hash-bound records."""
+
+    def test_prepare_and_confirm_requires_matching_payload_hash(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.PendingApprovalStore("test-project")
+            prepared = store.prepare(
+                action_type="payment",
+                payload={"amount": 120, "currency": "ILS", "recipient": "Studio"},
+                origin="interactive",
+                expires_in_seconds=600,
+                action_id="approval-1",
+            )
+
+            assert prepared["status"] == "pending"
+            assert len(prepared["payload_hash"]) == 64
+            with pytest.raises(ValueError, match="payload hash"):
+                store.confirm("approval-1", "0" * 64)
+
+            confirmed = store.confirm("approval-1", prepared["payload_hash"])
+
+        assert confirmed["status"] == "confirmed"
+        assert confirmed["action_id"] == "approval-1"
+        assert client.transaction_calls == 2
+
+    def test_confirmed_action_cannot_be_reused(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.PendingApprovalStore("test-project")
+            prepared = store.prepare(
+                action_type="first_time_outreach",
+                payload={"channel": "notion", "recipient": "Maya"},
+                origin="interactive",
+                action_id="approval-2",
+            )
+            store.confirm("approval-2", prepared["payload_hash"])
+            with pytest.raises(ValueError, match="not pending"):
+                store.confirm("approval-2", prepared["payload_hash"])
+
+
+class TestBehavioralFeedbackStore:
+    """Learned preferences remain model-neutral and carry an explicit veto."""
+
+    def test_record_persists_vetoable_feedback(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.BehavioralFeedbackStore("test-project")
+            result = store.record(
+                pattern="Amit protects Friday morning for long runs",
+                evidence=["Moved two meetings away from Friday morning"],
+                source="nightly",
+                feedback_id="feedback-1",
+            )
+
+        assert result["status"] == "proposed"
+        assert result["veto_available"] is True
+        assert result["evidence"] == ["Moved two meetings away from Friday morning"]
+
+
+class TestPortfolioStores:
+    """Holdings and weekly ILS valuations preserve source provenance."""
+
+    def test_holding_round_trips_native_currency_and_baseline(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.PortfolioHoldingStore("test-project")
+            holding = store.upsert({
+                "ticker": "VOO",
+                "exchange": "NYSEARCA",
+                "quantity": 2.5,
+                "native_currency": "USD",
+                "brokerage_return": 0.12,
+                "estimated_cost_basis": 990.50,
+                "source_urls": ["https://example.test/voo"],
+                "observed_at": "2026-08-08T08:00:00Z",
+            })
+            fetched = store.get(holding["id"])
+
+        assert fetched["ticker"] == "VOO"
+        assert fetched["native_currency"] == "USD"
+        assert fetched["estimated_cost_basis"] == 990.50
+        assert fetched["source_urls"] == ["https://example.test/voo"]
+
+    def test_weekly_snapshot_stores_ils_total_and_observation_time(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.PortfolioSnapshotStore("test-project")
+            stored = store.write_weekly({
+                "week": "2026-08-02",
+                "total_ils": 12_345.67,
+                "holdings": [{"ticker": "VOO", "value_ils": 12_345.67}],
+                "fx_rates": {"USD_ILS": 3.72},
+                "source_urls": ["https://example.test/usd-ils"],
+                "observed_at": "2026-08-08T08:00:00Z",
+            })
+            fetched = store.get("2026-08-02")
+
+        assert stored["week"] == "2026-08-02"
+        assert fetched["total_ils"] == 12_345.67
+        assert fetched["fx_rates"]["USD_ILS"] == 3.72
+
+
+class TestRoutineRunStore:
+    """Morning, nightly, and weekly runs share one provider-neutral schema."""
+
+    def test_start_generates_correlation_and_queued_state(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.RoutineRunStore("test-project")
+            run = store.start(
+                routine="morning",
+                target_date="2026-08-08",
+                trigger="wake",
+                correlation_id="routine-1",
+            )
+
+        assert run["correlation_id"] == "routine-1"
+        assert run["status"] == "queued"
+        assert run["routine"] == "morning"
+        assert run["callback_deadline_at"]
+
+    def test_start_is_atomic_and_preserves_first_trigger(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.RoutineRunStore("test-project")
+            first = store.start(
+                routine="morning",
+                target_date="2026-08-08",
+                trigger="wake",
+                correlation_id="same-run",
+            )
+            second = store.start(
+                routine="morning",
+                target_date="2026-08-08",
+                trigger="backstop",
+                correlation_id="same-run",
+            )
+
+        assert first["trigger"] == second["trigger"] == "wake"
+        assert second["created"] is False
+
+    def test_transition_rejects_unknown_review_status(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.RoutineRunStore("test-project")
+            store.start(
+                routine="nightly",
+                target_date="2026-08-08",
+                trigger="focus",
+                correlation_id="routine-2",
+            )
+            with pytest.raises(ValueError, match="status"):
+                store.transition("routine-2", "sent")
+
+    def test_fallback_can_upgrade_once_but_claude_publication_is_terminal(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.RoutineRunStore("test-project")
+            store.start(
+                routine="nightly",
+                target_date="2026-08-08",
+                trigger="backstop",
+                correlation_id="routine-3",
+            )
+            store.transition("routine-3", "published_fallback")
+            upgraded = store.transition("routine-3", "late_upgraded")
+            assert upgraded["status"] == "late_upgraded"
+            with pytest.raises(ValueError, match="transition"):
+                store.transition("routine-3", "late_upgraded")
+
+        assert client.transaction_calls == 3
+
+    def test_claude_publication_atomically_selects_initial_or_late_status(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.RoutineRunStore("test-project")
+            store.start(
+                routine="morning",
+                target_date="2026-08-08",
+                trigger="wake",
+                correlation_id="routine-initial",
+            )
+            initial = store.transition_claude_publication(
+                "routine-initial", review_id="morning:2026-08-08"
+            )
+            store.start(
+                routine="nightly",
+                target_date="2026-08-08",
+                trigger="backstop",
+                correlation_id="routine-late",
+            )
+            store.transition("routine-late", "published_fallback")
+            late = store.transition_claude_publication(
+                "routine-late", review_id="nightly:2026-08-08"
+            )
+
+        assert initial["status"] == "published_claude"
+        assert late["status"] == "late_upgraded"
+
+    def test_review_publisher_extends_existing_collection_with_common_schema(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            reviews = firestore_db.RoutineReviewStore("test-project")
+            published = reviews.publish(
+                routine="morning",
+                target_date="2026-08-08",
+                correlation_id="routine-4",
+                status="published_claude",
+                text="Good morning, Sir.",
+                structured={"priorities": ["Deep work"]},
+            )
+            stored = client._data["morning_briefings"]["2026-08-08"]
+
+        assert published["review_id"] == "morning:2026-08-08"
+        assert stored["correlation_id"] == "routine-4"
+        assert stored["routine_status"] == "published_claude"
+        assert stored["review_text"] == "Good morning, Sir."
 
 
 # =============================================================================
@@ -1500,6 +1746,21 @@ class TestLLMUsageStoreCacheAndPerPurposeCost:
         assert result == {}
 
 
+class TestEmbeddingUsageStore:
+    def test_record_tracks_billable_tokens_requests_items_and_configured_cost(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            store = firestore_db.EmbeddingUsageStore("test-project")
+            store.record(input_tokens=250, item_count=2, cost_usd=0.00005)
+
+        stored = client._data["embedding_usage"]
+        assert len(stored) == 1
+        document = next(iter(stored.values()))
+        assert document["embedding_calls"].value == 1
+        assert document["embedding_input_tokens"].value == 250
+        assert document["embedding_items"].value == 2
+        assert document["embedding_cost_usd"].value == 0.00005
+
 # =============================================================================
 # UserProfileStore — TTL cache on load() (Phase 30.5 Plan 02 — BRAIN-07)
 # =============================================================================
@@ -1678,3 +1939,81 @@ def test_tick_signature_store_set_fails_open():
         # Force the doc write to raise; set() must swallow and return None.
         store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
         assert store.set("some-signature") is None
+
+
+class _IdemSnap:
+    def __init__(self, value):
+        self._value = value
+        self.exists = value is not None
+
+    def to_dict(self):
+        return dict(self._value or {})
+
+
+class _IdemDoc:
+    def __init__(self, values, key):
+        self.values = values
+        self.key = key
+
+    def create(self, record):
+        if self.key in self.values:
+            raise RuntimeError("already exists")
+        self.values[self.key] = dict(record)
+
+    def get(self):
+        return _IdemSnap(self.values.get(self.key))
+
+    def set(self, patch, merge=False):
+        if merge:
+            self.values.setdefault(self.key, {}).update(patch)
+        else:
+            self.values[self.key] = dict(patch)
+
+
+class _IdemCollection:
+    def __init__(self, values):
+        self.values = values
+
+    def document(self, key):
+        return _IdemDoc(self.values, key)
+
+
+class _IdemClient:
+    def __init__(self):
+        self.collections = {}
+
+    def collection(self, name):
+        return _IdemCollection(self.collections.setdefault(name, {}))
+
+
+def test_action_idempotency_store_binds_key_to_payload_and_replays_result():
+    client = _IdemClient()
+    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        store = firestore_db.ActionIdempotencyStore("test-project")
+        first = store.begin(
+            "request-1",
+            tool_name="task_create",
+            payload={"title": "Plan week"},
+            origin="interactive",
+        )
+        assert first["is_new"] is True
+        store.mark_executed("request-1", {"id": "task-1"})
+        store.complete("request-1")
+
+        replay = store.begin(
+            "request-1",
+            tool_name="task_create",
+            payload={"title": "Plan week"},
+            origin="interactive",
+        )
+        assert replay["is_new"] is False
+        assert replay["status"] == "succeeded"
+        assert replay["result"] == {"id": "task-1"}
+
+        with pytest.raises(ValueError, match="different payload"):
+            store.begin(
+                "request-1",
+                tool_name="task_create",
+                payload={"title": "Different"},
+                origin="interactive",
+            )

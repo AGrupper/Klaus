@@ -1,7 +1,20 @@
 # Product Requirements Document (PRD): Personal Hybrid Agent
 
+> **v7.0 rebaseline (2026-08-08):** Klaus is now a subscription-first Personal
+> OS. The Claude Project “Klaus” is the primary conversational surface; Cloud
+> Run remains the authoritative tool/action/data backend; the Hub remains the
+> life dashboard and launches Claude instead of hosting model-backed chat.
+> Claude Remote Routines provide morning, nightly, and weekly reasoning. Gemini
+> is retained only for `gemini-embedding-2`. The detailed current contract and
+> guarded rollout are in [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md) and
+> [CLAUDE_FIRST_USE.md](CLAUDE_FIRST_USE.md). Legacy sections below are retained
+> as historical context until the seven-day cutover observation is signed off.
+
 ## 1. Vision
-Create a highly personalized, cloud-hosted AI agent that manages scheduling, task organization, and daily workflows. The agent will act autonomously but interface with the user seamlessly across multiple platforms, utilizing a dual-model LLM architecture for cost-efficiency and high-level reasoning.
+Create a highly personalized, cloud-hosted personal operating system that puts
+calendar, tasks, habits, health, reviews, activity, approvals, and portfolio in
+one Hub, with a proactive Claude agent that sees the same authoritative Klaus
+state and can safely administer reversible life logistics.
 
 ## 2. Core Features & Workflows
 * **Dual-Model Orchestration:** The system will use a fast, cheap model (e.g., Gemini Flash or a small local-in-cloud model) to route requests, fetch data, and handle simple queries. Complex logic and planning will be routed to a primary "Smart" model (TBD).

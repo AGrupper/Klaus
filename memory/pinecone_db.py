@@ -333,6 +333,7 @@ class MemoryStore:
             contents=text,
             config=types.EmbedContentConfig(output_dimensionality=768),
         )
+        self._record_embedding_usage(response, item_count=1)
         return list(response.embeddings[0].values)
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
@@ -356,14 +357,52 @@ class MemoryStore:
             ],
             config=types.EmbedContentConfig(output_dimensionality=768),
         )
+        self._record_embedding_usage(response, item_count=len(texts))
         return [list(e.values) for e in response.embeddings]
+
+    @staticmethod
+    def _record_embedding_usage(response, *, item_count: int) -> None:
+        """Best-effort meter using provider-reported tokens and an operator rate."""
+        if os.environ.get("KLAUS_EMBEDDING_METER_ENABLED", "false").strip().lower() not in {
+            "1", "true", "yes", "on",
+        }:
+            return
+        try:
+            metadata = getattr(response, "usage_metadata", None)
+            token_value = getattr(metadata, "prompt_token_count", None)
+            if not isinstance(token_value, (int, float)):
+                token_value = getattr(metadata, "total_token_count", 0)
+            input_tokens = int(token_value) if isinstance(token_value, (int, float)) else 0
+            per_million = float(
+                os.environ.get("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS", "0")
+            )
+            cost_usd = input_tokens * per_million / 1_000_000
+            from memory.firestore_db import EmbeddingUsageStore
+
+            EmbeddingUsageStore(
+                os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+                os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+            ).record(
+                input_tokens=input_tokens,
+                item_count=item_count,
+                cost_usd=cost_usd,
+            )
+        except Exception:
+            logger.warning("Could not record Gemini embedding usage", exc_info=True)
 
     def _get_genai(self):
         if self._genai is None:
             from google import genai
-            # WHY SMART_AGENT_API_KEY: embeddings use Gemini (Google AI Studio).
-            # The worker key is now DeepSeek, so we source the Gemini key
-            # from the smart agent (which is still a Google model).
-            api_key = os.environ["SMART_AGENT_API_KEY"]
+            # v7 keeps Gemini solely for embeddings, so the credential has a
+            # dedicated name. The legacy smart-agent variable remains a
+            # temporary rolling-deploy alias and can be removed after every
+            # Cloud Run revision and local environment has migrated.
+            api_key = os.environ.get("GEMINI_EMBEDDING_API_KEY") or os.environ.get(
+                "SMART_AGENT_API_KEY"
+            )
+            if not api_key:
+                raise RuntimeError(
+                    "GEMINI_EMBEDDING_API_KEY is required for Gemini embeddings"
+                )
             self._genai = genai.Client(api_key=api_key)
         return self._genai

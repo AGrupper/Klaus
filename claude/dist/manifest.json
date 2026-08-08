@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "skill_version": "7.0.0",
+  "skills": [
+    {
+      "artifact": "klaus-live-agent-7.0.0.zip",
+      "artifact_sha256": "315b7ba5566d715e436a8a4b1ddb3052effda391ac1a1945a8f91bbcdbb7e62d",
+      "name": "klaus-live-agent",
+      "source_sha256": "d131660d8e17528e27203f7c8753e69ff232bdc78a7571ee4810c34177643f98",
+      "version": "7.0.0"
+    },
+    {
+      "artifact": "klaus-morning-review-7.0.0.zip",
+      "artifact_sha256": "6ad93d25762c6bbf5ef3e732bc42a611e43542c7605422cc870f70dd20f68e89",
+      "name": "klaus-morning-review",
+      "source_sha256": "b2f6c9a5d42e55dcb8558470ff61eca8350cf79766a88216ff84f4575442d5df",
+      "version": "7.0.0"
+    },
+    {
+      "artifact": "klaus-nightly-review-7.0.0.zip",
+      "artifact_sha256": "62549896f4742fcd4545e73b56fa6d2c648cb40bfabf9b3b7c2ee3c0c80e714e",
+      "name": "klaus-nightly-review",
+      "source_sha256": "47146ec6271532ca21320e7b64e419d308619c1fa3f26b766bcb98d49d5d1a2c",
+      "version": "7.0.0"
+    },
+    {
+      "artifact": "klaus-weekly-review-7.0.0.zip",
+      "artifact_sha256": "c4fa51907f1b1bc77d93c76821edd310c48b3273749226d62408c8c7c6b25c20",
+      "name": "klaus-weekly-review",
+      "source_sha256": "b41365d8ce9961c8b86d656840887f34c4eff0072485378142ca7b236d4bd090",
+      "version": "7.0.0"
+    }
+  ]
+}

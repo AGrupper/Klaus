@@ -4,7 +4,7 @@
  * UI-SPEC constraints:
  *   - Phone only: className="md:hidden" — not visible on desktop
  *   - 64px height, #1A1A1A background
- *   - 5 tabs: Today · Tasks · Klaus · Habits · Health (Klaus center)
+ *   - 5 tabs: Today · Tasks · Claude · Habits · Health (Claude center)
  *   - Each tab touch target >= 44px (iOS HIG)
  *   - Active icon in accent #6366F1; inactive in textSecondary #9CA3AF
  *   - UnreadBadge on Klaus tab (26-08): accent bg, shows count or "9+", hidden at 0
@@ -17,9 +17,6 @@ import {
   Activity,
   Heart,
 } from 'lucide-react'
-import { UnreadBadge } from '../shared/UnreadBadge'
-import { useChat, latestKnownSeq } from '../../hooks/useChat'
-import { useUnread } from '../../hooks/useUnread'
 
 interface TabItem {
   label: string
@@ -30,7 +27,7 @@ interface TabItem {
 const TABS: TabItem[] = [
   { label: 'Today', path: '/', icon: CalendarDays },
   { label: 'Tasks', path: '/tasks', icon: CheckSquare },
-  { label: 'Klaus', path: '/klaus', icon: MessageCircle },
+  { label: 'Claude', path: '/klaus', icon: MessageCircle },
   { label: 'Habits', path: '/habits', icon: Activity },
   { label: 'Health', path: '/health', icon: Heart },
 ]
@@ -38,16 +35,6 @@ const TABS: TabItem[] = [
 export function BottomTabs() {
   const navigate = useNavigate()
   const location = useLocation()
-
-  // Poll only when the Klaus tab is NOT active (when it IS active, ChatWindow
-  // owns polling). This keeps badge fresh on other tabs without double-polling.
-  const isKlausTabActive = location.pathname.startsWith('/klaus')
-  const { messages } = useChat(!isKlausTabActive)
-  // latestKnownSeq (not messages.length): the tail poll only fetches the
-  // newest page (UAT gap-closure windowing), so the loaded array length no
-  // longer equals the true total conversation size once history exceeds one
-  // page — the server-assigned `seq` on the newest message is the real total.
-  const { unreadCount } = useUnread(latestKnownSeq(messages))
 
   return (
     /*
@@ -75,7 +62,6 @@ export function BottomTabs() {
       aria-label="Main navigation"
     >
       {TABS.map(({ label, path, icon: Icon }) => {
-        const isKlaus = label === 'Klaus'
         const isActive =
           path === '/'
             ? location.pathname === '/'
@@ -103,15 +89,6 @@ export function BottomTabs() {
             }}
             aria-current={isActive ? 'page' : undefined}
           >
-            {/* UnreadBadge on Klaus tab (CHAT-04) */}
-            {isKlaus && (
-              <div
-                style={{ position: 'absolute', top: '8px', right: 'calc(50% - 18px)' }}
-              >
-                <UnreadBadge count={unreadCount} />
-              </div>
-            )}
-
             <Icon size={24} strokeWidth={1.75} aria-hidden="true" />
             <span
               style={{

@@ -30,6 +30,7 @@ openai>=1.50                       # OpenAI-compatible protocol = lingua franca 
 python-telegram-bot>=21.0
 fastapi>=0.115                     # Cloud Run webhook server
 uvicorn[standard]>=0.30            # ASGI server for FastAPI
+mcp>=2.0,<3                        # Official stateless Streamable HTTP MCP SDK
 
 # --- Runtime utilities ---
 python-dotenv>=1.0

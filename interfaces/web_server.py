@@ -24,7 +24,7 @@ import hmac
 import logging
 import os
 from collections import OrderedDict
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import date as _date_cls, datetime, timedelta
 from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
@@ -62,6 +62,7 @@ logger = logging.getLogger(__name__)
 _orchestrator: AgentOrchestrator | None = None
 _router: MessageRouter | None = None
 _application: Application | None = None
+_mcp_bundle = None
 
 # Recently accepted Telegram update_ids, used to drop webhook retries.
 # WHY: Telegram re-delivers an Update if it doesn't get a 200 quickly. We now
@@ -95,6 +96,25 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
     """
     global _orchestrator, _router, _application  # noqa: PLW0603
 
+    mcp_stack = AsyncExitStack()
+    await mcp_stack.__aenter__()
+    if _mcp_bundle is not None:
+        if _flag_enabled("KLAUS_CLAUDE_LIVE_ENABLED"):
+            await mcp_stack.enter_async_context(
+                _mcp_bundle.interactive.session_manager.run()
+            )
+        if _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED"):
+            await mcp_stack.enter_async_context(_mcp_bundle.routine.session_manager.run())
+        logger.info("Klaus MCP session managers initialised.")
+
+    if not _flag_enabled("KLAUS_LEGACY_RUNTIME_ENABLED", default=True):
+        logger.info("Legacy Telegram/generative runtime disabled by feature flag.")
+        try:
+            yield
+        finally:
+            await mcp_stack.aclose()
+        return
+
     telegram_bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
 
     # WHY: ``Application.initialize()`` registers the Bot, sets up the
@@ -122,13 +142,15 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
     )
     logger.info("MessageRouter initialised.")
 
-    yield  # Server is live and handling requests from here.
-
-    # ---- Shutdown ----
-    # WHY: graceful shutdown flushes any in-flight Telegram API calls and
-    # releases the underlying HTTP connections cleanly.
-    await _application.shutdown()
-    logger.info("Telegram Application shut down.")
+    try:
+        yield  # Server is live and handling requests from here.
+    finally:
+        # ---- Shutdown ----
+        # WHY: graceful shutdown flushes any in-flight Telegram API calls and
+        # releases the underlying HTTP connections cleanly.
+        await _application.shutdown()
+        logger.info("Telegram Application shut down.")
+        await mcp_stack.aclose()
 
 
 # ------------------------------------------------------------------ #
@@ -140,6 +162,94 @@ app = FastAPI(
     description="Telegram webhook entry point for the Klaus personal AI agent.",
     lifespan=lifespan,
 )
+
+
+def _flag_enabled(name: str, *, default: bool = False) -> bool:
+    """Return a strict boolean feature flag from the environment."""
+    fallback = "true" if default else "false"
+    return os.environ.get(name, fallback).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _subscription_capability_gate() -> dict:
+    """Report the four manual Claude Pro proofs that must precede cutover."""
+    checks = {
+        "mcp_connector_verified": _flag_enabled("KLAUS_CAPABILITY_MCP_VERIFIED"),
+        "private_skill_verified": _flag_enabled("KLAUS_CAPABILITY_SKILL_VERIFIED"),
+        "remote_routine_verified": _flag_enabled("KLAUS_CAPABILITY_ROUTINE_VERIFIED"),
+        "routine_publish_verified": _flag_enabled("KLAUS_CAPABILITY_PUBLISH_VERIFIED"),
+    }
+    return {**checks, "passed": all(checks.values())}
+
+
+def _require_legacy_hub_chat() -> None:
+    """Fail closed after the independently reversible Hub-chat cutover."""
+    if not _flag_enabled("KLAUS_HUB_CHAT_ENABLED", default=True):
+        raise HTTPException(
+            status_code=410,
+            detail={"error": "Hub chat retired; use the configured Claude Project"},
+        )
+
+
+def _configure_subscription_interfaces() -> None:
+    """Mount OAuth and independently gated stateless MCP resources."""
+    global _mcp_bundle  # noqa: PLW0603
+
+    if not _flag_enabled("KLAUS_MCP_ENABLED"):
+        return
+    from urllib.parse import urlsplit
+
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from interfaces.mcp_oauth import build_oauth_router
+    from interfaces.mcp_runtime import (
+        create_production_mcp_bundle,
+        create_production_oauth_service,
+    )
+
+    oauth_service = create_production_oauth_service()
+    _mcp_bundle = create_production_mcp_bundle(
+        oauth_service,
+        read_only=_flag_enabled("KLAUS_MCP_READ_ONLY_MODE", default=True),
+    )
+    app.include_router(build_oauth_router(oauth_service, require_hub_session))
+
+    parsed = urlsplit(oauth_service.issuer_url)
+    allowed_hosts = [parsed.netloc, "localhost:*", "127.0.0.1:*"]
+    allowed_origins = [
+        oauth_service.issuer_url,
+        "https://claude.ai",
+        "https://claude.com",
+    ]
+    transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+    if _flag_enabled("KLAUS_CLAUDE_LIVE_ENABLED"):
+        app.mount(
+            "/mcp/interactive",
+            _mcp_bundle.interactive.streamable_http_app(
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
+                transport_security=transport_security,
+            ),
+            name="mcp-interactive",
+        )
+    if _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED"):
+        app.mount(
+            "/mcp/routine",
+            _mcp_bundle.routine.streamable_http_app(
+                streamable_http_path="/",
+                stateless_http=True,
+                json_response=True,
+                transport_security=transport_security,
+            ),
+            name="mcp-routine",
+        )
+
+
+_configure_subscription_interfaces()
 
 
 # ------------------------------------------------------------------ #
@@ -418,6 +528,24 @@ async def internal_process_occasion(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True})
 
 
+@app.post("/internal/routine-fallback")
+async def internal_routine_fallback(request: Request) -> JSONResponse:
+    """Cloud Tasks target for the ten-minute no-model review fallback."""
+    await _verify_cron_request(request)
+    body = await request.json()
+    correlation_id = str(body.get("correlation_id") or "")
+    if not correlation_id or len(correlation_id) > 128:
+        raise HTTPException(
+            status_code=400, detail={"error": "invalid correlation_id"}
+        )
+    from core.subscription_routines import build_subscription_routine_coordinator
+
+    result = await build_subscription_routine_coordinator().publish_timeout_fallback(
+        correlation_id
+    )
+    return JSONResponse(content=result)
+
+
 # ------------------------------------------------------------------ #
 # Cloud Scheduler OIDC verification                                  #
 # ------------------------------------------------------------------ #
@@ -624,6 +752,31 @@ def _log_cron_run(job_id: str, ok: bool, *, backlog_done: bool | None = None) ->
         logger.warning("Failed to record cron run for %s", job_id, exc_info=True)
 
 
+def _routine_cutover_enabled(routine: str) -> bool:
+    """Return whether one routine has independently cut over to Claude."""
+    return (
+        _flag_enabled("KLAUS_MCP_ENABLED")
+        and _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED")
+        and _subscription_capability_gate()["passed"]
+        and _flag_enabled(f"KLAUS_ROUTINE_{routine.upper()}_CUTOVER")
+    )
+
+
+async def _start_subscription_routine(
+    routine: str, target_date: str, trigger: str,
+) -> JSONResponse:
+    """Fire a subscription-backed routine and preserve the trigger API contract."""
+    from core.subscription_routines import build_subscription_routine_coordinator
+
+    loop = asyncio.get_running_loop()
+    coordinator = build_subscription_routine_coordinator()
+    result = await loop.run_in_executor(
+        None, coordinator.start, routine, target_date, trigger,
+    )
+    status_code = 202 if result.get("accepted") else 503
+    return JSONResponse(status_code=status_code, content=result)
+
+
 
 
 
@@ -684,9 +837,11 @@ async def trigger_nightly(request: Request) -> JSONResponse:
             Shortcut) can retry.
     """
     await _verify_trigger_request(request)
+    target = nightly_target_date_now()
+    if _routine_cutover_enabled("nightly"):
+        return await _start_subscription_routine("nightly", target, "focus")
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    target = nightly_target_date_now()
     loop = asyncio.get_running_loop()
     # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
     # api_chat_send's enqueue_hub_message dispatch.
@@ -736,9 +891,11 @@ async def trigger_morning(request: Request) -> JSONResponse:
             Shortcut) can retry.
     """
     await _verify_morning_trigger_request(request)
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    if _routine_cutover_enabled("morning"):
+        return await _start_subscription_routine("morning", today_iso, "wake")
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     loop = asyncio.get_running_loop()
     # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
     # api_chat_send's enqueue_hub_message dispatch.
@@ -775,9 +932,13 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
             HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
     """
     await _verify_cron_request(request)
+    target = nightly_target_date_now()
+    if _routine_cutover_enabled("nightly"):
+        response = await _start_subscription_routine("nightly", target, "backstop")
+        _log_cron_run("nightly-backstop", ok=response.status_code == 202)
+        return response
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    target = nightly_target_date_now()
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(
         None, lambda: enqueue_occasion("nightly", trigger="backstop", target_date=target),
@@ -790,6 +951,21 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
         )
     _log_cron_run("nightly-backstop", ok=True)
     return JSONResponse(status_code=202, content={"accepted": True})
+
+
+@app.post("/cron/morning-backstop")
+async def cron_morning_backstop(request: Request) -> JSONResponse:
+    """10:30 Asia/Jerusalem backstop for the subscription morning routine."""
+    await _verify_cron_request(request)
+    if not _routine_cutover_enabled("morning"):
+        return JSONResponse(
+            status_code=409,
+            content={"accepted": False, "error": "morning subscription cutover disabled"},
+        )
+    today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    response = await _start_subscription_routine("morning", today_iso, "backstop")
+    _log_cron_run("morning-backstop", ok=response.status_code == 202)
+    return response
 
 
 @app.post("/cron/autonomous-tick")
@@ -814,6 +990,16 @@ async def cron_autonomous_tick(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
+    if _flag_enabled("KLAUS_DETERMINISTIC_ALERTS_ENABLED"):
+        from core.deterministic_alerts import run_rule_evaluator
+
+        try:
+            result = await run_rule_evaluator()
+            _log_cron_run("autonomous-tick", ok=True)
+        except Exception:
+            _log_cron_run("autonomous-tick", ok=False)
+            raise
+        return JSONResponse(content={"ok": True, **result})
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
     # WHY: imported inside the handler so the heavy core.autonomous module
@@ -858,9 +1044,13 @@ async def cron_weekly_training_review(request: Request) -> JSONResponse:
             with HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
     """
     await _verify_cron_request(request)
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    if _routine_cutover_enabled("weekly"):
+        response = await _start_subscription_routine("weekly", today, "cron")
+        _log_cron_run("weekly-training-review", ok=response.status_code == 202)
+        return response
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(
         None, lambda: enqueue_occasion("weekly_review", trigger="cron", target_date=today),
@@ -1092,6 +1282,19 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
+    if _flag_enabled("KLAUS_DETERMINISTIC_ALERTS_ENABLED"):
+        from core.deterministic_alerts import run_rule_evaluator
+        from core.heartbeat import collect_deterministic_signals
+
+        try:
+            result = await run_rule_evaluator(
+                infrastructure_loader=collect_deterministic_signals
+            )
+            _log_cron_run("heartbeat", ok=True)
+        except Exception:
+            _log_cron_run("heartbeat", ok=False)
+            raise
+        return JSONResponse(content={"ok": True, **result})
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
     import core.heartbeat as _heartbeat
@@ -1152,7 +1355,10 @@ async def api_auth_google(request: Request) -> JSONResponse:
         max_age=365 * 86400,
         httponly=True,
         secure=True,
-        samesite="strict",
+        # OAuth begins as a cross-site top-level GET from Claude. Lax permits
+        # that safe navigation but still withholds the cookie on cross-site
+        # POST mutations; OAuth state + PKCE bind the authorization response.
+        samesite="lax",
         path="/",
     )
     return json_response
@@ -2472,6 +2678,7 @@ async def api_chat_send(
         HTTPException 400: Missing or empty content, or content too long.
         HTTPException 401: No valid session cookie (via require_hub_session).
     """
+    _require_legacy_hub_chat()
     body = await request.json()
     content = body.get("content", "")
     attachments = body.get("attachments") or None
@@ -2559,6 +2766,7 @@ async def api_chat_upload(
         HTTPException 400: unsupported/mismatched type or empty body.
         HTTPException 413: body exceeds MAX_ATTACHMENT_BYTES.
     """
+    _require_legacy_hub_chat()
     from core.hub_attachments import MAX_ATTACHMENT_BYTES, save_attachment
 
     data = await request.body()
@@ -2632,6 +2840,7 @@ async def api_chat_messages(
     Raises:
         HTTPException 401: No valid session cookie (via require_hub_session).
     """
+    _require_legacy_hub_chat()
     from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 + Pitfall 4
 
     if chat_visible == 1:
@@ -2716,6 +2925,7 @@ async def api_chat_regenerate(
     already in flight) — the pop is the guard, so a double-tap can't enqueue
     two turns for one popped reply.
     """
+    _require_legacy_hub_chat()
     loop = asyncio.get_running_loop()
     try:
         user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
@@ -2760,6 +2970,7 @@ async def api_chat_stop(
     Idempotent and safe with no turn in flight — the flag is simply reset by
     the next start_turn.
     """
+    _require_legacy_hub_chat()
     loop = asyncio.get_running_loop()
     try:
         user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
@@ -2799,6 +3010,7 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
     """
     # OIDC gate — same verification as /internal/process-update (T-26-05-02)
     await _verify_cron_request(request)
+    _require_legacy_hub_chat()
 
     # Singleton guard — orchestrator must be initialised (lifespan startup)
     if _orchestrator is None:
@@ -2955,6 +3167,11 @@ class CreateTaskInput(BaseModel):
     priority: Literal["none", "low", "medium", "high"] = "none"
     list_id: str | None = None  # None → coerced to "inbox" in the route
     recurrence: RecurrenceInput | None = None
+    estimated_minutes: int | None = Field(None, ge=1, le=1_440)
+    hard_deadline_at: datetime | None = None
+    auto_schedule: bool | None = None
+    manual_lock: bool | None = None
+    calendar_event_id: str | None = Field(None, max_length=1_024)
 
 
 class UpdateTaskInput(BaseModel):
@@ -2967,6 +3184,11 @@ class UpdateTaskInput(BaseModel):
     priority: Literal["none", "low", "medium", "high"] | None = None
     list_id: str | None = None
     recurrence: RecurrenceInput | None = None
+    estimated_minutes: int | None = Field(None, ge=1, le=1_440)
+    hard_deadline_at: datetime | None = None
+    auto_schedule: bool | None = None
+    manual_lock: bool | None = None
+    calendar_event_id: str | None = Field(None, max_length=1_024)
 
 
 class CreateListInput(BaseModel):
@@ -2997,7 +3219,7 @@ async def api_create_task(
     """
     from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import — Shared Pattern 5
 
-    task_dict = body.model_dump(exclude_none=False)
+    task_dict = body.model_dump(exclude_none=False, mode="json")
     # Coerce None list_id → "inbox" (D-07 from RESEARCH: Inbox is implicit)
     if not task_dict.get("list_id"):
         task_dict["list_id"] = "inbox"
@@ -3085,7 +3307,7 @@ async def api_update_task(
 
     # Only pass fields that were explicitly provided (exclude unset so None
     # values don't overwrite set fields that weren't sent in this PATCH).
-    patch = body.model_dump(exclude_unset=True)
+    patch = body.model_dump(exclude_unset=True, mode="json")
     loop = asyncio.get_running_loop()
     store = TaskStore(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
@@ -3907,6 +4129,254 @@ async def api_patch_settings(
 
     settings = await loop.run_in_executor(None, settings_store.get)
     return JSONResponse(content=_jsonsafe_doc(settings))
+
+
+# --------------------------------------------------------------------------- #
+# Klaus v7 subscription-first read models                                    #
+# --------------------------------------------------------------------------- #
+
+@app.post("/api/routines/{routine}/shadow")
+async def api_shadow_routine(
+    routine: str,
+    request: Request,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Run one subscription routine without publishing, pushing, or writing memory."""
+    if routine not in {"morning", "nightly", "weekly"}:
+        raise HTTPException(status_code=404, detail={"error": "unknown routine"})
+    if not (
+        _flag_enabled("KLAUS_MCP_ENABLED")
+        and _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED")
+    ):
+        raise HTTPException(
+            status_code=409, detail={"error": "Claude routine interface disabled"}
+        )
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail={"error": "body must be an object"})
+    target_date = str(
+        body.get("target_date")
+        or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    )
+    try:
+        _date_cls.fromisoformat(target_date)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400, detail={"error": "target_date must be YYYY-MM-DD"}
+        ) from exc
+    from core.subscription_routines import build_subscription_routine_coordinator
+
+    coordinator = build_subscription_routine_coordinator()
+    result = await asyncio.get_running_loop().run_in_executor(
+        None,
+        lambda: coordinator.start(
+            routine,
+            target_date,
+            "operator_shadow",
+            delivery_mode="shadow",
+        ),
+    )
+    return JSONResponse(
+        status_code=202 if result.get("accepted") else 503,
+        content=result,
+    )
+
+@app.get("/api/reviews")
+async def api_reviews(
+    limit: int = Query(default=20, ge=1, le=60),
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return published morning, nightly, and weekly reviews."""
+    from memory.firestore_db import RoutineReviewStore, _jsonsafe_doc
+
+    store = RoutineReviewStore(
+        os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+        os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+    )
+    reviews = await asyncio.get_running_loop().run_in_executor(
+        None, store.list_recent, min(limit, 31)
+    )
+    return JSONResponse(content={"reviews": _jsonsafe_doc(reviews[:limit])})
+
+
+@app.get("/api/activity")
+async def api_activity(
+    days: int = Query(default=7, ge=1, le=30),
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Assemble, but do not merge, review/outreach/action source records."""
+    from memory.firestore_db import (
+        ActionLogStore,
+        OutreachLogStore,
+        RoutineReviewStore,
+        _jsonsafe_doc,
+    )
+
+    project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+    database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+    loop = asyncio.get_running_loop()
+    reviews_store = RoutineReviewStore(project, database)
+    actions_store = ActionLogStore(project, database)
+    outreach_store = OutreachLogStore(project, database)
+    today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
+
+    def load_outreach() -> list[dict]:
+        records = []
+        for offset in range(days):
+            day = (today - timedelta(days=offset)).isoformat()
+            records.extend(outreach_store.get_today(day))
+        return records
+
+    reviews, actions, outreach = await asyncio.gather(
+        loop.run_in_executor(None, reviews_store.list_recent, min(days, 31)),
+        loop.run_in_executor(None, actions_store.get_recent, days),
+        loop.run_in_executor(None, load_outreach),
+    )
+    activity = []
+    activity.extend(
+        {
+            "type": "review",
+            "id": item.get("review_id"),
+            "at": item.get("published_at") or item.get("target_date"),
+            "record": item,
+        }
+        for item in reviews
+    )
+    activity.extend(
+        {
+            "type": "action",
+            "id": item.get("id"),
+            "at": item.get("at"),
+            "record": item,
+        }
+        for item in actions
+    )
+    activity.extend(
+        {
+            "type": "outreach",
+            "id": item.get("id") or item.get("topic_key"),
+            "at": item.get("at"),
+            "record": item,
+        }
+        for item in outreach
+    )
+    activity.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
+    return JSONResponse(content={"activity": _jsonsafe_doc(activity)})
+
+
+@app.get("/api/approvals")
+async def api_approvals(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return immutable high-risk actions awaiting confirmation."""
+    from memory.firestore_db import PendingApprovalStore, _jsonsafe_doc
+
+    store = PendingApprovalStore(
+        os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+        os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+    )
+    approvals = await asyncio.get_running_loop().run_in_executor(None, store.list_pending)
+    return JSONResponse(content={"approvals": _jsonsafe_doc(approvals)})
+
+
+@app.get("/api/portfolio")
+async def api_portfolio(
+    snapshot_limit: int = Query(default=12, ge=1, le=52),
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return active holdings and recent weekly ILS snapshots."""
+    from memory.firestore_db import (
+        PortfolioHoldingStore,
+        PortfolioSnapshotStore,
+        _jsonsafe_doc,
+    )
+
+    project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+    database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+    holdings = PortfolioHoldingStore(project, database)
+    snapshots = PortfolioSnapshotStore(project, database)
+    loop = asyncio.get_running_loop()
+    holdings_data, snapshot_data = await asyncio.gather(
+        loop.run_in_executor(None, holdings.list_active),
+        loop.run_in_executor(None, snapshots.list_recent, snapshot_limit),
+    )
+    last_valid = snapshot_data[0] if snapshot_data else None
+    return JSONResponse(
+        content=_jsonsafe_doc(
+            {
+                "holdings": holdings_data,
+                "snapshots": snapshot_data,
+                "last_valid_valuation": last_valid,
+            }
+        )
+    )
+
+
+@app.get("/api/agent/status")
+async def api_agent_status(
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Expose capability gates, routine state, and Ask Claude launch config."""
+    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+    from memory.firestore_db import RoutineRunStore, _jsonsafe_doc
+
+    project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+    database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+    runs = await asyncio.get_running_loop().run_in_executor(
+        None, RoutineRunStore(project, database).list_recent, 20
+    )
+    project_url = os.environ.get("CLAUDE_PROJECT_URL", "")
+    gate = _subscription_capability_gate()
+    embedding_usage = {}
+    try:
+        from memory.firestore_db import EmbeddingUsageStore
+
+        embedding_usage = await asyncio.get_running_loop().run_in_executor(
+            None, EmbeddingUsageStore(project, database).summary, "today"
+        )
+    except Exception:
+        logger.warning("Could not read embedding usage for agent status", exc_info=True)
+    return JSONResponse(
+        content=_jsonsafe_doc(
+            {
+                "interface": "claude_project",
+                "claude_project_url": project_url or None,
+                "ask_claude_configured": bool(project_url),
+                "expected_skill_version": EXPECTED_SKILL_VERSION,
+                "capability_gate": gate,
+                "features": {
+                    "mcp": _flag_enabled("KLAUS_MCP_ENABLED"),
+                    "live": _flag_enabled("KLAUS_CLAUDE_LIVE_ENABLED"),
+                    "routines": _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED"),
+                    "morning_cutover": _routine_cutover_enabled("morning"),
+                    "nightly_cutover": _routine_cutover_enabled("nightly"),
+                    "weekly_cutover": _routine_cutover_enabled("weekly"),
+                    "legacy_runtime": _flag_enabled(
+                        "KLAUS_LEGACY_RUNTIME_ENABLED", default=True
+                    ),
+                },
+                "recent_runs": runs,
+                "usage": {
+                    "claude_subscription": {
+                        "run_count": len(runs),
+                        "funding": "subscription",
+                        "cost_usd": None,
+                    },
+                    "gemini_embeddings": {
+                        "cost_usd": embedding_usage.get("embedding_cost_usd"),
+                        "request_count": embedding_usage.get("embedding_calls", 0),
+                        "input_tokens": embedding_usage.get("embedding_input_tokens", 0),
+                        "item_count": embedding_usage.get("embedding_items", 0),
+                        "measurement": (
+                            "provider_tokens_at_configured_rate"
+                            if os.environ.get("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS")
+                            else "provider_tokens_only_rate_not_configured"
+                        ),
+                    },
+                },
+            }
+        )
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -1,5 +1,22 @@
 # Milestones — Klaus
 
+## v7.0 Subscription-First Personal OS (Implementation complete; live gates pending)
+
+**Rebaselined:** 2026-08-08
+**Delivered in code:** provider-neutral state extensions; OAuth 2.1/PKCE scoped
+MCP resources; versioned Claude skills; subscription Remote Routine trigger and
+ten-minute fallback state machine; deterministic waking-hours rules; review,
+activity, approval, portfolio, usage, and agent-status Hub contracts; Ask Claude
+frontend; rollback/capability flags and operator checklist.
+
+**Not yet a production cutover:** Amit's Claude Pro account must pass the four
+capability proofs, shadow routines, independent cutovers, real iPhone/Hub UAT,
+and a seven-day observation. Legacy code/secrets are intentionally retained
+until then. Unfinished v6 Phases 34–35 are superseded, with training write-back,
+audit, eval, cleanup, and documentation obligations carried into v7.
+
+---
+
 ## v5.0 Klaus Hub (Shipped: 2026-07-09)
 
 **Phases completed:** 5 phases, 39 plans, 75 tasks

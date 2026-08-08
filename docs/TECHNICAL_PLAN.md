@@ -1,5 +1,11 @@
 # Technical Architecture & Implementation Plan
 
+> **Current v7 architecture:** [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md) is the
+> governing design for the subscription-first runtime. It supersedes the
+> generative model map and primary-interface claims in this historical plan.
+> The old implementation remains feature-flagged for capability proof,
+> independent cutovers, rollback, and the required seven-day observation.
+
 ## 1. Stack & Infrastructure
 * **Language:** Python 3.11+
 * **Hosting:** Google Cloud Run (Scales to zero, native integration with Google Cloud IAM/OAuth).

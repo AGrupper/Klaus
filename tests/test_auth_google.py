@@ -28,6 +28,21 @@ def test_scopes_list_excludes_fitness():
     assert FITNESS_NUTRITION_READ_SCOPE not in GoogleAuthManager.SCOPES
 
 
+def test_subscription_only_runtime_requests_calendar_scope_only(monkeypatch):
+    from core.auth_google import CALENDAR_SCOPE, GMAIL_SCOPE, required_google_scopes
+
+    monkeypatch.setenv("KLAUS_LEGACY_RUNTIME_ENABLED", "false")
+    assert required_google_scopes() == [CALENDAR_SCOPE]
+    assert GMAIL_SCOPE not in required_google_scopes()
+
+
+def test_legacy_runtime_keeps_backward_compatible_google_scopes(monkeypatch):
+    from core.auth_google import CALENDAR_SCOPE, GMAIL_SCOPE, required_google_scopes
+
+    monkeypatch.setenv("KLAUS_LEGACY_RUNTIME_ENABLED", "true")
+    assert required_google_scopes() == [GMAIL_SCOPE, CALENDAR_SCOPE]
+
+
 def _mgr_with_stub_creds() -> "object":
     from core.auth_google import GoogleAuthManager
 

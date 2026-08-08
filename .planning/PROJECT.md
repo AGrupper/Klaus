@@ -1,5 +1,12 @@
 # Klaus — Personal Hybrid Agent
 
+> **Current direction (v7.0, rebaselined 2026-08-08):** Claude Project “Klaus”
+> is the primary conversation surface; Klaus Cloud Run is the authoritative
+> OAuth/MCP/action/data layer; the Hub is the unified life dashboard and launches
+> Claude. The implementation is dark-shipped pending real Claude Pro capability
+> proof and a seven-day observation. See `docs/V7_ARCHITECTURE.md` and
+> `docs/CLAUDE_FIRST_USE.md`. The historical state below is retained for lineage.
+
 ## What This Is
 
 Klaus is a cloud-hosted personal AI agent for Amit that manages scheduling, native task and habit management, proactive alerts, daily workflows, and — as of v4.0 — acts as a genuinely expert hybrid-athlete coach (training-block periodization, end-of-block benchmarks, dated-goal projection, and nutrition/supplement accountability grounded in Amit's living blueprint + real Garmin/nutrition data). As of **v5.0** his primary interface is the **Klaus Hub** — a React + TypeScript PWA served from the same `klaus-agent` Cloud Run container — with a Today-timeline home screen (phone + desktop), a chat that shares one conversation with Telegram, native tasks and habits (TickTick retired), health visualizations, and Web Push; Telegram is mirrored during the transition. He uses a dual-model architecture (`gemini-3.5-flash` as the brain, `deepseek-v4-flash` as the worker, `claude-haiku-4-5` inline fallback, free `qwen3-32b` tick-brain), integrated with Gmail, Google Calendar, Notion, Garmin, Postgres, and a vector memory store (Pinecone). No local Mac dependency — fully Cloud Run native.

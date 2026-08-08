@@ -13,11 +13,31 @@ This file is a compact milestone summary. Per-milestone phase detail lives in
 - ✅ **v3.0 — Project Shifu** — Phases 19–20 (shipped 2026-06-02)
 - ✅ **v4.0 — Specific Training & Nutrition Coaching** — Phases 21–25 (shipped 2026-06-08)
 - ✅ **v5.0 — Klaus Hub** — Phases 26–30 (shipped 2026-07-09)
-- [ ] **v6.0 — Klaus Becomes an Agent** — Phases 30.5, 31–35 (in progress)
+- ⏭️ **v6.0 — Klaus Becomes an Agent** — Phases 30.5–33 delivered; unfinished Phases 34–35 superseded by v7
+- [ ] **v7.0 — Subscription-First Personal OS** — capability-gated implementation and live UAT in progress
 
 ---
 
-## v6.0 — Klaus Becomes an Agent (Phases 30.5, 31–35) — In Progress
+## v7.0 — Subscription-First Personal OS — In Progress
+
+Claude Project “Klaus” becomes the supported subscription-funded conversation
+surface while Cloud Run remains the authoritative MCP/action/data backend. The
+Hub becomes the unified life dashboard and launches Claude. Versioned skills,
+OAuth-scoped interactive/routine MCP resources, Remote Routine coordination,
+deterministic timeout reviews, portfolio state, approvals, and no-model daytime
+rules are implemented behind independent rollback flags.
+
+**Live gates still required:** real Claude Pro read-only connector, private skill,
+computer-off Remote Routine, publish callback, three shadow runs, independent
+cutovers, and seven days of observation. See `docs/CLAUDE_FIRST_USE.md`.
+
+The useful v6 Phase-34 training write-back and Phase-35 audit/cleanup obligations
+are carried into the v7 policy/test and post-observation subtraction work. They
+are not discarded merely because the old generative cascade is superseded.
+
+---
+
+## v6.0 — Klaus Becomes an Agent (Phases 30.5–33) — Superseded
 
 Rebuild Klaus from four independent, template-driven pipelines into one agent — a
 capable model (`claude-sonnet-5`) with tools, ambient memory, standing directives,
@@ -40,8 +60,8 @@ Phase 0 (tick-brain → `openai/gpt-oss-120b`) shipped pre-milestone 2026-07-16
 - [x] **Phase 31: Standing Directives** — Amit's lasting behavioral wishes are captured, injected into every reasoning path with a Step-0 veto, listable/cancellable, and self-proposed from reflection's learning loop (2 verification gaps closed 2026-07-22 — DIR-05 supersede link via 31-07 + DIR-07 vetoed anti-lesson via 31-08; re-verified 7/7) (completed 2026-07-22)
 - [x] **Phase 32: Unified Situation (Ambient Memory)** — Ambient auto-recall, conversation continuity, and reconciled training reality reach every reasoning path as context-only signals that never defeat the free-tier cost gate (completed 2026-07-22)
 - [x] **Phase 33: Occasion Cascade** — Nightly, morning, and weekly proactive messages become judgment-driven occasions through the shared 3-layer cascade, with silence a valid, explainable, and distinguishable-from-failure outcome (completed 2026-08-07)
-- [ ] **Phase 34: Write-Backs** — Calendar workout actions and chat-reported training changes mechanically and idempotently update the single training-reality source of truth
-- [ ] **Phase 35: Hardening & Subtraction** — New judgment eval fixtures, a token-budget guard test, dead-code deletion, and updated invariants close the milestone
+- ⏭️ **Phase 34: Write-Backs** — Superseded as a standalone phase; its durable training write-back and shared-reality requirements are preserved in v7
+- ⏭️ **Phase 35: Hardening & Subtraction** — Superseded as a standalone phase; its audit, eval, documentation, and cleanup requirements are preserved in v7's post-observation cutover
 
 ## Phase Details
 
@@ -166,7 +186,7 @@ Plans:
 
 - [x] 33-13-PLAN.md — Retire morning-briefing-tick, flip the flag, 3-4 day observation window
 
-### Phase 34: Write-Backs
+### Phase 34: Write-Backs — Superseded by v7
 
 **Goal**: Calendar workout actions and chat-reported training changes durably and idempotently update `TrainingLogStore` — the thing Klaus was told stays true even if the model doesn't restate it later
 **Depends on**: Phase 33 (occasion machinery supplies the date+slot dedup key for idempotency)
@@ -180,7 +200,7 @@ Plans:
 
 **Plans**: TBD
 
-### Phase 35: Hardening & Subtraction
+### Phase 35: Hardening & Subtraction — Superseded by v7
 
 **Goal**: Klaus's judgment is measurably tested against new fixtures, the codebase sheds retired pipelines and dead weight accumulated across the milestone, and the invariants this milestone introduces are documented for whoever builds on Klaus next
 **Depends on**: Phase 34 (system stable enough to write fixtures against; Phase 33's observation window must have elapsed)
@@ -205,8 +225,8 @@ Plans:
 | 31. Standing Directives | 8/8 | Complete   | 2026-07-22 |
 | 32. Unified Situation (Ambient Memory) | 8/8 | Complete    | 2026-07-23 |
 | 33. Occasion Cascade | 13/13 | Complete    | 2026-08-07 |
-| 34. Write-Backs | 0/? | Not started | - |
-| 35. Hardening & Subtraction | 0/? | Not started | - |
+| 34. Write-Backs | 0/? | Superseded; requirements carried to v7 | 2026-08-08 |
+| 35. Hardening & Subtraction | 0/? | Superseded; requirements carried to v7 | 2026-08-08 |
 
 ---
 

@@ -1,4 +1,32 @@
-# Requirements: Klaus v6.0 — Klaus Becomes an Agent
+# Requirements: Klaus v7.0 — Subscription-First Personal OS
+
+**Rebaselined:** 2026-08-08
+
+## v7 delivery requirements
+
+- [x] **SUB-01:** Dark-shipped, strict read-only MCP capability probe; no unsupported subscription-token bridge
+- [x] **SUB-02:** OAuth 2.1 authorization code + PKCE S256, resource binding, revocation, and distinct interactive/routine scopes
+- [x] **SUB-03:** Provider-neutral tasks, memory, directives, self-state, reviews, approvals, feedback, and portfolio state
+- [x] **SUB-04:** Versioned live/daily/weekly Claude skills with deterministic ZIP drift tests and evaluation scenarios
+- [x] **SUB-05:** Subscription Remote Routine trigger, atomic correlation, ten-minute deterministic fallback, late silent upgrade, and shadow mode
+- [x] **SUB-06:** Server-side idempotency/audit, protected user calendar events, training recommendation-only routines, untrusted retrieved content, and prepared high-risk confirmation
+- [x] **SUB-07:** Hub review/activity/approval/portfolio/status contracts and Ask Claude launch surface; legacy Hub chat independently fail-closed
+- [x] **SUB-08:** No-model daytime evaluator limited to timed follow-ups, hard deadlines, calendar/travel conflicts, and critical automation failures
+- [x] **SUB-09:** Dedicated Gemini embedding credential and usage meter; no invented Claude subscription cost
+- [x] **SUB-10:** Capability/cutover/rollback flags, least-privilege Calendar-only post-legacy OAuth, architecture/security/deployment docs, and first-use checklist
+- [ ] **UAT-01:** Real Claude Pro connector reads Klaus while the MCP surface is read-only
+- [ ] **UAT-02:** Uploaded private skill loads and matches reported version 7.0.0
+- [ ] **UAT-03:** API-triggered Remote Routine runs with the computer off, calls Klaus MCP, and publishes a validated result
+- [ ] **UAT-04:** Morning/nightly/weekly shadow and live flows, iOS triggers, Hub push, memory/actions, directives, portfolio, and seven-day observation pass
+- [ ] **CUT-01:** After UAT only, remove Telegram/Gmail/Readwise/chat-ingest/tick-brain/cascade/worker/generative SDKs and secrets without deleting historical data
+
+The unfinished v6 requirements `WB-01..04` and `HARD-01..05` remain preserved
+below as carried obligations for v7's training write-back and post-observation
+subtraction. Their old Phase-34/35 scheduling is superseded, not silently closed.
+
+---
+
+## Superseded v6.0 requirement archive
 
 **Defined:** 2026-07-17
 **Core Value:** Klaus should act as a genuinely intelligent, proactive companion that surfaces the right thing at the right time — while knowing exactly what he is and what he can do.

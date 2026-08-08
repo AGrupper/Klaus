@@ -612,6 +612,50 @@ class LLMUsageStore:
             return {}
 
 
+class EmbeddingUsageStore:
+    """Actual Gemini embedding request/token ledger, separate from LLM spend."""
+
+    _COLLECTION = "embedding_usage"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+
+    def record(self, *, input_tokens: int, item_count: int, cost_usd: float) -> None:
+        """Atomically record provider-reported usage; never raises."""
+        try:
+            from datetime import date
+
+            today = date.today().isoformat()
+            self._client.collection(self._COLLECTION).document(today).set(
+                {
+                    "date": today,
+                    "model": "gemini-embedding-2",
+                    "embedding_calls": firestore.Increment(1),
+                    "embedding_input_tokens": firestore.Increment(max(0, int(input_tokens))),
+                    "embedding_items": firestore.Increment(max(0, int(item_count))),
+                    "embedding_cost_usd": firestore.Increment(max(0.0, float(cost_usd))),
+                },
+                merge=True,
+            )
+        except Exception:
+            logger.warning("EmbeddingUsageStore.record() failed", exc_info=True)
+
+    def summary(self, period: str = "today") -> dict:
+        """Return today's embedding meter; month aggregation is intentionally deferred."""
+        try:
+            from datetime import date
+
+            if period != "today":
+                return {}
+            snap = self._client.collection(self._COLLECTION).document(
+                date.today().isoformat()
+            ).get()
+            return snap.to_dict() or {} if snap.exists else {}
+        except Exception:
+            logger.warning("EmbeddingUsageStore.summary() failed", exc_info=True)
+            return {}
+
+
 class SelfStateStore:
     """Persistent self-model state stored in Firestore.
 
@@ -1097,6 +1141,8 @@ class TrainingLogStore:
         quality: str | None = None,             # "strong" | "neutral" | "grind" | None (D-13 Phase 24)
         source: str = "telegram",               # garmin | telegram | manual_chat
         garmin_activity_id: str | None = None,
+        calendar_event_id: str | None = None,
+        plan_status: str | None = None,          # planned | moved | deleted
     ) -> None:
         """Write one training session to training_log/{date}_{slot}.
 
@@ -1131,6 +1177,8 @@ class TrainingLogStore:
             "quality": quality,
             "source": source,
             "garmin_activity_id": garmin_activity_id,
+            "calendar_event_id": calendar_event_id,
+            "plan_status": plan_status,
             "updated_at": firestore.SERVER_TIMESTAMP,
         }
         try:
@@ -1192,6 +1240,20 @@ class TrainingLogStore:
         except Exception:
             logger.warning("TrainingLogStore.get_by_date(%r) failed", date_str, exc_info=True)
             return []
+
+    def get_by_slot(self, slot: str) -> dict | None:
+        """Return the newest row for a calendar/event slot; never raises."""
+        try:
+            query = _where(self._col, "slot", "==", slot)
+            rows = [
+                {**_jsonsafe_doc(snap.to_dict() or {}), "doc_id": snap.id}
+                for snap in query.stream()
+            ]
+            rows.sort(key=lambda row: str(row.get("date") or ""), reverse=True)
+            return rows[0] if rows else None
+        except Exception:
+            logger.warning("TrainingLogStore.get_by_slot(%r) failed", slot, exc_info=True)
+            return None
 
     def get_range(self, start_date: str, end_date: str) -> list[dict]:
         """Return all sessions in [start_date, end_date] (inclusive), sorted date desc.
@@ -3445,6 +3507,37 @@ def _next_due_date(current_due, completed_on, rule: dict):
     return candidate
 
 
+def is_auto_schedule_candidate(task: dict) -> bool:
+    """Return whether Klaus may place an existing task into a movable time block.
+
+    Missing ``auto_schedule`` is intentionally treated as eligible so tasks
+    created before v7 participate without a destructive migration. Fixed
+    timing, recurrence, explicit deadline language, and a manual lock always
+    win over the opt-in flag.
+
+    Args:
+        task: Provider-neutral task document.
+
+    Returns:
+        ``True`` when the task may be scheduled or repaired automatically.
+    """
+    import re
+
+    if task.get("auto_schedule") is False or task.get("manual_lock") is True:
+        return False
+    if task.get("due_time") or task.get("recurrence") or task.get("hard_deadline_at"):
+        return False
+
+    text = " ".join(
+        str(value or "") for value in (task.get("title"), task.get("notes"))
+    )
+    hard_deadline_pattern = re.compile(
+        r"\b(hard\s+deadline|final\s+deadline|must\s+be\s+done|due\s+by|no\s+later\s+than)\b",
+        flags=re.IGNORECASE,
+    )
+    return hard_deadline_pattern.search(text) is None
+
+
 class TaskStore:
     """Native task store — replaces TickTick as the single source of truth.
 
@@ -3461,6 +3554,11 @@ class TaskStore:
         status: str           ("active"|"completing")
         recurrence: dict|null {"cadence", "every_n_days", "anchor"}
         series_id: str|null
+        estimated_minutes: int|null
+        hard_deadline_at: str|null  (ISO-8601 timestamp)
+        auto_schedule: bool|null    (missing/None remains backward compatible)
+        manual_lock: bool|null
+        calendar_event_id: str|null
         created_at: str       (ISO-8601 UTC plain string)
         updated_at: SERVER_TIMESTAMP  (stripped by _jsonsafe_doc before json.dumps)
 
@@ -4575,6 +4673,746 @@ class HubSettingsStore:
         except Exception:
             logger.error("HubSettingsStore.set() failed", exc_info=True)
             raise
+
+
+class ActionIdempotencyStore:
+    """Bind each remote write key to one immutable payload and cached result."""
+
+    _COLLECTION = "action_idempotency"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    @staticmethod
+    def _digest(tool_name: str, payload: dict, origin: str) -> str:
+        import hashlib
+        import json
+
+        canonical = json.dumps(
+            {"tool_name": tool_name, "payload": payload, "origin": origin},
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    @staticmethod
+    def _document_id(idempotency_key: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+
+    def begin(
+        self,
+        idempotency_key: str,
+        *,
+        tool_name: str,
+        payload: dict,
+        origin: str,
+    ) -> dict:
+        """Atomically claim a key or return its exact prior execution record."""
+        from datetime import datetime, timezone
+
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+            raise ValueError("idempotency_key is required")
+        if len(idempotency_key) > 256:
+            raise ValueError("idempotency_key is too long")
+        payload_hash = self._digest(tool_name, payload, origin)
+        record = {
+            "idempotency_key": idempotency_key,
+            "tool_name": tool_name,
+            "payload_hash": payload_hash,
+            "origin": origin,
+            "status": "running",
+            "result": None,
+            "error": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        doc = self._col.document(self._document_id(idempotency_key))
+        try:
+            # Firestore create() is atomic and fails if another request won.
+            doc.create(record)
+            return {**record, "is_new": True}
+        except Exception:
+            snap = doc.get()
+            if not snap.exists:
+                raise
+            existing = _jsonsafe_doc(snap.to_dict() or {})
+            if existing.get("payload_hash") != payload_hash:
+                raise ValueError("idempotency_key was already used for a different payload")
+            return {**existing, "is_new": False}
+
+    def mark_executed(self, idempotency_key: str, result: dict) -> None:
+        """Persist a result before auditing so retries never repeat the write."""
+        from datetime import datetime, timezone
+
+        self._col.document(self._document_id(idempotency_key)).set(
+            {
+                "status": "executed",
+                "result": _jsonsafe_doc(result),
+                "executed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            merge=True,
+        )
+
+    def complete(self, idempotency_key: str) -> None:
+        """Mark an executed action fully audited and replay-safe."""
+        from datetime import datetime, timezone
+
+        self._col.document(self._document_id(idempotency_key)).set(
+            {
+                "status": "succeeded",
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            merge=True,
+        )
+
+    def fail(self, idempotency_key: str, error: str) -> None:
+        """Record a pre-execution failure; a new retry must use a new key."""
+        from datetime import datetime, timezone
+
+        self._col.document(self._document_id(idempotency_key)).set(
+            {
+                "status": "failed",
+                "error": str(error)[:1000],
+                "failed_at": datetime.now(timezone.utc).isoformat(),
+            },
+            merge=True,
+        )
+
+
+class PendingApprovalStore:
+    """Store immutable, expiring confirmations for high-risk prepared actions.
+
+    The canonical payload hash binds confirmation to the exact action Amit
+    reviewed. A confirmed or rejected record can never be reused.
+    """
+
+    _COLLECTION = "pending_approvals"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    @staticmethod
+    def payload_hash(payload: dict) -> str:
+        """Return the SHA-256 hash of a canonical JSON action payload."""
+        import hashlib
+        import json
+
+        canonical = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(canonical).hexdigest()
+
+    def prepare(
+        self,
+        *,
+        action_type: str,
+        payload: dict,
+        origin: str,
+        expires_in_seconds: int = 900,
+        action_id: str | None = None,
+        risk_category: str | None = None,
+    ) -> dict:
+        """Create a pending prepared action and return its public record.
+
+        Args:
+            action_type: Stable action category such as ``payment``.
+            payload: Exact action parameters to bind to the confirmation.
+            origin: ``interactive`` or ``routine``.
+            expires_in_seconds: Positive approval lifetime, default 15 minutes.
+            action_id: Optional caller-supplied idempotency identifier.
+            risk_category: Optional policy category for the Hub display.
+
+        Returns:
+            The stored approval document without the server timestamp sentinel.
+        """
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        if not action_type.strip():
+            raise ValueError("action_type is required")
+        if expires_in_seconds <= 0:
+            raise ValueError("expires_in_seconds must be positive")
+        if not isinstance(payload, dict):
+            raise ValueError("payload must be an object")
+
+        now = datetime.now(timezone.utc)
+        identifier = action_id or uuid.uuid4().hex
+        record = {
+            "action_id": identifier,
+            "action_type": action_type,
+            "payload": dict(payload),
+            "payload_hash": self.payload_hash(payload),
+            "origin": origin,
+            "risk_category": risk_category or action_type,
+            "status": "pending",
+            "created_at": now.isoformat(),
+            "expires_at": (now + timedelta(seconds=expires_in_seconds)).isoformat(),
+            "confirmation_state": "awaiting_user",
+        }
+        doc_ref = self._col.document(identifier)
+        try:
+            doc_ref.create({**record, "updated_at": firestore.SERVER_TIMESTAMP})
+        except Exception as exc:
+            from google.api_core.exceptions import AlreadyExists
+
+            if not isinstance(exc, AlreadyExists):
+                raise
+            existing = self.get(identifier)
+            if existing is None:
+                raise RuntimeError("prepared action exists but could not be read") from exc
+            return {**existing, "created": False}
+        return {**record, "created": True}
+
+    def get(self, action_id: str) -> dict | None:
+        """Return an approval record or ``None``; never raise on read failure."""
+        try:
+            snap = self._col.document(action_id).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("PendingApprovalStore.get(%r) failed", action_id, exc_info=True)
+            return None
+
+    def list_pending(self) -> list[dict]:
+        """Return unexpired pending approvals; never raises on read failure."""
+        from datetime import datetime, timezone
+
+        try:
+            now = datetime.now(timezone.utc)
+            results = []
+            for snap in _where(self._col, "status", "==", "pending").stream():
+                record = _jsonsafe_doc(snap.to_dict() or {})
+                try:
+                    expiry = datetime.fromisoformat(
+                        str(record.get("expires_at") or "").replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    continue
+                if expiry > now:
+                    results.append(record)
+            return sorted(results, key=lambda item: str(item.get("created_at") or ""))
+        except Exception:
+            logger.warning("PendingApprovalStore.list_pending() failed", exc_info=True)
+            return []
+
+    def confirm(self, action_id: str, payload_hash: str) -> dict:
+        """Atomically confirm one pending action with its immutable payload hash."""
+        import hmac
+        from datetime import datetime, timezone
+
+        doc_ref = self._col.document(action_id)
+        transaction = self._client.transaction()
+
+        @firestore.transactional
+        def confirm_once(txn):
+            snap = doc_ref.get(transaction=txn)
+            if not snap.exists:
+                raise ValueError("prepared action not found")
+            record = snap.to_dict() or {}
+            if record.get("status") != "pending":
+                raise ValueError("prepared action is not pending")
+            expected_hash = str(record.get("payload_hash") or "")
+            if not hmac.compare_digest(expected_hash, str(payload_hash)):
+                raise ValueError("payload hash does not match prepared action")
+            try:
+                expires_at = datetime.fromisoformat(
+                    str(record["expires_at"]).replace("Z", "+00:00")
+                )
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ValueError("prepared action has invalid expiry") from exc
+            now = datetime.now(timezone.utc)
+            if expires_at <= now:
+                patch = {
+                    "status": "expired",
+                    "confirmation_state": "expired",
+                    "updated_at": firestore.SERVER_TIMESTAMP,
+                }
+                txn.update(doc_ref, patch)
+                return _jsonsafe_doc({**record, **patch}), True
+
+            patch = {
+                "status": "confirmed",
+                "confirmation_state": "confirmed",
+                "confirmed_at": now.isoformat(),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            txn.update(doc_ref, patch)
+            return _jsonsafe_doc({**record, **patch}), False
+
+        confirmed, expired = confirm_once(transaction)
+        if expired:
+            raise ValueError("prepared action has expired")
+        return confirmed
+
+    def reject(self, action_id: str) -> dict:
+        """Reject a pending action so its payload can never be confirmed later."""
+        from datetime import datetime, timezone
+
+        record = self.get(action_id)
+        if not record or record.get("status") != "pending":
+            raise ValueError("prepared action is not pending")
+        patch = {
+            "status": "rejected",
+            "confirmation_state": "rejected",
+            "rejected_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        self._col.document(action_id).set(patch, merge=True)
+        return _jsonsafe_doc({**record, **patch})
+
+
+class BehavioralFeedbackStore:
+    """Provider-neutral learned-preference proposals with a durable veto path."""
+
+    _COLLECTION = "behavioral_feedback"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def record(
+        self,
+        *,
+        pattern: str,
+        evidence: list[str],
+        source: str,
+        feedback_id: str | None = None,
+    ) -> dict:
+        """Persist a vetoable learned preference proposal."""
+        import uuid
+        from datetime import datetime, timezone
+
+        if not pattern.strip():
+            raise ValueError("pattern is required")
+        identifier = feedback_id or uuid.uuid4().hex
+        record = {
+            "id": identifier,
+            "pattern": pattern,
+            "evidence": [str(item) for item in evidence],
+            "source": source,
+            "status": "proposed",
+            "veto_available": True,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._col.document(identifier).set(
+            {**record, "updated_at": firestore.SERVER_TIMESTAMP},
+        )
+        return dict(record)
+
+    def veto(self, feedback_id: str) -> None:
+        """Mark feedback vetoed without deleting its training signal."""
+        from datetime import datetime, timezone
+
+        self._col.document(feedback_id).set(
+            {
+                "status": "vetoed",
+                "vetoed_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            },
+            merge=True,
+        )
+
+
+class PortfolioHoldingStore:
+    """Current portfolio holdings with native-currency provenance."""
+
+    _COLLECTION = "portfolio_holdings"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    @staticmethod
+    def _holding_id(exchange: str, ticker: str) -> str:
+        """Return a stable Firestore-safe identifier for an exchange/ticker pair."""
+        import re
+
+        raw = f"{exchange}-{ticker}".lower()
+        return re.sub(r"[^a-z0-9._-]+", "-", raw).strip("-")
+
+    def upsert(self, holding: dict) -> dict:
+        """Create or update a holding without discarding historical optional fields."""
+        from datetime import datetime, timezone
+
+        ticker = str(holding.get("ticker") or "").strip().upper()
+        exchange = str(holding.get("exchange") or "").strip().upper()
+        if not ticker or not exchange:
+            raise ValueError("ticker and exchange are required")
+        if holding.get("quantity") is None and holding.get("position_value") is None:
+            raise ValueError("quantity or position_value is required")
+
+        identifier = str(holding.get("id") or self._holding_id(exchange, ticker))
+        record = {
+            **holding,
+            "id": identifier,
+            "ticker": ticker,
+            "exchange": exchange,
+            "native_currency": str(holding.get("native_currency") or "").upper(),
+            "source_urls": [str(url) for url in holding.get("source_urls") or []],
+            "observed_at": holding.get("observed_at") or datetime.now(timezone.utc).isoformat(),
+            "status": holding.get("status") or "active",
+        }
+        self._col.document(identifier).set(
+            {**record, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return dict(record)
+
+    def get(self, holding_id: str) -> dict | None:
+        """Return one holding or ``None``; never raise on read failure."""
+        try:
+            snap = self._col.document(holding_id).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("PortfolioHoldingStore.get(%r) failed", holding_id, exc_info=True)
+            return None
+
+    def list_active(self) -> list[dict]:
+        """Return active holdings; never raise on Firestore failure."""
+        try:
+            return [
+                _jsonsafe_doc(snap.to_dict() or {})
+                for snap in _where(self._col, "status", "==", "active").stream()
+            ]
+        except Exception:
+            logger.warning("PortfolioHoldingStore.list_active() failed", exc_info=True)
+            return []
+
+
+class PortfolioSnapshotStore:
+    """Weekly portfolio valuations in ILS with quote and FX provenance."""
+
+    _COLLECTION = "portfolio_snapshots"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def write_weekly(self, snapshot: dict) -> dict:
+        """Idempotently write a weekly snapshot keyed by its ISO week date."""
+        from datetime import datetime, timezone
+
+        week = str(snapshot.get("week") or "")
+        if not week:
+            raise ValueError("week is required")
+        if snapshot.get("total_ils") is None:
+            raise ValueError("total_ils is required")
+        record = {
+            **snapshot,
+            "week": week,
+            "holdings": list(snapshot.get("holdings") or []),
+            "source_urls": [str(url) for url in snapshot.get("source_urls") or []],
+            "observed_at": snapshot.get("observed_at") or datetime.now(timezone.utc).isoformat(),
+        }
+        self._col.document(week).set(
+            {**record, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return dict(record)
+
+    def get(self, week: str) -> dict | None:
+        """Return a weekly snapshot or ``None``; never raise on read failure."""
+        try:
+            snap = self._col.document(week).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("PortfolioSnapshotStore.get(%r) failed", week, exc_info=True)
+            return None
+
+    def list_recent(self, limit: int = 12) -> list[dict]:
+        """Return newest weekly valuations, bounded and json-safe."""
+        try:
+            query = self._col.order_by("week", direction=_DESCENDING).limit(
+                max(1, min(int(limit), 52))
+            )
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
+        except Exception:
+            logger.warning("PortfolioSnapshotStore.list_recent() failed", exc_info=True)
+            return []
+
+
+class RoutineReviewStore:
+    """Common review schema layered onto the existing routine collections."""
+
+    _COLLECTIONS = {
+        "morning": "morning_briefings",
+        "nightly": "nightly_reviews",
+        "weekly": "weekly_reviews",
+    }
+    _STATUSES = frozenset(
+        {"published_claude", "published_fallback", "late_upgraded"}
+    )
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+
+    def publish(
+        self,
+        *,
+        routine: str,
+        target_date: str,
+        correlation_id: str,
+        status: str,
+        text: str,
+        structured: dict | None = None,
+        action_ids: list[str] | None = None,
+        partial_actions: list[dict] | None = None,
+    ) -> dict:
+        """Merge a Claude/fallback publication into its existing date document."""
+        from datetime import datetime, timezone
+
+        collection = self._COLLECTIONS.get(routine)
+        if collection is None:
+            raise ValueError(f"unsupported routine: {routine}")
+        if status not in self._STATUSES:
+            raise ValueError(f"unsupported review status: {status}")
+        if not text.strip():
+            raise ValueError("review text is required")
+        record = {
+            "review_id": f"{routine}:{target_date}",
+            "correlation_id": correlation_id,
+            "routine": routine,
+            "target_date": target_date,
+            "routine_status": status,
+            "provider": (
+                "deterministic" if status == "published_fallback" else "claude_subscription"
+            ),
+            "review_text": text,
+            "structured": dict(structured or {}),
+            "action_ids": [str(item) for item in action_ids or []],
+            "partial_actions": [_jsonsafe_doc(item) for item in partial_actions or []],
+            "published_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._client.collection(collection).document(target_date).set(
+            {**record, "updated_at": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+        return dict(record)
+
+    def get(self, routine: str, target_date: str) -> dict | None:
+        """Read one review from its existing collection; never raises."""
+        try:
+            collection = self._COLLECTIONS[routine]
+            snap = self._client.collection(collection).document(target_date).get()
+            return _jsonsafe_doc(snap.to_dict() or {}) if snap.exists else None
+        except Exception:
+            logger.warning(
+                "RoutineReviewStore.get(%r, %r) failed",
+                routine,
+                target_date,
+                exc_info=True,
+            )
+            return None
+
+    def list_recent(self, limit_per_routine: int = 10) -> list[dict]:
+        """Return recent v7 reviews across existing routine collections."""
+        limit = max(1, min(int(limit_per_routine), 31))
+        reviews = []
+        for routine, collection in self._COLLECTIONS.items():
+            try:
+                query = self._client.collection(collection).order_by(
+                    "target_date", direction=_DESCENDING
+                ).limit(limit)
+                for snap in query.stream():
+                    record = _jsonsafe_doc(snap.to_dict() or {})
+                    if record.get("review_text"):
+                        record.setdefault("routine", routine)
+                        reviews.append(record)
+            except Exception:
+                logger.warning(
+                    "RoutineReviewStore.list_recent(%s) failed", routine, exc_info=True
+                )
+        return sorted(
+            reviews,
+            key=lambda item: str(item.get("published_at") or item.get("target_date") or ""),
+            reverse=True,
+        )
+
+
+class RoutineRunStore:
+    """Shared morning/nightly/weekly subscription-routine run state."""
+
+    _COLLECTION = "routine_runs"
+    _ROUTINES = frozenset({"morning", "nightly", "weekly"})
+    _STATUSES = frozenset({
+        "queued",
+        "running",
+        "published_claude",
+        "published_fallback",
+        "late_upgraded",
+        "failed",
+    })
+    _TRANSITIONS = {
+        "queued": frozenset({"running", "published_claude", "published_fallback", "failed"}),
+        "running": frozenset({"published_claude", "published_fallback", "failed"}),
+        "published_fallback": frozenset({"late_upgraded"}),
+        "published_claude": frozenset(),
+        "late_upgraded": frozenset(),
+        "failed": frozenset(),
+    }
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = _make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def start(
+        self,
+        *,
+        routine: str,
+        target_date: str,
+        trigger: str,
+        correlation_id: str | None = None,
+        callback_timeout_seconds: int = 600,
+        delivery_mode: str = "live",
+    ) -> dict:
+        """Create a queued routine run before the external Claude trigger fires."""
+        import uuid
+        from datetime import datetime, timedelta, timezone
+
+        if routine not in self._ROUTINES:
+            raise ValueError(f"unsupported routine: {routine}")
+        if callback_timeout_seconds <= 0:
+            raise ValueError("callback_timeout_seconds must be positive")
+        if delivery_mode not in {"live", "shadow"}:
+            raise ValueError("delivery_mode must be live or shadow")
+        now = datetime.now(timezone.utc)
+        identifier = correlation_id or uuid.uuid4().hex
+        record = {
+            "correlation_id": identifier,
+            "routine": routine,
+            "target_date": target_date,
+            "trigger": trigger,
+            "status": "queued",
+            "provider": "claude_subscription",
+            "delivery_mode": delivery_mode,
+            "created_at": now.isoformat(),
+            "callback_deadline_at": (
+                now + timedelta(seconds=callback_timeout_seconds)
+            ).isoformat(),
+            "published_at": None,
+            "review_id": None,
+            "error": None,
+        }
+        doc_ref = self._col.document(identifier)
+        try:
+            doc_ref.create({**record, "updated_at": firestore.SERVER_TIMESTAMP})
+        except Exception as exc:
+            from google.api_core.exceptions import AlreadyExists
+
+            if not isinstance(exc, AlreadyExists):
+                raise
+            existing = self.get(identifier)
+            if existing is None:
+                raise RuntimeError("routine run exists but could not be read") from exc
+            return {**existing, "created": False}
+        return {**record, "created": True}
+
+    def get(self, correlation_id: str) -> dict | None:
+        """Return a routine run or ``None``; never raise on read failure."""
+        try:
+            snap = self._col.document(correlation_id).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("RoutineRunStore.get(%r) failed", correlation_id, exc_info=True)
+            return None
+
+    def patch(self, correlation_id: str, **fields) -> dict:
+        """Merge non-status trigger metadata into an existing run."""
+        current = self.get(correlation_id)
+        if current is None:
+            raise ValueError("routine run not found")
+        patch = {**fields, "updated_at": firestore.SERVER_TIMESTAMP}
+        self._col.document(correlation_id).set(patch, merge=True)
+        return _jsonsafe_doc({**current, **patch})
+
+    def list_recent(self, limit: int = 20) -> list[dict]:
+        """Return newest routine runs for Hub status and usage reporting."""
+        try:
+            query = self._col.order_by("created_at", direction=_DESCENDING).limit(
+                max(1, min(int(limit), 100))
+            )
+            return [_jsonsafe_doc(snap.to_dict() or {}) for snap in query.stream()]
+        except Exception:
+            logger.warning("RoutineRunStore.list_recent() failed", exc_info=True)
+            return []
+
+    def transition(self, correlation_id: str, status: str, **fields) -> dict:
+        """Atomically apply a validated state transition and return the record."""
+        from datetime import datetime, timezone
+
+        if status not in self._STATUSES:
+            raise ValueError(f"unsupported routine status: {status}")
+        doc_ref = self._col.document(correlation_id)
+        transaction = self._client.transaction()
+
+        @firestore.transactional
+        def transition_once(txn):
+            snap = doc_ref.get(transaction=txn)
+            if not snap.exists:
+                raise ValueError("routine run not found")
+            current = snap.to_dict() or {}
+            current_status = str(current.get("status") or "")
+            if status not in self._TRANSITIONS.get(current_status, frozenset()):
+                raise ValueError(
+                    f"invalid routine transition: {current_status or 'unknown'} -> {status}"
+                )
+            patch = {
+                **fields,
+                "status": status,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            if status.startswith("published_") or status == "late_upgraded":
+                patch.setdefault("published_at", datetime.now(timezone.utc).isoformat())
+            txn.update(doc_ref, patch)
+            return _jsonsafe_doc({**current, **patch})
+
+        return transition_once(transaction)
+
+    def transition_claude_publication(
+        self, correlation_id: str, *, review_id: str,
+    ) -> dict:
+        """Atomically win an initial publication or claim a late fallback upgrade."""
+        from datetime import datetime, timezone
+
+        doc_ref = self._col.document(correlation_id)
+        transaction = self._client.transaction()
+
+        @firestore.transactional
+        def transition_once(txn):
+            snap = doc_ref.get(transaction=txn)
+            if not snap.exists:
+                raise ValueError("routine run not found")
+            current = snap.to_dict() or {}
+            current_status = str(current.get("status") or "")
+            if current_status in {"queued", "running"}:
+                target_status = "published_claude"
+            elif current_status == "published_fallback":
+                target_status = "late_upgraded"
+            else:
+                raise ValueError(
+                    f"invalid routine transition: {current_status or 'unknown'} -> claude"
+                )
+            patch = {
+                "status": target_status,
+                "review_id": review_id,
+                "published_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            txn.update(doc_ref, patch)
+            return _jsonsafe_doc({**current, **patch})
+
+        return transition_once(transaction)
 
 
 def _smoke_test() -> int:

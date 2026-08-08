@@ -1,5 +1,22 @@
 # Klaus — Security Audit (WS4)
 
+## v7 subscription-first boundary
+
+Claude authenticates to Klaus through OAuth 2.1 authorization code + PKCE S256;
+Klaus never accepts Claude/ChatGPT subscription cookies or unofficial account
+tokens. Interactive and routine access tokens are opaque, hashed at rest,
+resource-bound, revocable, and separately scoped. Routine grants cannot contain
+`klaus.approve`. Every write requires an idempotency key and is audited.
+
+Notion and other retrieved content is untrusted data, not an instruction source.
+Routines cannot move/delete user-created calendar events or mutate training
+plans. Payments, credentials/security, permanent bulk deletion, medical
+commitments, and first-time outreach require an immutable, expiring prepared
+action whose payload hash is confirmed through the interactive endpoint.
+
+See [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md) for the complete authorization and
+cutover contract.
+
 Audit date: 2026-06-10. Scope: auth on all inbound endpoints, Telegram access control,
 the analytical DB tool's SQL surface, secret handling/logging, and prompt-injection from
 ingested content. Klaus is a **single-user** agent (one allow-listed Telegram account),

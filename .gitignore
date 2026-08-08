@@ -24,6 +24,9 @@ __pycache__/
 *$py.class
 *.egg-info/
 dist/
+!claude/dist/
+!claude/dist/*.zip
+!claude/dist/manifest.json
 build/
 .eggs/
 

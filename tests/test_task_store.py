@@ -517,6 +517,41 @@ class TestTaskStoreCRUD:
         # Must not be a SERVER_TIMESTAMP sentinel
         assert doc["due_date"] != firestore_db.firestore.SERVER_TIMESTAMP
 
+    def test_create_preserves_v7_planning_metadata(self):
+        """v7 task planning fields remain optional and round-trip unchanged."""
+        store, col = _make_store(firestore_db.TaskStore)
+        result = store.create({
+            "title": "Prepare enlistment paperwork",
+            "estimated_minutes": 45,
+            "hard_deadline_at": "2026-08-12T17:00:00+03:00",
+            "auto_schedule": True,
+            "manual_lock": False,
+            "calendar_event_id": "calendar-123",
+        })
+
+        stored = col._docs[result["id"]]
+        assert stored["estimated_minutes"] == 45
+        assert stored["hard_deadline_at"] == "2026-08-12T17:00:00+03:00"
+        assert stored["auto_schedule"] is True
+        assert stored["manual_lock"] is False
+        assert stored["calendar_event_id"] == "calendar-123"
+
+    @pytest.mark.parametrize(
+        ("task", "expected"),
+        [
+            ({"title": "Write project outline"}, True),
+            ({"title": "Write project outline", "auto_schedule": False}, False),
+            ({"title": "Write project outline", "due_time": "14:00"}, False),
+            ({"title": "Write project outline", "recurrence": {"cadence": "weekly"}}, False),
+            ({"title": "Write project outline", "manual_lock": True}, False),
+            ({"title": "Submit application — hard deadline Friday"}, False),
+            ({"title": "Submit application", "hard_deadline_at": "2026-08-12T17:00:00+03:00"}, False),
+        ],
+    )
+    def test_auto_schedule_candidate_policy(self, task, expected):
+        """Existing unannotated tasks are eligible unless a fixed constraint applies."""
+        assert firestore_db.is_auto_schedule_candidate(task) is expected
+
     def test_list_returns_only_active_tasks(self):
         store, col = _make_store(firestore_db.TaskStore)
         col._docs["a"] = {"id": "a", "status": "active", "title": "Active", "list_id": "inbox"}

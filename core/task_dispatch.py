@@ -158,6 +158,47 @@ def enqueue_occasion(
         return False
 
 
+def enqueue_routine_fallback(correlation_id: str, delay_seconds: int = 600) -> bool:
+    """Schedule the deterministic routine timeout callback through Cloud Tasks."""
+    import time
+
+    queue = os.getenv("CLOUD_TASKS_QUEUE", "")
+    if not queue:
+        return False
+    if not correlation_id or len(correlation_id) > 128:
+        return False
+    delay_seconds = max(1, min(int(delay_seconds), 3600))
+    try:
+        project = os.environ["GCP_PROJECT_ID"]
+        location = os.getenv("CLOUD_TASKS_LOCATION", "me-central1")
+        base_url = os.environ["CLOUD_RUN_URL"]
+        sa_email = os.environ["CLOUD_SCHEDULER_SA_EMAIL"]
+        client = _get_client()
+        parent = client.queue_path(project, location, queue)
+        task = {
+            "schedule_time": {"seconds": int(time.time()) + delay_seconds},
+            "dispatch_deadline": {"seconds": 120},
+            "http_request": {
+                "http_method": "POST",
+                "url": f"{base_url}/internal/routine-fallback",
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps({"correlation_id": correlation_id}).encode("utf-8"),
+                "oidc_token": {
+                    "service_account_email": sa_email,
+                    "audience": base_url,
+                },
+            },
+        }
+        client.create_task(request={"parent": parent, "task": task})
+        return True
+    except Exception:
+        logger.exception(
+            "Cloud Tasks enqueue failed for routine fallback correlation_id=%s",
+            correlation_id,
+        )
+        return False
+
+
 def enqueue_hub_message(
     content: str, user_id: int, attachments: list[dict] | None = None,
     regenerate: bool = False,

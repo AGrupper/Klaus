@@ -41,6 +41,11 @@ export interface Task {
   priority: Priority
   list_id: string            // 'inbox' or a user-created list id
   recurrence: RecurrenceRule | null
+  estimated_minutes: number | null
+  hard_deadline_at: string | null
+  auto_schedule: boolean | null
+  manual_lock: boolean | null
+  calendar_event_id: string | null
   updated_at: string         // ISO timestamp
 }
 
@@ -85,6 +90,11 @@ export async function createTask(input: {
   priority?: Priority
   list_id?: string
   recurrence?: RecurrenceRule | null
+  estimated_minutes?: number | null
+  hard_deadline_at?: string | null
+  auto_schedule?: boolean | null
+  manual_lock?: boolean | null
+  calendar_event_id?: string | null
 }): Promise<Task> {
   return apiFetch<Task>('/api/tasks', {
     method: 'POST',
@@ -95,7 +105,7 @@ export async function createTask(input: {
 /** Update task fields. Pass only the fields that changed. */
 export async function updateTask(
   id: string,
-  patch: Partial<Pick<Task, 'title' | 'notes' | 'due_date' | 'due_time' | 'priority' | 'list_id' | 'recurrence'>>,
+  patch: Partial<Pick<Task, 'title' | 'notes' | 'due_date' | 'due_time' | 'priority' | 'list_id' | 'recurrence' | 'estimated_minutes' | 'hard_deadline_at' | 'auto_schedule' | 'manual_lock' | 'calendar_event_id'>>,
 ): Promise<Task> {
   return apiFetch<Task>(`/api/tasks/${id}`, {
     method: 'PATCH',

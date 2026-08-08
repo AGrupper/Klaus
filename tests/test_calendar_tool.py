@@ -43,7 +43,11 @@ def _fake_service(calls):
     service = MagicMock()
 
     def _insert(calendarId=None, body=None):
-        calls.append({"calendarId": calendarId, "summary": (body or {}).get("summary")})
+        calls.append({
+            "calendarId": calendarId,
+            "summary": (body or {}).get("summary"),
+            "body": body or {},
+        })
         chain = MagicMock()
         chain.execute.return_value = {"id": f"evt_{len(calls)}"}
         return chain
@@ -140,6 +144,27 @@ def test_get_ready_summary_never_treated_as_workout():
     assert len(calls) == 1, "no nested Get Ready block"
     assert calls[0]["calendarId"] == "primary", calls
     gcbn.assert_not_called()
+
+
+def test_created_events_are_marked_as_klaus_owned():
+    calls: list = []
+    m = _mgr()
+    start, end = _window()
+    with patch.object(m, "_get_service", return_value=_fake_service(calls)):
+        m.create_event("Deep work", start, end)
+
+    assert calls[0]["body"]["extendedProperties"]["private"]["klaus_owned"] == "true"
+
+
+def test_is_klaus_owned_reads_private_extended_property():
+    m = _mgr()
+    service = MagicMock()
+    service.events.return_value.get.return_value = _chain({
+        "id": "evt1",
+        "extendedProperties": {"private": {"klaus_owned": "true"}},
+    })
+    with patch.object(m, "_get_service", return_value=service):
+        assert m.is_klaus_owned("evt1", "primary") is True
 
 
 # --------------------------------------------------------------------------- #

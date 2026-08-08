@@ -78,6 +78,11 @@ export function useCreateTask(listId?: string) {
         priority: input.priority ?? 'none',
         list_id: input.list_id ?? listId ?? 'inbox',
         recurrence: input.recurrence ?? null,
+        estimated_minutes: input.estimated_minutes ?? null,
+        hard_deadline_at: input.hard_deadline_at ?? null,
+        auto_schedule: input.auto_schedule ?? null,
+        manual_lock: input.manual_lock ?? null,
+        calendar_event_id: input.calendar_event_id ?? null,
         updated_at: new Date().toISOString(),
       }
 

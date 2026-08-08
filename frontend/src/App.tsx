@@ -9,7 +9,7 @@
  * Routes:
  *   /         → Today timeline (real content: 26-07)
  *   /tasks    → TasksPage (real content: 27-05)
- *   /klaus    → ChatWindow (real content: 26-08)
+ *   /klaus    → Ask Claude launch surface
  *   /habits   → HabitsPage (real content: 28-04)
  *   /health   → HealthPage (Training / Nutrition / Sleep sub-tabs)
  *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
@@ -30,7 +30,7 @@ import { useAuthStore } from './store/auth'
 import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
 import { TimelineDay } from './components/timeline/TimelineDay'
-import { ChatWindow } from './components/chat/ChatWindow'
+import { AskClaudePage } from './components/claude/AskClaudePage'
 import { dominant } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
@@ -52,18 +52,8 @@ function TasksPage() {
   return <TasksPageComponent />
 }
 
-/**
- * KlausPage — Full-screen chat on phone (/klaus route).
- * ChatWindow polls while this page is mounted (isVisible=true default).
- * On desktop, the DockChat panel shows the same chat; on phone this is
- * the primary interface.
- */
 function KlausPage() {
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <ChatWindow isVisible={true} />
-    </div>
-  )
+  return <AskClaudePage />
 }
 
 function HabitsPage() {

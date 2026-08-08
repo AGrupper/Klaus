@@ -1,5 +1,11 @@
 # Klaus — GCP Bootstrap Runbook
 
+> **v7 operator note:** complete
+> [Claude Project “Klaus” — First Use](CLAUDE_FIRST_USE.md) before changing any
+> legacy or cutover flag. The subscription-first architecture is documented in
+> [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md). Existing deployment instructions
+> remain valid for the rollback runtime until the seven-day observation closes.
+
 This document walks you through taking Klaus from "nothing on GCP" to "fully
 running in Cloud Run with CI/CD." Every command is copy-pasteable. Read each
 section heading before running commands — the **why** is included so you

@@ -1,0 +1,455 @@
+"""Scoped remote MCP servers for Claude conversations and Remote Routines."""
+from __future__ import annotations
+
+import asyncio
+import inspect
+import json
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable
+
+from mcp.server import MCPServer
+from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
+from mcp.types import ToolAnnotations
+
+from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
+
+
+EXPECTED_SKILL_VERSION = "7.0.0"
+
+READ_TOOLS = frozenset(
+    {
+        "list_calendar_events",
+        "check_calendar_free",
+        "task_list",
+        "get_habit_adherence",
+        "recall",
+        "get_recent_decisions",
+        "fetch_weather",
+        "fetch_garmin_today",
+        "notion_search",
+        "notion_get_page",
+        "notion_query_database",
+        "get_self_status",
+        "get_push_health",
+        "list_followups",
+        "list_standing_directives",
+        "get_training_profile",
+        "read_coaching_guide",
+        "fetch_training_status",
+        "fetch_recent_activities",
+        "get_acwr",
+        "fetch_recent_meals",
+        "fetch_nutrition_trend",
+        "get_training_history",
+        "get_strength_progress",
+        "get_training_context",
+        "get_run_detail",
+        "get_plan",
+        "get_block_status",
+        "get_benchmark_history",
+        "get_goal_projection",
+    }
+)
+
+WRITE_TOOLS = frozenset(
+    {
+        "create_calendar_event",
+        "delete_calendar_event",
+        "update_calendar_event",
+        "task_create",
+        "task_complete",
+        "task_reschedule",
+        "task_edit",
+        "task_delete",
+        "notion_create_page",
+        "notion_append_blocks",
+        "schedule_followup",
+        "cancel_followup",
+        "set_standing_directive",
+        "cancel_standing_directive",
+        "update_training_profile",
+        "update_plan",
+        "log_training",
+        "log_benchmark",
+        "start_block",
+        "end_block",
+    }
+)
+
+MEMORY_READ_TOOLS = frozenset({"recall"})
+MEMORY_WRITE_TOOLS = frozenset({"remember", "forget_memory"})
+TRAINING_WRITE_TOOLS = frozenset(
+    {
+        "update_training_profile",
+        "update_plan",
+        "log_training",
+        "log_benchmark",
+        "start_block",
+        "end_block",
+    }
+)
+
+COMMON_CUSTOM_READ_TOOLS = frozenset(
+    {
+        "get_life_snapshot",
+        "query_health_database",
+        "list_portfolio_holdings",
+        "get_routine_status",
+    }
+)
+COMMON_CUSTOM_WRITE_TOOLS = frozenset(
+    {"upsert_portfolio_holding", "prepare_high_risk_action"}
+)
+INTERACTIVE_CUSTOM_TOOLS = frozenset(
+    {"confirm_prepared_action", "list_pending_approvals"}
+)
+ROUTINE_CUSTOM_TOOLS = frozenset({"publish_review", "publish_portfolio_snapshot"})
+
+INTERACTIVE_TOOLS = frozenset(
+    READ_TOOLS
+    | WRITE_TOOLS
+    | MEMORY_WRITE_TOOLS
+    | COMMON_CUSTOM_READ_TOOLS
+    | COMMON_CUSTOM_WRITE_TOOLS
+    | INTERACTIVE_CUSTOM_TOOLS
+)
+ROUTINE_TOOLS = frozenset(
+    READ_TOOLS
+    | (WRITE_TOOLS - TRAINING_WRITE_TOOLS)
+    | MEMORY_WRITE_TOOLS
+    | COMMON_CUSTOM_READ_TOOLS
+    | COMMON_CUSTOM_WRITE_TOOLS
+    | ROUTINE_CUSTOM_TOOLS
+)
+
+WRITE_LIKE_TOOLS = frozenset(
+    WRITE_TOOLS | MEMORY_WRITE_TOOLS | COMMON_CUSTOM_WRITE_TOOLS | {
+        "confirm_prepared_action",
+        "publish_review",
+        "publish_portfolio_snapshot",
+    }
+)
+
+
+class MCPToolError(ValueError):
+    """Safe policy or validation failure returned to the MCP client."""
+
+
+CustomHandler = Callable[[dict[str, Any]], Any | Awaitable[Any]]
+Auditor = Callable[..., Any | Awaitable[Any]]
+CalendarOwnershipChecker = Callable[[str, str | None], bool | Awaitable[bool]]
+
+
+class KlausMCPGateway:
+    """Server-side scope, endpoint, idempotency, and trust boundary."""
+
+    def __init__(
+        self,
+        *,
+        dispatcher: Callable[[str, dict], Any],
+        custom_handlers: dict[str, CustomHandler] | None = None,
+        idempotency_store: Any | None = None,
+        auditor: Auditor | None = None,
+        calendar_ownership_checker: CalendarOwnershipChecker | None = None,
+        interactive_resource: str = "https://klaus.example.com/mcp/interactive",
+        routine_resource: str = "https://klaus.example.com/mcp/routine",
+        read_only: bool = False,
+    ) -> None:
+        self._dispatcher = dispatcher
+        self._custom_handlers = custom_handlers or {}
+        self._idempotency_store = idempotency_store
+        self._auditor = auditor
+        self._calendar_ownership_checker = calendar_ownership_checker
+        self._resources = {
+            "interactive": interactive_resource,
+            "routine": routine_resource,
+        }
+        self._read_only = read_only
+
+    @staticmethod
+    def _require_scopes(token: AccessToken, required: set[str]) -> None:
+        missing = required - set(token.scopes)
+        if missing:
+            raise MCPToolError(f"Missing required scope: {', '.join(sorted(missing))}")
+
+    async def execute(
+        self,
+        *,
+        endpoint: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        token: AccessToken,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        if self._read_only:
+            catalog = READ_TOOLS | MEMORY_READ_TOOLS | COMMON_CUSTOM_READ_TOOLS
+            if endpoint == "routine":
+                catalog = frozenset()
+        else:
+            catalog = INTERACTIVE_TOOLS if endpoint == "interactive" else ROUTINE_TOOLS
+        if tool_name not in catalog:
+            raise MCPToolError(f"Tool {tool_name!r} is not available on {endpoint}")
+        expected_resource = self._resources[endpoint]
+        if token.resource != expected_resource:
+            raise MCPToolError("Token resource does not match this MCP endpoint")
+
+        required = {"klaus.read"}
+        if tool_name in WRITE_LIKE_TOOLS:
+            required.add("klaus.write")
+            if not idempotency_key or not idempotency_key.strip():
+                raise MCPToolError("idempotency_key is required for every write")
+        if tool_name in MEMORY_READ_TOOLS | MEMORY_WRITE_TOOLS:
+            required.add("klaus.memory")
+        if tool_name in ROUTINE_CUSTOM_TOOLS:
+            required.add("klaus.routine")
+        if tool_name == "confirm_prepared_action":
+            required.add("klaus.approve")
+        self._require_scopes(token, required)
+
+        if not isinstance(arguments, dict):
+            raise MCPToolError("arguments must be an object")
+        if endpoint == "routine" and tool_name in {
+            "update_calendar_event",
+            "delete_calendar_event",
+        }:
+            if self._calendar_ownership_checker is None:
+                owned = False
+            else:
+                owned = self._calendar_ownership_checker(
+                    str(arguments.get("event_id") or ""),
+                    arguments.get("calendar_id"),
+                )
+                if asyncio.iscoroutine(owned):
+                    owned = await owned
+            if not owned:
+                raise MCPToolError(
+                    "Routines cannot move or delete a user-created calendar event"
+                )
+        claim = None
+        if tool_name in WRITE_LIKE_TOOLS and self._idempotency_store is not None:
+            claim = await asyncio.to_thread(
+                self._idempotency_store.begin,
+                idempotency_key,
+                tool_name=tool_name,
+                payload=arguments,
+                origin=endpoint,
+            )
+            if not claim.get("is_new"):
+                status = claim.get("status")
+                if status == "succeeded":
+                    return dict(claim.get("result") or {})
+                if status == "executed":
+                    result = dict(claim.get("result") or {})
+                    await self._audit(
+                        endpoint, tool_name, arguments, idempotency_key or "", result
+                    )
+                    await asyncio.to_thread(self._idempotency_store.complete, idempotency_key)
+                    return result
+                raise MCPToolError(f"Idempotent write is already {status}")
+
+        executed = False
+        try:
+            handler = self._custom_handlers.get(tool_name)
+            if handler:
+                handler_arguments = {**arguments, "_mcp_origin": endpoint}
+                if inspect.iscoroutinefunction(handler):
+                    result = await handler(handler_arguments)
+                else:
+                    result = await asyncio.to_thread(handler, handler_arguments)
+                    if asyncio.iscoroutine(result):
+                        result = await result
+            else:
+                result = await asyncio.to_thread(self._dispatcher, tool_name, arguments)
+            result = self._normalise_result(result)
+            if claim is not None:
+                await asyncio.to_thread(
+                    self._idempotency_store.mark_executed, idempotency_key, result
+                )
+                executed = True
+            if tool_name in WRITE_LIKE_TOOLS:
+                await self._audit(
+                    endpoint, tool_name, arguments, idempotency_key or "", result
+                )
+            if claim is not None:
+                await asyncio.to_thread(self._idempotency_store.complete, idempotency_key)
+        except Exception as exc:
+            if claim is not None and claim.get("is_new") and not executed:
+                await asyncio.to_thread(
+                    self._idempotency_store.fail, idempotency_key, str(exc)
+                )
+            raise
+        if tool_name.startswith("notion_"):
+            return {"untrusted_data": True, "source": "notion", "data": result}
+        return result
+
+    @staticmethod
+    def _normalise_result(result: Any) -> dict[str, Any]:
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                result = {"result": result}
+        if not isinstance(result, dict):
+            result = {"data": result}
+        return result
+
+    async def _audit(
+        self,
+        endpoint: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        idempotency_key: str,
+        result: dict[str, Any],
+    ) -> None:
+        if self._auditor is None:
+            return
+        audited = self._auditor(
+            origin=endpoint,
+            tool_name=tool_name,
+            arguments=arguments,
+            idempotency_key=idempotency_key,
+            result=result,
+        )
+        if asyncio.iscoroutine(audited):
+            await audited
+
+
+@dataclass(slots=True)
+class MCPServerBundle:
+    interactive: MCPServer
+    routine: MCPServer
+    gateway: KlausMCPGateway
+
+
+def _schema_descriptions() -> dict[str, str]:
+    # Parse the registry rather than importing it just to obtain prose.  This
+    # keeps capability discovery free of Google/Telegram SDK initialization
+    # and mirrors SELF.md's dependency-neutral manifest generation.
+    from core.self_manifest import _get_source_root, _load_tool_data
+
+    return {
+        str(item["name"]): str(item.get("purpose") or "")
+        for item in _load_tool_data(_get_source_root())
+    }
+
+
+def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, name: str) -> None:
+    descriptions = _schema_descriptions()
+    is_write = name in WRITE_LIKE_TOOLS
+
+    async def invoke(
+        arguments: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        token = get_access_token()
+        if token is None:
+            raise MCPToolError("Authenticated MCP access token is required")
+        return await gateway.execute(
+            endpoint=endpoint,
+            tool_name=name,
+            arguments=arguments or {},
+            token=token,
+            idempotency_key=idempotency_key,
+        )
+
+    invoke.__name__ = f"{endpoint}_{name}"
+    description = descriptions.get(name) or {
+        "get_life_snapshot": "Return Klaus's compact normalized life snapshot.",
+        "query_health_database": "Run a bounded read-only health SQL query.",
+        "list_portfolio_holdings": "List active portfolio holdings and provenance.",
+        "get_routine_status": "Read the latest routine run state.",
+        "upsert_portfolio_holding": "Create or update a portfolio holding.",
+        "prepare_high_risk_action": "Queue an immutable high-risk action for approval.",
+        "confirm_prepared_action": "Confirm and execute an exact prepared action.",
+        "list_pending_approvals": "List high-risk actions awaiting the user.",
+        "publish_review": "Publish a validated Claude routine review callback.",
+        "publish_portfolio_snapshot": "Persist a weekly ILS portfolio valuation.",
+    }.get(name, f"Klaus tool: {name}")
+    server.add_tool(
+        invoke,
+        name=name,
+        description=(
+            f"{description} Pass the original tool fields inside `arguments`. "
+            + ("A unique idempotency_key is required." if is_write else "")
+        ),
+        annotations=ToolAnnotations(
+            readOnlyHint=not is_write,
+            destructiveHint=name in {"delete_calendar_event", "task_delete"},
+            idempotentHint=bool(is_write),
+            openWorldHint=name.startswith("notion_") or name == "fetch_weather",
+        ),
+        meta={
+            "klaus/skillVersion": EXPECTED_SKILL_VERSION,
+            "klaus/endpoint": endpoint,
+            "klaus/requiredScopes": sorted(
+                {"klaus.read"}
+                | ({"klaus.write"} if is_write else set())
+                | ({"klaus.memory"} if name in MEMORY_READ_TOOLS | MEMORY_WRITE_TOOLS else set())
+                | ({"klaus.routine"} if name in ROUTINE_CUSTOM_TOOLS else set())
+                | ({"klaus.approve"} if name == "confirm_prepared_action" else set())
+            ),
+        },
+        structured_output=True,
+    )
+
+
+def create_mcp_bundle(
+    oauth_service: OAuthAuthorizationService,
+    *,
+    dispatcher: Callable[[str, dict], Any] | None = None,
+    custom_handlers: dict[str, CustomHandler] | None = None,
+    idempotency_store: Any | None = None,
+    auditor: Auditor | None = None,
+    calendar_ownership_checker: CalendarOwnershipChecker | None = None,
+    read_only: bool = False,
+) -> MCPServerBundle:
+    """Construct independently authenticated stateless MCP servers."""
+    if dispatcher is None:
+        from core.tools import dispatch
+
+        dispatcher = dispatch
+    gateway = KlausMCPGateway(
+        dispatcher=dispatcher,
+        custom_handlers=custom_handlers,
+        idempotency_store=idempotency_store,
+        auditor=auditor,
+        calendar_ownership_checker=calendar_ownership_checker,
+        interactive_resource=oauth_service.interactive_resource,
+        routine_resource=oauth_service.routine_resource,
+        read_only=read_only,
+    )
+    interactive = MCPServer(
+        "Klaus Interactive",
+        version="7.0.0",
+        instructions="Use get_life_snapshot first. Klaus backend data is authoritative.",
+        token_verifier=KlausTokenVerifier(oauth_service, oauth_service.interactive_resource),
+        auth=AuthSettings(
+            issuer_url=oauth_service.issuer_url,
+            resource_server_url=oauth_service.interactive_resource,
+            required_scopes=["klaus.read"],
+        ),
+    )
+    routine = MCPServer(
+        "Klaus Routines",
+        version="7.0.0",
+        instructions="Use get_life_snapshot first. Routines cannot approve actions.",
+        token_verifier=KlausTokenVerifier(oauth_service, oauth_service.routine_resource),
+        auth=AuthSettings(
+            issuer_url=oauth_service.issuer_url,
+            resource_server_url=oauth_service.routine_resource,
+            required_scopes=["klaus.read"],
+        ),
+    )
+    interactive_tools = (
+        READ_TOOLS | MEMORY_READ_TOOLS | COMMON_CUSTOM_READ_TOOLS
+        if read_only
+        else INTERACTIVE_TOOLS
+    )
+    routine_tools = frozenset() if read_only else ROUTINE_TOOLS
+    for name in sorted(interactive_tools):
+        _register_tool(interactive, gateway, "interactive", name)
+    for name in sorted(routine_tools):
+        _register_tool(routine, gateway, "routine", name)
+    return MCPServerBundle(interactive=interactive, routine=routine, gateway=gateway)

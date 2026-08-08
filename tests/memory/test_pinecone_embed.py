@@ -1,9 +1,8 @@
 """Integration test for the Gemini embedding call used by MemoryStore.
 
-Hits the real Gemini API. Requires SMART_AGENT_API_KEY in env (loaded from
-.env via load_dotenv(override=True), per project convention) — the same key
-the production embed path reads (MemoryStore._get_genai sources the Gemini key
-from SMART_AGENT_API_KEY since the worker moved to DeepSeek in d93deac).
+Hits the real Gemini API. Requires GEMINI_EMBEDDING_API_KEY (preferred) or the
+temporary SMART_AGENT_API_KEY compatibility alias in env (loaded from .env via
+load_dotenv(override=True), per project convention).
 Skipped automatically if the key is missing so non-integration runs are clean.
 """
 import os
@@ -13,8 +12,11 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("SMART_AGENT_API_KEY"),
-    reason="SMART_AGENT_API_KEY not set; skipping live Gemini embedding test",
+    not (
+        os.environ.get("GEMINI_EMBEDDING_API_KEY")
+        or os.environ.get("SMART_AGENT_API_KEY")
+    ),
+    reason="Gemini embedding API key not set; skipping live embedding test",
 )
 
 

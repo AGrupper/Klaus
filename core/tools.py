@@ -321,6 +321,29 @@ TOOL_SCHEMAS: list[dict] = [
                     "type": "object",
                     "description": "Optional recurrence rule. E.g. {\"cadence\": \"daily\", \"anchor\": \"completion\"}.",
                 },
+                "estimated_minutes": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 1440,
+                    "description": "Estimated focused work duration in minutes.",
+                },
+                "hard_deadline_at": {
+                    "type": "string",
+                    "format": "date-time",
+                    "description": "Optional immutable deadline as an ISO-8601 timestamp.",
+                },
+                "auto_schedule": {
+                    "type": "boolean",
+                    "description": "Whether Klaus may place this task into movable calendar blocks.",
+                },
+                "manual_lock": {
+                    "type": "boolean",
+                    "description": "True when Amit fixed the task placement and Klaus must not move it.",
+                },
+                "calendar_event_id": {
+                    "type": "string",
+                    "description": "Linked Klaus-owned calendar time-block event id.",
+                },
             },
             "required": ["title"],
         },
@@ -403,6 +426,26 @@ TOOL_SCHEMAS: list[dict] = [
                     "description": "New priority level.",
                 },
                 "list_id": {"type": "string", "description": "Move to this list ID."},
+                "estimated_minutes": {
+                    "type": "integer", "minimum": 1, "maximum": 1440,
+                    "description": "Updated estimated duration in minutes.",
+                },
+                "hard_deadline_at": {
+                    "type": "string", "format": "date-time",
+                    "description": "Updated immutable ISO-8601 deadline.",
+                },
+                "auto_schedule": {
+                    "type": "boolean",
+                    "description": "Allow or disallow Klaus-owned time blocking.",
+                },
+                "manual_lock": {
+                    "type": "boolean",
+                    "description": "Protect the task's current placement from automatic moves.",
+                },
+                "calendar_event_id": {
+                    "type": "string",
+                    "description": "Linked Klaus-owned calendar time-block event id.",
+                },
             },
             "required": ["task_id"],
         },
@@ -1816,6 +1859,88 @@ def _record_action(action: str, detail: str, *, occasion: str = "chat") -> str:
     return entry_id
 
 
+def _training_calendar_writeback(
+    event_id: str,
+    *,
+    operation: str,
+    date_iso: str | None = None,
+    summary: str | None = None,
+) -> None:
+    """Best-effort calendar-to-training reality write-back (WB-01/02)."""
+    if os.environ.get("KLAUS_TRAINING_WRITEBACK_ENABLED", "false").strip().lower() not in {
+        "1", "true", "yes", "on",
+    }:
+        return
+    try:
+        from memory.firestore_db import TrainingLogStore
+
+        store = TrainingLogStore(
+            os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+            os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+        )
+        existing = store.get_by_slot(event_id) if operation != "create" else None
+        if operation == "create":
+            if not date_iso:
+                return
+            store.log_session(
+                date=date_iso,
+                slot=event_id,
+                session_type=summary,
+                planned=True,
+                completed=False,
+                source="calendar",
+                calendar_event_id=event_id,
+                plan_status="planned",
+            )
+            return
+        if not existing:
+            return
+        old_date = str(existing.get("date") or "")
+        session_type = summary or existing.get("type")
+        if operation == "delete":
+            store.log_session(
+                date=old_date,
+                slot=event_id,
+                session_type=session_type,
+                planned=False,
+                completed=bool(existing.get("completed")),
+                source="calendar",
+                calendar_event_id=event_id,
+                plan_status="deleted",
+            )
+            return
+        if operation == "update":
+            target_date = date_iso or old_date
+            if target_date != old_date:
+                store.log_session(
+                    date=old_date,
+                    slot=event_id,
+                    session_type=existing.get("type"),
+                    planned=False,
+                    completed=bool(existing.get("completed")),
+                    source="calendar",
+                    calendar_event_id=event_id,
+                    plan_status="moved",
+                )
+            store.log_session(
+                date=target_date,
+                slot=event_id,
+                session_type=session_type,
+                planned=True,
+                completed=False,
+                source="calendar",
+                calendar_event_id=event_id,
+                plan_status="planned",
+            )
+    except Exception:
+        logger.error(
+            "Training calendar write-back failed for %s (%s)",
+            event_id,
+            operation,
+            exc_info=True,
+        )
+
+
 def _handle_create_calendar_event(
     summary: str,
     start_iso: str,
@@ -1877,6 +2002,13 @@ def _handle_create_calendar_event(
         result["action_id"] = _record_action(
             action="calendar_create", detail=f"{summary}, {start_iso}",
         )
+        if is_workout and result.get("event_id"):
+            _training_calendar_writeback(
+                str(result["event_id"]),
+                operation="create",
+                date_iso=datetime.fromisoformat(start_iso).date().isoformat(),
+                summary=summary,
+            )
     return json.dumps(result)
 
 
@@ -1894,6 +2026,7 @@ def _handle_delete_calendar_event(event_id: str, calendar_id: str | None = None)
     """
     result = _get_calendar_tool().delete_event(event_id, calendar_id=calendar_id)
     if result.get("ok"):
+        _training_calendar_writeback(event_id, operation="delete")
         summary = result.get("summary", "")
         detail = f"{event_id}, {summary}" if summary else event_id
         result["action_id"] = _record_action(action="calendar_delete", detail=detail)
@@ -1922,6 +2055,17 @@ def _handle_update_calendar_event(
         description=description,
     )
     if result.get("ok"):
+        if start_iso is not None or summary is not None:
+            _training_calendar_writeback(
+                event_id,
+                operation="update",
+                date_iso=(
+                    datetime.fromisoformat(start_iso).date().isoformat()
+                    if start_iso is not None
+                    else None
+                ),
+                summary=summary,
+            )
         changed = [
             field for field, value in (
                 ("summary", summary), ("start", start_iso),
@@ -1970,6 +2114,11 @@ def _handle_task_create(
     priority: str | None = None,
     list_id: str | None = None,
     recurrence: dict | None = None,
+    estimated_minutes: int | None = None,
+    hard_deadline_at: str | None = None,
+    auto_schedule: bool | None = None,
+    manual_lock: bool | None = None,
+    calendar_event_id: str | None = None,
 ) -> str:
     """Create a new task in TaskStore and return the created document."""
     store = _get_task_store()
@@ -1986,6 +2135,16 @@ def _handle_task_create(
         kwargs["list_id"] = list_id
     if recurrence is not None:
         kwargs["recurrence"] = recurrence
+    if estimated_minutes is not None:
+        kwargs["estimated_minutes"] = estimated_minutes
+    if hard_deadline_at is not None:
+        kwargs["hard_deadline_at"] = hard_deadline_at
+    if auto_schedule is not None:
+        kwargs["auto_schedule"] = auto_schedule
+    if manual_lock is not None:
+        kwargs["manual_lock"] = manual_lock
+    if calendar_event_id is not None:
+        kwargs["calendar_event_id"] = calendar_event_id
     # TaskStore.create takes a single task dict (not kwargs) — passing **kwargs
     # raised TypeError and made Klaus's task_create reject every entry.
     result = store.create(kwargs)
@@ -2030,7 +2189,7 @@ def _handle_task_reschedule(
     updates: dict = {"due_date": due_date}
     if due_time is not None:
         updates["due_time"] = due_time
-    result = store.update(task_id, **updates)
+    result = store.update(task_id, updates)
     return json.dumps(result)
 
 
@@ -2040,6 +2199,11 @@ def _handle_task_edit(
     notes: str | None = None,
     priority: str | None = None,
     list_id: str | None = None,
+    estimated_minutes: int | None = None,
+    hard_deadline_at: str | None = None,
+    auto_schedule: bool | None = None,
+    manual_lock: bool | None = None,
+    calendar_event_id: str | None = None,
 ) -> str:
     """Edit title, notes, priority, and/or list of a task."""
     store = _get_task_store()
@@ -2052,7 +2216,17 @@ def _handle_task_edit(
         updates["priority"] = priority
     if list_id is not None:
         updates["list_id"] = list_id
-    result = store.update(task_id, **updates)
+    if estimated_minutes is not None:
+        updates["estimated_minutes"] = estimated_minutes
+    if hard_deadline_at is not None:
+        updates["hard_deadline_at"] = hard_deadline_at
+    if auto_schedule is not None:
+        updates["auto_schedule"] = auto_schedule
+    if manual_lock is not None:
+        updates["manual_lock"] = manual_lock
+    if calendar_event_id is not None:
+        updates["calendar_event_id"] = calendar_event_id
+    result = store.update(task_id, updates)
     return json.dumps(result)
 
 
