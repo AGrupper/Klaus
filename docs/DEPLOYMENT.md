@@ -46,6 +46,7 @@ Complete every item on this checklist before running any commands below.
   | `GCP_WORKLOAD_IDENTITY_PROVIDER` | Printed at end of Step 9 |
   | `GCP_DEPLOYER_SA` | `klaus-deployer@<project>.iam.gserviceaccount.com` |
   | `TELEGRAM_ALLOWED_USER_IDS` | Your numeric Telegram user ID |
+  | `KLAUS_USER_ID` | Canonical numeric namespace shared by interactive MCP, routines, and Pinecone |
 
 ---
 
@@ -457,6 +458,7 @@ Go to your GitHub repository → **Settings** → **Secrets and variables** →
 | `GCP_WORKLOAD_IDENTITY_PROVIDER` | The string printed in Step 9d |
 | `GCP_DEPLOYER_SA` | `klaus-deployer@<PROJECT_ID>.iam.gserviceaccount.com` |
 | `TELEGRAM_ALLOWED_USER_IDS` | Your numeric Telegram user ID (find it by messaging `@userinfobot`) |
+| `KLAUS_USER_ID` | Canonical numeric namespace shared by interactive MCP, routines, and Pinecone |
 
 **No JSON key files.** WIF replaces long-lived credentials entirely. There is
 no key file to rotate, leak, or accidentally commit.

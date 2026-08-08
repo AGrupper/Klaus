@@ -15,6 +15,8 @@ and [Remote Routines](https://code.claude.com/docs/en/routines).
   `KLAUS_LEGACY_RUNTIME_ENABLED=true`, `KLAUS_HUB_CHAT_ENABLED=true`, all
   routine cutover flags `false`, and deterministic alerts `false`.
 - [ ] Set `KLAUS_PUBLIC_URL` to the canonical HTTPS Cloud Run URL.
+- [ ] Set `KLAUS_USER_ID` to the numeric `user_id` already present on Amit's
+  Pinecone memories. Do not choose a new value during cutover.
 - [ ] Set `KLAUS_MCP_ENABLED=true`, `KLAUS_CLAUDE_LIVE_ENABLED=true`, and
   `KLAUS_MCP_READ_ONLY_MODE=true`.
 - [ ] Confirm OAuth discovery and protected-resource metadata return the
