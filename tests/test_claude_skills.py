@@ -34,9 +34,11 @@ def test_uploadable_zips_exactly_match_canonical_sources():
         artifact = ROOT / "claude" / "dist" / f"{name}-{version}.zip"
         assert artifact.is_file(), f"missing upload artifact: {artifact}"
         with zipfile.ZipFile(artifact) as archive:
-            assert sorted(archive.namelist()) == ["SKILL.md", "VERSION"]
-            assert archive.read("SKILL.md") == (source / "SKILL.md").read_bytes()
-            assert archive.read("VERSION") == (source / "VERSION").read_bytes()
+            skill_path = f"{name}/SKILL.md"
+            version_path = f"{name}/VERSION"
+            assert sorted(archive.namelist()) == [skill_path, version_path]
+            assert archive.read(skill_path) == (source / "SKILL.md").read_bytes()
+            assert archive.read(version_path) == (source / "VERSION").read_bytes()
 
 
 def test_packager_check_mode_detects_no_drift():

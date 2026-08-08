@@ -33,7 +33,8 @@ def _archive_bytes(skill_dir: Path) -> bytes:
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for filename in FILES:
             data = (skill_dir / filename).read_bytes()
-            info = zipfile.ZipInfo(filename, ZIP_TIMESTAMP)
+            archive_path = f"{skill_dir.name}/{filename}"
+            info = zipfile.ZipInfo(archive_path, ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
             archive.writestr(info, data)
