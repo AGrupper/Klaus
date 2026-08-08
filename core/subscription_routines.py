@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
+import json
 import os
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -250,12 +251,22 @@ def fire_remote_claude_routine(payload: dict) -> dict:
     url = os.environ.get(f"CLAUDE_ROUTINE_TRIGGER_URL_{routine}", "")
     if not url:
         raise RuntimeError(f"Claude {routine.lower()} routine trigger URL is not configured")
-    headers = {"Content-Type": "application/json"}
-    token = os.environ.get("CLAUDE_ROUTINE_TRIGGER_TOKEN", "")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+    token = os.environ.get(f"CLAUDE_ROUTINE_TRIGGER_TOKEN_{routine}") or os.environ.get(
+        "CLAUDE_ROUTINE_TRIGGER_TOKEN", ""
+    )
+    if not token:
+        raise RuntimeError(
+            f"Claude {routine.lower()} routine trigger token is not configured"
+        )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "anthropic-beta": "experimental-cc-routine-2026-04-01",
+        "anthropic-version": "2023-06-01",
+    }
     timeout = float(os.environ.get("CLAUDE_ROUTINE_TRIGGER_TIMEOUT_SECONDS", "30"))
-    response = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+    body = {"text": json.dumps(payload, sort_keys=True, separators=(",", ":"))}
+    response = httpx.post(url, json=body, headers=headers, timeout=timeout)
     response.raise_for_status()
     if not response.content:
         return {"accepted": True}

@@ -4,6 +4,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 class FakeRunStore:
     def __init__(self):
@@ -188,3 +190,72 @@ def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
     result = asyncio.run(coordinator.publish_timeout_fallback(started["correlation_id"]))
     assert result["deduplicated"] is True
     assert pushes == []
+
+
+def test_remote_fire_uses_claude_subscription_routine_api_contract(monkeypatch):
+    from core.subscription_routines import fire_remote_claude_routine
+
+    monkeypatch.setenv(
+        "CLAUDE_ROUTINE_TRIGGER_URL_MORNING",
+        "https://api.anthropic.com/v1/claude_code/routines/trig_morning/fire",
+    )
+    monkeypatch.setenv("CLAUDE_ROUTINE_TRIGGER_TOKEN_MORNING", "morning-token")
+    monkeypatch.setenv("CLAUDE_ROUTINE_TRIGGER_TOKEN", "legacy-shared-token")
+    captured = {}
+
+    class FakeResponse:
+        content = b'{"type":"routine_fire","claude_code_session_id":"session_1"}'
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"type": "routine_fire", "claude_code_session_id": "session_1"}
+
+    def fake_post(url, *, json, headers, timeout):
+        captured.update(url=url, json=json, headers=headers, timeout=timeout)
+        return FakeResponse()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+    result = fire_remote_claude_routine(
+        {
+            "routine": "morning",
+            "correlation_id": "corr-1",
+            "target_date": "2026-08-08",
+        }
+    )
+
+    assert captured == {
+        "url": "https://api.anthropic.com/v1/claude_code/routines/trig_morning/fire",
+        "json": {
+            "text": '{"correlation_id":"corr-1","routine":"morning","target_date":"2026-08-08"}'
+        },
+        "headers": {
+            "Authorization": "Bearer morning-token",
+            "Content-Type": "application/json",
+            "anthropic-beta": "experimental-cc-routine-2026-04-01",
+            "anthropic-version": "2023-06-01",
+        },
+        "timeout": 30.0,
+    }
+    assert result["claude_code_session_id"] == "session_1"
+
+
+def test_remote_fire_requires_a_routine_trigger_token(monkeypatch):
+    from core.subscription_routines import fire_remote_claude_routine
+
+    monkeypatch.setenv(
+        "CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY",
+        "https://api.anthropic.com/v1/claude_code/routines/trig_nightly/fire",
+    )
+    monkeypatch.delenv("CLAUDE_ROUTINE_TRIGGER_TOKEN_NIGHTLY", raising=False)
+    monkeypatch.delenv("CLAUDE_ROUTINE_TRIGGER_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "httpx.post",
+        lambda *_args, **_kwargs: pytest.fail("request must not fire without a token"),
+    )
+
+    with pytest.raises(RuntimeError, match="nightly routine trigger token is not configured"):
+        fire_remote_claude_routine({"routine": "nightly"})

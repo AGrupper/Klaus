@@ -47,8 +47,9 @@ and [Remote Routines](https://code.claude.com/docs/en/routines).
   Sonnet routine using `klaus-nightly-review`, and a Sunday Opus routine using
   `klaus-weekly-review`.
 - [ ] Configure their supported API trigger URLs as
-  `CLAUDE_ROUTINE_TRIGGER_URL_MORNING`, `_NIGHTLY`, and `_WEEKLY`; store any
-  trigger bearer as `CLAUDE_ROUTINE_TRIGGER_TOKEN` in Secret Manager.
+  `CLAUDE_ROUTINE_TRIGGER_URL_MORNING`, `_NIGHTLY`, and `_WEEKLY`. Store each
+  one-time bearer separately in Secret Manager as
+  `CLAUDE_ROUTINE_TRIGGER_TOKEN_MORNING`, `_NIGHTLY`, and `_WEEKLY`.
 - [ ] With the computer off, trigger one routine and verify it reads Klaus MCP.
 - [ ] Verify it calls `publish_review`, correlates to the queued run, and never
   receives `klaus.approve` or training-plan mutation tools.
