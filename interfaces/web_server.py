@@ -190,6 +190,26 @@ def _require_legacy_hub_chat() -> None:
         )
 
 
+_MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
+
+
+@app.middleware("http")
+async def _normalize_mcp_mount_path(request: Request, call_next):
+    """Route canonical no-slash MCP URLs into their root-mounted ASGI apps.
+
+    Starlette mounts a child app's ``/`` route at ``<mount>/``. Ordinarily its
+    router redirects ``<mount>`` there, but Klaus's final ``/`` SPA mount
+    captures the request first and returns 405 for MCP POSTs. Rewriting only
+    the two exact public MCP paths preserves the advertised OAuth resource URL
+    and avoids a redirect that could drop the request body or bearer header.
+    """
+    path = request.scope.get("path")
+    if path in _MCP_MOUNT_PATHS:
+        request.scope["path"] = f"{path}/"
+        request.scope["raw_path"] = f"{path}/".encode("ascii")
+    return await call_next(request)
+
+
 def _configure_subscription_interfaces() -> None:
     """Mount OAuth and independently gated stateless MCP resources."""
     global _mcp_bundle  # noqa: PLW0603

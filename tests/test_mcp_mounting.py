@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from tests.test_web_server import _stub_web_server_imports
 
@@ -19,9 +21,20 @@ def _fake_runtime_module():
         "https://klaus.example.com",
         "amit.grupper@gmail.com",
     )
+
+    async def interactive_probe(_request):
+        return JSONResponse({"transport": "interactive"}, status_code=202)
+
+    async def routine_probe(_request):
+        return JSONResponse({"transport": "routine"}, status_code=202)
+
     bundle = MagicMock()
-    bundle.interactive.streamable_http_app.return_value = Starlette()
-    bundle.routine.streamable_http_app.return_value = Starlette()
+    bundle.interactive.streamable_http_app.return_value = Starlette(
+        routes=[Route("/", interactive_probe, methods=["POST"])]
+    )
+    bundle.routine.streamable_http_app.return_value = Starlette(
+        routes=[Route("/", routine_probe, methods=["POST"])]
+    )
     runtime = MagicMock()
     runtime.create_production_oauth_service.return_value = service
     runtime.create_production_mcp_bundle.return_value = bundle
@@ -64,3 +77,46 @@ def test_cloud_service_can_start_without_telegram_when_legacy_runtime_is_off():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_advertised_mcp_urls_accept_post_without_trailing_slash():
+    """The public connector URLs must not fall through to the Hub SPA."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    dist_dir = os.path.join(repo_root, "frontend", "dist")
+    index_html = os.path.join(dist_dir, "index.html")
+    made_dir = not os.path.isdir(dist_dir)
+    os.makedirs(dist_dir, exist_ok=True)
+    made_index = not os.path.exists(index_html)
+    if made_index:
+        with open(index_html, "w", encoding="utf-8") as fh:
+            fh.write("<!doctype html><title>Klaus</title>")
+
+    try:
+        stubs = _stub_web_server_imports()
+        runtime, _bundle = _fake_runtime_module()
+        stubs["interfaces.mcp_runtime"] = runtime
+        env = {
+            "KLAUS_MCP_ENABLED": "true",
+            "KLAUS_CLAUDE_LIVE_ENABLED": "true",
+            "KLAUS_CLAUDE_ROUTINES_ENABLED": "true",
+            "KLAUS_LEGACY_RUNTIME_ENABLED": "false",
+        }
+        with patch.dict(os.environ, env, clear=False), patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws
+
+            with TestClient(ws.app) as client:
+                interactive = client.post("/mcp/interactive", json={})
+                routine = client.post("/mcp/routine", json={})
+
+        assert interactive.status_code == 202
+        assert interactive.json() == {"transport": "interactive"}
+        assert routine.status_code == 202
+        assert routine.json() == {"transport": "routine"}
+    finally:
+        if made_index and os.path.exists(index_html):
+            os.remove(index_html)
+        if made_dir and os.path.isdir(dist_dir):
+            try:
+                os.rmdir(dist_dir)
+            except OSError:
+                pass
