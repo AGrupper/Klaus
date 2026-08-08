@@ -50,14 +50,19 @@ def _resolve_single_user_id() -> int:
     if explicit is not None:
         return _positive_user_id(explicit, setting="KLAUS_USER_ID")
 
-    for candidate in os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(","):
-        candidate = candidate.strip()
-        if not candidate:
-            continue
-        try:
-            return _positive_user_id(candidate, setting="TELEGRAM_ALLOWED_USER_IDS")
-        except RuntimeError:
-            continue
+    legacy = os.environ.get("TELEGRAM_ALLOWED_USER_IDS")
+    if legacy is not None:
+        for candidate in legacy.split(","):
+            candidate = candidate.strip()
+            if not candidate:
+                continue
+            try:
+                return _positive_user_id(candidate, setting="TELEGRAM_ALLOWED_USER_IDS")
+            except RuntimeError:
+                continue
+        raise RuntimeError(
+            "TELEGRAM_ALLOWED_USER_IDS must contain at least one positive integer"
+        )
 
     if os.environ.get("ENVIRONMENT", "development").strip().lower() == "production":
         raise RuntimeError(

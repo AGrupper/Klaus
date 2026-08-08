@@ -44,6 +44,22 @@ def test_resolve_single_user_id_uses_first_valid_legacy_value(monkeypatch):
     assert _resolve_single_user_id() == 123456789
 
 
+@pytest.mark.parametrize("environment", ["development", "test"])
+@pytest.mark.parametrize("legacy_value", ["", "not-a-number", "0", "-1"])
+def test_resolve_single_user_id_rejects_invalid_legacy_setting_outside_production(
+    monkeypatch, environment, legacy_value
+):
+    """Configured legacy identities must not silently create namespace zero."""
+    from interfaces.mcp_runtime import _resolve_single_user_id
+
+    monkeypatch.delenv("KLAUS_USER_ID", raising=False)
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", legacy_value)
+    monkeypatch.setenv("ENVIRONMENT", environment)
+
+    with pytest.raises(RuntimeError, match="TELEGRAM_ALLOWED_USER_IDS"):
+        _resolve_single_user_id()
+
+
 @pytest.mark.parametrize("value", ["", "not-a-number", "0", "-1"])
 def test_resolve_single_user_id_rejects_invalid_explicit_setting(monkeypatch, value):
     from interfaces.mcp_runtime import _resolve_single_user_id
