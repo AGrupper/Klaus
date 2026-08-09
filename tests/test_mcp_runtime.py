@@ -134,3 +134,27 @@ def test_production_bundle_uses_identity_aware_dispatcher(monkeypatch):
 
     assert runtime.create_production_mcp_bundle(object()) == "bundle"
     assert captured["dispatcher"] is runtime.dispatch_for_single_user
+
+
+def test_normalise_publish_review_accepts_claude_review_alias():
+    """Claude's observed ``review`` payload must not publish as empty content."""
+    from interfaces.mcp_runtime import _normalise_publish_review
+
+    review = {
+        "summary": "Quiet morning. Recovery is adequate; preserve tonight's plan.",
+        "calendar": {"events": []},
+        "recovery": {"sleep_hours": 8.1, "hrv": 104},
+    }
+
+    text, structured = _normalise_publish_review({"review": review})
+
+    assert text == review["summary"]
+    assert structured == review
+
+
+def test_normalise_publish_review_rejects_empty_publication():
+    """A successful callback cannot discard the review and publish emptiness."""
+    from interfaces.mcp_runtime import _normalise_publish_review
+
+    with pytest.raises(ValueError, match="review content is required"):
+        _normalise_publish_review({})

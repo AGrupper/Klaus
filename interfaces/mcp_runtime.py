@@ -108,6 +108,24 @@ def _reject_embedded_secrets(payload: Any) -> None:
             _reject_embedded_secrets(item)
 
 
+def _normalise_publish_review(arguments: dict) -> tuple[str, dict]:
+    """Accept the canonical payload and Claude's observed ``review`` alias."""
+    structured = arguments.get("structured")
+    if structured is None:
+        structured = arguments.get("review")
+    if structured is None:
+        structured = {}
+    if not isinstance(structured, dict):
+        raise ValueError("structured review must be an object")
+
+    text = str(arguments.get("text") or "").strip()
+    if not text:
+        text = str(structured.get("text") or structured.get("summary") or "").strip()
+    if not text:
+        raise ValueError("review content is required")
+    return text, structured
+
+
 def build_custom_handlers() -> dict[str, Any]:
     """Return lazy production handlers for Klaus-specific MCP tools."""
 
@@ -174,16 +192,13 @@ def build_custom_handlers() -> dict[str, Any]:
         correlation_id = str(arguments.get("correlation_id") or "")
         routine = str(arguments.get("routine") or "")
         target_date = str(arguments.get("target_date") or "")
-        text = str(arguments.get("text") or "")
+        text, structured = _normalise_publish_review(arguments)
         runs = RoutineRunStore(*_settings())
         current = runs.get(correlation_id)
         if not current:
             raise ValueError("routine run not found")
         if current.get("routine") != routine or current.get("target_date") != target_date:
             raise ValueError("routine callback does not match its queued run")
-        structured = arguments.get("structured") or {}
-        if not isinstance(structured, dict):
-            raise ValueError("structured review must be an object")
         reflection = structured.get("reflection")
         self_state = structured.get("self_state")
         if routine == "nightly" and (
