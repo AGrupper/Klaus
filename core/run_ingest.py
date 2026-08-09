@@ -37,6 +37,7 @@ from mcp_tools.garmin_tool import (
     fetch_garmin_activities,
     fetch_run_detail_raw,
     normalize_run_detail,
+    upsert_activity_summaries_to_postgres,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,7 @@ BATCH_MAX_ACTIVITIES = 8     # detail pulls per tick (env: RUN_INGEST_MAX_ACTIVI
 TIME_BUDGET_SEC = 50         # wall-clock budget (env: RUN_INGEST_TIME_BUDGET_SEC)
 BACKFILL_DAYS = 120          # first-run look-back (env: RUN_INGEST_BACKFILL_DAYS)
 DELTA_DAYS = 14              # steady-state look-back (env: RUN_INGEST_DELTA_DAYS)
+ACWR_REFRESH_DAYS = 35       # full 28-day load window plus late-sync margin
 REQUEST_DELAY_SEC = 0.7      # sleep between detail pulls (env: RUN_INGEST_REQUEST_DELAY_SEC)
 _COLLECTION = "run_ingest"
 _STATE_DOC = "state"
@@ -109,11 +111,12 @@ def run_one_batch() -> dict:
     delay = float(os.getenv("RUN_INGEST_REQUEST_DELAY_SEC", str(REQUEST_DELAY_SEC)))
     backfill_days = int(os.getenv("RUN_INGEST_BACKFILL_DAYS", str(BACKFILL_DAYS)))
     delta_days = int(os.getenv("RUN_INGEST_DELTA_DAYS", str(DELTA_DAYS)))
+    acwr_days = int(os.getenv("RUN_INGEST_ACWR_DAYS", str(ACWR_REFRESH_DAYS)))
 
     state = _get_state()
     backfill_done = bool(state.get("backfill_done"))
     mode = "delta" if backfill_done else "backfill"
-    window = delta_days if backfill_done else backfill_days
+    window = max(delta_days, acwr_days) if backfill_done else max(backfill_days, acwr_days)
 
     store = _store()
     start = time.monotonic()
@@ -124,6 +127,10 @@ def run_one_batch() -> dict:
     except (GarminAuthError, GarminUnavailableError) as exc:
         logger.warning("run_ingest: activities fetch failed: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+    # Refresh the relational summary table on every sync.  ACWR reads this
+    # table, while per-run details below are stored separately in Firestore.
+    activity_summaries_synced = upsert_activity_summaries_to_postgres(activities)
 
     # Candidate runs, newest-first, not yet stored.
     candidates = [
@@ -171,6 +178,7 @@ def run_one_batch() -> dict:
         "processed": processed,
         "remaining": max(0, remaining),
         "done": done,
+        "activity_summaries_synced": activity_summaries_synced,
     }
 
 

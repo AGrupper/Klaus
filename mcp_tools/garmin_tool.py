@@ -454,6 +454,74 @@ def fetch_garmin_activities(days: int = 7) -> list[dict]:
     return out
 
 
+def upsert_activity_summaries_to_postgres(activities: list[dict]) -> int:
+    """Best-effort refresh of the Postgres activity summaries used by ACWR.
+
+    Garmin's live activities endpoint is the canonical incremental source.
+    Persist every normalized summary, not only running activities selected for
+    detailed Firestore ingestion, because ACWR covers total training load.
+
+    Returns:
+        Number of valid rows submitted to Postgres.  Missing configuration or
+        a database failure returns ``0`` so run-detail ingestion can continue.
+    """
+    dsn = os.environ.get("DATABASE_URL") or os.environ.get("PG_CONNECTION_STRING")
+    if not dsn:
+        logger.info("activity summary upsert: database URL unset — skipping")
+        return 0
+    try:
+        import psycopg2
+    except ImportError:
+        logger.warning("activity summary upsert: psycopg2 not installed")
+        return 0
+
+    rows = []
+    for activity in activities:
+        activity_id = activity.get("activity_id")
+        activity_date = activity.get("date")
+        if activity_id is None or not activity_date:
+            continue
+        try:
+            duration_sec = int(activity.get("duration_sec") or 0)
+        except (TypeError, ValueError):
+            duration_sec = 0
+        rows.append((
+            activity_id,
+            activity_date,
+            activity.get("type") or "unknown",
+            duration_sec,
+            activity.get("distance_m"),
+            activity.get("training_load"),
+            activity.get("perceived_exertion"),
+            activity.get("feel"),
+        ))
+    if not rows:
+        return 0
+
+    sql = """
+        INSERT INTO activities (
+            activity_id, date, type, duration_sec, distance_m,
+            training_load, perceived_exertion, feel
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (activity_id) DO UPDATE SET
+            date = EXCLUDED.date,
+            type = EXCLUDED.type,
+            duration_sec = EXCLUDED.duration_sec,
+            distance_m = EXCLUDED.distance_m,
+            training_load = EXCLUDED.training_load,
+            perceived_exertion = EXCLUDED.perceived_exertion,
+            feel = EXCLUDED.feel
+    """
+    try:
+        with psycopg2.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.executemany(sql, rows)
+    except Exception:
+        logger.warning("activity summary upsert failed", exc_info=True)
+        return 0
+    return len(rows)
+
+
 # ------------------------------------------------------------------ #
 # Run-detail capture — full per-run telemetry (stride, cadence,      #
 # vertical oscillation, ground contact, power, HR) + recorded laps.  #

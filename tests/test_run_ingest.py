@@ -32,6 +32,9 @@ def _patch_common(monkeypatch, store):
         lambda aid: {"details": {}, "splits": {}, "hr_zones": [], "typed_splits": {}},
     )
     monkeypatch.setattr(ri, "_store", lambda: store)
+    monkeypatch.setattr(
+        ri, "upsert_activity_summaries_to_postgres", lambda activities: len(activities),
+    )
     state_holder = {"state": {}}
     monkeypatch.setattr(ri, "_get_state", lambda: dict(state_holder["state"]))
     monkeypatch.setattr(ri, "_set_state", lambda f: state_holder["state"].update(f))
@@ -120,7 +123,20 @@ def test_delta_mode_uses_short_window(store):
         result = ri.run_one_batch()
     assert result["mode"] == "delta"
     assert result["done"] is True
-    fga.assert_called_once_with(14)  # short delta window
+    fga.assert_called_once_with(35)  # covers the full 28-day ACWR window + margin
+
+
+def test_every_fetched_activity_summary_is_persisted_before_run_filtering(store):
+    acts = _runs(1) + [{"activity_id": 2, "type": "cycling"}]
+    writer = MagicMock(return_value=2)
+    with patch.object(ri, "fetch_garmin_activities", return_value=acts):
+        with patch.object(
+            ri, "upsert_activity_summaries_to_postgres", writer, create=True,
+        ):
+            result = ri.run_one_batch()
+
+    writer.assert_called_once_with(acts)
+    assert result["activity_summaries_synced"] == 2
 
 
 # ------------------------------------------------------------------ #

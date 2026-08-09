@@ -125,6 +125,73 @@ def test_recent_activities_raises_on_fetch_failure():
             gt.fetch_garmin_activities(days=7)
 
 
+def test_activity_summaries_upsert_refreshes_acwr_source(monkeypatch):
+    """Live Garmin summaries must update the Postgres activities table."""
+    import sys
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_conn = MagicMock()
+    fake_cursor = MagicMock()
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.return_value = fake_conn
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+    activities = [
+        {
+            "activity_id": 101,
+            "date": "2026-08-08T07:00:00",
+            "type": "running",
+            "duration_sec": 1800,
+            "distance_m": 5000.0,
+            "training_load": 72.5,
+            "perceived_exertion": 7,
+            "feel": 4,
+        },
+        {
+            "activity_id": 102,
+            "date": "2026-08-09T08:00:00",
+            "type": "cycling",
+            "duration_sec": 3600,
+            "distance_m": 24000.0,
+            "training_load": 81.0,
+            "perceived_exertion": None,
+            "feel": None,
+        },
+    ]
+
+    count = gt.upsert_activity_summaries_to_postgres(activities)
+
+    assert count == 2
+    sql, rows = fake_cursor.executemany.call_args.args
+    assert "INSERT INTO activities" in sql
+    assert "ON CONFLICT (activity_id) DO UPDATE" in sql
+    assert rows[0] == (
+        101, "2026-08-08T07:00:00", "running", 1800, 5000.0, 72.5, 7, 4,
+    )
+
+
+def test_activity_summary_upsert_skips_records_without_identity_or_date(monkeypatch):
+    import sys
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://test")
+    fake_conn = MagicMock()
+    fake_cursor = MagicMock()
+    fake_conn.__enter__.return_value = fake_conn
+    fake_conn.cursor.return_value.__enter__.return_value = fake_cursor
+    fake_psycopg2 = MagicMock()
+    fake_psycopg2.connect.return_value = fake_conn
+    monkeypatch.setitem(sys.modules, "psycopg2", fake_psycopg2)
+
+    count = gt.upsert_activity_summaries_to_postgres([
+        {"activity_id": None, "date": "2026-08-09", "type": "running"},
+        {"activity_id": 102, "date": None, "type": "running"},
+    ])
+
+    assert count == 0
+    fake_cursor.executemany.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # GARMIN-05 — write_today_biometrics_to_postgres (Plan 19-04)
 # ---------------------------------------------------------------------------
