@@ -106,7 +106,7 @@ def _first_sentence(description: str) -> str:
 def _load_tool_data(root: Path) -> list[dict]:
     """Read TOOL_SCHEMAS and SMART_AGENT_DIRECT_TOOLS from ``core/tools.py``.
 
-    Returns a list of dicts with keys: name, routing, purpose.
+    Returns a list of dicts with keys: name, routing, purpose, input_schema.
 
     The source is parsed with :mod:`ast` instead of imported.  Manifest
     generation therefore cannot initialize an SDK, load local credentials, or
@@ -155,7 +155,12 @@ def _load_tool_data(root: Path) -> list[dict]:
             else:
                 purpose = str(desc)
             routing = "brain-direct" if name in direct_tools else "worker-delegated"
-            rows.append({"name": name, "routing": routing, "purpose": purpose})
+            rows.append({
+                "name": name,
+                "routing": routing,
+                "purpose": purpose,
+                "input_schema": schema.get("input_schema"),
+            })
         return rows
 
     except Exception as exc:

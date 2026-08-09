@@ -5,13 +5,14 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Annotated, Any, Awaitable, Callable
 
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
 from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
+from pydantic import WithJsonSchema
 
 from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
 
@@ -323,20 +324,20 @@ class MCPServerBundle:
     gateway: KlausMCPGateway
 
 
-def _schema_descriptions() -> dict[str, str]:
+def _schema_metadata() -> dict[str, dict[str, Any]]:
     # Parse the registry rather than importing it just to obtain prose.  This
     # keeps capability discovery free of Google/Telegram SDK initialization
     # and mirrors SELF.md's dependency-neutral manifest generation.
     from core.self_manifest import _get_source_root, _load_tool_data
 
     return {
-        str(item["name"]): str(item.get("purpose") or "")
+        str(item["name"]): item
         for item in _load_tool_data(_get_source_root())
     }
 
 
 def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, name: str) -> None:
-    descriptions = _schema_descriptions()
+    metadata = _schema_metadata()
     is_write = name in WRITE_LIKE_TOOLS
 
     async def invoke(
@@ -355,7 +356,8 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
         )
 
     invoke.__name__ = f"{endpoint}_{name}"
-    description = descriptions.get(name) or {
+    canonical = metadata.get(name, {})
+    description = str(canonical.get("purpose") or "") or {
         "get_life_snapshot": "Return Klaus's compact normalized life snapshot.",
         "query_health_database": "Run a bounded read-only health SQL query.",
         "list_portfolio_holdings": "List active portfolio holdings and provenance.",
@@ -367,6 +369,43 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
         "publish_review": "Publish a validated Claude routine review callback.",
         "publish_portfolio_snapshot": "Persist a weekly ILS portfolio valuation.",
     }.get(name, f"Klaus tool: {name}")
+
+    # MCPServer derives the published JSON schema from the callable signature.
+    # Keep the stable outer ``arguments`` envelope used by the gateway, but
+    # annotate it with the canonical legacy tool schema so clients can see the
+    # exact field names, types, and required set.  Without this, every tool is
+    # advertised as an unrestricted object and models must guess parameter
+    # names (for example start_date instead of time_min_iso).
+    input_schema = canonical.get("input_schema")
+    arguments_annotation: Any = dict[str, Any]
+    if isinstance(input_schema, dict):
+        arguments_annotation = Annotated[
+            dict[str, Any],
+            WithJsonSchema(input_schema),
+        ]
+    arguments_required = is_write or bool(
+        isinstance(input_schema, dict) and input_schema.get("required")
+    )
+    parameters = [
+        inspect.Parameter(
+            "arguments",
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=(inspect.Parameter.empty if arguments_required else None),
+            annotation=arguments_annotation,
+        )
+    ]
+    if is_write:
+        parameters.append(
+            inspect.Parameter(
+                "idempotency_key",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=str,
+            )
+        )
+    invoke.__signature__ = inspect.Signature(  # type: ignore[attr-defined]
+        parameters=parameters,
+        return_annotation=dict[str, Any],
+    )
     server.add_tool(
         invoke,
         name=name,

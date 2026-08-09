@@ -50,6 +50,39 @@ def test_interactive_and_routine_servers_have_distinct_tool_catalogs():
     )
 
 
+def test_legacy_tools_publish_their_exact_nested_argument_schemas():
+    """Claude must see the canonical fields instead of an untyped object."""
+    from interfaces.mcp_server import _schema_metadata, create_mcp_bundle
+
+    bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
+    tools = {tool.name: tool for tool in bundle.interactive._tool_manager.list_tools()}
+
+    for name, metadata in _schema_metadata().items():
+        if name not in tools or not isinstance(metadata.get("input_schema"), dict):
+            continue
+        expected = metadata["input_schema"]
+        actual = tools[name].parameters["properties"]["arguments"]
+        assert actual["type"] == expected["type"], name
+        assert actual["properties"] == expected["properties"], name
+        assert actual.get("required", []) == expected.get("required", []), name
+
+    calendar = tools["list_calendar_events"].parameters
+    calendar_arguments = calendar["properties"]["arguments"]
+    assert set(calendar_arguments["properties"]) == {"time_min_iso", "time_max_iso"}
+    assert set(calendar_arguments["required"]) == {"time_min_iso", "time_max_iso"}
+    assert calendar["required"] == ["arguments"]
+
+    task_create = tools["task_create"].parameters
+    task_arguments = task_create["properties"]["arguments"]
+    assert "title" in task_arguments["properties"]
+    assert task_arguments["required"] == ["title"]
+    assert set(task_create["required"]) == {"arguments", "idempotency_key"}
+
+    acwr = tools["get_acwr"].parameters
+    assert acwr["properties"]["arguments"]["properties"] == {}
+    assert "arguments" not in acwr.get("required", [])
+
+
 def test_capability_gate_can_mount_a_strictly_read_only_interactive_catalog():
     from interfaces.mcp_server import create_mcp_bundle
 
