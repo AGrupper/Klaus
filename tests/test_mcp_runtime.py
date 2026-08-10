@@ -421,3 +421,53 @@ def test_publish_review_pushes_claude_nightly_to_its_review_detail(monkeypatch):
             "Klaus Nightly Review",
         )
     ]
+
+
+def test_publish_review_late_upgrade_does_not_send_another_push(monkeypatch):
+    """A Claude callback after fallback enriches the review without notifying again."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    pushes = []
+
+    class RoutineRuns:
+        @staticmethod
+        def get(_correlation_id):
+            return {
+                "routine": "morning",
+                "target_date": "2026-08-08",
+                "delivery_mode": "live",
+            }
+
+        @staticmethod
+        def transition_claude_publication(*_args, **_kwargs):
+            return {"status": "late_upgraded"}
+
+    class Reviews:
+        @staticmethod
+        def publish(**kwargs):
+            return kwargs
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
+    monkeypatch.setattr(
+        core.push_sender,
+        "send_push_to_all",
+        lambda *args: pushes.append(args) or {"sent": 1},
+    )
+
+    result = build_custom_handlers()["publish_review"](
+        {
+            "correlation_id": "routine-1",
+            "routine": "morning",
+            "target_date": "2026-08-08",
+            "text": "Morning review.",
+            "structured": {},
+            "action_ids": [],
+            "partial_actions": [],
+        }
+    )
+
+    assert result["delivery"] == {"late_upgrade": True, "push_sent": False}
+    assert pushes == []
