@@ -112,16 +112,17 @@ describe('sw.ts', () => {
     expect(skipWaiting).toHaveBeenCalledTimes(1)
   })
 
-  it('notificationclick focuses an existing client and posts NAVIGATE to /', async () => {
+  it('notificationclick focuses an existing client and posts NAVIGATE to the review path', async () => {
     const postMessage = vi.fn()
     const focus = vi.fn().mockResolvedValue(undefined)
     matchAll.mockResolvedValueOnce([{ focus, postMessage }])
+    const reviewPath = '/klaus/reviews/nightly/2026-08-10'
 
     const notificationClickListener = getListener(listeners, 'notificationclick')
     const close = vi.fn()
     const waitUntilPromises: Promise<unknown>[] = []
     const event = {
-      notification: { close },
+      notification: { close, data: { url: reviewPath } },
       waitUntil: (p: Promise<unknown>) => {
         waitUntilPromises.push(p)
       },
@@ -132,16 +133,23 @@ describe('sw.ts', () => {
 
     expect(close).toHaveBeenCalledTimes(1)
     expect(focus).toHaveBeenCalledTimes(1)
-    expect(postMessage).toHaveBeenCalledWith({ type: 'NAVIGATE', path: '/' })
+    expect(postMessage).toHaveBeenCalledWith({ type: 'NAVIGATE', path: reviewPath })
     expect(openWindow).not.toHaveBeenCalled()
   })
 
-  it('notificationclick opens a new window when no client is focused', async () => {
-    matchAll.mockResolvedValueOnce([])
+  it.each([
+    'https://evil.example/phish',
+    '//evil.example/phish',
+    '/\\\\evil.example/phish',
+    '/klaus\n/evil',
+  ])('notificationclick falls back to root for hostile path %j', async (url) => {
+    const postMessage = vi.fn()
+    const focus = vi.fn().mockResolvedValue(undefined)
+    matchAll.mockResolvedValueOnce([{ focus, postMessage }])
     const notificationClickListener = getListener(listeners, 'notificationclick')
     const waitUntilPromises: Promise<unknown>[] = []
     const event = {
-      notification: { close: vi.fn() },
+      notification: { close: vi.fn(), data: { url } },
       waitUntil: (p: Promise<unknown>) => {
         waitUntilPromises.push(p)
       },
@@ -150,6 +158,26 @@ describe('sw.ts', () => {
     notificationClickListener(event)
     await Promise.all(waitUntilPromises)
 
-    expect(openWindow).toHaveBeenCalledWith('/')
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(postMessage).toHaveBeenCalledWith({ type: 'NAVIGATE', path: '/' })
+    expect(openWindow).not.toHaveBeenCalled()
+  })
+
+  it('notificationclick opens a new window at the review path when no client is focused', async () => {
+    matchAll.mockResolvedValueOnce([])
+    const notificationClickListener = getListener(listeners, 'notificationclick')
+    const waitUntilPromises: Promise<unknown>[] = []
+    const reviewPath = '/klaus/reviews/nightly/2026-08-10'
+    const event = {
+      notification: { close: vi.fn(), data: { url: reviewPath } },
+      waitUntil: (p: Promise<unknown>) => {
+        waitUntilPromises.push(p)
+      },
+    }
+
+    notificationClickListener(event)
+    await Promise.all(waitUntilPromises)
+
+    expect(openWindow).toHaveBeenCalledWith(reviewPath)
   })
 })

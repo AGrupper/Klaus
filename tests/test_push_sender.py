@@ -134,6 +134,42 @@ def test_payload_shape_title_body_class_url():
     assert payload["url"] == "/"
 
 
+def test_payload_uses_explicit_safe_same_origin_destination():
+    store = _FakeSubscriptionStore([_sub(1)])
+    p1, p2, p3 = _patched(store)
+    with p1, p2, p3 as mock_webpush:
+        push_sender.send_push_to_all(
+            "Nightly review",
+            "briefing",
+            "/klaus/reviews/nightly/2026-08-10",
+            "Klaus Nightly Review",
+        )
+
+    payload = json.loads(mock_webpush.call_args.kwargs["data"])
+    assert payload["title"] == "Klaus Nightly Review"
+    assert payload["url"] == "/klaus/reviews/nightly/2026-08-10"
+
+
+@pytest.mark.parametrize(
+    "unsafe",
+    [
+        "https://evil.example/phish",
+        "//evil.example/phish",
+        "/\\\\evil.example/phish",
+        "/klaus\n/evil",
+        "klaus/reviews/nightly/2026-08-10",
+    ],
+)
+def test_payload_falls_back_to_root_for_unsafe_destination(unsafe):
+    store = _FakeSubscriptionStore([_sub(1)])
+    p1, p2, p3 = _patched(store)
+    with p1, p2, p3 as mock_webpush:
+        push_sender.send_push_to_all("Review", "briefing", unsafe, "Klaus Nightly Review")
+
+    payload = json.loads(mock_webpush.call_args.kwargs["data"])
+    assert payload["url"] == "/"
+
+
 def test_payload_body_truncated_to_1000_chars():
     long_text = "x" * 5000
     store = _FakeSubscriptionStore([_sub(1)])

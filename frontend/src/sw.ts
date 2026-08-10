@@ -185,18 +185,37 @@ self.addEventListener('push', (event) => {
   )
 })
 
-// ── 6. Tap → Today, never chat (D-12) ──
+function safeNotificationPath(value: unknown): string {
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith('/') ||
+    value.startsWith('//') ||
+    value.includes('\\') ||
+    /[\x00-\x1F\x7F]/.test(value)
+  ) {
+    return '/'
+  }
+  try {
+    const parsed = new URL(value, self.location.origin)
+    return parsed.origin === self.location.origin ? value : '/'
+  } catch {
+    return '/'
+  }
+}
+
+// ── 6. Tap → the validated notification destination (D-12) ──
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   event.waitUntil(
     (async () => {
+      const path = safeNotificationPath(event.notification.data?.url)
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       const client = clientList[0]
       if (client) {
         await client.focus()
-        client.postMessage({ type: 'NAVIGATE', path: '/' })
+        client.postMessage({ type: 'NAVIGATE', path })
       } else {
-        await self.clients.openWindow('/')
+        await self.clients.openWindow(path)
       }
     })(),
   )

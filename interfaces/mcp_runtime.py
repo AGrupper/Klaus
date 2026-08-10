@@ -224,7 +224,11 @@ def build_custom_handlers() -> dict[str, Any]:
     def publish_review(arguments: dict) -> dict:
         text, structured, action_ids, partial_actions = _validate_publish_review(arguments)
 
-        from core.review_delivery import normalise_claude_session_url
+        from core.review_delivery import (
+            normalise_claude_session_url,
+            routine_review_path,
+            routine_review_title,
+        )
         from core.push_sender import send_push_to_all
         from memory.firestore_db import (
             BehavioralFeedbackStore,
@@ -326,7 +330,12 @@ def build_custom_handlers() -> dict[str, Any]:
         delivery = (
             {"late_upgrade": True, "push_sent": False}
             if status == "late_upgraded"
-            else send_push_to_all(text, "briefing")
+            else send_push_to_all(
+                text,
+                "briefing",
+                routine_review_path(routine, target_date),
+                routine_review_title(routine),
+            )
         )
         return {"review": review, "run": run, "delivery": delivery}
 

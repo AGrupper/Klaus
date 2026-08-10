@@ -9,7 +9,11 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from core.review_delivery import normalise_claude_session_url
+from core.review_delivery import (
+    normalise_claude_session_url,
+    routine_review_path,
+    routine_review_title,
+)
 
 
 _MODELS = {"morning": "sonnet", "nightly": "sonnet", "weekly": "opus"}
@@ -36,7 +40,7 @@ class SubscriptionRoutineCoordinator:
         remote_fire: Callable[[dict], dict],
         enqueue_fallback: Callable[[str, int], bool],
         snapshot_builder: Callable[[], Any],
-        push_sender: Callable[[str, str], dict],
+        push_sender: Callable[[str, str, str, str], dict],
         public_url: str,
         callback_timeout_seconds: int = 600,
     ) -> None:
@@ -233,7 +237,13 @@ class SubscriptionRoutineCoordinator:
         if session_url:
             review_fields["claude_session_url"] = session_url
         review = await asyncio.to_thread(self._reviews.publish, **review_fields)
-        delivery = await asyncio.to_thread(self._push_sender, text, "briefing")
+        delivery = await asyncio.to_thread(
+            self._push_sender,
+            text,
+            "briefing",
+            routine_review_path(run["routine"], run["target_date"]),
+            routine_review_title(run["routine"]),
+        )
         return {**transitioned, "review": review, "delivery": delivery}
 
 

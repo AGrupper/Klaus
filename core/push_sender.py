@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,32 @@ def _get_subscription_store():
     )
 
 
-def send_push_to_all(text: str, message_class: str = "default") -> dict:
+def _safe_destination(value: object) -> str:
+    """Return a safe same-origin absolute path, or the Hub root."""
+    if not isinstance(value, str):
+        return "/"
+    if (
+        not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
+    ):
+        return "/"
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return "/"
+    if parsed.scheme or parsed.netloc:
+        return "/"
+    return value
+
+
+def send_push_to_all(
+    text: str,
+    message_class: str = "default",
+    destination: str = "/",
+    title: str = "Klaus",
+) -> dict:
     """Fan out one push message to every stored subscription.
 
     SYNC — always call via loop.run_in_executor from async contexts.
@@ -128,6 +154,8 @@ def send_push_to_all(text: str, message_class: str = "default") -> dict:
         text: The message body. Truncated to 1000 chars in the payload (D-12
             documented deviation — see note below).
         message_class: Selects the TTL from CLASS_TTL (D-07).
+        destination: Same-origin absolute Hub path to open from the push.
+        title: User-visible notification title.
 
     Returns:
         {"sent": int, "failed": int, "removed": int}
@@ -136,14 +164,14 @@ def send_push_to_all(text: str, message_class: str = "default") -> dict:
 
     store = _get_subscription_store()
     payload = json.dumps({
-        "title": "Klaus",
+        "title": title,
         # DEVIATION (justified, D-12): D-12 calls for "full message text" as
         # the body, but APNs caps encrypted push payloads at ~4KB
         # (RESEARCH.md Assumption A8) and iOS truncates/expands the display
         # regardless. Nothing is lost: the full text is always available in
         # the Firestore conversation store + Telegram mirror.
         "body": text[:1000],
-        "url": "/",
+        "url": _safe_destination(destination),
         "class": message_class,
     })
     ttl = CLASS_TTL.get(message_class, CLASS_TTL["default"])

@@ -352,3 +352,72 @@ def test_publish_review_passes_only_safe_session_url_to_review_store(
         assert "claude_session_url" not in published[0]
     else:
         assert published[0]["claude_session_url"] == expected_url
+
+
+def test_publish_review_pushes_claude_nightly_to_its_review_detail(monkeypatch):
+    """The initial Claude publication routes its push to the nightly review."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    pushes = []
+
+    class RoutineRuns:
+        @staticmethod
+        def get(_correlation_id):
+            return {
+                "routine": "nightly",
+                "target_date": "2026-08-10",
+                "delivery_mode": "live",
+            }
+
+        @staticmethod
+        def transition_claude_publication(*_args, **_kwargs):
+            return {"status": "published_claude"}
+
+    class Reviews:
+        @staticmethod
+        def publish(**kwargs):
+            return kwargs
+
+    class Journal:
+        @staticmethod
+        def set(*_args, **_kwargs):
+            return None
+
+    class SelfState:
+        @staticmethod
+        def set(*_args, **_kwargs):
+            return None
+
+    class Feedback:
+        @staticmethod
+        def record(*_args, **_kwargs):
+            return None
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
+    monkeypatch.setattr(memory.firestore_db, "JournalStore", lambda *_args: Journal())
+    monkeypatch.setattr(memory.firestore_db, "SelfStateStore", lambda *_args: SelfState())
+    monkeypatch.setattr(
+        memory.firestore_db, "BehavioralFeedbackStore", lambda *_args: Feedback()
+    )
+    monkeypatch.setattr(
+        core.push_sender,
+        "send_push_to_all",
+        lambda *args: pushes.append(args) or {"sent": 1},
+    )
+
+    payload = complete_nightly_payload()
+    payload["target_date"] = "2026-08-10"
+    result = build_custom_handlers()["publish_review"](payload)
+
+    assert result["delivery"] == {"sent": 1}
+    assert pushes == [
+        (
+            "Nightly review: good recovery.",
+            "briefing",
+            "/klaus/reviews/nightly/2026-08-10",
+            "Klaus Nightly Review",
+        )
+    ]

@@ -75,7 +75,7 @@ def test_trigger_persists_pending_before_remote_fire_and_schedules_timeout():
             ("fallback", correlation_id, delay)
         ) or True,
         snapshot_builder=lambda: {},
-        push_sender=lambda _text, _kind: {},
+        push_sender=lambda _text, _kind, _destination, _title: {},
         public_url="https://klaus.example.com",
     )
     result = coordinator.start("morning", "2026-08-08", "wake")
@@ -102,7 +102,7 @@ def test_trigger_drops_hostile_session_url_but_keeps_run_running():
         },
         enqueue_fallback=lambda _cid, _delay: True,
         snapshot_builder=lambda: {},
-        push_sender=lambda _text, _kind: {},
+        push_sender=lambda _text, _kind, _destination, _title: {},
         public_url="https://klaus.example.com",
     )
 
@@ -124,7 +124,7 @@ def test_same_routine_date_deduplicates_without_second_remote_fire():
         remote_fire=lambda payload: fires.append(payload) or {"accepted": True},
         enqueue_fallback=lambda _cid, _delay: True,
         snapshot_builder=lambda: {},
-        push_sender=lambda _text, _kind: {},
+        push_sender=lambda _text, _kind, _destination, _title: {},
         public_url="https://klaus.example.com",
     )
     first = coordinator.start("weekly", "2026-08-09", "cron")
@@ -147,7 +147,7 @@ def test_shadow_run_has_separate_identity_and_tells_claude_not_to_deliver():
         remote_fire=lambda payload: fires.append(payload) or {"accepted": True},
         enqueue_fallback=lambda _cid, _delay: True,
         snapshot_builder=lambda: {},
-        push_sender=lambda _text, _kind: {},
+        push_sender=lambda _text, _kind, _destination, _title: {},
         public_url="https://klaus.example.com",
     )
     live = coordinator.start("morning", "2026-08-08", "wake")
@@ -187,7 +187,10 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
             "tasks": [{"id": "t1"}],
             "habits_pending": [],
         },
-        push_sender=lambda text, kind: pushes.append((text, kind)) or {"sent": 1},
+        push_sender=lambda text, kind, destination, title: pushes.append(
+            (text, kind, destination, title)
+        )
+        or {"sent": 1},
         public_url="https://klaus.example.com",
     )
     started = coordinator.start("nightly", "2026-08-08", "backstop")
@@ -205,6 +208,12 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
     )
     assert "No schedule, task, training, or memory changes were made" in reviews.published[0]["text"]
     assert len(pushes) == 1
+    assert pushes[0] == (
+        reviews.published[0]["text"],
+        "briefing",
+        "/klaus/reviews/nightly/2026-08-08",
+        "Klaus Nightly Review",
+    )
 
 
 def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
@@ -219,7 +228,10 @@ def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
         remote_fire=lambda _payload: {"accepted": True},
         enqueue_fallback=lambda _cid, _delay: True,
         snapshot_builder=lambda: {},
-        push_sender=lambda text, kind: pushes.append((text, kind)) or {},
+        push_sender=lambda text, kind, destination, title: pushes.append(
+            (text, kind, destination, title)
+        )
+        or {},
         public_url="https://klaus.example.com",
     )
     started = coordinator.start("morning", "2026-08-08", "wake")
