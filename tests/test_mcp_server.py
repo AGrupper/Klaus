@@ -83,6 +83,35 @@ def test_legacy_tools_publish_their_exact_nested_argument_schemas():
     assert "arguments" not in acwr.get("required", [])
 
 
+def test_custom_tools_publish_exact_nested_argument_schemas():
+    """Claude must receive strict, handler-aligned schemas for custom tools."""
+    from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
+    from interfaces.mcp_server import create_mcp_bundle
+
+    bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
+    interactive = {
+        tool.name: tool for tool in bundle.interactive._tool_manager.list_tools()
+    }
+    routine = {tool.name: tool for tool in bundle.routine._tool_manager.list_tools()}
+
+    for name, expected in CUSTOM_TOOL_SCHEMAS.items():
+        tool = routine.get(name) or interactive.get(name)
+        assert tool is not None, name
+        actual = tool.parameters["properties"]["arguments"]
+        assert actual["properties"] == expected["properties"], name
+        assert actual.get("required", []) == expected.get("required", []), name
+        assert actual["additionalProperties"] is False, name
+
+    publish = routine["publish_review"].parameters["properties"]["arguments"]
+    assert set(publish["required"]) == {
+        "correlation_id", "routine", "target_date", "text",
+        "structured", "action_ids", "partial_actions",
+    }
+    assert publish["properties"]["routine"]["enum"] == [
+        "morning", "nightly", "weekly",
+    ]
+
+
 def test_capability_gate_can_mount_a_strictly_read_only_interactive_catalog():
     from interfaces.mcp_server import create_mcp_bundle
 

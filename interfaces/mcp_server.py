@@ -14,6 +14,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 from pydantic import WithJsonSchema
 
+from interfaces.mcp_custom_schemas import custom_tool_schema
 from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
 
 
@@ -366,7 +367,10 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
         "prepare_high_risk_action": "Queue an immutable high-risk action for approval.",
         "confirm_prepared_action": "Confirm and execute an exact prepared action.",
         "list_pending_approvals": "List high-risk actions awaiting the user.",
-        "publish_review": "Publish a validated Claude routine review callback.",
+        "publish_review": (
+            "Publish the final, one-shot Claude routine review callback. Never call "
+            "this tool with schema probes, placeholders, or test content."
+        ),
         "publish_portfolio_snapshot": "Persist a weekly ILS portfolio valuation.",
     }.get(name, f"Klaus tool: {name}")
 
@@ -376,7 +380,7 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
     # exact field names, types, and required set.  Without this, every tool is
     # advertised as an unrestricted object and models must guess parameter
     # names (for example start_date instead of time_min_iso).
-    input_schema = canonical.get("input_schema")
+    input_schema = canonical.get("input_schema") or custom_tool_schema(name)
     arguments_annotation: Any = dict[str, Any]
     if isinstance(input_schema, dict):
         arguments_annotation = Annotated[
