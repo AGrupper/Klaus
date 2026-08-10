@@ -142,7 +142,7 @@ export function ReviewDetailPage() {
   }
 
   return (
-    <main
+    <div
       style={{
         flex: 1,
         minHeight: '100%',
@@ -155,6 +155,6 @@ export function ReviewDetailPage() {
       <div style={{ maxWidth: '760px', margin: '0 auto' }}>
         <ReviewDetail routine={routine} targetDate={targetDate} />
       </div>
-    </main>
+    </div>
   )
 }

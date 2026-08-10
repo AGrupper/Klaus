@@ -130,6 +130,7 @@ describe('App auth gate', () => {
     renderApp('/klaus/reviews/nightly/2026-08-10')
 
     expect(await screen.findByRole('heading', { name: 'Nightly review for 2026-08-10' })).toBeInTheDocument()
+    expect(screen.getAllByRole('main')).toHaveLength(1)
     expect(screen.getByTitle('Ask Claude')).toHaveAttribute('aria-current', 'page')
     expect(screen.getByTitle('Claude')).toHaveAttribute('aria-current', 'page')
   })
