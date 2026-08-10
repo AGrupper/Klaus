@@ -60,7 +60,9 @@ INVALIDATED_STRUCTURED = {
 DOCUMENT_NAMES = ["nightly_review", "journal", "self_state", "routine_run"]
 
 
-def _read_incident_documents(client: Any) -> tuple[dict[str, Any], dict[str, dict[str, Any] | None]]:
+def _read_incident_documents(
+    client: Any,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any] | None], dict[str, Any]]:
     """Read every target document before any repair write can be created."""
     references = {
         "nightly_review": client.document(REVIEW_PATH),
@@ -69,10 +71,12 @@ def _read_incident_documents(client: Any) -> tuple[dict[str, Any], dict[str, dic
         "routine_run": client.document(RUN_PATH),
     }
     documents: dict[str, dict[str, Any] | None] = {}
+    snapshots: dict[str, Any] = {}
     for name, reference in references.items():
         snapshot = reference.get()
+        snapshots[name] = snapshot
         documents[name] = snapshot.to_dict() if snapshot.exists else None
-    return references, documents
+    return references, documents, snapshots
 
 
 def _is_already_repaired(documents: dict[str, dict[str, Any] | None]) -> bool:
@@ -82,6 +86,11 @@ def _is_already_repaired(documents: dict[str, dict[str, Any] | None]) -> bool:
     routine_run = documents["routine_run"] or {}
     return (
         documents["journal"] is None
+        and review.get("correlation_id") == INCIDENT_CORRELATION_ID
+        and review.get("routine") == "nightly"
+        and review.get("target_date") == INCIDENT_DATE
+        and review.get("routine_status") == "published_claude"
+        and review.get("review_id") == f"nightly:{INCIDENT_DATE}"
         and review.get("review_text") == INVALIDATED_REVIEW_TEXT
         and review.get("structured") == INVALIDATED_STRUCTURED
         and review.get("invalid_reason") == INCIDENT_REASON
@@ -90,6 +99,11 @@ def _is_already_repaired(documents: dict[str, dict[str, Any] | None]) -> bool:
         and "reflection_date" not in self_state
         and "proposed_mood" not in self_state
         and bool(self_state.get("incident_repaired_at"))
+        and routine_run.get("correlation_id") == INCIDENT_CORRELATION_ID
+        and routine_run.get("routine") == "nightly"
+        and routine_run.get("target_date") == INCIDENT_DATE
+        and routine_run.get("status") == "published_claude"
+        and routine_run.get("review_id") == f"nightly:{INCIDENT_DATE}"
         and routine_run.get("incident_invalidated") is True
         and routine_run.get("incident_reason") == INCIDENT_REASON
         and bool(routine_run.get("incident_repaired_at"))
@@ -112,7 +126,11 @@ def _require_incident_preconditions(documents: dict[str, dict[str, Any] | None])
         or review.get("structured") != PLACEHOLDER_STRUCTURED
     ):
         raise ValueError("incident precondition failed: nightly review differs")
-    if any(journal.get(key) != value for key, value in PLACEHOLDER_JOURNAL.items()):
+    expected_journal_keys = set(PLACEHOLDER_JOURNAL) | {"updated_at"}
+    if (
+        set(journal) != expected_journal_keys
+        or any(journal.get(key) != value for key, value in PLACEHOLDER_JOURNAL.items())
+    ):
         raise ValueError("incident precondition failed: journal differs")
     if any(self_state.get(key) != value for key, value in PLACEHOLDER_SELF_STATE.items()):
         raise ValueError("incident precondition failed: self-state differs")
@@ -126,6 +144,16 @@ def _require_incident_preconditions(documents: dict[str, dict[str, Any] | None])
         raise ValueError("incident precondition failed: routine run differs")
 
 
+def _write_options(client: Any, snapshots: dict[str, Any]) -> dict[str, Any]:
+    """Build update-time write guards for each document read for this repair."""
+    options: dict[str, Any] = {}
+    for name, snapshot in snapshots.items():
+        if not snapshot.exists or snapshot.update_time is None:
+            raise ValueError(f"incident precondition failed: {name} has no update time")
+        options[name] = client.write_option(last_update_time=snapshot.update_time)
+    return options
+
+
 def _summary(*, eligible: bool, already_repaired: bool) -> dict[str, Any]:
     """Build a redacted result that identifies documents but never their content."""
     return {
@@ -137,7 +165,7 @@ def _summary(*, eligible: bool, already_repaired: bool) -> dict[str, Any]:
 
 def inspect_incident(client: Any) -> dict[str, Any]:
     """Validate the repair preconditions and return a read-only redacted summary."""
-    _, documents = _read_incident_documents(client)
+    _, documents, _ = _read_incident_documents(client)
     if _is_already_repaired(documents):
         return _summary(eligible=False, already_repaired=True)
     _require_incident_preconditions(documents)
@@ -157,7 +185,7 @@ def repair_incident(client: Any, *, repaired_at: str) -> dict[str, Any]:
     Raises:
         ValueError: If any target is missing, altered, or only partly repaired.
     """
-    references, documents = _read_incident_documents(client)
+    references, documents, snapshots = _read_incident_documents(client)
     if _is_already_repaired(documents):
         return {
             "repaired": False,
@@ -165,11 +193,12 @@ def repair_incident(client: Any, *, repaired_at: str) -> dict[str, Any]:
             "documents": list(DOCUMENT_NAMES),
         }
     _require_incident_preconditions(documents)
+    write_options = _write_options(client, snapshots)
 
     # Preconditions are now known for all four documents.  Commit once so no
     # intermediate state can leave a partial repair if the process exits.
     batch = client.batch()
-    batch.set(
+    batch.update(
         references["nightly_review"],
         {
             "review_text": INVALIDATED_REVIEW_TEXT,
@@ -177,9 +206,9 @@ def repair_incident(client: Any, *, repaired_at: str) -> dict[str, Any]:
             "invalidated_at": repaired_at,
             "invalid_reason": INCIDENT_REASON,
         },
-        merge=True,
+        option=write_options["nightly_review"],
     )
-    batch.delete(references["journal"])
+    batch.delete(references["journal"], option=write_options["journal"])
     batch.update(
         references["self_state"],
         {
@@ -188,15 +217,16 @@ def repair_incident(client: Any, *, repaired_at: str) -> dict[str, Any]:
             "proposed_mood": firestore.DELETE_FIELD,
             "incident_repaired_at": repaired_at,
         },
+        option=write_options["self_state"],
     )
-    batch.set(
+    batch.update(
         references["routine_run"],
         {
             "incident_invalidated": True,
             "incident_reason": INCIDENT_REASON,
             "incident_repaired_at": repaired_at,
         },
-        merge=True,
+        option=write_options["routine_run"],
     )
     batch.commit()
     return {

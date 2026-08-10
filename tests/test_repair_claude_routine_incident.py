@@ -17,9 +17,10 @@ CORRELATION_ID = "a485e1a9914893c100eb2dce1d25b53e"
 class FakeSnapshot:
     """Minimal Firestore snapshot backed by a fake document dictionary."""
 
-    def __init__(self, data: dict | None) -> None:
+    def __init__(self, data: dict | None, update_time: int | None) -> None:
         self._data = deepcopy(data) if data is not None else None
         self.exists = data is not None
+        self.update_time = update_time
 
     def to_dict(self) -> dict:
         """Return the stored document data as Firestore would."""
@@ -36,7 +37,9 @@ class FakeDocumentReference:
     def get(self) -> FakeSnapshot:
         """Read this document without changing the fake client."""
         self._client.read_paths.append(self.path)
-        return FakeSnapshot(self._client.docs.get(self.path))
+        return FakeSnapshot(
+            self._client.docs.get(self.path), self._client.versions.get(self.path)
+        )
 
 
 class FakeBatch:
@@ -44,25 +47,41 @@ class FakeBatch:
 
     def __init__(self, client: "FakeFirestoreClient") -> None:
         self._client = client
-        self._operations: list[tuple[str, FakeDocumentReference, dict | None, bool]] = []
+        self._operations: list[
+            tuple[str, FakeDocumentReference, dict | None, bool, int | None]
+        ] = []
 
-    def set(self, reference: FakeDocumentReference, data: dict, *, merge: bool = False) -> None:
+    def set(
+        self,
+        reference: FakeDocumentReference,
+        data: dict,
+        *,
+        merge: bool = False,
+        option: int | None = None,
+    ) -> None:
         """Queue a Firestore set operation."""
-        self._operations.append(("set", reference, deepcopy(data), merge))
+        self._operations.append(("set", reference, deepcopy(data), merge, option))
 
-    def delete(self, reference: FakeDocumentReference) -> None:
+    def delete(self, reference: FakeDocumentReference, *, option: int | None = None) -> None:
         """Queue a Firestore delete operation."""
-        self._operations.append(("delete", reference, None, False))
+        self._operations.append(("delete", reference, None, False, option))
 
-    def update(self, reference: FakeDocumentReference, data: dict) -> None:
+    def update(
+        self, reference: FakeDocumentReference, data: dict, *, option: int | None = None
+    ) -> None:
         """Queue the self-state update used by this repair."""
-        self._operations.append(("update", reference, deepcopy(data), False))
+        self._operations.append(("update", reference, deepcopy(data), False, option))
 
     def commit(self) -> None:
         """Apply all queued operations together, after all validation has passed."""
-        self._client.commit_calls += 1
+        if self._client.before_commit is not None:
+            self._client.before_commit(self._client)
+        for _, reference, _, _, option in self._operations:
+            if option != self._client.versions.get(reference.path):
+                raise FakePreconditionFailed(reference.path)
+
         staged = deepcopy(self._client.docs)
-        for operation, reference, data, merge in self._operations:
+        for operation, reference, data, merge, _ in self._operations:
             if operation == "delete":
                 staged.pop(reference.path, None)
             elif operation == "set":
@@ -79,6 +98,11 @@ class FakeBatch:
                     if field not in {"source", "reflection_date", "proposed_mood"}:
                         current[field] = value
         self._client.docs = staged
+        self._client.commit_calls += 1
+
+
+class FakePreconditionFailed(Exception):
+    """Raised when a fake write's observed update time is no longer current."""
 
 
 class FakeFirestoreClient:
@@ -86,9 +110,11 @@ class FakeFirestoreClient:
 
     def __init__(self, docs: dict[str, dict]) -> None:
         self.docs = deepcopy(docs)
+        self.versions = {path: 1 for path in self.docs}
         self.read_paths: list[str] = []
         self.commit_calls = 0
         self.batch_created = 0
+        self.before_commit = None
 
     def document(self, path: str) -> FakeDocumentReference:
         """Return a path-addressed fake Firestore document reference."""
@@ -98,6 +124,15 @@ class FakeFirestoreClient:
         """Create the sole batch used by an eligible repair."""
         self.batch_created += 1
         return FakeBatch(self)
+
+    def write_option(self, *, last_update_time: int) -> int:
+        """Use an integer version as the fake equivalent of Firestore's option."""
+        return last_update_time
+
+    def mutate_concurrently(self, path: str, patch: dict) -> None:
+        """Apply an external write between repair validation and batch commit."""
+        self.docs[path].update(patch)
+        self.versions[path] += 1
 
 
 def incident_documents() -> dict[str, dict]:
@@ -212,6 +247,60 @@ def test_repair_aborts_before_creating_a_batch_when_placeholder_changed():
     assert client.docs == documents
 
 
+def test_repair_aborts_before_creating_a_batch_when_journal_has_extra_content():
+    """The journal is deletable only when it is entirely the observed placeholder."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[JOURNAL_PATH]["legitimate_later_note"] = "Keep this."
+    client = FakeFirestoreClient(documents)
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.batch_created == 0
+    assert client.commit_calls == 0
+    assert client.docs == documents
+
+
+def test_repair_aborts_before_creating_a_batch_when_self_state_incident_value_changed():
+    """A changed incident-owned self-state value is not safe to delete."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[SELF_STATE_PATH]["proposed_mood"] = "reflective"
+    client = FakeFirestoreClient(documents)
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.batch_created == 0
+    assert client.commit_calls == 0
+    assert client.docs == documents
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("correlation_id", "another-run"), ("status", "published_fallback")],
+)
+def test_repair_aborts_before_creating_a_batch_when_routine_run_identity_changes(
+    field, value
+):
+    """The historical run must remain the exact published-Claude incident run."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[RUN_PATH][field] = value
+    client = FakeFirestoreClient(documents)
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.batch_created == 0
+    assert client.commit_calls == 0
+    assert client.docs == documents
+
+
 def test_repair_is_idempotent_after_a_completed_invalidation():
     """A rerun reports its safe terminal state without a second commit."""
     from scripts.repair_claude_routine_incident import repair_incident
@@ -227,6 +316,40 @@ def test_repair_is_idempotent_after_a_completed_invalidation():
         "documents": ["nightly_review", "journal", "self_state", "routine_run"],
     }
     assert client.commit_calls == 1
+
+
+def test_repair_rejects_an_altered_already_repaired_shape():
+    """A repair-shaped record with broken immutable identity is not idempotent."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    client = FakeFirestoreClient(incident_documents())
+    repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+    client.docs[RUN_PATH]["review_id"] = "nightly:other-date"
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T10:00:00+00:00")
+
+    assert client.commit_calls == 1
+
+
+def test_repair_commit_aborts_without_repair_writes_after_concurrent_mutation():
+    """Write-time update-time guards prevent a stale repair from partially applying."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    client = FakeFirestoreClient(incident_documents())
+    client.before_commit = lambda fake: fake.mutate_concurrently(
+        SELF_STATE_PATH, {"current_focus": "A newer user update."}
+    )
+
+    with pytest.raises(FakePreconditionFailed):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.commit_calls == 0
+    assert client.docs[REVIEW_PATH]["review_text"] == "test text eighteen"
+    assert JOURNAL_PATH in client.docs
+    assert client.docs[SELF_STATE_PATH]["proposed_mood"] == "steady"
+    assert client.docs[SELF_STATE_PATH]["current_focus"] == "A newer user update."
+    assert "incident_invalidated" not in client.docs[RUN_PATH]
 
 
 def test_dry_run_inspects_and_redacts_known_placeholder_without_creating_batch():
