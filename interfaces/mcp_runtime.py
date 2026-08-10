@@ -224,6 +224,7 @@ def build_custom_handlers() -> dict[str, Any]:
     def publish_review(arguments: dict) -> dict:
         text, structured, action_ids, partial_actions = _validate_publish_review(arguments)
 
+        from core.review_delivery import normalise_claude_session_url
         from core.push_sender import send_push_to_all
         from memory.firestore_db import (
             BehavioralFeedbackStore,
@@ -301,16 +302,27 @@ def build_custom_handlers() -> dict[str, Any]:
                         f"{correlation_id}:{index}:{pattern}".encode("utf-8")
                     ).hexdigest()[:32],
                 )
-        review = RoutineReviewStore(*_settings()).publish(
-            routine=routine,
-            target_date=target_date,
-            correlation_id=correlation_id,
-            status=status,
-            text=text,
-            structured=structured,
-            action_ids=action_ids,
-            partial_actions=partial_actions,
-        )
+        session_url = normalise_claude_session_url(current.get("claude_session_url"))
+        if "claude_session_url" not in current:
+            remote_result = current.get("remote_trigger_result")
+            session_url = normalise_claude_session_url(
+                remote_result.get("claude_code_session_url")
+                if isinstance(remote_result, dict)
+                else None
+            )
+        review_fields = {
+            "routine": routine,
+            "target_date": target_date,
+            "correlation_id": correlation_id,
+            "status": status,
+            "text": text,
+            "structured": structured,
+            "action_ids": action_ids,
+            "partial_actions": partial_actions,
+        }
+        if session_url:
+            review_fields["claude_session_url"] = session_url
+        review = RoutineReviewStore(*_settings()).publish(**review_fields)
         delivery = (
             {"late_upgrade": True, "push_sent": False}
             if status == "late_upgraded"

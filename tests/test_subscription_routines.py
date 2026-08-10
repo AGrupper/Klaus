@@ -59,7 +59,13 @@ def test_trigger_persists_pending_before_remote_fire_and_schedules_timeout():
 
     def remote_fire(payload):
         events.append(("remote", runs.get(payload["correlation_id"])["status"]))
-        return {"accepted": True}
+        return {
+            "accepted": True,
+            "claude_code_session_id": "session_01ABC",
+            "claude_code_session_url": (
+                "https://claude.ai/epitaxy/session_01ABC?trigger=trig_private"
+            ),
+        }
 
     coordinator = SubscriptionRoutineCoordinator(
         run_store=runs,
@@ -77,8 +83,34 @@ def test_trigger_persists_pending_before_remote_fire_and_schedules_timeout():
     assert result["accepted"] is True
     assert events[0][0] == "fallback"
     assert events[1] == ("remote", "queued")
-    assert runs.get(result["correlation_id"])["status"] == "running"
+    stored = runs.get(result["correlation_id"])
+    assert stored["status"] == "running"
+    assert stored["claude_session_url"] == "https://claude.ai/epitaxy/session_01ABC"
     assert result["model"] == "sonnet"
+
+
+def test_trigger_drops_hostile_session_url_but_keeps_run_running():
+    from core.subscription_routines import SubscriptionRoutineCoordinator
+
+    runs = FakeRunStore()
+    coordinator = SubscriptionRoutineCoordinator(
+        run_store=runs,
+        review_store=FakeReviewStore(),
+        remote_fire=lambda _payload: {
+            "accepted": True,
+            "claude_code_session_url": "https://evil.example/session_01ABC",
+        },
+        enqueue_fallback=lambda _cid, _delay: True,
+        snapshot_builder=lambda: {},
+        push_sender=lambda _text, _kind: {},
+        public_url="https://klaus.example.com",
+    )
+
+    result = coordinator.start("morning", "2026-08-08", "wake")
+
+    stored = runs.get(result["correlation_id"])
+    assert stored["status"] == "running"
+    assert "claude_session_url" not in stored
 
 
 def test_same_routine_date_deduplicates_without_second_remote_fire():
@@ -145,7 +177,10 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
     coordinator = SubscriptionRoutineCoordinator(
         run_store=runs,
         review_store=reviews,
-        remote_fire=lambda _payload: {"accepted": True},
+        remote_fire=lambda _payload: {
+            "accepted": True,
+            "claude_code_session_url": "https://claude.ai/code/session_01ABC",
+        },
         enqueue_fallback=lambda _cid, _delay: True,
         snapshot_builder=lambda: {
             "today": {"today": "2026-08-08", "calendar": {"timed": [{"id": "e1"}]}, "garmin": {}},
@@ -165,6 +200,9 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
     assert fallback["status"] == "published_fallback"
     assert reviews.published[0]["action_ids"] == []
     assert reviews.published[0]["partial_actions"] == []
+    assert reviews.published[0]["claude_session_url"] == (
+        "https://claude.ai/code/session_01ABC"
+    )
     assert "No schedule, task, training, or memory changes were made" in reviews.published[0]["text"]
     assert len(pushes) == 1
 

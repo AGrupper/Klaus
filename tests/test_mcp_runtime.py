@@ -287,3 +287,68 @@ def test_invalid_nightly_publish_has_zero_side_effects(monkeypatch):
     assert transitions == []
     assert writes == []
     assert pushes == []
+
+
+@pytest.mark.parametrize(
+    ("stored_url", "expected_url"),
+    [
+        (
+            "https://www.claude.ai/epitaxy/session_01ABC?trigger=private",
+            "https://claude.ai/epitaxy/session_01ABC",
+        ),
+        ("https://evil.example/code/session_01ABC", None),
+    ],
+)
+def test_publish_review_passes_only_safe_session_url_to_review_store(
+    monkeypatch, stored_url, expected_url
+):
+    """Callback delivery forwards a normalized session link, never provider data."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    published = []
+
+    class RoutineRuns:
+        def get(self, _correlation_id):
+            return {
+                "routine": "morning",
+                "target_date": "2026-08-08",
+                "delivery_mode": "live",
+                "claude_session_url": stored_url,
+                "remote_trigger_result": {
+                    "claude_code_session_url": "https://evil.example/never-forward"
+                },
+            }
+
+        @staticmethod
+        def transition_claude_publication(*_args, **_kwargs):
+            return {"status": "published_claude"}
+
+    class Reviews:
+        @staticmethod
+        def publish(**kwargs):
+            published.append(kwargs)
+            return kwargs
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
+    monkeypatch.setattr(core.push_sender, "send_push_to_all", lambda *_args: {"sent": 1})
+
+    result = build_custom_handlers()["publish_review"](
+        {
+            "correlation_id": "routine-1",
+            "routine": "morning",
+            "target_date": "2026-08-08",
+            "text": "Morning review.",
+            "structured": {},
+            "action_ids": [],
+            "partial_actions": [],
+        }
+    )
+
+    assert result["delivery"] == {"sent": 1}
+    if expected_url is None:
+        assert "claude_session_url" not in published[0]
+    else:
+        assert published[0]["claude_session_url"] == expected_url

@@ -5166,9 +5166,12 @@ class RoutineReviewStore:
         structured: dict | None = None,
         action_ids: list[str] | None = None,
         partial_actions: list[dict] | None = None,
+        claude_session_url: str | None = None,
     ) -> dict:
         """Merge a Claude/fallback publication into its existing date document."""
         from datetime import datetime, timezone
+
+        from core.review_delivery import normalise_claude_session_url
 
         collection = self._COLLECTIONS.get(routine)
         if collection is None:
@@ -5192,6 +5195,9 @@ class RoutineReviewStore:
             "partial_actions": [_jsonsafe_doc(item) for item in partial_actions or []],
             "published_at": datetime.now(timezone.utc).isoformat(),
         }
+        session_url = normalise_claude_session_url(claude_session_url)
+        if session_url:
+            record["claude_session_url"] = session_url
         self._client.collection(collection).document(target_date).set(
             {**record, "updated_at": firestore.SERVER_TIMESTAMP},
             merge=True,

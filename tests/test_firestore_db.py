@@ -1362,13 +1362,24 @@ class TestRoutineRunStore:
                 status="published_claude",
                 text="Good morning, Sir.",
                 structured={"priorities": ["Deep work"]},
+                claude_session_url="https://claude.ai/code/session_01ABC",
             )
             stored = client._data["morning_briefings"]["2026-08-08"]
+            legacy = reviews.publish(
+                routine="weekly",
+                target_date="2026-08-10",
+                correlation_id="routine-5",
+                status="published_fallback",
+                text="Weekly status.",
+            )
 
         assert published["review_id"] == "morning:2026-08-08"
         assert stored["correlation_id"] == "routine-4"
         assert stored["routine_status"] == "published_claude"
         assert stored["review_text"] == "Good morning, Sir."
+        assert published["claude_session_url"] == "https://claude.ai/code/session_01ABC"
+        assert stored["claude_session_url"] == "https://claude.ai/code/session_01ABC"
+        assert "claude_session_url" not in legacy
 
 
 # =============================================================================

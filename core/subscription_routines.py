@@ -9,6 +9,8 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
+from core.review_delivery import normalise_claude_session_url
+
 
 _MODELS = {"morning": "sonnet", "nightly": "sonnet", "weekly": "opus"}
 
@@ -116,11 +118,21 @@ class SubscriptionRoutineCoordinator:
         }
         try:
             remote_result = self._remote_fire(payload)
+            transition_fields = {
+                "fallback_scheduled": True,
+                "remote_trigger_result": remote_result,
+            }
+            session_url = normalise_claude_session_url(
+                remote_result.get("claude_code_session_url")
+                if isinstance(remote_result, dict)
+                else None
+            )
+            if session_url:
+                transition_fields["claude_session_url"] = session_url
             self._runs.transition(
                 correlation_id,
                 "running",
-                fallback_scheduled=True,
-                remote_trigger_result=remote_result,
+                **transition_fields,
             )
             provider_fired = True
         except Exception as exc:
@@ -202,22 +214,25 @@ class SubscriptionRoutineCoordinator:
                 "status": current.get("status"),
                 "correlation_id": correlation_id,
             }
-        review = await asyncio.to_thread(
-            self._reviews.publish,
-            routine=run["routine"],
-            target_date=run["target_date"],
-            correlation_id=correlation_id,
-            status="published_fallback",
-            text=text,
-            structured={
+        review_fields = {
+            "routine": run["routine"],
+            "target_date": run["target_date"],
+            "correlation_id": correlation_id,
+            "status": "published_fallback",
+            "text": text,
+            "structured": {
                 "fallback": True,
                 "reason": "Claude callback timed out after 10 minutes",
                 "snapshot_generated": True,
                 "judgment_writes": False,
             },
-            action_ids=[],
-            partial_actions=[],
-        )
+            "action_ids": [],
+            "partial_actions": [],
+        }
+        session_url = normalise_claude_session_url(run.get("claude_session_url"))
+        if session_url:
+            review_fields["claude_session_url"] = session_url
+        review = await asyncio.to_thread(self._reviews.publish, **review_fields)
         delivery = await asyncio.to_thread(self._push_sender, text, "briefing")
         return {**transitioned, "review": review, "delivery": delivery}
 
