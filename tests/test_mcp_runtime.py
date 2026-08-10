@@ -158,3 +158,132 @@ def test_normalise_publish_review_rejects_empty_publication():
 
     with pytest.raises(ValueError, match="review content is required"):
         _normalise_publish_review({})
+
+
+INCIDENT_PAYLOAD = {
+    "correlation_id": "a485e1a9914893c100eb2dce1d25b53e",
+    "routine": "nightly",
+    "target_date": "2026-08-09",
+    "text": "test text eighteen",
+    "structured": {
+        "reflection": {"summary": "test reflection", "mood": "steady"},
+        "self_state": {"proposed_mood": "steady"},
+        "quiet_night": True,
+    },
+    "action_ids": [],
+    "partial_actions": [],
+}
+
+
+def complete_nightly_payload():
+    return {
+        "correlation_id": "complete-nightly-correlation",
+        "routine": "nightly",
+        "target_date": "2026-08-09",
+        "text": "Nightly review: good recovery.",
+        "structured": {
+            "reflection": {
+                "summary": "Good recovery.",
+                "mood": "steady",
+                "current_focus": "Recovery",
+                "recent_context": "A quiet Sunday.",
+                "highlights": ["Good recovery"],
+            },
+            "self_state": {
+                "mood": "steady",
+                "current_focus": "Recovery",
+                "recent_context": "A quiet Sunday.",
+            },
+        },
+        "action_ids": [],
+        "partial_actions": [],
+    }
+
+
+def test_validate_publish_review_rejects_incident_placeholder_shape():
+    """Nightly publications require the full reflection and self-state contract."""
+    from interfaces.mcp_runtime import _validate_publish_review
+
+    with pytest.raises(ValueError, match="current_focus"):
+        _validate_publish_review(INCIDENT_PAYLOAD)
+
+
+def test_validate_publish_review_accepts_complete_nightly_shape():
+    """A complete nightly payload preserves normalized publication fields."""
+    from interfaces.mcp_runtime import _validate_publish_review
+
+    text, structured, action_ids, partial_actions = _validate_publish_review(
+        complete_nightly_payload()
+    )
+
+    assert text.startswith("Nightly review")
+    assert structured["reflection"]["highlights"] == ["Good recovery"]
+    assert action_ids == []
+    assert partial_actions == []
+
+
+def test_invalid_nightly_publish_has_zero_side_effects(monkeypatch):
+    """A malformed callback must fail before it can publish or mutate routine state."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    transitions = []
+    writes = []
+    pushes = []
+    reads = []
+
+    class RoutineRuns:
+        def get(self, correlation_id):
+            reads.append(correlation_id)
+            return {
+                "routine": "nightly",
+                "target_date": "2026-08-09",
+                "delivery_mode": "live",
+            }
+
+        def transition_claude_publication(self, *args, **kwargs):
+            transitions.append((args, kwargs))
+            return {"status": "published"}
+
+        def patch(self, *args, **kwargs):
+            writes.append(("routine_patch", args, kwargs))
+
+    class Journal:
+        def set(self, *args, **kwargs):
+            writes.append(("journal", args, kwargs))
+
+    class SelfState:
+        def set(self, *args, **kwargs):
+            writes.append(("self_state", args, kwargs))
+
+    class Reviews:
+        def publish(self, *args, **kwargs):
+            writes.append(("review", args, kwargs))
+
+    class Feedback:
+        def record(self, *args, **kwargs):
+            writes.append(("feedback", args, kwargs))
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(memory.firestore_db, "JournalStore", lambda *_args: Journal())
+    monkeypatch.setattr(memory.firestore_db, "SelfStateStore", lambda *_args: SelfState())
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
+    monkeypatch.setattr(
+        memory.firestore_db,
+        "BehavioralFeedbackStore",
+        lambda *_args: Feedback(),
+    )
+    monkeypatch.setattr(
+        core.push_sender,
+        "send_push_to_all",
+        lambda *args: pushes.append(args),
+    )
+
+    with pytest.raises(ValueError, match="current_focus"):
+        build_custom_handlers()["publish_review"](INCIDENT_PAYLOAD)
+
+    assert reads == []
+    assert transitions == []
+    assert writes == []
+    assert pushes == []

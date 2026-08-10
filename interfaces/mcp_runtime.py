@@ -126,6 +126,48 @@ def _normalise_publish_review(arguments: dict) -> tuple[str, dict]:
     return text, structured
 
 
+def _require_nonempty_string(mapping: dict, field: str, *, parent: str) -> str:
+    value = str(mapping.get(field) or "").strip()
+    if not value:
+        raise ValueError(f"{parent}.{field} is required")
+    return value
+
+
+def _validate_publish_review(
+    arguments: dict[str, Any],
+) -> tuple[str, dict, list[str], list[dict]]:
+    """Validate a callback fully before it can mutate a routine publication."""
+    text, structured = _normalise_publish_review(arguments)
+    action_ids = arguments.get("action_ids")
+    partial_actions = arguments.get("partial_actions")
+    if not isinstance(action_ids, list):
+        raise ValueError("action_ids must be an array")
+    if not isinstance(partial_actions, list):
+        raise ValueError("partial_actions must be an array")
+    if str(arguments.get("routine") or "") == "nightly":
+        reflection = structured.get("reflection")
+        self_state = structured.get("self_state")
+        if not isinstance(reflection, dict):
+            raise ValueError("structured.reflection must be an object")
+        if not isinstance(self_state, dict):
+            raise ValueError("structured.self_state must be an object")
+        for field in ("summary", "mood", "current_focus", "recent_context"):
+            _require_nonempty_string(
+                reflection,
+                field,
+                parent="structured.reflection",
+            )
+        if not isinstance(reflection.get("highlights"), list):
+            raise ValueError("structured.reflection.highlights must be an array")
+        for field in ("mood", "current_focus", "recent_context"):
+            _require_nonempty_string(
+                self_state,
+                field,
+                parent="structured.self_state",
+            )
+    return text, structured, [str(item) for item in action_ids], list(partial_actions)
+
+
 def build_custom_handlers() -> dict[str, Any]:
     """Return lazy production handlers for Klaus-specific MCP tools."""
 
@@ -180,6 +222,8 @@ def build_custom_handlers() -> dict[str, Any]:
         return {"run": RoutineRunStore(*_settings()).get(correlation_id)}
 
     def publish_review(arguments: dict) -> dict:
+        text, structured, action_ids, partial_actions = _validate_publish_review(arguments)
+
         from core.push_sender import send_push_to_all
         from memory.firestore_db import (
             BehavioralFeedbackStore,
@@ -192,7 +236,6 @@ def build_custom_handlers() -> dict[str, Any]:
         correlation_id = str(arguments.get("correlation_id") or "")
         routine = str(arguments.get("routine") or "")
         target_date = str(arguments.get("target_date") or "")
-        text, structured = _normalise_publish_review(arguments)
         runs = RoutineRunStore(*_settings())
         current = runs.get(correlation_id)
         if not current:
@@ -219,8 +262,8 @@ def build_custom_handlers() -> dict[str, Any]:
                     "target_date": target_date,
                     "text": text,
                     "structured": structured,
-                    "action_ids": arguments.get("action_ids") or [],
-                    "partial_actions": arguments.get("partial_actions") or [],
+                    "action_ids": action_ids,
+                    "partial_actions": partial_actions,
                 },
             )
             return {
@@ -265,8 +308,8 @@ def build_custom_handlers() -> dict[str, Any]:
             status=status,
             text=text,
             structured=structured,
-            action_ids=arguments.get("action_ids") or [],
-            partial_actions=arguments.get("partial_actions") or [],
+            action_ids=action_ids,
+            partial_actions=partial_actions,
         )
         delivery = (
             {"late_upgrade": True, "push_sent": False}
