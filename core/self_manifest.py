@@ -425,7 +425,7 @@ def _render_manifest(root: Path, sha: str) -> str:
             "for gemini-embedding-2."
         ),
         "",
-        "MCP resources: `/mcp/interactive` and `/mcp/routine`. Expected Claude skill version: `7.0.0`.",
+        "MCP resources: `/mcp/interactive` and `/mcp/routine`. Expected Claude skill version: `7.1.0`.",
         "",
     ]
 

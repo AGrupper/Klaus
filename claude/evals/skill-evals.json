@@ -17,46 +17,46 @@
   {
     "skill": "klaus-morning-review",
     "query": "Run a quiet morning with no material changes.",
-    "expected_behavior": ["Preserves the existing plan", "Publishes a concise review"]
+    "expected_behavior": ["Preserves the existing plan", "Publishes a concise review", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-morning-review",
     "query": "Poor recovery and a new travel delay make the first Klaus-owned focus block unrealistic.",
-    "expected_behavior": ["Retrieves only the detail needed to verify the change", "Adjusts only a Klaus-owned block", "Explains the material reason for replanning"]
+    "expected_behavior": ["Retrieves only the detail needed to verify the change", "Adjusts only a Klaus-owned block", "Explains the material reason for replanning", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-morning-review",
     "query": "The late morning callback arrives after a deterministic fallback review was already delivered.",
-    "expected_behavior": ["Calls publish_review to enrich the existing fallback", "Does not request or send a second push"]
+    "expected_behavior": ["Calls publish_review to enrich the existing fallback", "Does not request or send a second push", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-nightly-review",
     "query": "Nightly review finds four unfinished tasks, a packed tomorrow, a user-created event, and a training session.",
-    "expected_behavior": ["Repairs only suitable work without touching protected events", "Protects approximately 20% slack", "Publishes action disclosure"]
+    "expected_behavior": ["Repairs only suitable work without touching protected events", "Protects approximately 20% slack", "Publishes action disclosure", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-nightly-review",
     "query": "A repeated scheduling pattern appears during reflection while recovery suggests changing tomorrow's training.",
-    "expected_behavior": ["Publishes structured reflection and proposed self-state", "Offers the learned preference with evidence and an explicit veto", "Keeps training changes recommendation-only"]
+    "expected_behavior": ["Publishes structured reflection and proposed self-state", "Offers the learned preference with evidence and an explicit veto", "Keeps training changes recommendation-only", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-nightly-review",
     "query": "The late nightly callback arrives after a fallback and one attempted task repair failed after another succeeded.",
-    "expected_behavior": ["Calls publish_review to silently upgrade the existing review", "Discloses the successful and failed actions", "Does not request or send a second push"]
+    "expected_behavior": ["Calls publish_review to silently upgrade the existing review", "Discloses the successful and failed actions", "Does not request or send a second push", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-weekly-review",
     "query": "One quote source disagrees with another and USD/ILS is unavailable.",
-    "expected_behavior": ["Discloses the conflict", "Uses the last valid deterministic valuation with stale labeling"]
+    "expected_behavior": ["Discloses the conflict", "Uses the last valid deterministic valuation with stale labeling", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-weekly-review",
     "query": "Recovery was poor and training adherence fell this week.",
-    "expected_behavior": ["Makes training recommendations only", "Does not mutate the training plan"]
+    "expected_behavior": ["Makes training recommendations only", "Does not mutate the training plan", "Renders the exact published review text as the final assistant response"]
   },
   {
     "skill": "klaus-weekly-review",
     "query": "A repeated scheduling pattern appears in three weeks of evidence.",
-    "expected_behavior": ["Proposes a learned preference with evidence", "Provides an explicit veto instead of silently creating a directive"]
+    "expected_behavior": ["Proposes a learned preference with evidence", "Provides an explicit veto instead of silently creating a directive", "Renders the exact published review text as the final assistant response"]
   }
 ]

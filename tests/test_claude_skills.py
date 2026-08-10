@@ -95,3 +95,29 @@ def test_routine_skills_forbid_write_based_schema_discovery():
     ).read_text().lower()
     for field in ("summary", "mood", "current_focus", "recent_context", "highlights"):
         assert field in nightly
+
+
+def test_routine_skills_render_exact_published_text_after_success():
+    for name in (
+        "klaus-morning-review",
+        "klaus-nightly-review",
+        "klaus-weekly-review",
+    ):
+        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+        assert "exact published review text" in text
+        assert "final assistant response" in text
+        assert "do not replace it with an acknowledgement" in text
+        assert "do not call `publish_review` again" in text
+        assert "if `publish_review` fails" in text
+
+
+def test_skill_version_is_7_1_0_everywhere():
+    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+
+    assert EXPECTED_SKILL_VERSION == "7.1.0"
+    assert '"skill_version": "7.1.0"' in (
+        ROOT / "core" / "subscription_routines.py"
+    ).read_text()
+    assert "Expected Claude skill version: `7.1.0`" in (
+        ROOT / "core" / "self_manifest.py"
+    ).read_text()

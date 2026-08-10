@@ -32,10 +32,10 @@ and [Remote Routines](https://code.claude.com/docs/en/routines).
 - [ ] Use `docs/AGENT.md` for the JARVIS/C-3PO “Sir” voice and explicitly state
   that Klaus backend data and Pinecone memory are authoritative.
 - [ ] Upload the four ZIP files from `claude/dist/`:
-  `klaus-live-agent-7.0.0.zip`, `klaus-morning-review-7.0.0.zip`,
-  `klaus-nightly-review-7.0.0.zip`, and `klaus-weekly-review-7.0.0.zip`.
+  `klaus-live-agent-7.1.0.zip`, `klaus-morning-review-7.1.0.zip`,
+  `klaus-nightly-review-7.1.0.zip`, and `klaus-weekly-review-7.1.0.zip`.
 - [ ] Run `python scripts/package_claude_skills.py --check` and confirm the
-  uploaded version matches MCP metadata `7.0.0`.
+  uploaded version matches MCP metadata `7.1.0`.
 - [ ] Test proactive recall, durable-only remember, one reversible task write
   in a test environment, and the high-risk prepared-action flow.
 - [ ] Set `KLAUS_CAPABILITY_SKILL_VERIFIED=true` after the private skill loads
@@ -55,6 +55,8 @@ and [Remote Routines](https://code.claude.com/docs/en/routines).
 - [ ] With the computer off, trigger one routine and verify it reads Klaus MCP.
 - [ ] Verify it calls `publish_review`, correlates to the queued run, and never
   receives `klaus.approve` or training-plan mutation tools.
+- [ ] After a successful publication, verify the final Routine response renders
+  the exact published review text without another `publish_review` call or push.
 - [ ] Set `KLAUS_CAPABILITY_ROUTINE_VERIFIED=true` and
   `KLAUS_CAPABILITY_PUBLISH_VERIFIED=true` only after both proofs pass.
 
