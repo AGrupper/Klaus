@@ -167,11 +167,10 @@ def _validate_custom_tool_arguments(
     violation = next(validator.iter_errors(arguments), None)
     if violation is None:
         return
-    location = ".".join(str(part) for part in violation.absolute_path) or "root"
     rule = str(violation.validator or "schema")
-    raise MCPToolError(
-        f"Invalid arguments for {tool_name}: schema rule {rule} failed at {location}"
-    )
+    # ``absolute_path`` can include attacker-controlled keys from maps such as
+    # portfolio quotes.  Return only schema-owned context to the remote client.
+    raise MCPToolError(f"Invalid arguments for {tool_name}: schema rule {rule} failed")
 
 
 class KlausMCPGateway:

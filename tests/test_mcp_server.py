@@ -257,6 +257,55 @@ def test_custom_schema_rejects_invalid_arguments_before_any_side_effect(
     assert recorder.operations == []
 
 
+def test_custom_schema_error_does_not_disclose_dynamic_object_keys():
+    """Validation errors must not echo payload-controlled nested object paths."""
+    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+
+    recorder = _GatewaySideEffectRecorder()
+    gateway = KlausMCPGateway(
+        dispatcher=recorder.dispatcher,
+        custom_handlers={
+            "publish_portfolio_snapshot": recorder.custom_handler,
+        },
+        idempotency_store=recorder,
+        auditor=recorder.audit,
+        calendar_ownership_checker=recorder.check_calendar_ownership,
+    )
+    secret_quote_key = "customer-secret-123"
+    secret_value = "private-price-marker"
+
+    with pytest.raises(
+        MCPToolError,
+        match="Invalid arguments for publish_portfolio_snapshot",
+    ) as caught:
+        asyncio.run(
+            gateway.execute(
+                endpoint="routine",
+                tool_name="publish_portfolio_snapshot",
+                arguments={
+                    "week": "2026-08-09",
+                    "quotes": {
+                        secret_quote_key: {
+                            "price": secret_value,
+                        },
+                    },
+                },
+                token=_token(
+                    "klaus.read",
+                    "klaus.write",
+                    "klaus.routine",
+                    resource="https://klaus.example.com/mcp/routine",
+                ),
+                idempotency_key="private-quote-invalid",
+            )
+        )
+
+    safe_message = str(caught.value)
+    assert secret_quote_key not in safe_message
+    assert secret_value not in safe_message
+    assert recorder.operations == []
+
+
 def test_custom_schema_allows_valid_arguments_to_reach_handler():
     """Schema enforcement must not block a valid custom handler invocation."""
     from interfaces.mcp_server import KlausMCPGateway
