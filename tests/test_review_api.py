@@ -35,6 +35,14 @@ REVIEWS = {
         "action_ids": ["task-1"],
         "partial_actions": [{"tool": "task_edit", "error": "conflict"}],
         "published_at": "2026-08-10T22:15:00+00:00",
+        "remote_trigger_result": {
+            "claude_code_session_url": "https://evil.example/code/session_provider",
+            "provider_token": "provider-token-must-not-reach-browser",
+        },
+        "raw_provider_response": "raw-provider-payload-must-not-reach-browser",
+        "provider_bearer_token": "bearer-token-must-not-reach-browser",
+        "untrusted_url": "https://evil.example/should-not-be-a-review-field",
+        "extra_field": "extra-review-data-must-not-reach-browser",
     },
     ("morning", "2026-08-10"): {
         "review_id": "morning:2026-08-10",
@@ -48,6 +56,42 @@ REVIEWS = {
         "published_at": "2026-08-10T07:30:00+00:00",
     },
 }
+
+_CLIENT_REVIEW_FIELDS = frozenset({
+    "review_id",
+    "correlation_id",
+    "routine",
+    "target_date",
+    "routine_status",
+    "provider",
+    "review_text",
+    "structured",
+    "action_ids",
+    "partial_actions",
+    "published_at",
+})
+_HOSTILE_REVIEW_MARKERS = (
+    "remote_trigger_result",
+    "provider-token-must-not-reach-browser",
+    "raw-provider-payload-must-not-reach-browser",
+    "bearer-token-must-not-reach-browser",
+    "https://evil.example/should-not-be-a-review-field",
+    "extra-review-data-must-not-reach-browser",
+)
+
+
+def _expected_public_review(review: dict, claude_session_url: str) -> dict:
+    """Build the API contract's approved review shape from a stored fixture."""
+    return {
+        **{key: review[key] for key in _CLIENT_REVIEW_FIELDS if key in review},
+        "claude_session_url": claude_session_url,
+    }
+
+
+def _assert_no_hostile_review_data(response) -> None:
+    """Ensure raw provider fields cannot leak through a serialized API response."""
+    for marker in _HOSTILE_REVIEW_MARKERS:
+        assert marker not in response.text
 
 
 def _stub_web_server_imports() -> dict:
@@ -138,19 +182,24 @@ def review_client(monkeypatch):
 
 def test_review_list_returns_newest_reviews_and_safe_session_links(review_client):
     """The inbox sorts reviews and exposes only normalised session navigation URLs."""
-    client, _reviews, _runs, _ws, _hub_auth = review_client
+    client, reviews, _runs, _ws, _hub_auth = review_client
 
     response = client.get("/api/reviews?limit=20")
 
     assert response.status_code == 200, response.text
-    reviews = response.json()["reviews"]
-    assert [review["review_id"] for review in reviews] == [
-        "nightly:2026-08-10",
-        "morning:2026-08-10",
-    ]
-    assert reviews[0]["claude_session_url"] == "https://claude.ai/code/session_nightly"
-    assert reviews[1]["claude_session_url"] == "https://claude.ai/epitaxy/session_morning"
-    assert all("remote_trigger_result" not in review for review in reviews)
+    assert response.json() == {
+        "reviews": [
+            _expected_public_review(
+                reviews[("nightly", "2026-08-10")],
+                "https://claude.ai/code/session_nightly",
+            ),
+            _expected_public_review(
+                reviews[("morning", "2026-08-10")],
+                "https://claude.ai/epitaxy/session_morning",
+            ),
+        ]
+    }
+    _assert_no_hostile_review_data(response)
 
 
 def test_review_detail_returns_full_canonical_review(review_client):
@@ -161,11 +210,12 @@ def test_review_detail_returns_full_canonical_review(review_client):
 
     assert response.status_code == 200, response.text
     assert response.json() == {
-        "review": {
-            **reviews[("nightly", "2026-08-10")],
-            "claude_session_url": "https://claude.ai/code/session_nightly",
-        }
+        "review": _expected_public_review(
+            reviews[("nightly", "2026-08-10")],
+            "https://claude.ai/code/session_nightly",
+        )
     }
+    _assert_no_hostile_review_data(response)
 
 
 def test_review_detail_recovers_safe_link_from_correlated_legacy_run(review_client):
