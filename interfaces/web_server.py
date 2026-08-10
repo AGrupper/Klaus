@@ -4201,22 +4201,103 @@ async def api_shadow_routine(
         content=result,
     )
 
+_REVIEW_CLIENT_FIELDS = frozenset({
+    "review_id",
+    "correlation_id",
+    "routine",
+    "target_date",
+    "routine_status",
+    "provider",
+    "review_text",
+    "structured",
+    "action_ids",
+    "partial_actions",
+    "published_at",
+})
+
+
+def _review_for_client(review: dict, runs) -> dict:
+    """Return a browser-safe canonical review with optional Claude navigation."""
+    from core.review_delivery import normalise_claude_session_url
+
+    result = {
+        key: value for key, value in review.items() if key in _REVIEW_CLIENT_FIELDS
+    }
+    session_url = normalise_claude_session_url(review.get("claude_session_url"))
+    if not session_url and review.get("correlation_id"):
+        run = runs.get(str(review["correlation_id"])) or {}
+        session_url = normalise_claude_session_url(run.get("claude_session_url"))
+        if not session_url:
+            remote = run.get("remote_trigger_result")
+            session_url = normalise_claude_session_url(
+                remote.get("claude_code_session_url")
+                if isinstance(remote, dict)
+                else None
+            )
+    if session_url:
+        result["claude_session_url"] = session_url
+    return result
+
+
 @app.get("/api/reviews")
 async def api_reviews(
     limit: int = Query(default=20, ge=1, le=60),
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
-    """Return published morning, nightly, and weekly reviews."""
-    from memory.firestore_db import RoutineReviewStore, _jsonsafe_doc
+    """Return published morning, nightly, and weekly reviews for the inbox."""
+    from memory.firestore_db import RoutineReviewStore, RoutineRunStore, _jsonsafe_doc
 
-    store = RoutineReviewStore(
-        os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
-        os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+    project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+    database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+    reviews_store = RoutineReviewStore(project, database)
+    runs_store = RoutineRunStore(project, database)
+
+    def load_reviews() -> list[dict]:
+        reviews = reviews_store.list_recent(min(limit, 31))
+        return [
+            _review_for_client(review, runs_store)
+            for review in reviews[:limit]
+        ]
+
+    reviews = await asyncio.get_running_loop().run_in_executor(None, load_reviews)
+    return JSONResponse(
+        content={"reviews": [_jsonsafe_doc(review) for review in reviews]}
     )
-    reviews = await asyncio.get_running_loop().run_in_executor(
-        None, store.list_recent, min(limit, 31)
-    )
-    return JSONResponse(content={"reviews": _jsonsafe_doc(reviews[:limit])})
+
+
+@app.get("/api/reviews/{routine}/{target_date}")
+async def api_review_detail(
+    routine: Literal["morning", "nightly", "weekly"],
+    target_date: str,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Return one canonical review, recovering only a safe legacy session URL."""
+    try:
+        parsed_date = _date_cls.fromisoformat(target_date)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail={"error": "target_date must be YYYY-MM-DD"}
+        ) from exc
+    if parsed_date.isoformat() != target_date:
+        raise HTTPException(
+            status_code=422, detail={"error": "target_date must be YYYY-MM-DD"}
+        )
+
+    from memory.firestore_db import RoutineReviewStore, RoutineRunStore, _jsonsafe_doc
+
+    project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
+    database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
+    reviews_store = RoutineReviewStore(project, database)
+    runs_store = RoutineRunStore(project, database)
+
+    def load_review() -> dict | None:
+        review = reviews_store.get(routine, target_date)
+        return _review_for_client(review, runs_store) if review is not None else None
+
+    review = await asyncio.get_running_loop().run_in_executor(None, load_review)
+    if review is None:
+        raise HTTPException(status_code=404, detail={"error": "review not found"})
+    return JSONResponse(content={"review": _jsonsafe_doc(review)})
 
 
 @app.get("/api/activity")
