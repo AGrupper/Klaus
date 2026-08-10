@@ -112,6 +112,218 @@ def test_custom_tools_publish_exact_nested_argument_schemas():
     ]
 
 
+class _GatewaySideEffectRecorder:
+    """Record every operation that schema validation must precede."""
+
+    def __init__(self):
+        self.operations = []
+
+    def begin(self, key, *, tool_name, payload, origin):
+        self.operations.append(("idempotency_begin", key, tool_name, payload, origin))
+        return {"is_new": True, "status": "running"}
+
+    def mark_executed(self, key, result):
+        self.operations.append(("idempotency_mark_executed", key, result))
+
+    def complete(self, key):
+        self.operations.append(("idempotency_complete", key))
+
+    def fail(self, key, error):
+        self.operations.append(("idempotency_fail", key, error))
+
+    def custom_handler(self, arguments):
+        self.operations.append(("custom_handler", arguments))
+        return {"ok": True}
+
+    def dispatcher(self, tool_name, arguments):
+        self.operations.append(("dispatcher", tool_name, arguments))
+        return {"ok": True}
+
+    def audit(self, **entry):
+        self.operations.append(("audit", entry))
+
+    def check_calendar_ownership(self, event_id, calendar_id):
+        self.operations.append(("calendar_ownership", event_id, calendar_id))
+        return True
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "tool_name", "arguments", "scopes", "idempotency_key"),
+    [
+        (
+            "interactive",
+            "get_life_snapshot",
+            {"unexpected": True},
+            ("klaus.read",),
+            None,
+        ),
+        (
+            "interactive",
+            "get_routine_status",
+            {},
+            ("klaus.read",),
+            None,
+        ),
+        (
+            "interactive",
+            "prepare_high_risk_action",
+            {"action_type": "harmless_probe", "payload": {}},
+            ("klaus.read", "klaus.write"),
+            "invalid-enum",
+        ),
+        (
+            "routine",
+            "publish_review",
+            {
+                "correlation_id": "routine-1",
+                "routine": "nightly",
+                "target_date": "2026-99-99",
+                "text": "Final review",
+                "structured": {},
+                "action_ids": [],
+                "partial_actions": [],
+            },
+            ("klaus.read", "klaus.write", "klaus.routine"),
+            "invalid-date",
+        ),
+        (
+            "interactive",
+            "upsert_portfolio_holding",
+            {
+                "ticker": "KLAUS",
+                "exchange": "TEST",
+                "quantity": 1,
+                "source_urls": ["not a uri"],
+            },
+            ("klaus.read", "klaus.write"),
+            "invalid-uri",
+        ),
+        (
+            "interactive",
+            "upsert_portfolio_holding",
+            {
+                "ticker": "KLAUS",
+                "exchange": "TEST",
+                "quantity": 1,
+                "observed_at": "sometime yesterday",
+            },
+            ("klaus.read", "klaus.write"),
+            "invalid-date-time",
+        ),
+    ],
+    ids=[
+        "unknown-field",
+        "missing-required",
+        "invalid-enum",
+        "invalid-date",
+        "invalid-uri",
+        "invalid-date-time",
+    ],
+)
+def test_custom_schema_rejects_invalid_arguments_before_any_side_effect(
+    endpoint, tool_name, arguments, scopes, idempotency_key
+):
+    """Strict custom schemas must be enforced before any stateful operation."""
+    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+
+    recorder = _GatewaySideEffectRecorder()
+    gateway = KlausMCPGateway(
+        dispatcher=recorder.dispatcher,
+        custom_handlers={tool_name: recorder.custom_handler},
+        idempotency_store=recorder,
+        auditor=recorder.audit,
+        calendar_ownership_checker=recorder.check_calendar_ownership,
+    )
+    resource = f"https://klaus.example.com/mcp/{endpoint}"
+
+    with pytest.raises(
+        MCPToolError,
+        match=f"Invalid arguments for {tool_name}",
+    ) as caught:
+        asyncio.run(
+            gateway.execute(
+                endpoint=endpoint,
+                tool_name=tool_name,
+                arguments=arguments,
+                token=_token(*scopes, resource=resource),
+                idempotency_key=idempotency_key,
+            )
+        )
+
+    safe_message = str(caught.value)
+    assert len(safe_message) < 160
+    for private_value in ("harmless_probe", "not a uri", "sometime yesterday"):
+        assert private_value not in safe_message
+    assert recorder.operations == []
+
+
+def test_custom_schema_allows_valid_arguments_to_reach_handler():
+    """Schema enforcement must not block a valid custom handler invocation."""
+    from interfaces.mcp_server import KlausMCPGateway
+
+    recorder = _GatewaySideEffectRecorder()
+    gateway = KlausMCPGateway(
+        dispatcher=recorder.dispatcher,
+        custom_handlers={"get_routine_status": recorder.custom_handler},
+    )
+
+    result = asyncio.run(
+        gateway.execute(
+            endpoint="interactive",
+            tool_name="get_routine_status",
+            arguments={"correlation_id": "routine-1"},
+            token=_token("klaus.read"),
+        )
+    )
+
+    assert result == {"ok": True}
+    assert recorder.operations == [
+        ("custom_handler", {"correlation_id": "routine-1", "_mcp_origin": "interactive"})
+    ]
+
+
+def test_empty_object_custom_schema_rejects_extras_before_dispatcher():
+    """A custom schema remains enforced even if no custom handler is installed."""
+    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+
+    recorder = _GatewaySideEffectRecorder()
+    gateway = KlausMCPGateway(dispatcher=recorder.dispatcher)
+
+    with pytest.raises(MCPToolError, match="Invalid arguments for get_life_snapshot"):
+        asyncio.run(
+            gateway.execute(
+                endpoint="interactive",
+                tool_name="get_life_snapshot",
+                arguments={"probe": "must not dispatch"},
+                token=_token("klaus.read"),
+            )
+        )
+
+    assert recorder.operations == []
+
+
+def test_legacy_tool_without_custom_schema_preserves_existing_argument_behavior():
+    """Only the explicit custom-schema registry is enforced at this boundary."""
+    from interfaces.mcp_server import KlausMCPGateway
+
+    recorder = _GatewaySideEffectRecorder()
+    gateway = KlausMCPGateway(dispatcher=recorder.dispatcher)
+
+    result = asyncio.run(
+        gateway.execute(
+            endpoint="interactive",
+            tool_name="task_list",
+            arguments={"legacy_extra": "still-dispatched"},
+            token=_token("klaus.read"),
+        )
+    )
+
+    assert result == {"ok": True}
+    assert recorder.operations == [
+        ("dispatcher", "task_list", {"legacy_extra": "still-dispatched"})
+    ]
+
+
 def test_capability_gate_can_mount_a_strictly_read_only_interactive_catalog():
     from interfaces.mcp_server import create_mcp_bundle
 

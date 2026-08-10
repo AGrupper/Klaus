@@ -5,8 +5,10 @@ import asyncio
 import inspect
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Annotated, Any, Awaitable, Callable
 
+from jsonschema import Draft202012Validator, FormatChecker
 from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken
@@ -144,6 +146,34 @@ Auditor = Callable[..., Any | Awaitable[Any]]
 CalendarOwnershipChecker = Callable[[str, str | None], bool | Awaitable[bool]]
 
 
+@lru_cache(maxsize=None)
+def _custom_tool_validator(tool_name: str) -> Draft202012Validator | None:
+    """Build and cache the validator for one explicitly registered custom tool."""
+    schema = custom_tool_schema(tool_name)
+    if schema is None:
+        return None
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema, format_checker=FormatChecker())
+
+
+def _validate_custom_tool_arguments(
+    tool_name: str,
+    arguments: dict[str, Any],
+) -> None:
+    """Reject malformed custom-tool arguments without echoing their payload."""
+    validator = _custom_tool_validator(tool_name)
+    if validator is None:
+        return
+    violation = next(validator.iter_errors(arguments), None)
+    if violation is None:
+        return
+    location = ".".join(str(part) for part in violation.absolute_path) or "root"
+    rule = str(violation.validator or "schema")
+    raise MCPToolError(
+        f"Invalid arguments for {tool_name}: schema rule {rule} failed at {location}"
+    )
+
+
 class KlausMCPGateway:
     """Server-side scope, endpoint, idempotency, and trust boundary."""
 
@@ -212,6 +242,7 @@ class KlausMCPGateway:
 
         if not isinstance(arguments, dict):
             raise MCPToolError("arguments must be an object")
+        _validate_custom_tool_arguments(tool_name, arguments)
         if endpoint == "routine" and tool_name in {
             "update_calendar_event",
             "delete_calendar_event",
