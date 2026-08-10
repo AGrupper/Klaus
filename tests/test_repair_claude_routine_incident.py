@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime
 import json
 
 import pytest
@@ -12,6 +13,10 @@ JOURNAL_PATH = "journal/2026-08-09"
 SELF_STATE_PATH = "config/self_state"
 RUN_PATH = "routine_runs/a485e1a9914893c100eb2dce1d25b53e"
 CORRELATION_ID = "a485e1a9914893c100eb2dce1d25b53e"
+REVIEW_PUBLISHED_AT = "2026-08-09T19:20:39.984292+00:00"
+JOURNAL_UPDATED_AT = "2026-08-09T19:20:39.838000+00:00"
+RUN_CREATED_AT = "2026-08-09T19:15:03.441538+00:00"
+RUN_PUBLISHED_AT = "2026-08-09T19:20:39.683017+00:00"
 
 
 class FakeSnapshot:
@@ -153,7 +158,7 @@ def incident_documents() -> dict[str, dict]:
             },
             "action_ids": [],
             "partial_actions": [],
-            "published_at": "2026-08-09T20:00:00+00:00",
+            "published_at": REVIEW_PUBLISHED_AT,
             "updated_at": "observed-review-update-time",
         },
         JOURNAL_PATH: {
@@ -162,7 +167,7 @@ def incident_documents() -> dict[str, dict]:
             "source": "claude_subscription",
             "correlation_id": CORRELATION_ID,
             "date": "2026-08-09",
-            "updated_at": "observed-journal-update-time",
+            "updated_at": JOURNAL_UPDATED_AT,
         },
         SELF_STATE_PATH: {
             "identity_summary": "Klaus is Amit's personal hybrid agent.",
@@ -181,7 +186,8 @@ def incident_documents() -> dict[str, dict]:
             "target_date": "2026-08-09",
             "status": "published_claude",
             "review_id": "nightly:2026-08-09",
-            "published_at": "2026-08-09T20:00:00+00:00",
+            "created_at": RUN_CREATED_AT,
+            "published_at": RUN_PUBLISHED_AT,
         },
     }
 
@@ -203,7 +209,7 @@ def test_repair_replaces_only_known_incident_data_and_preserves_morning_state():
     assert client.commit_calls == 1
     assert client.docs[REVIEW_PATH]["review_text"].startswith("Invalidated nightly review")
     assert client.docs[REVIEW_PATH]["correlation_id"] == CORRELATION_ID
-    assert client.docs[REVIEW_PATH]["published_at"] == "2026-08-09T20:00:00+00:00"
+    assert client.docs[REVIEW_PATH]["published_at"] == REVIEW_PUBLISHED_AT
     assert JOURNAL_PATH not in client.docs
     assert "proposed_mood" not in client.docs[SELF_STATE_PATH]
     assert "source" not in client.docs[SELF_STATE_PATH]
@@ -263,6 +269,39 @@ def test_repair_aborts_before_creating_a_batch_when_journal_has_extra_content():
     assert client.docs == documents
 
 
+def test_repair_aborts_before_creating_a_batch_when_journal_update_time_changes():
+    """A journal timestamp change means the whole document is no longer deletable."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[JOURNAL_PATH]["updated_at"] = "2026-08-09T19:21:00+00:00"
+    client = FakeFirestoreClient(documents)
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.batch_created == 0
+    assert client.commit_calls == 0
+    assert client.docs == documents
+
+
+def test_repair_accepts_firestore_datetime_audit_values():
+    """Timestamp preconditions normalize Firestore datetime values and ISO strings."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[REVIEW_PATH]["published_at"] = datetime.fromisoformat(REVIEW_PUBLISHED_AT)
+    documents[JOURNAL_PATH]["updated_at"] = datetime.fromisoformat(JOURNAL_UPDATED_AT)
+    documents[RUN_PATH]["created_at"] = datetime.fromisoformat(RUN_CREATED_AT)
+    documents[RUN_PATH]["published_at"] = datetime.fromisoformat(RUN_PUBLISHED_AT)
+    client = FakeFirestoreClient(documents)
+
+    result = repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert result["repaired"] is True
+    assert client.commit_calls == 1
+
+
 def test_repair_aborts_before_creating_a_batch_when_self_state_incident_value_changed():
     """A changed incident-owned self-state value is not safe to delete."""
     from scripts.repair_claude_routine_incident import repair_incident
@@ -301,6 +340,31 @@ def test_repair_aborts_before_creating_a_batch_when_routine_run_identity_changes
     assert client.docs == documents
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("created_at", "2026-08-09T19:16:00+00:00"),
+        ("published_at", "2026-08-09T19:21:00+00:00"),
+    ],
+)
+def test_repair_aborts_before_creating_a_batch_when_routine_run_audit_time_changes(
+    field, value
+):
+    """The batch is limited to the documented run, including its audit times."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    documents = incident_documents()
+    documents[RUN_PATH][field] = value
+    client = FakeFirestoreClient(documents)
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+
+    assert client.batch_created == 0
+    assert client.commit_calls == 0
+    assert client.docs == documents
+
+
 def test_repair_is_idempotent_after_a_completed_invalidation():
     """A rerun reports its safe terminal state without a second commit."""
     from scripts.repair_claude_routine_incident import repair_incident
@@ -325,6 +389,32 @@ def test_repair_rejects_an_altered_already_repaired_shape():
     client = FakeFirestoreClient(incident_documents())
     repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
     client.docs[RUN_PATH]["review_id"] = "nightly:other-date"
+
+    with pytest.raises(ValueError, match="precondition"):
+        repair_incident(client, repaired_at="2026-08-10T10:00:00+00:00")
+
+    assert client.commit_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("published_at", "2026-08-09T19:21:00+00:00"),
+        ("published_at", None),
+    ],
+)
+def test_repair_rejects_altered_or_missing_review_audit_time_after_repair(
+    field, value
+):
+    """A repair-shaped review still needs its immutable publication audit time."""
+    from scripts.repair_claude_routine_incident import repair_incident
+
+    client = FakeFirestoreClient(incident_documents())
+    repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
+    if value is None:
+        client.docs[REVIEW_PATH].pop(field)
+    else:
+        client.docs[REVIEW_PATH][field] = value
 
     with pytest.raises(ValueError, match="precondition"):
         repair_incident(client, repaired_at="2026-08-10T10:00:00+00:00")

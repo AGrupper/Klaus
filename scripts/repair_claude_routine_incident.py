@@ -24,6 +24,10 @@ from google.cloud import firestore
 INCIDENT_DATE = "2026-08-09"
 INCIDENT_CORRELATION_ID = "a485e1a9914893c100eb2dce1d25b53e"
 INCIDENT_REASON = "schema-probe placeholder published by Claude nightly routine"
+REVIEW_PUBLISHED_AT = "2026-08-09T19:20:39.984292+00:00"
+JOURNAL_UPDATED_AT = "2026-08-09T19:20:39.838000+00:00"
+RUN_CREATED_AT = "2026-08-09T19:15:03.441538+00:00"
+RUN_PUBLISHED_AT = "2026-08-09T19:20:39.683017+00:00"
 
 REVIEW_PATH = f"nightly_reviews/{INCIDENT_DATE}"
 JOURNAL_PATH = f"journal/{INCIDENT_DATE}"
@@ -42,6 +46,7 @@ PLACEHOLDER_JOURNAL = {
     "source": "claude_subscription",
     "correlation_id": INCIDENT_CORRELATION_ID,
     "date": INCIDENT_DATE,
+    "updated_at": JOURNAL_UPDATED_AT,
 }
 PLACEHOLDER_SELF_STATE = {
     "source": "claude_subscription",
@@ -58,6 +63,27 @@ INVALIDATED_STRUCTURED = {
     "original_placeholder_removed": True,
 }
 DOCUMENT_NAMES = ["nightly_review", "journal", "self_state", "routine_run"]
+
+
+def _normalise_audit_timestamp(value: Any) -> str | None:
+    """Return a UTC ISO timestamp for Firestore datetime or ISO-string values."""
+    if isinstance(value, datetime):
+        timestamp = value
+    elif isinstance(value, str):
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if timestamp.tzinfo is None:
+        return None
+    return timestamp.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _matches_audit_timestamp(value: Any, expected: str) -> bool:
+    """Compare an audit timestamp after normalizing strings and Firestore values."""
+    return _normalise_audit_timestamp(value) == expected
 
 
 def _read_incident_documents(
@@ -91,6 +117,7 @@ def _is_already_repaired(documents: dict[str, dict[str, Any] | None]) -> bool:
         and review.get("target_date") == INCIDENT_DATE
         and review.get("routine_status") == "published_claude"
         and review.get("review_id") == f"nightly:{INCIDENT_DATE}"
+        and _matches_audit_timestamp(review.get("published_at"), REVIEW_PUBLISHED_AT)
         and review.get("review_text") == INVALIDATED_REVIEW_TEXT
         and review.get("structured") == INVALIDATED_STRUCTURED
         and review.get("invalid_reason") == INCIDENT_REASON
@@ -104,6 +131,8 @@ def _is_already_repaired(documents: dict[str, dict[str, Any] | None]) -> bool:
         and routine_run.get("target_date") == INCIDENT_DATE
         and routine_run.get("status") == "published_claude"
         and routine_run.get("review_id") == f"nightly:{INCIDENT_DATE}"
+        and _matches_audit_timestamp(routine_run.get("created_at"), RUN_CREATED_AT)
+        and _matches_audit_timestamp(routine_run.get("published_at"), RUN_PUBLISHED_AT)
         and routine_run.get("incident_invalidated") is True
         and routine_run.get("incident_reason") == INCIDENT_REASON
         and bool(routine_run.get("incident_repaired_at"))
@@ -122,14 +151,19 @@ def _require_incident_preconditions(documents: dict[str, dict[str, Any] | None])
         review.get("correlation_id") != INCIDENT_CORRELATION_ID
         or review.get("routine") != "nightly"
         or review.get("target_date") != INCIDENT_DATE
+        or not _matches_audit_timestamp(review.get("published_at"), REVIEW_PUBLISHED_AT)
         or review.get("review_text") != PLACEHOLDER_REVIEW_TEXT
         or review.get("structured") != PLACEHOLDER_STRUCTURED
     ):
         raise ValueError("incident precondition failed: nightly review differs")
-    expected_journal_keys = set(PLACEHOLDER_JOURNAL) | {"updated_at"}
+    expected_journal_keys = set(PLACEHOLDER_JOURNAL)
+    expected_journal_values = {
+        key: value for key, value in PLACEHOLDER_JOURNAL.items() if key != "updated_at"
+    }
     if (
         set(journal) != expected_journal_keys
-        or any(journal.get(key) != value for key, value in PLACEHOLDER_JOURNAL.items())
+        or any(journal.get(key) != value for key, value in expected_journal_values.items())
+        or not _matches_audit_timestamp(journal.get("updated_at"), JOURNAL_UPDATED_AT)
     ):
         raise ValueError("incident precondition failed: journal differs")
     if any(self_state.get(key) != value for key, value in PLACEHOLDER_SELF_STATE.items()):
@@ -140,6 +174,8 @@ def _require_incident_preconditions(documents: dict[str, dict[str, Any] | None])
         or routine_run.get("target_date") != INCIDENT_DATE
         or routine_run.get("status") != "published_claude"
         or routine_run.get("review_id") != f"nightly:{INCIDENT_DATE}"
+        or not _matches_audit_timestamp(routine_run.get("created_at"), RUN_CREATED_AT)
+        or not _matches_audit_timestamp(routine_run.get("published_at"), RUN_PUBLISHED_AT)
     ):
         raise ValueError("incident precondition failed: routine run differs")
 
