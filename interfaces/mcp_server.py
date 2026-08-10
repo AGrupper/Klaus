@@ -271,14 +271,16 @@ class KlausMCPGateway:
             if not claim.get("is_new"):
                 status = claim.get("status")
                 if status == "succeeded":
-                    return dict(claim.get("result") or {})
+                    return self._outward_result(
+                        tool_name, dict(claim.get("result") or {})
+                    )
                 if status == "executed":
                     result = dict(claim.get("result") or {})
                     await self._audit(
                         endpoint, tool_name, arguments, idempotency_key or "", result
                     )
                     await asyncio.to_thread(self._idempotency_store.complete, idempotency_key)
-                    return result
+                    return self._outward_result(tool_name, result)
                 raise MCPToolError(f"Idempotent write is already {status}")
 
         executed = False
@@ -326,6 +328,15 @@ class KlausMCPGateway:
         if not isinstance(result, dict):
             result = {"data": result}
         return result
+
+    @staticmethod
+    def _outward_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+        """Sanitize legacy cached results only where the routine-run contract applies."""
+        if tool_name != "publish_review" or "run" not in result:
+            return result
+        from core.review_delivery import public_routine_run
+
+        return {**result, "run": public_routine_run(result.get("run"))}
 
     async def _audit(
         self,

@@ -8,6 +8,12 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.server.auth.provider import AccessToken
 
+from tests.test_review_delivery import (
+    assert_public_routine_run,
+    expected_public_routine_run,
+    hostile_routine_run,
+)
+
 
 def _token(*scopes: str, resource: str = "https://klaus.example.com/mcp/interactive"):
     return AccessToken(
@@ -539,6 +545,88 @@ def test_successful_write_is_deduplicated_and_audited_once():
     assert calls == [("task_create", {"title": "Plan week"})]
     assert len(audits) == 1
     assert audits[0]["idempotency_key"] == "same-request"
+
+
+@pytest.mark.parametrize("replay_status", ("succeeded", "executed"))
+def test_publish_review_replay_sanitizes_legacy_cached_run_without_mutating_it(
+    replay_status,
+):
+    """Legacy cached routine runs must be safe on both gateway replay paths."""
+    from interfaces.mcp_server import KlausMCPGateway
+
+    stored_run = hostile_routine_run(status="published_claude")
+    cached_result = {
+        "review": {"review_id": "morning:2026-08-10", "review_text": "Published."},
+        "run": stored_run,
+        "delivery": {"sent": 1},
+    }
+    handler_calls = []
+    audit_calls = []
+
+    class ReplayStore:
+        def __init__(self):
+            self.completed = []
+
+        @staticmethod
+        def begin(_key, **_kwargs):
+            return {
+                "is_new": False,
+                "status": replay_status,
+                "result": cached_result,
+            }
+
+        def complete(self, key):
+            self.completed.append(key)
+
+    store = ReplayStore()
+    gateway = KlausMCPGateway(
+        dispatcher=lambda _name, _arguments: pytest.fail("dispatcher must not run"),
+        custom_handlers={
+            "publish_review": lambda arguments: handler_calls.append(arguments),
+        },
+        idempotency_store=store,
+        auditor=lambda **entry: audit_calls.append(entry),
+    )
+
+    result = asyncio.run(
+        gateway.execute(
+            endpoint="routine",
+            tool_name="publish_review",
+            arguments={
+                "correlation_id": stored_run["correlation_id"],
+                "routine": stored_run["routine"],
+                "target_date": stored_run["target_date"],
+                "text": "Published.",
+                "structured": {},
+                "action_ids": [],
+                "partial_actions": [],
+            },
+            token=_token(
+                "klaus.read",
+                "klaus.write",
+                "klaus.routine",
+                resource="https://klaus.example.com/mcp/routine",
+            ),
+            idempotency_key=f"legacy-{replay_status}",
+        )
+    )
+
+    expected_run = expected_public_routine_run(stored_run)
+    assert result == {
+        "review": cached_result["review"],
+        "run": expected_run,
+        "delivery": cached_result["delivery"],
+    }
+    assert_public_routine_run(result["run"], expected_run)
+    assert cached_result["run"] is stored_run
+    assert stored_run["remote_trigger_result"]["provider_secret"] == "remote-provider-secret"
+    assert handler_calls == []
+    if replay_status == "succeeded":
+        assert store.completed == []
+        assert audit_calls == []
+    else:
+        assert store.completed == ["legacy-executed"]
+        assert len(audit_calls) == 1
 
 
 def test_routine_cannot_move_or_delete_user_owned_calendar_event():
