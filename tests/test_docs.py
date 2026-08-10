@@ -210,6 +210,22 @@ def test_self_md_cron_section_matches_the_generator():
     assert Path(root, "docs", "SELF.md").exists()
 
 
+def test_self_md_expected_skill_version_matches_canonical_render():
+    """The committed manifest must expose the live Klaus MCP skill version."""
+    from pathlib import Path
+
+    from core.self_manifest import _compute_schema_hash, _get_source_root, _render_manifest
+    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+
+    root = _get_source_root()
+    fresh = _render_manifest(root, _compute_schema_hash(root))
+    committed = Path(SELF_MD_PATH).read_text(encoding="utf-8")
+    expected_line = f"Expected Claude skill version: `{EXPECTED_SKILL_VERSION}`"
+
+    assert expected_line in fresh
+    assert expected_line in committed
+
+
 def test_deployment_md_section_22_push_endpoints():
     """RESEARCH.md Q10 — DEPLOYMENT.md ends at §21; this phase adds §22 + §23 (NOT §23 + §24)."""
     with open(DEPLOYMENT_PATH, encoding="utf-8") as f:

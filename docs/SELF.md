@@ -1,5 +1,5 @@
 ---
-generated_at: 2026-08-08T00:26:52Z
+generated_at: 2026-08-10T20:16:30Z
 sha: 3c876fb7b9a25e59f34d70e97bed26485944985d
 ---
 
@@ -18,7 +18,7 @@ Klaus is a cloud-hosted personal AI agent deployed on Google Cloud Run, serving 
 
 Klaus v7 is dark-shipped behind independent capability and cutover flags. The supported target is a Claude Project as the conversation surface, with scoped OAuth/MCP access to this Cloud Run backend. Firestore, Postgres, Pinecone, directives, journal, and self-state remain authoritative. The legacy generative/Telegram runtime remains only for proof, rollback, and a seven-day observation; Gemini remains in the target runtime solely for gemini-embedding-2.
 
-MCP resources: `/mcp/interactive` and `/mcp/routine`. Expected Claude skill version: `7.0.0`.
+MCP resources: `/mcp/interactive` and `/mcp/routine`. Expected Claude skill version: `7.1.0`.
 
 ## Model Map
 
