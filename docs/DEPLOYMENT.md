@@ -1755,8 +1755,19 @@ temporarily paused and restored after shadow UAT.
    `KLAUS_ROUTINE_MORNING_CUTOVER=false` and
    `KLAUS_ROUTINE_WEEKLY_CUTOVER=false`; do not enable either independent
    cutover.
-3. Deploy that paused configuration and confirm `/health` succeeds before
-   touching Claude configuration.
+3. Deploy that paused configuration and confirm `/health` succeeds. Inspect the live Cloud Run revision/environment — not just the workflow file — with the established production service check:
+
+   ```bash
+   gcloud run services describe klaus-agent \
+     --project klaus-agent \
+     --region me-west1 \
+     --format='value(spec.template.spec.containers[0].env)'
+   ```
+
+   Confirm all three live routine cutovers are false. Before touching Claude
+   configuration, use the Klaus Routines connector's published MCP tool metadata
+   (`klaus/skillVersion`) and confirm MCP metadata reports expected skill version 7.1.0.
+   A passing health check or a workflow edit alone is not sufficient.
 4. In Claude Customize → Skills, **Upload all four 7.1.0 ZIP files**:
    `claude/dist/klaus-live-agent-7.1.0.zip`,
    `claude/dist/klaus-morning-review-7.1.0.zip`,
@@ -1774,6 +1785,12 @@ temporarily paused and restored after shadow UAT.
    write occurred.
 8. After all three shadows pass, restore only
    `KLAUS_ROUTINE_NIGHTLY_CUTOVER=true`. Leave morning and weekly `false`.
+   Commit and push the restoration, then wait for its deployment; editing the
+   workflow alone is insufficient. After the deployment, verify `/health` and
+   inspect the live Cloud Run environment with the same `gcloud run services
+   describe klaus-agent --project klaus-agent --region me-west1` check above.
+   Confirm nightly=true while morning=false and weekly=false before the live
+   nightly UAT.
 9. Run one nightly live UAT. Confirm exactly one review record and one initial
    push, then verify there is no duplicate review, push, journal, or self-state
    write.
