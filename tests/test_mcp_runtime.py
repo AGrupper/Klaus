@@ -3,6 +3,12 @@ from __future__ import annotations
 
 import pytest
 
+from tests.test_review_delivery import (
+    assert_public_routine_run,
+    expected_public_routine_run,
+    hostile_routine_run,
+)
+
 
 def test_redaction_and_prepared_action_guard_find_nested_secret_aliases():
     from interfaces.mcp_runtime import _redact, _reject_embedded_secrets
@@ -158,6 +164,27 @@ def test_normalise_publish_review_rejects_empty_publication():
 
     with pytest.raises(ValueError, match="review content is required"):
         _normalise_publish_review({})
+
+
+def test_get_routine_status_returns_only_the_public_run_contract(monkeypatch):
+    """Internal provider diagnostics must not cross the MCP status boundary."""
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    stored = hostile_routine_run()
+
+    class RoutineRuns:
+        @staticmethod
+        def get(_correlation_id):
+            return stored
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+
+    result = build_custom_handlers()["get_routine_status"](
+        {"correlation_id": stored["correlation_id"]}
+    )
+
+    assert_public_routine_run(result["run"], expected_public_routine_run(stored))
 
 
 INCIDENT_PAYLOAD = {
@@ -471,3 +498,67 @@ def test_publish_review_late_upgrade_does_not_send_another_push(monkeypatch):
 
     assert result["delivery"] == {"late_upgrade": True, "push_sent": False}
     assert pushes == []
+
+
+@pytest.mark.parametrize(
+    ("delivery_mode", "transition_status"),
+    [
+        ("shadow", "published_claude"),
+        ("live", "published_claude"),
+        ("live", "late_upgraded"),
+    ],
+    ids=("shadow", "initial-publication", "late-upgrade"),
+)
+def test_publish_review_never_returns_internal_run_diagnostics(
+    monkeypatch, delivery_mode, transition_status
+):
+    """All publication results expose an exact public run, never raw diagnostics."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    stored = hostile_routine_run(delivery_mode=delivery_mode)
+
+    class RoutineRuns:
+        @staticmethod
+        def get(_correlation_id):
+            return stored
+
+        @staticmethod
+        def transition_claude_publication(*_args, **_kwargs):
+            return {**stored, "status": transition_status, "review_id": "morning:2026-08-10"}
+
+        @staticmethod
+        def patch(_correlation_id, **fields):
+            return {
+                **stored,
+                "status": transition_status,
+                "review_id": "morning:2026-08-10",
+                **fields,
+            }
+
+    class Reviews:
+        @staticmethod
+        def publish(**kwargs):
+            return kwargs
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
+    monkeypatch.setattr(core.push_sender, "send_push_to_all", lambda *_args: {"sent": 1})
+
+    result = build_custom_handlers()["publish_review"](
+        {
+            "correlation_id": stored["correlation_id"],
+            "routine": stored["routine"],
+            "target_date": stored["target_date"],
+            "text": "Morning review.",
+            "structured": {},
+            "action_ids": [],
+            "partial_actions": [],
+        }
+    )
+
+    expected = expected_public_routine_run(
+        {**stored, "status": transition_status, "review_id": "morning:2026-08-10"}
+    )
+    assert_public_routine_run(result["run"], expected)

@@ -7,6 +7,84 @@ from core.review_delivery import (
 )
 
 
+_PUBLIC_RUN_FIELDS = frozenset({
+    "correlation_id",
+    "routine",
+    "target_date",
+    "status",
+    "provider",
+    "delivery_mode",
+    "created_at",
+    "updated_at",
+    "callback_deadline_at",
+    "published_at",
+    "review_id",
+    "fallback_scheduled",
+    "claude_session_url",
+})
+
+
+def hostile_routine_run(**overrides) -> dict:
+    """Return one internal run containing diagnostics that must stay internal."""
+    run = {
+        "correlation_id": "run-public-1",
+        "routine": "morning",
+        "target_date": "2026-08-10",
+        "status": "running",
+        "provider": "claude_subscription",
+        "delivery_mode": "live",
+        "created_at": "2026-08-10T07:00:00+00:00",
+        "updated_at": "2026-08-10T07:01:00+00:00",
+        "callback_deadline_at": "2026-08-10T07:10:00+00:00",
+        "published_at": None,
+        "review_id": None,
+        "fallback_scheduled": True,
+        "claude_session_url": (
+            "https://www.claude.ai/code/session_01Public?token=url-query-secret"
+        ),
+        "trigger": "trigger-secret",
+        "remote_trigger_result": {
+            "claude_code_session_url": (
+                "https://provider-user:provider-pass@claude.ai/code/session_01Raw"
+            ),
+            "provider_secret": "remote-provider-secret",
+        },
+        "remote_trigger_error": "remote-error-secret",
+        "error": "fallback-error-secret",
+        "shadow_review": {"metadata_secret": "shadow-metadata-secret"},
+        "credential": "top-level-credential-secret",
+        "arbitrary_provider_field": "arbitrary-provider-secret",
+    }
+    run.update(overrides)
+    return run
+
+
+def expected_public_routine_run(run: dict) -> dict:
+    """Hand-built public run contract for hostile boundary fixtures."""
+    result = {key: run[key] for key in _PUBLIC_RUN_FIELDS if key in run}
+    result["claude_session_url"] = "https://claude.ai/code/session_01Public"
+    return result
+
+
+def assert_public_routine_run(run: dict, expected: dict) -> None:
+    """Assert the response remains an exact whitelist despite hostile storage."""
+    assert run == expected
+    rendered = repr(run)
+    for marker in (
+        "trigger-secret",
+        "url-query-secret",
+        "provider-user",
+        "provider-pass",
+        "remote-provider-secret",
+        "remote-error-secret",
+        "fallback-error-secret",
+        "shadow-metadata-secret",
+        "top-level-credential-secret",
+        "arbitrary-provider-secret",
+    ):
+        assert marker not in rendered
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

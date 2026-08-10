@@ -214,18 +214,20 @@ def build_custom_handlers() -> dict[str, Any]:
         return snapshots.write_weekly(snapshot)
 
     def get_routine(arguments: dict) -> dict:
+        from core.review_delivery import public_routine_run
         from memory.firestore_db import RoutineRunStore
 
         correlation_id = str(arguments.get("correlation_id") or "")
         if not correlation_id:
             raise ValueError("correlation_id is required")
-        return {"run": RoutineRunStore(*_settings()).get(correlation_id)}
+        return {"run": public_routine_run(RoutineRunStore(*_settings()).get(correlation_id))}
 
     def publish_review(arguments: dict) -> dict:
         text, structured, action_ids, partial_actions = _validate_publish_review(arguments)
 
         from core.review_delivery import (
             normalise_claude_session_url,
+            public_routine_run,
             routine_review_path,
             routine_review_title,
         )
@@ -273,7 +275,7 @@ def build_custom_handlers() -> dict[str, Any]:
             )
             return {
                 "review": run.get("shadow_review"),
-                "run": run,
+                "run": public_routine_run(run),
                 "delivery": {"shadow": True, "push_sent": False},
             }
         # Claim the publication atomically before any user-visible side effect.
@@ -337,7 +339,7 @@ def build_custom_handlers() -> dict[str, Any]:
                 routine_review_title(routine),
             )
         )
-        return {"review": review, "run": run, "delivery": delivery}
+        return {"review": review, "run": public_routine_run(run), "delivery": delivery}
 
     def prepare_action(arguments: dict) -> dict:
         from memory.firestore_db import PendingApprovalStore

@@ -3,11 +3,26 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 
 ROUTINE_NAMES = frozenset({"morning", "nightly", "weekly"})
 _SESSION_PATH = re.compile(r"^/(?:code|epitaxy)/session_[A-Za-z0-9_-]+$")
+PUBLIC_ROUTINE_RUN_FIELDS = frozenset({
+    "correlation_id",
+    "routine",
+    "target_date",
+    "status",
+    "provider",
+    "delivery_mode",
+    "created_at",
+    "updated_at",
+    "callback_deadline_at",
+    "published_at",
+    "review_id",
+    "fallback_scheduled",
+})
 
 
 def normalise_claude_session_url(value: object) -> str | None:
@@ -29,6 +44,21 @@ def normalise_claude_session_url(value: object) -> str | None:
     if not _SESSION_PATH.fullmatch(path):
         return None
     return urlunsplit(("https", "claude.ai", path, "", ""))
+
+
+def public_routine_run(record: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Return the exact browser/MCP-safe view of a stored routine run."""
+    if not isinstance(record, Mapping):
+        return None
+    public = {
+        field: record[field]
+        for field in PUBLIC_ROUTINE_RUN_FIELDS
+        if field in record
+    }
+    session_url = normalise_claude_session_url(record.get("claude_session_url"))
+    if session_url:
+        public["claude_session_url"] = session_url
+    return public
 
 
 def routine_review_path(routine: str, target_date: str) -> str:

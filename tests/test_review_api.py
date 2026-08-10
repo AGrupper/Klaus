@@ -10,6 +10,12 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+from tests.test_review_delivery import (
+    assert_public_routine_run,
+    expected_public_routine_run,
+    hostile_routine_run,
+)
+
 
 os.environ.setdefault("TELEGRAM_ALLOWED_USER_IDS", "123456")
 os.environ.setdefault("GCP_PROJECT_ID", "klaus-agent")
@@ -137,6 +143,9 @@ class _RunStore:
     def get(self, correlation_id: str) -> dict | None:
         record = self.runs.get(correlation_id)
         return deepcopy(record) if record else None
+
+    def list_recent(self, _limit: int) -> list[dict]:
+        return [deepcopy(record) for record in self.runs.values()]
 
 
 @pytest.fixture
@@ -283,3 +292,27 @@ def test_review_routes_require_hub_auth(review_client):
 
     assert client.get("/api/reviews").status_code == 401
     assert client.get("/api/reviews/nightly/2026-08-10").status_code == 401
+
+
+def test_agent_status_exposes_only_public_routine_run_fields(review_client, monkeypatch):
+    """The Hub status payload cannot reveal retained provider diagnostics."""
+    client, _reviews, runs, _ws, _hub_auth = review_client
+    stored = hostile_routine_run()
+    runs.clear()
+    runs[stored["correlation_id"]] = stored
+
+    import memory.firestore_db
+
+    class EmbeddingUsage:
+        @staticmethod
+        def summary(_period):
+            return {}
+
+    monkeypatch.setattr(memory.firestore_db, "EmbeddingUsageStore", lambda *_args: EmbeddingUsage())
+
+    response = client.get("/api/agent/status")
+
+    assert response.status_code == 200, response.text
+    assert_public_routine_run(
+        response.json()["recent_runs"][0], expected_public_routine_run(stored)
+    )

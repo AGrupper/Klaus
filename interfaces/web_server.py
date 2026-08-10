@@ -4418,6 +4418,7 @@ async def api_agent_status(
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
     """Expose capability gates, routine state, and Ask Claude launch config."""
+    from core.review_delivery import public_routine_run
     from interfaces.mcp_server import EXPECTED_SKILL_VERSION
     from memory.firestore_db import RoutineRunStore, _jsonsafe_doc
 
@@ -4456,7 +4457,7 @@ async def api_agent_status(
                         "KLAUS_LEGACY_RUNTIME_ENABLED", default=True
                     ),
                 },
-                "recent_runs": runs,
+                "recent_runs": [public_routine_run(run) for run in runs],
                 "usage": {
                     "claude_subscription": {
                         "run_count": len(runs),
