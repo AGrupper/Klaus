@@ -1738,3 +1738,42 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 Expect **no results**; any hit means `TICK_BRAIN_MAX_TOKENS=1024` is too small and must be raised.
 
 **Deferred (spec fast-follows):** the adaptive budget controller (spread the 200K TPD across the day); and staggering the heartbeat tick-brain pass off the `:00` boundary if same-minute heartbeat+autonomous TPM collisions appear.
+
+---
+
+## Claude skill 7.1.0 coordinated rollout
+
+This is a manual, coordinated production operation. It prevents a saved 7.0.0
+Routine instruction from receiving a 7.1.0 trigger payload. Do not perform any
+of these production writes without explicit approval. Keep the cutovers
+independent throughout: morning and weekly stay disabled, and only nightly is
+temporarily paused and restored after shadow UAT.
+
+1. Complete Tasks 1–5 and the full local verification in Task 7 before any
+   deployment.
+2. In the deploy workflow, set `KLAUS_ROUTINE_NIGHTLY_CUTOVER=false`. Keep
+   `KLAUS_ROUTINE_MORNING_CUTOVER=false` and
+   `KLAUS_ROUTINE_WEEKLY_CUTOVER=false`; do not enable either independent
+   cutover.
+3. Deploy that paused configuration and confirm `/health` succeeds before
+   touching Claude configuration.
+4. In Claude Customize → Skills, **Upload all four 7.1.0 ZIP files**:
+   `claude/dist/klaus-live-agent-7.1.0.zip`,
+   `claude/dist/klaus-morning-review-7.1.0.zip`,
+   `claude/dist/klaus-nightly-review-7.1.0.zip`, and
+   `claude/dist/klaus-weekly-review-7.1.0.zip`.
+5. **Edit all three saved Remote Routine instructions**. Confirm morning,
+   nightly, and weekly each declare their matching `routine` and that
+   `skill_version is 7.1.0`; append this exact addendum to all three:
+   `After the single successful publish_review call, return the exact published review text as the final assistant response. Do not publish or push again.`
+6. Confirm each saved Routine has only the Klaus Routines connector (no
+   Interactive connector) and remains API-triggered/manual-only.
+7. Run one shadow UAT each for morning, nightly, and weekly. For every shadow,
+   confirm the final Claude response is the complete published review text,
+   `shadow_review` is stored, and no review, push, journal, or self-state
+   write occurred.
+8. After all three shadows pass, restore only
+   `KLAUS_ROUTINE_NIGHTLY_CUTOVER=true`. Leave morning and weekly `false`.
+9. Run one nightly live UAT. Confirm exactly one review record and one initial
+   push, then verify there is no duplicate review, push, journal, or self-state
+   write.
