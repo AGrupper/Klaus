@@ -77,3 +77,21 @@ def test_skills_encode_non_negotiable_authority_and_safety_rules():
     )
     for phrase in required_phrases:
         assert phrase in combined
+
+
+def test_routine_skills_forbid_write_based_schema_discovery():
+    routine_names = (
+        "klaus-morning-review", "klaus-nightly-review", "klaus-weekly-review",
+    )
+    for name in routine_names:
+        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+        assert "never call a write tool to discover its schema" in text
+        assert "final and one-shot" in text
+        assert "correlation_id" in text
+        assert "partial_actions" in text
+
+    nightly = (
+        ROOT / "claude" / "skills" / "klaus-nightly-review" / "SKILL.md"
+    ).read_text().lower()
+    for field in ("summary", "mood", "current_focus", "recent_context", "highlights"):
+        assert field in nightly
