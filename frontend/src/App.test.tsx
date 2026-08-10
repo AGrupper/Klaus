@@ -29,9 +29,16 @@ vi.mock('./api/auth', () => ({
   logout: vi.fn(),
   revokeAll: vi.fn(),
 }))
+vi.mock('./api/reviews', () => ({
+  fetchReview: vi.fn(),
+  fetchReviews: vi.fn(),
+}))
 
 import { fetchMe } from './api/auth'
+import { fetchReview, fetchReviews } from './api/reviews'
 const mockFetchMe = vi.mocked(fetchMe)
+const mockFetchReview = vi.mocked(fetchReview)
+const mockFetchReviews = vi.mocked(fetchReviews)
 
 // ---------------------------------------------------------------------------
 // Test helper: wrap with fresh QueryClient + MemoryRouter
@@ -63,6 +70,7 @@ function renderApp(initialPath = '/') {
 describe('App auth gate', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockFetchReviews.mockResolvedValue({ reviews: [] })
   })
 
   it('renders AppShell (not SignInPage) when /api/auth/me resolves', async () => {
@@ -99,6 +107,31 @@ describe('App auth gate', () => {
 
     // AppShell content (Today placeholder) should NOT be present
     expect(screen.queryByText(/Today — Coming soon/i)).not.toBeInTheDocument()
+  })
+
+  it('renders a nested review detail while Claude navigation remains active', async () => {
+    mockFetchMe.mockResolvedValueOnce({ email: 'amit.grupper@gmail.com' })
+    mockFetchReview.mockResolvedValue({
+      review: {
+        review_id: 'review-1',
+        correlation_id: 'correlation-1',
+        routine: 'nightly',
+        target_date: '2026-08-10',
+        routine_status: 'published_claude',
+        provider: 'claude_subscription',
+        review_text: 'A complete nightly review.',
+        structured: {},
+        action_ids: [],
+        partial_actions: [],
+        published_at: '2026-08-10T21:00:00Z',
+      },
+    })
+
+    renderApp('/klaus/reviews/nightly/2026-08-10')
+
+    expect(await screen.findByRole('heading', { name: 'Nightly review for 2026-08-10' })).toBeInTheDocument()
+    expect(screen.getByTitle('Ask Claude')).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByTitle('Claude')).toHaveAttribute('aria-current', 'page')
   })
 })
 

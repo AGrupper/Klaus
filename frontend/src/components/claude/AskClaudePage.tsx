@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, ShieldCheck } from 'lucide-react'
 import { fetchAgentStatus } from '../../api/agent'
+import { ReviewInbox } from './ReviewInbox'
 import {
   accent,
   border,
@@ -111,6 +112,7 @@ export function AskClaudePage() {
             </p>
           )}
         </section>
+        <ReviewInbox />
       </div>
     </div>
   )

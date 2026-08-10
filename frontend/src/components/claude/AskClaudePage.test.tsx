@@ -2,13 +2,17 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import '@testing-library/jest-dom'
+import { MemoryRouter } from 'react-router-dom'
 import { AskClaudePage } from './AskClaudePage'
 
 vi.mock('../../api/agent', () => ({ fetchAgentStatus: vi.fn() }))
+vi.mock('../../api/reviews', () => ({ fetchReviews: vi.fn() }))
 
 import { fetchAgentStatus } from '../../api/agent'
+import { fetchReviews } from '../../api/reviews'
 
 const mockFetchAgentStatus = vi.mocked(fetchAgentStatus)
+const mockFetchReviews = vi.mocked(fetchReviews)
 
 function renderPage() {
   const queryClient = new QueryClient({
@@ -16,13 +20,18 @@ function renderPage() {
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <AskClaudePage />
+      <MemoryRouter>
+        <AskClaudePage />
+      </MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
 describe('AskClaudePage', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mockFetchReviews.mockResolvedValue({ reviews: [] })
+  })
 
   it('launches the configured Klaus Claude Project in a new tab', async () => {
     mockFetchAgentStatus.mockResolvedValue({
@@ -70,5 +79,28 @@ describe('AskClaudePage', () => {
 
     expect(await screen.findByText(/CLAUDE_PROJECT_URL/)).toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
+  })
+
+  it('keeps the Claude Project launcher alongside the routine review inbox', async () => {
+    mockFetchAgentStatus.mockResolvedValue({
+      interface: 'claude_project',
+      claude_project_url: 'https://claude.ai/project/klaus',
+      ask_claude_configured: true,
+      expected_skill_version: '7.0.0',
+      capability_gate: {
+        mcp_connector_verified: true,
+        private_skill_verified: true,
+        remote_routine_verified: true,
+        routine_publish_verified: true,
+        passed: true,
+      },
+      features: {},
+      recent_runs: [],
+      usage: { claude_subscription: {}, gemini_embeddings: {} },
+    })
+    renderPage()
+
+    expect(await screen.findByRole('link', { name: /Open Klaus in Claude/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Recent routine reviews' })).toBeInTheDocument()
   })
 })

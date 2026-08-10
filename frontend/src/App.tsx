@@ -31,6 +31,7 @@ import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
 import { TimelineDay } from './components/timeline/TimelineDay'
 import { AskClaudePage } from './components/claude/AskClaudePage'
+import { ReviewDetailPage } from './components/claude/ReviewDetailPage'
 import { dominant } from './tokens'
 import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
 import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
@@ -155,6 +156,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<TodayPage />} />
         <Route path="/tasks" element={<TasksPage />} />
+        <Route path="/klaus/reviews/:routine/:targetDate" element={<ReviewDetailPage />} />
         <Route path="/klaus" element={<KlausPage />} />
         <Route path="/habits" element={<HabitsPage />} />
         <Route path="/health" element={<HealthPage />} />
