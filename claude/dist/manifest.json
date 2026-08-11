@@ -11,23 +11,23 @@
     },
     {
       "artifact": "klaus-morning-review-7.1.0.zip",
-      "artifact_sha256": "d0836b3ab27c3c7f15def4f68364e74ca828e623e499247939899e44fc09f52c",
+      "artifact_sha256": "e11ac0c26e972d464c45cd39add6dcc542e13fc2406cdcb761647d9aba987b1b",
       "name": "klaus-morning-review",
-      "source_sha256": "da7dd789e23f03e1f0ad060cf68daf48b14692ce193f42480441a8a95b23f2d1",
+      "source_sha256": "73009e9a7119075ff64fdb02f2652dca1c0484256fe8c0f4abfe6d797bcb9f3d",
       "version": "7.1.0"
     },
     {
       "artifact": "klaus-nightly-review-7.1.0.zip",
-      "artifact_sha256": "736da6743b5598e2b8c1c2123b83be024444c2be477bb121a627a75285ff0200",
+      "artifact_sha256": "8add7ad11a4f4078743ac23ae53e7936d0ad90b909cbfa6f1f8b9b9b03209ea1",
       "name": "klaus-nightly-review",
-      "source_sha256": "0d88e884c0d446691642826b3d1b7ea796d445ca5f473260d955b1479cfe18ea",
+      "source_sha256": "7e44205f796fe1b18c78f791eae80998c72d0ff2d9755b8102d67f58427a980d",
       "version": "7.1.0"
     },
     {
       "artifact": "klaus-weekly-review-7.1.0.zip",
-      "artifact_sha256": "f5b1463d6390c178cf4462655d176e2c8fbac0cfcee4b1ad29777e29c626f7e4",
+      "artifact_sha256": "ed9daa46a06fd696b1b52b44a00c2da7c2e842c96189560f1c52540620503ac6",
       "name": "klaus-weekly-review",
-      "source_sha256": "d570af5af745010347cff1d1c3ed26479b9beb66c77bd022c7229520069209d0",
+      "source_sha256": "bce9bc3493b17d2e97a64fd4e99fa580296f846403da18888f57f995e529c254",
       "version": "7.1.0"
     }
   ]

@@ -115,6 +115,20 @@ def test_routine_skills_render_exact_published_text_after_success():
         assert "if `publish_review` fails" in text
 
 
+def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
+    for name in (
+        "klaus-morning-review",
+        "klaus-nightly-review",
+        "klaus-weekly-review",
+    ):
+        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+        normalized = " ".join(text.split())
+        assert "when `delivery_mode` is `shadow`" in normalized
+        assert "do not call any mutating tool except the single `publish_review`" in normalized
+        assert "do not create, edit, complete, reschedule, or delete tasks" in normalized
+        assert "record proposed actions only in `partial_actions`" in normalized
+
+
 def test_skill_version_is_7_1_0_everywhere():
     from interfaces.mcp_server import EXPECTED_SKILL_VERSION
 
