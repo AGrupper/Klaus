@@ -288,61 +288,67 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["message_id"],
         },
     },
-    # --- Native TaskStore tools (Phase 27 Plan 03 — replaces add_task) ---
+    # --- Task tools — backed by Amit's real Things 3 list (TASK_BACKEND=things) ---
+    #
+    # Things separates "when I'll do it" (due_date) from "when it's due"
+    # (hard_deadline_at).  Keep them distinct: collapsing them loses real meaning,
+    # and rescheduling must never silently move a deadline.
     {
         "name": "task_create",
         "description": (
-            "Create a new native task in Klaus's task store. Prefer due_date + due_time "
-            "over reminder strings. list_id defaults to 'inbox' when omitted."
+            "Add a to-do to Amit's Things 3 list. Goes to the Inbox unless a date or "
+            "project is given. Set due_date for when Amit plans to DO it, and "
+            "hard_deadline_at for when it is actually DUE — these are different "
+            "fields in Things and either alone is fine."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "title": {"type": "string", "description": "Task title."},
+                "title": {"type": "string", "description": "To-do title."},
                 "notes": {"type": "string", "description": "Optional notes or details."},
                 "due_date": {
                     "type": "string",
-                    "description": "Optional due date (YYYY-MM-DD).",
+                    "description": "Scheduled date — when Amit plans to work on it (YYYY-MM-DD). Things calls this 'When'.",
                 },
                 "due_time": {
                     "type": "string",
-                    "description": "Optional due time (HH:MM, 24-hour, local time). Only meaningful when due_date is also set.",
+                    "description": "Reminder time (HH:MM, 24-hour, local). Only meaningful alongside due_date.",
+                },
+                "hard_deadline_at": {
+                    "type": "string",
+                    "description": "Deadline — when it must be finished (YYYY-MM-DD). Independent of due_date; Things stores day granularity.",
+                },
+                "list_id": {
+                    "type": "string",
+                    "description": "Things project or area id to file it under. Omit for the Inbox.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Things tag ids to attach. Use task_list to discover existing tags.",
                 },
                 "priority": {
                     "type": "string",
                     "enum": ["none", "low", "medium", "high"],
-                    "description": "Task priority level. Defaults to 'none'.",
-                },
-                "list_id": {
-                    "type": "string",
-                    "description": "ID of the task list. Defaults to 'inbox'.",
-                },
-                "recurrence": {
-                    "type": "object",
-                    "description": "Optional recurrence rule. E.g. {\"cadence\": \"daily\", \"anchor\": \"completion\"}.",
+                    "description": "Klaus-internal only — Things has no priority field, so this is stored on Klaus's side and is NOT visible in the Things app.",
                 },
                 "estimated_minutes": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 1440,
-                    "description": "Estimated focused work duration in minutes.",
-                },
-                "hard_deadline_at": {
-                    "type": "string",
-                    "format": "date-time",
-                    "description": "Optional immutable deadline as an ISO-8601 timestamp.",
+                    "description": "Klaus-internal: estimated focused work duration in minutes.",
                 },
                 "auto_schedule": {
                     "type": "boolean",
-                    "description": "Whether Klaus may place this task into movable calendar blocks.",
+                    "description": "Klaus-internal: whether Klaus may place this into movable calendar blocks.",
                 },
                 "manual_lock": {
                     "type": "boolean",
-                    "description": "True when Amit fixed the task placement and Klaus must not move it.",
+                    "description": "Klaus-internal: Amit fixed the placement and Klaus must not move it.",
                 },
                 "calendar_event_id": {
                     "type": "string",
-                    "description": "Linked Klaus-owned calendar time-block event id.",
+                    "description": "Klaus-internal: linked Klaus-owned calendar time-block event id.",
                 },
             },
             "required": ["title"],
@@ -351,28 +357,37 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "task_list",
         "description": (
-            "Query Amit's native tasks by list, date, priority, or overdue flag. "
-            "All filters are optional — omitting all returns all active tasks."
+            "Read Amit's open Things 3 to-dos. All filters are optional — omit them "
+            "all to see the whole list, including project, area, and tag labels. "
+            "Use upcoming_days to see the week ahead; note that Amit dates very few "
+            "to-dos, so most of his list has no date at all and a date filter will "
+            "usually come back empty."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "list_id": {
                     "type": "string",
-                    "description": "Filter by list ID (e.g. 'inbox').",
+                    "description": "Filter to a Things project or area id, or 'inbox' for unfiled to-dos.",
                 },
                 "date": {
                     "type": "string",
-                    "description": "Filter tasks due on this date (YYYY-MM-DD).",
+                    "description": "Only to-dos scheduled on this date (YYYY-MM-DD).",
+                },
+                "upcoming_days": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "Only to-dos landing within this many days, by scheduled date OR deadline. Use 7 for the coming week.",
                 },
                 "priority": {
                     "type": "string",
                     "enum": ["none", "low", "medium", "high"],
-                    "description": "Filter by priority level.",
+                    "description": "Filter by Klaus-internal priority (not a Things field).",
                 },
                 "overdue": {
                     "type": "boolean",
-                    "description": "If true, return only tasks whose due_date is before today.",
+                    "description": "If true, only to-dos whose scheduled date is before today.",
                 },
             },
             "required": [],
@@ -381,31 +396,36 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "task_complete",
         "description": (
-            "Mark a task as complete. If the task is recurring, this creates the next "
-            "instance automatically and returns its id in 'next_id'."
+            "Tick off a to-do in Things. Recurring to-dos are handled by Things "
+            "itself, which spawns the next instance — 'next_id' is always null and "
+            "you must never create the follow-up yourself."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "The task ID to complete."},
+                "task_id": {"type": "string", "description": "The to-do id to complete."},
             },
             "required": ["task_id"],
         },
     },
     {
         "name": "task_reschedule",
-        "description": "Reschedule a task to a new due date (and optionally a new time).",
+        "description": (
+            "Move when Amit plans to WORK on a to-do. This changes the scheduled "
+            "date only and deliberately leaves any deadline untouched — use "
+            "task_edit's hard_deadline_at to move an actual deadline."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "The task ID to reschedule."},
+                "task_id": {"type": "string", "description": "The to-do id to reschedule."},
                 "due_date": {
                     "type": "string",
-                    "description": "New due date (YYYY-MM-DD).",
+                    "description": "New scheduled date (YYYY-MM-DD).",
                 },
                 "due_time": {
                     "type": "string",
-                    "description": "New due time (HH:MM, 24-hour). Optional.",
+                    "description": "New reminder time (HH:MM, 24-hour). Optional.",
                 },
             },
             "required": ["task_id", "due_date"],
@@ -413,38 +433,41 @@ TOOL_SCHEMAS: list[dict] = [
     },
     {
         "name": "task_edit",
-        "description": "Edit a task's title, notes, priority, or list. Only provided fields are updated.",
+        "description": (
+            "Edit a to-do in Things. Only the fields you provide are changed; "
+            "everything else is left exactly as it is."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "The task ID to edit."},
+                "task_id": {"type": "string", "description": "The to-do id to edit."},
                 "title": {"type": "string", "description": "New title."},
                 "notes": {"type": "string", "description": "New notes."},
+                "hard_deadline_at": {
+                    "type": "string",
+                    "description": "New deadline — when it must be finished (YYYY-MM-DD). Separate from the scheduled date.",
+                },
                 "priority": {
                     "type": "string",
                     "enum": ["none", "low", "medium", "high"],
-                    "description": "New priority level.",
+                    "description": "Klaus-internal only — not visible in the Things app.",
                 },
-                "list_id": {"type": "string", "description": "Move to this list ID."},
+                "list_id": {"type": "string", "description": "Move to this Things project or area id."},
                 "estimated_minutes": {
                     "type": "integer", "minimum": 1, "maximum": 1440,
-                    "description": "Updated estimated duration in minutes.",
-                },
-                "hard_deadline_at": {
-                    "type": "string", "format": "date-time",
-                    "description": "Updated immutable ISO-8601 deadline.",
+                    "description": "Klaus-internal: updated estimated duration in minutes.",
                 },
                 "auto_schedule": {
                     "type": "boolean",
-                    "description": "Allow or disallow Klaus-owned time blocking.",
+                    "description": "Klaus-internal: allow or disallow Klaus-owned time blocking.",
                 },
                 "manual_lock": {
                     "type": "boolean",
-                    "description": "Protect the task's current placement from automatic moves.",
+                    "description": "Klaus-internal: protect the current placement from automatic moves.",
                 },
                 "calendar_event_id": {
                     "type": "string",
-                    "description": "Linked Klaus-owned calendar time-block event id.",
+                    "description": "Klaus-internal: linked Klaus-owned calendar time-block event id.",
                 },
             },
             "required": ["task_id"],
@@ -452,11 +475,14 @@ TOOL_SCHEMAS: list[dict] = [
     },
     {
         "name": "task_delete",
-        "description": "Permanently delete a task. This cannot be undone.",
+        "description": (
+            "Move a to-do to the Things trash. Recoverable by hand from the app — "
+            "Klaus never destroys a to-do outright."
+        ),
         "input_schema": {
             "type": "object",
             "properties": {
-                "task_id": {"type": "string", "description": "The task ID to delete."},
+                "task_id": {"type": "string", "description": "The to-do id to trash."},
             },
             "required": ["task_id"],
         },
@@ -2092,12 +2118,16 @@ def _handle_get_email(message_id: str) -> str:
 # --- Native TaskStore handlers (Phase 27 Plan 03 — replaces _handle_add_task) ---
 
 def _get_task_store():
-    """Return a TaskStore instance using env-driven project/database config."""
-    from memory.firestore_db import TaskStore
-    return TaskStore(
-        project_id=os.environ.get("GCP_PROJECT_ID", ""),
-        database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-    )
+    """Return the active task store, selected by the ``TASK_BACKEND`` env var.
+
+    ``things`` (default) reads and writes Amit's real Things 3 list via Things
+    Cloud; ``firestore`` falls back to the Phase 27 native store.  Both satisfy the
+    same interface, so the six ``_handle_task_*`` handlers below are backend-blind.
+
+    Set ``TASK_BACKEND=firestore`` to roll back without a deploy.
+    """
+    from memory.firestore_db import get_task_store
+    return get_task_store()
 
 
 def _task_today_iso() -> str:
@@ -2113,6 +2143,7 @@ def _handle_task_create(
     due_time: str | None = None,
     priority: str | None = None,
     list_id: str | None = None,
+    tags: list | None = None,
     recurrence: dict | None = None,
     estimated_minutes: int | None = None,
     hard_deadline_at: str | None = None,
@@ -2133,7 +2164,11 @@ def _handle_task_create(
         kwargs["priority"] = priority
     if list_id is not None:
         kwargs["list_id"] = list_id
+    if tags is not None:
+        kwargs["tag_ids"] = tags
     if recurrence is not None:
+        # Things owns recurrence; the Things backend ignores this. Kept so the
+        # Firestore fallback backend still behaves as it did in Phase 27.
         kwargs["recurrence"] = recurrence
     if estimated_minutes is not None:
         kwargs["estimated_minutes"] = estimated_minutes
@@ -2154,13 +2189,26 @@ def _handle_task_create(
 def _handle_task_list(
     list_id: str | None = None,
     date: str | None = None,
+    upcoming_days: int | None = None,
     priority: str | None = None,
     overdue: bool | None = None,
 ) -> str:
-    """Query tasks from TaskStore with optional filters."""
+    """Query tasks from the active store with optional filters."""
     store = _get_task_store()
     if overdue:
         tasks = store.get_overdue(_task_today_iso())
+    elif upcoming_days:
+        # get_upcoming checks scheduled date AND deadline; only the Things backend
+        # has it, so fall back to a date-range scan on the Firestore store.
+        get_upcoming = getattr(store, "get_upcoming", None)
+        if get_upcoming:
+            tasks = get_upcoming(_task_today_iso(), days=upcoming_days)
+        else:
+            from datetime import date as _date, timedelta
+            today = _task_today_iso()
+            horizon = (_date.fromisoformat(today) + timedelta(days=upcoming_days)).isoformat()
+            tasks = [t for t in store.list(list_id=list_id)
+                     if t.get("due_date") and today <= t["due_date"] <= horizon]
     elif date:
         # list all tasks then filter by due_date in Python (simple approach)
         all_tasks = store.list(list_id=list_id)

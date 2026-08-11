@@ -186,12 +186,9 @@ def _gather_tomorrow(tomorrow_iso: str) -> dict:
     # Tasks (overdue + today's open carry into tomorrow) — native TaskStore,
     # evaluated as of tonight (the current day, not tomorrow_iso).
     try:
-        from memory.firestore_db import TaskStore
+        from memory.firestore_db import get_task_store
         _today = datetime.now(_TZ).date().isoformat()
-        _ts = TaskStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
+        _ts = get_task_store()
         data["tasks"] = _ts.get_today_and_overdue(_today)
     except Exception:
         logger.warning("nightly_review: task fetch failed", exc_info=True)

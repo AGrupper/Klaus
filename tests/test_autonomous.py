@@ -1299,7 +1299,9 @@ class TestNativeOverdueGather:
             {"task_id": "abc", "title": "Buy milk", "due_date": "2026-06-17",
              "status": "active", "list_id": "inbox"},
         ]
-        with patch("memory.firestore_db.TaskStore", return_value=fake_store):
+        # Patch the backend factory, not TaskStore directly: the gather now goes
+        # through get_task_store() so it follows TASK_BACKEND to Things.
+        with patch("memory.firestore_db.get_task_store", return_value=fake_store):
             result = auto._gather_native_overdue()
 
         assert isinstance(result, list), "must return a list"
@@ -1312,11 +1314,16 @@ class TestNativeOverdueGather:
         assert item["due"] == "2026-06-17"
 
     def test_gather_native_overdue_reads_from_task_store_not_ticktick(self):
-        """_gather_native_overdue source must import from memory.firestore_db.TaskStore,
-        NOT from mcp_tools.ticktick_tool."""
+        """_gather_native_overdue must read the native task store, NOT ticktick_tool.
+
+        It goes through ``get_task_store()`` so it follows TASK_BACKEND rather than
+        pinning one backend — that indirection is what keeps the autonomous tick
+        reading the same list Klaus talks about.
+        """
         src = open("core/autonomous.py", encoding="utf-8").read()
-        # The function body must reference TaskStore
-        assert "TaskStore" in src, "core/autonomous.py must import TaskStore"
+        assert "get_task_store" in src, (
+            "core/autonomous.py must resolve its store via get_task_store()"
+        )
         # And _gather_native_overdue must not call ticktick_tool.get_today_tasks
         func_start = src.find("def _gather_native_overdue")
         assert func_start != -1, "_gather_native_overdue not found in source"

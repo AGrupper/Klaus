@@ -192,10 +192,24 @@ def day_to_iso(epoch: int | float | None) -> str | None:
 
 
 def iso_to_day(iso: str | None) -> int | None:
-    """Encode ``YYYY-MM-DD`` to a Things day field (UTC-midnight epoch).  None-safe."""
+    """Encode an ISO date to a Things day field (UTC-midnight epoch).  None-safe.
+
+    Accepts a plain ``YYYY-MM-DD`` **or** a full timestamp, truncating the time.
+    Klaus's ``hard_deadline_at`` tool schema declares ``format: date-time``, so the
+    brain does send timestamps; ``date.fromisoformat`` rejects those outright, which
+    would raise inside a write path.  Things only stores day granularity anyway.
+
+    Raises:
+        ValueError: If the string is not an ISO date or timestamp at all.
+    """
     if not iso:
         return None
-    parsed = date.fromisoformat(iso)
+    text = iso.strip()
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError:
+        # Tolerate a trailing 'Z', which datetime.fromisoformat rejected before 3.11.
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00")).date()
     return int(
         datetime(parsed.year, parsed.month, parsed.day, tzinfo=timezone.utc).timestamp()
     )

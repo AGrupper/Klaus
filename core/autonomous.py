@@ -338,21 +338,23 @@ def _gather_calendar(now: datetime) -> list:
 
 
 def _gather_native_overdue() -> list:
-    """(b) Native TaskStore overdue — replaces TickTick gather (D-17 / TASK-05).
+    """(b) Overdue to-dos — replaces the TickTick gather (D-17 / TASK-05).
 
-    Reads TaskStore.get_overdue(today_iso) and returns a TickTick-compatible
-    list of {"title": str, "due": str} dicts so the situation key
-    'ticktick_overdue' and all downstream triage/compose references need zero
-    changes (Pitfall 3 — exact shape preserved).
+    Reads ``get_task_store().get_overdue(today_iso)`` — Amit's real Things 3 list
+    under the default ``TASK_BACKEND`` — and returns a TickTick-compatible list of
+    {"title": str, "due": str} dicts so the situation key 'ticktick_overdue' and
+    all downstream triage/compose references need zero changes (Pitfall 3 — exact
+    shape preserved).
+
+    Note: Amit dates very few to-dos, so this is usually empty even when his list
+    is long.  ``get_today_and_overdue`` carries an ``upcoming`` key that is the
+    more useful signal.
     """
     try:
         from zoneinfo import ZoneInfo
-        from memory.firestore_db import TaskStore
+        from memory.firestore_db import get_task_store
         today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-        store = TaskStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
+        store = get_task_store()
         tasks = store.get_overdue(today_iso) or []
         return [{"title": t["title"], "due": t.get("due_date", "")} for t in tasks]
     except Exception:

@@ -532,11 +532,8 @@ def _gather_data(today_iso: str) -> dict:
                     "morning_briefing: D-15 yesterday calendar fetch failed", exc_info=True
                 )
             try:
-                from memory.firestore_db import TaskStore
-                _ts_yesterday = TaskStore(
-                    project_id=os.environ["GCP_PROJECT_ID"],
-                    database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-                )
+                from memory.firestore_db import get_task_store
+                _ts_yesterday = get_task_store()
                 yesterday_data["tasks"] = _ts_yesterday.get_today_and_overdue(yesterday_iso)
             except Exception:
                 logger.warning(
@@ -619,11 +616,8 @@ def _gather_data(today_iso: str) -> dict:
 
     # Tasks due today + overdue (native TaskStore)
     try:
-        from memory.firestore_db import TaskStore
-        _ts = TaskStore(
-            project_id=os.environ["GCP_PROJECT_ID"],
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
+        from memory.firestore_db import get_task_store
+        _ts = get_task_store()
         data["tasks"] = _ts.get_today_and_overdue(today_iso)
     except Exception:
         logger.warning("morning_briefing: task fetch failed", exc_info=True)

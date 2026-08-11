@@ -203,11 +203,8 @@ def _gather_day(target_date: str) -> dict:
 
     # (d) Tasks due today from the native TaskStore (count of today's due tasks)
     try:
-        from memory.firestore_db import TaskStore
-        _ts = TaskStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
+        from memory.firestore_db import get_task_store
+        _ts = get_task_store()
         tasks_data = _ts.get_today_and_overdue(target_date)
         gathered["tasks_completed"] = len(tasks_data.get("today", []))
     except Exception:

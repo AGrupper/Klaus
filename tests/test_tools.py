@@ -986,6 +986,9 @@ class TestNativeTaskTools:
         from core import tools
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
         monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
+        # Pin the legacy backend: this test patches memory.firestore_db.TaskStore
+        # specifically, and TASK_BACKEND now defaults to the Things store.
+        monkeypatch.setenv("TASK_BACKEND", "firestore")
 
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t1", "title": "Call dentist", "status": "active"}
@@ -1027,6 +1030,82 @@ class TestNativeTaskTools:
             "manual_lock": False,
             "calendar_event_id": "event-123",
         }
+
+    # -- TASK_BACKEND switch (Things cutover) -------------------------------- #
+
+    def test_task_backend_defaults_to_things(self, monkeypatch):
+        from core import tools
+        monkeypatch.delenv("TASK_BACKEND", raising=False)
+        from memory.things_store import ThingsTaskStore
+        assert isinstance(tools._get_task_store(), ThingsTaskStore)
+
+    def test_task_backend_firestore_rolls_back_without_a_deploy(self, monkeypatch):
+        from core import tools
+        from memory.firestore_db import TaskStore
+        monkeypatch.setenv("TASK_BACKEND", "firestore")
+        assert isinstance(tools._get_task_store(), TaskStore)
+
+    def test_task_backend_is_case_and_space_tolerant(self, monkeypatch):
+        from core import tools
+        from memory.firestore_db import TaskStore
+        monkeypatch.setenv("TASK_BACKEND", "  FireStore ")
+        assert isinstance(tools._get_task_store(), TaskStore)
+
+    def test_no_core_module_constructs_taskstore_directly(self):
+        """Every proactive reader must resolve its store via get_task_store().
+
+        Regression guard: the morning briefing, nightly review, reflection, and
+        autonomous tick each built their own TaskStore, so switching TASK_BACKEND
+        in core/tools.py left all of them reading the abandoned Firestore store —
+        Klaus discussing Things in chat while every proactive feature stayed blind
+        to it. Backend selection has to live in exactly one place.
+        """
+        import pathlib
+        offenders = []
+        for path in pathlib.Path("core").glob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            for number, line in enumerate(source.splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("#") or "ThingsTaskStore" in stripped:
+                    continue
+                if "TaskStore(" in stripped:
+                    offenders.append(f"{path}:{number}: {stripped}")
+        assert not offenders, (
+            "construct the store via memory.firestore_db.get_task_store():\n"
+            + "\n".join(offenders)
+        )
+
+    def test_task_create_forwards_tags_as_tag_ids(self):
+        """Things has real tags; the store expects them as `tag_ids`."""
+        from core import tools
+        mock_store = MagicMock()
+        mock_store.create.return_value = {"id": "t1", "title": "Buy milk"}
+        with patch("core.tools._get_task_store", return_value=mock_store):
+            tools._handle_task_create(title="Buy milk", tags=["tag-errand"])
+        assert mock_store.create.call_args.args[0]["tag_ids"] == ["tag-errand"]
+
+    def test_task_list_upcoming_days_uses_get_upcoming(self):
+        """Routed to get_upcoming so deadline-only to-dos are not missed."""
+        from core import tools
+        mock_store = MagicMock()
+        mock_store.get_upcoming.return_value = [{"id": "t1", "title": "Book"}]
+        with patch("core.tools._get_task_store", return_value=mock_store):
+            tools._handle_task_list(upcoming_days=7)
+        assert mock_store.get_upcoming.call_args.kwargs["days"] == 7
+
+    def test_task_list_upcoming_days_falls_back_on_legacy_store(self):
+        """The Firestore store has no get_upcoming — scan the range instead."""
+        from core import tools
+        import json as _json
+        legacy = MagicMock(spec=["list", "get_overdue"])   # no get_upcoming
+        legacy.list.return_value = [
+            {"id": "a", "title": "soon", "due_date": tools._task_today_iso()},
+            {"id": "b", "title": "far", "due_date": "2099-01-01"},
+            {"id": "c", "title": "undated", "due_date": None},
+        ]
+        with patch("core.tools._get_task_store", return_value=legacy):
+            out = _json.loads(tools._handle_task_list(upcoming_days=7))
+        assert [t["title"] for t in out] == ["soon"]
 
     def test_task_schemas_expose_v7_planning_fields(self):
         """The provider-neutral tool contract exposes every new optional field."""

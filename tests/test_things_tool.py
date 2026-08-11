@@ -374,6 +374,22 @@ def test_day_field_lands_on_utc_midnight():
     assert things.iso_to_day("2026-08-11") % 86400 == 0
 
 
+@pytest.mark.parametrize("value", [
+    "2026-08-11",
+    "2026-08-11T10:00:00",
+    "2026-08-11T10:00:00+03:00",
+    "2026-08-11T07:00:00Z",
+])
+def test_iso_to_day_accepts_timestamps_not_just_dates(value):
+    """hard_deadline_at is declared `format: date-time`, so the brain sends these."""
+    assert things.day_to_iso(things.iso_to_day(value)) == "2026-08-11"
+
+
+def test_iso_to_day_rejects_junk():
+    with pytest.raises(ValueError):
+        things.iso_to_day("next tuesday")
+
+
 # ------------------------------------------------------------------ #
 # Write record builders                                               #
 # ------------------------------------------------------------------ #
