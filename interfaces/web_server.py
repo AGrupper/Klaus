@@ -1231,6 +1231,37 @@ async def cron_strength_sync(request: Request) -> JSONResponse:
         raise
 
 
+@app.post("/cron/things-sync")
+async def cron_things_sync(request: Request) -> JSONResponse:
+    """Receive a Cloud Scheduler tick and refresh the Things 3 mirror.
+
+    Schedule: */30 6-23 * * *  (Asia/Jerusalem)
+    Authenticated via OIDC bearer token from Cloud Scheduler.
+
+    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is the
+    Firestore mirror (via core.things_ingest.run_one_batch).
+
+    A backstop, not the primary path: ThingsTaskStore checks the journal head on
+    every read and pulls its own delta, so conversational reads are already fresh.
+    This keeps the mirror warm for cold starts, and keeps the fallback that reads
+    degrade to hours old rather than days when Things Cloud is unreachable.
+
+    Returns:
+        JSONResponse: status dict (ok, mode, cursor, entities, open_todos, done).
+    """
+    await _verify_cron_request(request)
+    import asyncio as _asyncio
+    import core.things_ingest as _things
+    try:
+        loop = _asyncio.get_running_loop()
+        result = await loop.run_in_executor(None, _things.run_one_batch)
+        _log_cron_run("things-sync", ok=bool(result.get("ok")), backlog_done=result.get("done"))
+        return JSONResponse(content=result)
+    except Exception:
+        _log_cron_run("things-sync", ok=False)
+        raise
+
+
 @app.post("/cron/run-sync")
 async def cron_run_sync(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler daily tick and run a bounded Garmin run-detail batch.

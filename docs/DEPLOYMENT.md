@@ -322,35 +322,27 @@ for secret in TICKTICK_ACCESS_TOKEN TICKTICK_REFRESH_TOKEN; do
 done
 ```
 
-### Run the bootstrap script
+### Things 3 credentials
 
-```bash
-# Run on your Mac — opens a browser for the TickTick consent screen.
-python scripts/ticktick_oauth_bootstrap.py
-```
-
-The script saves tokens to `config/ticktick_tokens.json` and prints the
-exact `gcloud` commands to upload them to Secret Manager. Run those commands.
-If TickTick does not return a refresh token, upload `none` as a placeholder:
-
-```bash
-echo -n "none" | gcloud secrets versions add TICKTICK_REFRESH_TOKEN \
-  --data-file=- --project=${PROJECT_ID}
-```
-
-Upload the client credentials (source `.env` first so the vars are in scope):
+Things Cloud has no API key, no OAuth, and no 2FA — just the account email and
+password. Upload both to Secret Manager:
 
 ```bash
 source .env
-echo -n "$TICKTICK_CLIENT_ID" | gcloud secrets versions add TICKTICK_CLIENT_ID \
+echo -n "$THINGS_EMAIL" | gcloud secrets create klaus-things-email \
   --data-file=- --project=${PROJECT_ID}
-echo -n "$TICKTICK_CLIENT_SECRET" | gcloud secrets versions add TICKTICK_CLIENT_SECRET \
+echo -n "$THINGS_PASSWORD" | gcloud secrets create klaus-things-password \
   --data-file=- --project=${PROJECT_ID}
 ```
 
-**Note:** TickTick access tokens last approximately 180 days. If a token
-expires, re-run `python scripts/ticktick_oauth_bootstrap.py` and re-upload
-`TICKTICK_ACCESS_TOKEN` to Secret Manager.
+`deploy.yml` binds them via `--update-secrets`. Do **not** set them on the
+service out of band: `--set-env-vars` rewrites the whole env block on the next
+deploy and would drop them.
+
+Writes ship disabled (`THINGS_WRITE_ENABLED=false`). The sync protocol is
+reverse-engineered and can break on any Things release, so enable writes only
+after verifying them against the live account — see `docs/things_protocol.md`.
+To roll the whole integration back without a deploy, set `TASK_BACKEND=firestore`.
 
 ---
 
@@ -1104,6 +1096,7 @@ are in `Asia/Jerusalem`.
 | 10 | klaus-run-sync              | `15 5 * * *`          | `/cron/run-sync`                  | Run-detail     |
 | 11 | klaus-nightly-backstop      | `0 1 * * *`           | `/cron/nightly-backstop`          | Nightly (WS2)  |
 | 12 | klaus-biometric-sync        | `30 5 * * *`          | `/cron/biometric-sync`            | Biometrics     |
+| 13 | klaus-things-sync           | `*/30 6-23 * * *`     | `/cron/things-sync`               | Things 3       |
 
 **Row 1 retired (Phase 33 / D-09/D-10/D-31, plan 33-13):** `klaus-morning-briefing`
 (`*/10 6-10 * * *`, the polling route deleted alongside it) is retired — the morning
@@ -1214,6 +1207,34 @@ gcloud scheduler jobs create http klaus-strength-sync \
 First-run backfill: re-invoke until the response shows `done: true`
 (`gcloud scheduler jobs run klaus-strength-sync --location="${REGION}"`), or just let the
 daily ticks drain it. Requires the `HEVY_API_KEY` secret bound (see §20a).
+
+### §19c. klaus-things-sync (Things 3 mirror)
+
+Refreshes the Firestore mirror of Amit's Things 3 list — runs
+`core/things_ingest.py:run_one_batch()`. Pull-only; no orchestrator/LLM/Telegram.
+
+This is a **backstop, not the primary path**. `ThingsTaskStore` checks the journal
+head index on every read and pulls its own delta, so conversation is already fresh.
+The cron exists so a Cloud Run cold start finds a populated mirror instead of
+replaying the whole journal on the first message of the day, and so that when Things
+Cloud is unreachable the mirror reads fall back to is hours old rather than days.
+
+```bash
+gcloud scheduler jobs create http klaus-things-sync \
+  --schedule="*/30 6-23 * * *" \
+  --time-zone="Asia/Jerusalem" \
+  --uri="${SERVICE_URL}/cron/things-sync" \
+  --http-method=POST \
+  --oidc-service-account-email="${CLOUD_SCHEDULER_SA_EMAIL}" \
+  --oidc-token-audience="${SERVICE_URL}" \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+```
+
+No backlog to drain — a refresh always reaches the journal head in one call, so
+`done` is always `true`. `ok: false` with an `error` means Things Cloud was
+unreachable and the mirror is stale; reads keep working from it. Requires the
+`klaus-things-email` / `klaus-things-password` secrets bound (see §7).
 
 ### §19b. klaus-run-sync (Garmin per-run detail)
 
@@ -1657,8 +1678,8 @@ the two composite indexes from §21.
    isn't bound. Verify current bindings first with
    `gcloud run services describe klaus-agent --region me-west1 --format=yaml | grep -i ticktick`.)
 
-The standalone `scripts/ticktick_oauth_bootstrap.py` is now dead but left in
-place as historical reference; it imports nothing from the deleted modules.
+`scripts/ticktick_oauth_bootstrap.py` has been deleted; TickTick is fully
+retired and replaced by the Things 3 integration.
 
 ---
 

@@ -5,8 +5,8 @@
 Klaus is a cloud-hosted personal AI agent for Amit Grupper, deployed on Google Cloud Run.
 He runs a **dual-model architecture** (brain + worker, with a separate free always-on
 tick-brain and an emergency fallback) and integrates with Gmail, Google Calendar,
-Things 3, Notion, Pinecone, Firestore, weather/Readwise/Garmin, and the local
-Claude Code / multi-AI chat-log pipelines. Telegram is the primary interface.
+TickTick, Notion, Pinecone, Firestore, weather/Readwise/Garmin, and the local
+Codex / multi-AI chat-log pipelines. Telegram is the primary interface.
 
 As of milestone v2.0 (shipped 2026-05-23) Klaus is **self-aware, cost-transparent, and
 judgment-driven autonomous** — every LLM call is metered, he can read his own source
@@ -28,7 +28,6 @@ Before writing any code, read and adhere to these:
 - `docs/CODING_STANDARDS.md` — code structure, readability, formatting rules
 - `docs/SELF.md` — Klaus's own auto-generated capability manifest (regenerated on every deploy via `core/self_manifest.py`)
 - `docs/DEPLOYMENT.md` — Cloud Run + Cloud Scheduler + Secret Manager operator runbook
-- `docs/things_protocol.md` — reverse-engineered Things Cloud protocol + schema (no official API exists)
 - `.planning/MILESTONES.md` + `.planning/ROADMAP.md` — what shipped, when, what's next
 
 ## 3. Model architecture (env-driven)
@@ -37,7 +36,7 @@ Before writing any code, read and adhere to these:
 |---------|-------|---------|-------|
 | Brain (smart agent) | `gemini-3.5-flash` | Gemini AI Studio | Orchestration, judgment, every conversation turn |
 | Worker (hands) | `deepseek-v4-flash` | OpenAI-compat (DeepSeek API) | Tool execution, structured JSON, data gathering — $0.11/$0.22 per 1M tokens |
-| Brain fallback | `claude-haiku-4-5` | Anthropic | Inline fallback on LLMError — diversity hedge |
+| Brain fallback | `Codex-haiku-4-5` | Anthropic | Inline fallback on LLMError — diversity hedge |
 | Tick-brain | `openai/gpt-oss-120b` | Groq (OpenAI-compat) | Always-on free reasoning for heartbeat + autonomous tick. Groq ids are namespaced — bare model names 404. qwen/qwen3-32b decommissioned by Groq 2026-07-17. Free tier: 8K tokens/request (TPM), 200K tokens/day (TPD). Every tick-brain request is admission-controlled to `input + max_tokens ≤ 7,200` (margin below the hard 8K ceiling; guarded by `tests/test_token_budget.py`) via `reasoning_effort=low` + `TICK_BRAIN_MAX_TOKENS=1024` — never raise the guard target to mask a prompt-bloat regression. A change-detection gate skips the Groq call when salient signals are unchanged since the last tick |
 | Tick-brain fallback | `gemini-3.5-flash` | Gemini AI Studio | Used if Groq fails |
 | Embeddings | `gemini-embedding-2` | Gemini AI Studio (**NOT Vertex**) | 768-dim, Pinecone cosine |
@@ -52,7 +51,7 @@ All model strings come from env vars (`SMART_AGENT_MODEL`, `WORKER_AGENT_MODEL`,
 Klaus/
 ├── .env                    # (gitignored) local env vars
 ├── .env.example            # template
-├── CLAUDE.md               # this file
+├── AGENTS.md               # this file
 ├── docs/
 │   ├── PRD.md              # product requirements
 │   ├── TECHNICAL_PLAN.md   # architecture + per-phase technical details
@@ -78,14 +77,12 @@ Klaus/
 │   ├── scheduled_message.py# Telegram send + Firestore conversation injection
 │   ├── task_dispatch.py    # Cloud Tasks enqueue → /internal/process-update (full-CPU turns)
 │   ├── self_manifest.py    # Auto-generates docs/SELF.md (CI runs on every deploy)
-│   ├── chat_ingest.py      # Daily 04:00: parse Claude Code JSONL → Pinecone + Notion
-│   ├── chat_export_ingest.py # Daily 04:30: ChatGPT/Claude.ai/Gemini Takeout zips → same pipeline
+│   ├── chat_ingest.py      # Daily 04:00: parse Codex JSONL → Pinecone + Notion
+│   ├── chat_export_ingest.py # Daily 04:30: ChatGPT/Codex.ai/Gemini Takeout zips → same pipeline
 │   ├── strength_ingest.py  # Daily 05:00: Hevy pull (backfill→delta) → StrengthSessionStore
-│   ├── things_ingest.py    # */30 6-23: refresh the Things 3 mirror (cold-start backstop)
 │   └── run_ingest.py       # Daily 05:15: Garmin per-run detail pull (presence-diff) → RunDetailStore
 ├── memory/
 │   ├── firestore_conversation.py # Per-user conversation history
-│   ├── things_store.py     # ThingsTaskStore: Things 3 read/write + Firestore mirror + sidecar
 │   ├── firestore_db.py     # All Firestore stores: LLMUsage, SelfState, Journal,
 │   │                       #   MorningBriefing, Followup, OutreachLog, TickLog, StrengthSession
 │   └── pinecone_db.py      # MemoryStore: remember/recall + chat upserts
@@ -96,7 +93,6 @@ Klaus/
 │   ├── notion_tool.py      # 5 tools: search, get_page, query_db, create_page, append_blocks
 │   ├── weather_tool.py     # wttr.in
 │   ├── readwise_tool.py    # Daily reading highlights
-│   ├── things_tool.py      # Things Cloud sync protocol (journal replay, commit) — writes gated
 │   ├── hevy_tool.py        # Hevy strength API (full per-set workouts) + normalizer
 │   ├── garmin_tool.py      # Sleep, HRV, body battery, resting HR
 │   ├── routes_tool.py      # Google Routes API (traffic-aware drive time)
@@ -119,7 +115,7 @@ Klaus/
 │   └── meal_audit.md       # Meal auditing prompt
 ├── scripts/
 │   ├── eval_tick_brain.py  # Measurement-only judgment eval runner
-│   ├── spike_things_protocol.py # Read-only Things Cloud schema discovery
+│   ├── ticktick_oauth_bootstrap.py
 │   ├── backfill_notion_titles.py
 │   ├── ingest_garmin_zip.py # Parses + ingests Garmin export zip to Postgres
 │   ├── upload_claude_logs.{sh,ps1}
@@ -138,7 +134,7 @@ Klaus/
 - **Cloud Run service:** `klaus-agent` in `me-west1`, project `klaus-agent`
 - **Firestore database:** `klaus-firestore` (lowercase k — uppercase causes silent 404s)
 - **Pinecone index:** `klaus-memory` (768-dim, cosine)
-- **Cloud Scheduler jobs:** heartbeat (hourly), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-nightly-backstop (01:00, writes journal/self_state + sends the nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**, **klaus-things-sync (*/30 6-23, Things 3 mirror refresh)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly` (the nightly flow writes the journal via `_ensure_reflection`); the morning briefing is triggered the same way, by an iOS wake-up automation → `POST /trigger/morning` (Phase 33, D-08/D-31 — exact trigger mechanism varies by iOS version, see `docs/sleep_focus_off_shortcut.md` §3.0), with no cron backstop by design (D-09). **Retired:** proactive-alerts (21:30) and reflect (22:00) — folded into the nightly review; the morning's polling cron (*/10 6-10) — retired in plan 33-13 once the wake-up trigger was confirmed live in production (2026-08-01).
+- **Cloud Scheduler jobs:** heartbeat (hourly), chat-ingest (04:00), chat-export-ingest (04:30), **klaus-nightly-backstop (01:00, writes journal/self_state + sends the nightly review if the Sleep-Focus trigger didn't)**, **klaus-autonomous-tick (*/20 7-21)**, weekly-training-review (Sun 10:00), **klaus-strength-sync (05:00, Hevy pull)**, **klaus-run-sync (05:15, Garmin per-run detail pull)**. Nightly review is normally triggered organically by the iOS Sleep-Focus automation → `POST /trigger/nightly` (the nightly flow writes the journal via `_ensure_reflection`); the morning briefing is triggered the same way, by an iOS wake-up automation → `POST /trigger/morning` (Phase 33, D-08/D-31 — exact trigger mechanism varies by iOS version, see `docs/sleep_focus_off_shortcut.md` §3.0), with no cron backstop by design (D-09). **Retired:** proactive-alerts (21:30) and reflect (22:00) — folded into the nightly review; the morning's polling cron (*/10 6-10) — retired in plan 33-13 once the wake-up trigger was confirmed live in production (2026-08-01).
 
 ## 6. Invariants
 
@@ -152,7 +148,3 @@ Klaus/
 - Agent turns must run INSIDE a tracked request (Cloud Tasks → `/internal/process-update`), never in a Starlette BackgroundTask — background tasks run after the response and Cloud Run throttles CPU once no request is in flight (2026-06-12: 18-minute reply). Telegram still gets its instant webhook ACK
 - Every LLM client carries an explicit timeout (`LLM_TIMEOUT_SECONDS`, default 120s) — SDK defaults are 600s and a single hung provider call stalls the whole turn
 - HealthKit/Lifesum meal timestamps are canonical slot times (08:00/12:00/20:00), NOT actual eating times — never build features that infer eating time from them
-- Task backend is selected in **one** place — `memory.firestore_db.get_task_store()` (`TASK_BACKEND=things|firestore`). Never construct `TaskStore`/`ThingsTaskStore` directly: the briefing, nightly review, reflection, and autonomous tick each used to build their own, so flipping the backend left every proactive feature reading an abandoned store. Guarded by a test in `tests/test_tools.py`
-- Things Cloud is **unofficial and fails by returning plausible wrong data, never by raising** (see `docs/things_protocol.md`). Three traps, all found only by diffing against the running app: journal opcode `t=2` is DELETE (treating it as an edit resurrects deleted items); the page cursor is `start + len(items)`, NOT `current-item-index` (which is the head — using it silently drops everything past page one); and trashing a project leaves its children with `tr=False`. Always read through `things_tool.live_todos()` / `replay_journal()`, which encode these rules — never hand-roll the filter or the pagination
-- Things `sr` (scheduled, "when I'll do it") and `dd` (deadline, "when it's due") are **separate fields**. `due_date`→`sr`, `hard_deadline_at`→`dd`; rescheduling moves `sr` only. Things has no priority field — `priority` and the other Klaus-only planning fields live in the `task_meta` sidecar
-- Things owns recurrence: it spawns the next instance itself, so `complete()` returns `next_id: None` and Klaus must never create the follow-up. Klaus never hard-deletes a to-do either — `task_delete` trashes, which is recoverable
