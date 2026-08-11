@@ -629,6 +629,93 @@ def test_publish_review_replay_sanitizes_legacy_cached_run_without_mutating_it(
         assert len(audit_calls) == 1
 
 
+def test_registered_publish_review_structured_output_serializes_atomic_run(
+    monkeypatch,
+):
+    """The real registered MCP converter must serialize a fresh atomic result."""
+    import core.push_sender
+    import interfaces.mcp_server as mcp_server
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
+    )
+
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore,
+        "transactional",
+        transactional_with_retry,
+    )
+    monkeypatch.setattr(core.push_sender, "send_push_to_all", lambda *_args: {"sent": 1})
+    memory.firestore_db.RoutineRunStore("test-project").start(
+        routine="morning",
+        target_date="2026-08-11",
+        trigger="wake",
+        correlation_id="mcp-json-safe",
+    )
+
+    class IdempotencyStore:
+        @staticmethod
+        def begin(*_args, **_kwargs):
+            return {"is_new": True, "status": "running"}
+
+        @staticmethod
+        def mark_executed(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def complete(*_args, **_kwargs):
+            return None
+
+        @staticmethod
+        def fail(*_args, **_kwargs):
+            return None
+
+    bundle = mcp_server.create_mcp_bundle(
+        _oauth_service(),
+        custom_handlers=build_custom_handlers(),
+        idempotency_store=IdempotencyStore(),
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "get_access_token",
+        lambda: _token(
+            "klaus.read",
+            "klaus.write",
+            "klaus.routine",
+            resource="https://klaus.example.com/mcp/routine",
+        ),
+    )
+    tool = bundle.routine._tool_manager.get_tool("publish_review")
+    converted = asyncio.run(
+        tool.run(
+            {
+                "arguments": {
+                    "correlation_id": "mcp-json-safe",
+                    "routine": "morning",
+                    "target_date": "2026-08-11",
+                    "text": "Serializable morning review.",
+                    "structured": {},
+                    "action_ids": [],
+                    "partial_actions": [],
+                },
+                "idempotency_key": "mcp-json-safe-once",
+            },
+            None,
+            convert_result=True,
+        )
+    )
+
+    encoded = converted.model_dump_json()
+    assert "Serializable morning review." in encoded
+    assert "published_claude" in encoded
+
+
 def test_routine_cannot_move_or_delete_user_owned_calendar_event():
     from interfaces.mcp_server import KlausMCPGateway, MCPToolError
 

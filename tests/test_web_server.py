@@ -456,6 +456,65 @@ def _load_sample_payload() -> dict:
         return json.load(f)
 
 
+def test_internal_routine_fallback_jsonresponse_serializes_atomic_run(
+    monkeypatch,
+    _ws_module,
+):
+    """The real fallback HTTP route must JSON-encode a fresh atomic result."""
+    import memory.firestore_db
+    from fastapi.testclient import TestClient
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
+    )
+
+    ws = _ws_module
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore,
+        "transactional",
+        transactional_with_retry,
+    )
+    runs = memory.firestore_db.RoutineRunStore("test-project")
+    runs.start(
+        routine="morning",
+        target_date="2026-08-11",
+        trigger="wake",
+        correlation_id="fallback-json-safe",
+    )
+
+    class AtomicFallbackCoordinator:
+        @staticmethod
+        async def publish_timeout_fallback(correlation_id):
+            return runs.publish_review_atomic(
+                correlation_id,
+                publisher="fallback",
+                text="Serializable deterministic fallback.",
+                structured={"fallback": True},
+                action_ids=[],
+                partial_actions=[],
+            )
+
+    monkeypatch.setattr(
+        "core.subscription_routines.build_subscription_routine_coordinator",
+        lambda: AtomicFallbackCoordinator(),
+    )
+    with patch.dict(os.environ, _BASE_ENV):
+        response = TestClient(ws.app, raise_server_exceptions=True).post(
+            "/internal/routine-fallback",
+            json={"correlation_id": "fallback-json-safe"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["run"]["status"] == "published_fallback"
+    assert isinstance(payload["run"]["updated_at"], str)
+    assert payload["review"]["review_text"] == "Serializable deterministic fallback."
+
+
 @pytest.fixture(scope="module")
 def _ws_module():
     """Module-scoped import of interfaces.web_server with stubs applied.

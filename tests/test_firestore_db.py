@@ -1415,9 +1415,14 @@ class TestRoutineRunStore:
         assert publication["committed"] is True
         assert publication["initial_publication"] is True
         assert publication["run"]["status"] == "published_fallback"
+        assert isinstance(publication["run"]["updated_at"], str)
         assert publication["review"]["provider"] == "deterministic"
         assert client._data["routine_runs"]["routine-atomic-fallback"]["status"] == (
             "published_fallback"
+        )
+        assert (
+            client._data["routine_runs"]["routine-atomic-fallback"]["updated_at"]
+            is firestore_db.firestore.SERVER_TIMESTAMP
         )
         assert client._data["morning_briefings"]["2026-08-08"]["review_text"] == (
             "Deterministic morning status."

@@ -5512,16 +5512,20 @@ class RoutineRunStore:
                 claude_session_url=claude_session_url,
                 published_at=published_at,
             )
-            run_patch = {
+            stored_run_patch = {
                 "status": target_status,
                 "review_id": review["review_id"],
                 "published_at": published_at,
                 "updated_at": firestore.SERVER_TIMESTAMP,
             }
+            returned_run_patch = {
+                **stored_run_patch,
+                "updated_at": published_at,
+            }
             review_ref = self._client.collection(
                 RoutineReviewStore._COLLECTIONS[routine]
             ).document(target_date)
-            txn.update(run_ref, run_patch)
+            txn.update(run_ref, stored_run_patch)
             txn.set(
                 review_ref,
                 {**review, "updated_at": firestore.SERVER_TIMESTAMP},
@@ -5530,7 +5534,7 @@ class RoutineRunStore:
             return {
                 "committed": True,
                 "initial_publication": initial_publication,
-                "run": _jsonsafe_doc({**current, **run_patch}),
+                "run": _jsonsafe_doc({**current, **returned_run_patch}),
                 "review": dict(review),
             }
 

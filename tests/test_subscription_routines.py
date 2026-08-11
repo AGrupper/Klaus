@@ -9,11 +9,9 @@ import pytest
 
 
 class FakeRunStore:
-    def __init__(self, *, fallback_claimed=None, resume_fallback=None):
+    def __init__(self):
         self.records = {}
         self.review_store = None
-        self.fallback_claimed = fallback_claimed
-        self.resume_fallback = resume_fallback
 
     def get(self, correlation_id):
         record = self.records.get(correlation_id)
@@ -38,9 +36,6 @@ class FakeRunStore:
 
     def transition(self, correlation_id, status, **fields):
         self.records[correlation_id].update(status=status, **fields)
-        if status == "published_fallback" and self.fallback_claimed is not None:
-            self.fallback_claimed.set()
-            assert self.resume_fallback.wait(timeout=2)
         return dict(self.records[correlation_id])
 
     def transition_claude_publication(self, correlation_id, *, review_id):
@@ -84,9 +79,6 @@ class FakeRunStore:
             status=status,
             **review_fields,
         )
-        if publisher == "fallback" and self.fallback_claimed is not None:
-            self.fallback_claimed.set()
-            assert self.resume_fallback.wait(timeout=2)
         return {
             "committed": True,
             "initial_publication": initial_publication,
@@ -308,21 +300,28 @@ def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
     assert pushes == []
 
 
-def test_fallback_cannot_overwrite_claude_review_after_late_upgrade(monkeypatch):
-    """The fallback claim/review write gap must not overwrite a late upgrade."""
+def test_stale_fallback_retries_without_overwriting_claude_publication(monkeypatch):
+    """A stale fallback transaction retries and cannot overwrite Claude."""
     import core.push_sender
     import memory.firestore_db
     from core.subscription_routines import SubscriptionRoutineCoordinator
     from interfaces.mcp_runtime import build_custom_handlers
-
-    fallback_claimed = threading.Event()
-    resume_fallback = threading.Event()
-    reviews = FakeReviewStore()
-    runs = FakeRunStore(
-        fallback_claimed=fallback_claimed,
-        resume_fallback=resume_fallback,
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
     )
-    runs.review_store = reviews
+
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore,
+        "transactional",
+        transactional_with_retry,
+    )
+    runs = memory.firestore_db.RoutineRunStore("test-project")
+    reviews = memory.firestore_db.RoutineReviewStore("test-project")
     pushes = []
     coordinator = SubscriptionRoutineCoordinator(
         run_store=runs,
@@ -339,6 +338,7 @@ def test_fallback_cannot_overwrite_claude_review_after_late_upgrade(monkeypatch)
         correlation_id,
         callback_deadline_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
     )
+    client.arm_next_transaction_read_pause()
 
     outcome = {}
 
@@ -349,10 +349,8 @@ def test_fallback_cannot_overwrite_claude_review_after_late_upgrade(monkeypatch)
 
     fallback_thread = threading.Thread(target=publish_fallback)
     fallback_thread.start()
-    assert fallback_claimed.wait(timeout=2)
+    assert client.read_barrier.wait(timeout=2)
 
-    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: runs)
-    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: reviews)
     monkeypatch.setattr(
         core.push_sender,
         "send_push_to_all",
@@ -369,16 +367,30 @@ def test_fallback_cannot_overwrite_claude_review_after_late_upgrade(monkeypatch)
             "partial_actions": [],
         }
     )
-    resume_fallback.set()
+    client.resume_barrier.set()
     fallback_thread.join(timeout=2)
     assert not fallback_thread.is_alive()
 
-    assert runs.get(correlation_id)["status"] == "late_upgraded"
-    assert reviews.canonical["morning:2026-08-08"]["text"] == (
+    assert runs.get(correlation_id)["status"] == "published_claude"
+    assert reviews.get("morning", "2026-08-08")["review_text"] == (
         "Claude's canonical review."
     )
-    assert claude["delivery"] == {"late_upgrade": True, "push_sent": False}
-    assert len(pushes) == 1
+    assert claude["delivery"] == {"sent": 1}
+    assert outcome["fallback"] == {
+        "deduplicated": True,
+        "status": "published_claude",
+        "correlation_id": correlation_id,
+    }
+    assert client.stale_commits == 1
+    assert client.retries == 1
+    review_writes = [
+        write
+        for write in client.write_history
+        if write[0] == ("morning_briefings", "2026-08-08")
+    ]
+    assert len(review_writes) == 1
+    assert review_writes[0][1]["provider"] == "claude_subscription"
+    assert pushes == ["Claude's canonical review."]
 
 
 def test_remote_fire_uses_claude_subscription_routine_api_contract(monkeypatch):
