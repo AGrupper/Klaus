@@ -19,7 +19,7 @@ def test_deployment_runbook_documents_atomic_skill_rollout():
 
 def test_production_cutovers_remain_independent():
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
-    assert "KLAUS_ROUTINE_MORNING_CUTOVER=false" in workflow
+    assert "KLAUS_ROUTINE_MORNING_CUTOVER=true" in workflow
     assert "KLAUS_ROUTINE_WEEKLY_CUTOVER=false" in workflow
 
 
