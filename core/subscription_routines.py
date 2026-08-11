@@ -203,26 +203,7 @@ class SubscriptionRoutineCoordinator:
                 "review": transitioned.get("shadow_review"),
                 "delivery": {"shadow": True, "push_sent": False},
             }
-        review_id = f"{run['routine']}:{run['target_date']}"
-        try:
-            transitioned = await asyncio.to_thread(
-                self._runs.transition,
-                correlation_id,
-                "published_fallback",
-                review_id=review_id,
-            )
-        except ValueError:
-            current = self._runs.get(correlation_id) or {}
-            return {
-                "deduplicated": True,
-                "status": current.get("status"),
-                "correlation_id": correlation_id,
-            }
         review_fields = {
-            "routine": run["routine"],
-            "target_date": run["target_date"],
-            "correlation_id": correlation_id,
-            "status": "published_fallback",
             "text": text,
             "structured": {
                 "fallback": True,
@@ -236,10 +217,23 @@ class SubscriptionRoutineCoordinator:
         session_url = normalise_claude_session_url(run.get("claude_session_url"))
         if session_url:
             review_fields["claude_session_url"] = session_url
-        review = await asyncio.to_thread(self._reviews.publish, **review_fields)
+        publication = await asyncio.to_thread(
+            self._runs.publish_review_atomic,
+            correlation_id,
+            publisher="fallback",
+            **review_fields,
+        )
+        transitioned = publication["run"]
+        if not publication["committed"]:
+            return {
+                "deduplicated": True,
+                "status": transitioned.get("status"),
+                "correlation_id": correlation_id,
+            }
+        review = publication["review"]
         delivery = await asyncio.to_thread(
             self._push_sender,
-            text,
+            review["review_text"],
             "briefing",
             routine_review_path(run["routine"], run["target_date"]),
             routine_review_title(run["routine"]),

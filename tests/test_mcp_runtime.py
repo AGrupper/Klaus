@@ -349,17 +349,16 @@ def test_publish_review_passes_only_safe_session_url_to_review_store(
             }
 
         @staticmethod
-        def transition_claude_publication(*_args, **_kwargs):
-            return {"status": "published_claude"}
-
-    class Reviews:
-        @staticmethod
-        def publish(**kwargs):
+        def publish_review_atomic(correlation_id, **kwargs):
             published.append(kwargs)
-            return kwargs
+            return {
+                "committed": True,
+                "initial_publication": True,
+                "run": {"status": "published_claude"},
+                "review": {**kwargs, "review_text": kwargs["text"]},
+            }
 
     monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
-    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
     monkeypatch.setattr(core.push_sender, "send_push_to_all", lambda *_args: {"sent": 1})
 
     result = build_custom_handlers()["publish_review"](
@@ -399,13 +398,13 @@ def test_publish_review_pushes_claude_nightly_to_its_review_detail(monkeypatch):
             }
 
         @staticmethod
-        def transition_claude_publication(*_args, **_kwargs):
-            return {"status": "published_claude"}
-
-    class Reviews:
-        @staticmethod
-        def publish(**kwargs):
-            return kwargs
+        def publish_review_atomic(correlation_id, **kwargs):
+            return {
+                "committed": True,
+                "initial_publication": True,
+                "run": {"status": "published_claude"},
+                "review": {**kwargs, "review_text": kwargs["text"]},
+            }
 
     class Journal:
         @staticmethod
@@ -423,7 +422,6 @@ def test_publish_review_pushes_claude_nightly_to_its_review_detail(monkeypatch):
             return None
 
     monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
-    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
     monkeypatch.setattr(memory.firestore_db, "JournalStore", lambda *_args: Journal())
     monkeypatch.setattr(memory.firestore_db, "SelfStateStore", lambda *_args: SelfState())
     monkeypatch.setattr(
@@ -468,16 +466,15 @@ def test_publish_review_late_upgrade_does_not_send_another_push(monkeypatch):
             }
 
         @staticmethod
-        def transition_claude_publication(*_args, **_kwargs):
-            return {"status": "late_upgraded"}
-
-    class Reviews:
-        @staticmethod
-        def publish(**kwargs):
-            return kwargs
+        def publish_review_atomic(correlation_id, **kwargs):
+            return {
+                "committed": True,
+                "initial_publication": False,
+                "run": {"status": "late_upgraded"},
+                "review": {**kwargs, "review_text": kwargs["text"]},
+            }
 
     monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
-    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: Reviews())
     monkeypatch.setattr(
         core.push_sender,
         "send_push_to_all",
@@ -498,6 +495,88 @@ def test_publish_review_late_upgrade_does_not_send_another_push(monkeypatch):
 
     assert result["delivery"] == {"late_upgrade": True, "push_sent": False}
     assert pushes == []
+
+
+def test_publish_review_uses_atomic_result_and_pushes_committed_canonical_text(
+    monkeypatch,
+):
+    """Live Claude publication must push only the review committed with its run."""
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    publications = []
+    pushes = []
+
+    class RoutineRuns:
+        @staticmethod
+        def get(_correlation_id):
+            return {
+                "routine": "morning",
+                "target_date": "2026-08-08",
+                "delivery_mode": "live",
+            }
+
+        @staticmethod
+        def transition_claude_publication(*_args, **_kwargs):
+            raise AssertionError("live publication must use the atomic store API")
+
+        @staticmethod
+        def publish_review_atomic(correlation_id, **kwargs):
+            publications.append((correlation_id, kwargs))
+            return {
+                "committed": True,
+                "initial_publication": True,
+                "run": {
+                    "correlation_id": correlation_id,
+                    "routine": "morning",
+                    "target_date": "2026-08-08",
+                    "delivery_mode": "live",
+                    "status": "published_claude",
+                    "review_id": "morning:2026-08-08",
+                },
+                "review": {
+                    "review_id": "morning:2026-08-08",
+                    "review_text": "Canonical committed Claude review.",
+                },
+            }
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: RoutineRuns())
+    monkeypatch.setattr(
+        memory.firestore_db,
+        "RoutineReviewStore",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("live publication must not perform a second review write")
+        ),
+    )
+    monkeypatch.setattr(
+        core.push_sender,
+        "send_push_to_all",
+        lambda *args: pushes.append(args) or {"sent": 1},
+    )
+
+    result = build_custom_handlers()["publish_review"](
+        {
+            "correlation_id": "routine-atomic",
+            "routine": "morning",
+            "target_date": "2026-08-08",
+            "text": "Uncommitted callback text.",
+            "structured": {},
+            "action_ids": [],
+            "partial_actions": [],
+        }
+    )
+
+    assert publications[0][1]["publisher"] == "claude"
+    assert result["review"]["review_text"] == "Canonical committed Claude review."
+    assert pushes == [
+        (
+            "Canonical committed Claude review.",
+            "briefing",
+            "/klaus/reviews/morning/2026-08-08",
+            "Klaus Morning Review",
+        )
+    ]
 
 
 @pytest.mark.parametrize(
@@ -527,6 +606,19 @@ def test_publish_review_never_returns_internal_run_diagnostics(
         @staticmethod
         def transition_claude_publication(*_args, **_kwargs):
             return {**stored, "status": transition_status, "review_id": "morning:2026-08-10"}
+
+        @staticmethod
+        def publish_review_atomic(correlation_id, **kwargs):
+            return {
+                "committed": True,
+                "initial_publication": transition_status == "published_claude",
+                "run": {
+                    **stored,
+                    "status": transition_status,
+                    "review_id": "morning:2026-08-10",
+                },
+                "review": {**kwargs, "review_text": kwargs["text"]},
+            }
 
         @staticmethod
         def patch(_correlation_id, **fields):

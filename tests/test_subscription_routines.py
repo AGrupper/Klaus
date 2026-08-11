@@ -2,14 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 
 class FakeRunStore:
-    def __init__(self):
+    def __init__(self, *, fallback_claimed=None, resume_fallback=None):
         self.records = {}
+        self.review_store = None
+        self.fallback_claimed = fallback_claimed
+        self.resume_fallback = resume_fallback
 
     def get(self, correlation_id):
         record = self.records.get(correlation_id)
@@ -34,7 +38,61 @@ class FakeRunStore:
 
     def transition(self, correlation_id, status, **fields):
         self.records[correlation_id].update(status=status, **fields)
+        if status == "published_fallback" and self.fallback_claimed is not None:
+            self.fallback_claimed.set()
+            assert self.resume_fallback.wait(timeout=2)
         return dict(self.records[correlation_id])
+
+    def transition_claude_publication(self, correlation_id, *, review_id):
+        current = self.records[correlation_id]
+        status = (
+            "late_upgraded"
+            if current["status"] == "published_fallback"
+            else "published_claude"
+        )
+        current.update(status=status, review_id=review_id)
+        return dict(current)
+
+    def publish_review_atomic(self, correlation_id, *, publisher, **review_fields):
+        current = self.records[correlation_id]
+        if publisher == "fallback":
+            if current["status"] not in {"queued", "running"}:
+                return {
+                    "committed": False,
+                    "initial_publication": False,
+                    "run": dict(current),
+                    "review": None,
+                }
+            status = "published_fallback"
+            initial_publication = True
+        elif current["status"] in {"queued", "running"}:
+            status = "published_claude"
+            initial_publication = True
+        elif current["status"] == "published_fallback":
+            status = "late_upgraded"
+            initial_publication = False
+        else:
+            raise ValueError("invalid routine transition")
+        current.update(
+            status=status,
+            review_id=f"{current['routine']}:{current['target_date']}",
+        )
+        review = self.review_store.publish(
+            routine=current["routine"],
+            target_date=current["target_date"],
+            correlation_id=correlation_id,
+            status=status,
+            **review_fields,
+        )
+        if publisher == "fallback" and self.fallback_claimed is not None:
+            self.fallback_claimed.set()
+            assert self.resume_fallback.wait(timeout=2)
+        return {
+            "committed": True,
+            "initial_publication": initial_publication,
+            "run": dict(current),
+            "review": review,
+        }
 
     def patch(self, correlation_id, **fields):
         self.records[correlation_id].update(**fields)
@@ -44,10 +102,16 @@ class FakeRunStore:
 class FakeReviewStore:
     def __init__(self):
         self.published = []
+        self.canonical = {}
 
     def publish(self, **record):
-        record = {**record, "review_id": f"{record['routine']}:{record['target_date']}"}
+        record = {
+            **record,
+            "review_id": f"{record['routine']}:{record['target_date']}",
+            "review_text": record["text"],
+        }
         self.published.append(record)
+        self.canonical[record["review_id"]] = record
         return record
 
 
@@ -173,6 +237,7 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
 
     runs = FakeRunStore()
     reviews = FakeReviewStore()
+    runs.review_store = reviews
     pushes = []
     coordinator = SubscriptionRoutineCoordinator(
         run_store=runs,
@@ -221,6 +286,7 @@ def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
 
     runs = FakeRunStore()
     reviews = FakeReviewStore()
+    runs.review_store = reviews
     pushes = []
     coordinator = SubscriptionRoutineCoordinator(
         run_store=runs,
@@ -240,6 +306,79 @@ def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
     result = asyncio.run(coordinator.publish_timeout_fallback(started["correlation_id"]))
     assert result["deduplicated"] is True
     assert pushes == []
+
+
+def test_fallback_cannot_overwrite_claude_review_after_late_upgrade(monkeypatch):
+    """The fallback claim/review write gap must not overwrite a late upgrade."""
+    import core.push_sender
+    import memory.firestore_db
+    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from interfaces.mcp_runtime import build_custom_handlers
+
+    fallback_claimed = threading.Event()
+    resume_fallback = threading.Event()
+    reviews = FakeReviewStore()
+    runs = FakeRunStore(
+        fallback_claimed=fallback_claimed,
+        resume_fallback=resume_fallback,
+    )
+    runs.review_store = reviews
+    pushes = []
+    coordinator = SubscriptionRoutineCoordinator(
+        run_store=runs,
+        review_store=reviews,
+        remote_fire=lambda _payload: {"accepted": True},
+        enqueue_fallback=lambda _cid, _delay: True,
+        snapshot_builder=lambda: {},
+        push_sender=lambda text, *_args: pushes.append(text) or {"sent": 1},
+        public_url="https://klaus.example.com",
+    )
+    started = coordinator.start("morning", "2026-08-08", "wake")
+    correlation_id = started["correlation_id"]
+    runs.patch(
+        correlation_id,
+        callback_deadline_at=(datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+    )
+
+    outcome = {}
+
+    def publish_fallback():
+        outcome["fallback"] = asyncio.run(
+            coordinator.publish_timeout_fallback(correlation_id)
+        )
+
+    fallback_thread = threading.Thread(target=publish_fallback)
+    fallback_thread.start()
+    assert fallback_claimed.wait(timeout=2)
+
+    monkeypatch.setattr(memory.firestore_db, "RoutineRunStore", lambda *_args: runs)
+    monkeypatch.setattr(memory.firestore_db, "RoutineReviewStore", lambda *_args: reviews)
+    monkeypatch.setattr(
+        core.push_sender,
+        "send_push_to_all",
+        lambda text, *_args: pushes.append(text) or {"sent": 1},
+    )
+    claude = build_custom_handlers()["publish_review"](
+        {
+            "correlation_id": correlation_id,
+            "routine": "morning",
+            "target_date": "2026-08-08",
+            "text": "Claude's canonical review.",
+            "structured": {"source": "claude"},
+            "action_ids": [],
+            "partial_actions": [],
+        }
+    )
+    resume_fallback.set()
+    fallback_thread.join(timeout=2)
+    assert not fallback_thread.is_alive()
+
+    assert runs.get(correlation_id)["status"] == "late_upgraded"
+    assert reviews.canonical["morning:2026-08-08"]["text"] == (
+        "Claude's canonical review."
+    )
+    assert claude["delivery"] == {"late_upgrade": True, "push_sent": False}
+    assert len(pushes) == 1
 
 
 def test_remote_fire_uses_claude_subscription_routine_api_contract(monkeypatch):

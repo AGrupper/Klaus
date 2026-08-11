@@ -975,6 +975,7 @@ class _ActionLogFakeClient:
     def __init__(self):
         self._data: dict = {}
         self.transaction_calls = 0
+        self.transactions = []
 
     def collection(self, name: str) -> _ActionLogFakeCol:
         return _ActionLogFakeCol(self._data.setdefault(name, {}))
@@ -983,11 +984,20 @@ class _ActionLogFakeClient:
         self.transaction_calls += 1
 
         class _Transaction:
-            @staticmethod
-            def update(doc_ref, patch):
+            def __init__(self):
+                self.operations = []
+
+            def update(self, doc_ref, patch):
+                self.operations.append(("update", doc_ref, patch))
                 doc_ref.set(patch, merge=True)
 
-        return _Transaction()
+            def set(self, doc_ref, record, merge=False):
+                self.operations.append(("set", doc_ref, record, merge))
+                doc_ref.set(record, merge=merge)
+
+        transaction = _Transaction()
+        self.transactions.append(transaction)
+        return transaction
 
 
 class TestActionLogStore:
@@ -1380,6 +1390,111 @@ class TestRoutineRunStore:
         assert published["claude_session_url"] == "https://claude.ai/code/session_01ABC"
         assert stored["claude_session_url"] == "https://claude.ai/code/session_01ABC"
         assert "claude_session_url" not in legacy
+
+    def test_atomic_fallback_writes_run_and_canonical_review_in_one_transaction(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            runs = firestore_db.RoutineRunStore("test-project")
+            runs.start(
+                routine="morning",
+                target_date="2026-08-08",
+                trigger="wake",
+                correlation_id="routine-atomic-fallback",
+            )
+            runs.transition("routine-atomic-fallback", "running")
+
+            publication = runs.publish_review_atomic(
+                "routine-atomic-fallback",
+                publisher="fallback",
+                text="Deterministic morning status.",
+                structured={"fallback": True},
+                action_ids=[],
+                partial_actions=[],
+            )
+
+        assert publication["committed"] is True
+        assert publication["initial_publication"] is True
+        assert publication["run"]["status"] == "published_fallback"
+        assert publication["review"]["provider"] == "deterministic"
+        assert client._data["routine_runs"]["routine-atomic-fallback"]["status"] == (
+            "published_fallback"
+        )
+        assert client._data["morning_briefings"]["2026-08-08"]["review_text"] == (
+            "Deterministic morning status."
+        )
+        transaction = client.transactions[-1]
+        assert [operation[0] for operation in transaction.operations] == ["update", "set"]
+
+    def test_atomic_publication_enforces_claude_over_fallback_precedence(self):
+        client = _ActionLogFakeClient()
+        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+            runs = firestore_db.RoutineRunStore("test-project")
+            runs.start(
+                routine="nightly",
+                target_date="2026-08-08",
+                trigger="focus",
+                correlation_id="routine-claude-first",
+            )
+            claude_first = runs.publish_review_atomic(
+                "routine-claude-first",
+                publisher="claude",
+                text="Claude initial review.",
+            )
+            fallback_lost = runs.publish_review_atomic(
+                "routine-claude-first",
+                publisher="fallback",
+                text="Fallback must not replace Claude.",
+            )
+
+            runs.start(
+                routine="weekly",
+                target_date="2026-08-09",
+                trigger="cron",
+                correlation_id="routine-late-claude",
+            )
+            runs.publish_review_atomic(
+                "routine-late-claude",
+                publisher="fallback",
+                text="Initial fallback review.",
+            )
+            late_claude = runs.publish_review_atomic(
+                "routine-late-claude",
+                publisher="claude",
+                text="Claude late upgrade.",
+                claude_session_url=(
+                    "https://www.claude.ai/code/session_01ABC?trigger=private"
+                ),
+            )
+            fallback_after_upgrade = runs.publish_review_atomic(
+                "routine-late-claude",
+                publisher="fallback",
+                text="Fallback must not replace the late upgrade.",
+            )
+
+        assert claude_first["run"]["status"] == "published_claude"
+        assert fallback_lost == {
+            "committed": False,
+            "initial_publication": False,
+            "run": fallback_lost["run"],
+            "review": None,
+        }
+        assert fallback_lost["run"]["status"] == "published_claude"
+        assert client._data["nightly_reviews"]["2026-08-08"]["review_text"] == (
+            "Claude initial review."
+        )
+        assert late_claude["run"]["status"] == "late_upgraded"
+        assert late_claude["initial_publication"] is False
+        assert late_claude["review"]["review_text"] == "Claude late upgrade."
+        assert late_claude["review"]["claude_session_url"] == (
+            "https://claude.ai/code/session_01ABC"
+        )
+        assert client._data["weekly_reviews"]["2026-08-09"]["routine_status"] == (
+            "late_upgraded"
+        )
+        assert fallback_after_upgrade["committed"] is False
+        assert client._data["weekly_reviews"]["2026-08-09"]["review_text"] == (
+            "Claude late upgrade."
+        )
 
 
 # =============================================================================

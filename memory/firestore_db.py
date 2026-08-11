@@ -5155,6 +5155,54 @@ class RoutineReviewStore:
     def __init__(self, project_id: str, database: str = "(default)") -> None:
         self._client = _make_firestore_client(project_id, database)
 
+    @classmethod
+    def build_record(
+        cls,
+        *,
+        routine: str,
+        target_date: str,
+        correlation_id: str,
+        status: str,
+        text: str,
+        structured: dict | None = None,
+        action_ids: list[str] | None = None,
+        partial_actions: list[dict] | None = None,
+        claude_session_url: str | None = None,
+        published_at: str | None = None,
+    ) -> dict:
+        """Build and validate the canonical routine-review record."""
+        from datetime import datetime, timezone
+
+        from core.review_delivery import normalise_claude_session_url
+
+        if routine not in cls._COLLECTIONS:
+            raise ValueError(f"unsupported routine: {routine}")
+        if status not in cls._STATUSES:
+            raise ValueError(f"unsupported review status: {status}")
+        if not text.strip():
+            raise ValueError("review text is required")
+        record = {
+            "review_id": f"{routine}:{target_date}",
+            "correlation_id": correlation_id,
+            "routine": routine,
+            "target_date": target_date,
+            "routine_status": status,
+            "provider": (
+                "deterministic"
+                if status == "published_fallback"
+                else "claude_subscription"
+            ),
+            "review_text": text,
+            "structured": dict(structured or {}),
+            "action_ids": [str(item) for item in action_ids or []],
+            "partial_actions": [_jsonsafe_doc(item) for item in partial_actions or []],
+            "published_at": published_at or datetime.now(timezone.utc).isoformat(),
+        }
+        session_url = normalise_claude_session_url(claude_session_url)
+        if session_url:
+            record["claude_session_url"] = session_url
+        return record
+
     def publish(
         self,
         *,
@@ -5169,36 +5217,18 @@ class RoutineReviewStore:
         claude_session_url: str | None = None,
     ) -> dict:
         """Merge a Claude/fallback publication into its existing date document."""
-        from datetime import datetime, timezone
-
-        from core.review_delivery import normalise_claude_session_url
-
-        collection = self._COLLECTIONS.get(routine)
-        if collection is None:
-            raise ValueError(f"unsupported routine: {routine}")
-        if status not in self._STATUSES:
-            raise ValueError(f"unsupported review status: {status}")
-        if not text.strip():
-            raise ValueError("review text is required")
-        record = {
-            "review_id": f"{routine}:{target_date}",
-            "correlation_id": correlation_id,
-            "routine": routine,
-            "target_date": target_date,
-            "routine_status": status,
-            "provider": (
-                "deterministic" if status == "published_fallback" else "claude_subscription"
-            ),
-            "review_text": text,
-            "structured": dict(structured or {}),
-            "action_ids": [str(item) for item in action_ids or []],
-            "partial_actions": [_jsonsafe_doc(item) for item in partial_actions or []],
-            "published_at": datetime.now(timezone.utc).isoformat(),
-        }
-        session_url = normalise_claude_session_url(claude_session_url)
-        if session_url:
-            record["claude_session_url"] = session_url
-        self._client.collection(collection).document(target_date).set(
+        record = self.build_record(
+            routine=routine,
+            target_date=target_date,
+            correlation_id=correlation_id,
+            status=status,
+            text=text,
+            structured=structured,
+            action_ids=action_ids,
+            partial_actions=partial_actions,
+            claude_session_url=claude_session_url,
+        )
+        self._client.collection(self._COLLECTIONS[routine]).document(target_date).set(
             {**record, "updated_at": firestore.SERVER_TIMESTAMP},
             merge=True,
         )
@@ -5419,6 +5449,92 @@ class RoutineRunStore:
             return _jsonsafe_doc({**current, **patch})
 
         return transition_once(transaction)
+
+    def publish_review_atomic(
+        self,
+        correlation_id: str,
+        *,
+        publisher: str,
+        text: str,
+        structured: dict | None = None,
+        action_ids: list[str] | None = None,
+        partial_actions: list[dict] | None = None,
+        claude_session_url: str | None = None,
+    ) -> dict:
+        """Atomically transition a live run and write its canonical review."""
+        from datetime import datetime, timezone
+
+        if publisher not in {"claude", "fallback"}:
+            raise ValueError(f"unsupported routine publisher: {publisher}")
+        run_ref = self._col.document(correlation_id)
+        transaction = self._client.transaction()
+
+        @firestore.transactional
+        def publish_once(txn):
+            snap = run_ref.get(transaction=txn)
+            if not snap.exists:
+                raise ValueError("routine run not found")
+            current = snap.to_dict() or {}
+            current_status = str(current.get("status") or "")
+            if publisher == "fallback":
+                if current_status not in {"queued", "running"}:
+                    return {
+                        "committed": False,
+                        "initial_publication": False,
+                        "run": _jsonsafe_doc(current),
+                        "review": None,
+                    }
+                target_status = "published_fallback"
+                initial_publication = True
+            elif current_status in {"queued", "running"}:
+                target_status = "published_claude"
+                initial_publication = True
+            elif current_status == "published_fallback":
+                target_status = "late_upgraded"
+                initial_publication = False
+            else:
+                raise ValueError(
+                    f"invalid routine transition: {current_status or 'unknown'} -> claude"
+                )
+
+            routine = str(current.get("routine") or "")
+            target_date = str(current.get("target_date") or "")
+            published_at = datetime.now(timezone.utc).isoformat()
+            review = RoutineReviewStore.build_record(
+                routine=routine,
+                target_date=target_date,
+                correlation_id=correlation_id,
+                status=target_status,
+                text=text,
+                structured=structured,
+                action_ids=action_ids,
+                partial_actions=partial_actions,
+                claude_session_url=claude_session_url,
+                published_at=published_at,
+            )
+            run_patch = {
+                "status": target_status,
+                "review_id": review["review_id"],
+                "published_at": published_at,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            }
+            review_ref = self._client.collection(
+                RoutineReviewStore._COLLECTIONS[routine]
+            ).document(target_date)
+            txn.update(run_ref, run_patch)
+            txn.set(
+                review_ref,
+                {**review, "updated_at": firestore.SERVER_TIMESTAMP},
+                merge=True,
+            )
+            return {
+                "committed": True,
+                "initial_publication": initial_publication,
+                "run": _jsonsafe_doc({**current, **run_patch}),
+                "review": dict(review),
+            }
+
+        return publish_once(transaction)
 
 
 def _smoke_test() -> int:

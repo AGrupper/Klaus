@@ -235,7 +235,6 @@ def build_custom_handlers() -> dict[str, Any]:
         from memory.firestore_db import (
             BehavioralFeedbackStore,
             JournalStore,
-            RoutineReviewStore,
             RoutineRunStore,
             SelfStateStore,
         )
@@ -278,13 +277,29 @@ def build_custom_handlers() -> dict[str, Any]:
                 "run": public_routine_run(run),
                 "delivery": {"shadow": True, "push_sent": False},
             }
-        # Claim the publication atomically before any user-visible side effect.
-        # This makes the timeout/Claude race resolve to one initial publisher;
-        # a callback arriving after fallback becomes a silent late upgrade.
-        run = runs.transition_claude_publication(
-            correlation_id, review_id=review_id
+        session_url = normalise_claude_session_url(current.get("claude_session_url"))
+        if "claude_session_url" not in current:
+            remote_result = current.get("remote_trigger_result")
+            session_url = normalise_claude_session_url(
+                remote_result.get("claude_code_session_url")
+                if isinstance(remote_result, dict)
+                else None
+            )
+        review_fields = {
+            "text": text,
+            "structured": structured,
+            "action_ids": action_ids,
+            "partial_actions": partial_actions,
+        }
+        if session_url:
+            review_fields["claude_session_url"] = session_url
+        publication = runs.publish_review_atomic(
+            correlation_id,
+            publisher="claude",
+            **review_fields,
         )
-        status = str(run["status"])
+        run = publication["run"]
+        review = publication["review"]
         if routine == "nightly":
             JournalStore(*_settings()).set(
                 target_date,
@@ -308,32 +323,11 @@ def build_custom_handlers() -> dict[str, Any]:
                         f"{correlation_id}:{index}:{pattern}".encode("utf-8")
                     ).hexdigest()[:32],
                 )
-        session_url = normalise_claude_session_url(current.get("claude_session_url"))
-        if "claude_session_url" not in current:
-            remote_result = current.get("remote_trigger_result")
-            session_url = normalise_claude_session_url(
-                remote_result.get("claude_code_session_url")
-                if isinstance(remote_result, dict)
-                else None
-            )
-        review_fields = {
-            "routine": routine,
-            "target_date": target_date,
-            "correlation_id": correlation_id,
-            "status": status,
-            "text": text,
-            "structured": structured,
-            "action_ids": action_ids,
-            "partial_actions": partial_actions,
-        }
-        if session_url:
-            review_fields["claude_session_url"] = session_url
-        review = RoutineReviewStore(*_settings()).publish(**review_fields)
         delivery = (
             {"late_upgrade": True, "push_sent": False}
-            if status == "late_upgraded"
+            if not publication["initial_publication"]
             else send_push_to_all(
-                text,
+                review["review_text"],
                 "briefing",
                 routine_review_path(routine, target_date),
                 routine_review_title(routine),
