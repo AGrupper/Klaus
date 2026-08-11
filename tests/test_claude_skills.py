@@ -104,8 +104,12 @@ def test_routine_skills_render_exact_published_text_after_success():
         "klaus-weekly-review",
     ):
         text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+        normalized = " ".join(text.split())
         assert "exact published review text" in text
         assert "final assistant response" in text
+        assert "consist solely of the exact published review text" in normalized
+        assert "do not add a preamble, status line, acknowledgement, or postscript" in normalized
+        assert "you may append" not in text
         assert "do not replace it with an acknowledgement" in text
         assert "do not call `publish_review` again" in text
         assert "if `publish_review` fails" in text

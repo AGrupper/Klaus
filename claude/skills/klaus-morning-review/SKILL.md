@@ -29,10 +29,10 @@ Pass `correlation_id`, `routine`, `target_date`, `text`, `structured`, `action_i
 
 ## Final routine response
 
-After `publish_review` returns success, use the exact published review text as the
-body of the final assistant response. Do not replace it with an acknowledgement,
-short summary, or “published successfully” message. You may append one short
-sentence saying that Amit can continue the conversation in this Routine session.
+After `publish_review` returns success, the final assistant response must consist
+solely of the exact published review text. Do not add a preamble, status line,
+acknowledgement, or postscript. Do not replace it with an acknowledgement, short
+summary, or “published successfully” message.
 
 Rendering the already-published text is not another write: do not call `publish_review` again and do not request or send another push. If `publish_review` fails, report the failure honestly and do not describe the unpublished review as canonical.
 
