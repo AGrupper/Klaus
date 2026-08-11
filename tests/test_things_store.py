@@ -154,11 +154,124 @@ def test_today_and_overdue_preserves_legacy_shape():
     with _patch_things(state):
         result = _store().get_today_and_overdue("2026-08-11")
 
-    assert set(result) == {"today", "overdue", "due_today", "staleness_warning"}
+    # Subset, not equality: extra keys are additive and safe, missing ones break
+    # the autonomous engine and the eval fixtures.
+    assert {"today", "overdue", "due_today", "staleness_warning"} <= set(result)
     assert result["today"] == [{"title": "now", "tags": []}]
     assert result["overdue"] == [{"title": "late", "due": "2026-08-01", "tags": []}]
     assert result["due_today"] == []
     assert result["staleness_warning"] is None
+
+
+def test_today_and_overdue_adds_upcoming_without_breaking_legacy_keys():
+    """New keys are additive — existing readers and eval fixtures still work."""
+    import mcp_tools.things_tool as things
+    state = {"t1": _payload(tt="soon", sr=things.iso_to_day("2026-08-14"))}
+    with _patch_things(state):
+        result = _store().get_today_and_overdue("2026-08-11")
+    assert {"today", "overdue", "due_today", "staleness_warning"} <= set(result)
+    assert [t["title"] for t in result["upcoming"]] == ["soon"]
+    assert result["open_count"] == 1
+
+
+# ------------------------------------------------------------------ #
+# The coming week — what Amit actually asked for                      #
+# ------------------------------------------------------------------ #
+
+def test_upcoming_includes_scheduled_within_the_window():
+    import mcp_tools.things_tool as things
+    state = {
+        "t1": _payload(tt="in range", sr=things.iso_to_day("2026-08-14")),
+        "t2": _payload(tt="too far", sr=things.iso_to_day("2026-09-30")),
+        "t3": _payload(tt="undated"),
+    }
+    with _patch_things(state):
+        assert [t["title"] for t in _store().get_upcoming("2026-08-11")] == ["in range"]
+
+
+def test_upcoming_includes_deadline_only_tasks():
+    """A to-do due Friday but never scheduled must not be invisible."""
+    import mcp_tools.things_tool as things
+    state = {"t1": _payload(tt="due friday", sr=None, dd=things.iso_to_day("2026-08-14"))}
+    with _patch_things(state):
+        found = _store().get_upcoming("2026-08-11")
+    assert [t["title"] for t in found] == ["due friday"]
+    assert found[0]["kind"] == "deadline"
+
+
+def test_upcoming_reports_which_date_put_it_in_range():
+    import mcp_tools.things_tool as things
+    state = {"t1": _payload(tt="both", sr=things.iso_to_day("2026-08-13"),
+                            dd=things.iso_to_day("2026-08-15"))}
+    with _patch_things(state):
+        entry = _store().get_upcoming("2026-08-11")[0]
+    assert entry["kind"] == "scheduled" and entry["date"] == "2026-08-13"
+    assert entry["hard_deadline_at"] == "2026-08-15"
+
+
+def test_upcoming_lists_each_task_once():
+    import mcp_tools.things_tool as things
+    day = things.iso_to_day("2026-08-13")
+    with _patch_things({"t1": _payload(tt="both", sr=day, dd=day)}):
+        assert len(_store().get_upcoming("2026-08-11")) == 1
+
+
+def test_upcoming_excludes_overdue():
+    import mcp_tools.things_tool as things
+    state = {"t1": _payload(tt="late", sr=things.iso_to_day("2026-08-01"))}
+    with _patch_things(state):
+        assert _store().get_upcoming("2026-08-11") == []
+
+
+def test_upcoming_includes_today_and_the_horizon_edge():
+    import mcp_tools.things_tool as things
+    state = {
+        "t1": _payload(tt="today", sr=things.iso_to_day("2026-08-11")),
+        "t2": _payload(tt="day seven", sr=things.iso_to_day("2026-08-18")),
+        "t3": _payload(tt="day eight", sr=things.iso_to_day("2026-08-19")),
+    }
+    with _patch_things(state):
+        titles = [t["title"] for t in _store().get_upcoming("2026-08-11")]
+    assert titles == ["today", "day seven"]
+
+
+def test_upcoming_sorted_soonest_first_with_days_away():
+    import mcp_tools.things_tool as things
+    state = {
+        "t1": _payload(tt="later", sr=things.iso_to_day("2026-08-16")),
+        "t2": _payload(tt="sooner", sr=things.iso_to_day("2026-08-12")),
+    }
+    with _patch_things(state):
+        found = _store().get_upcoming("2026-08-11")
+    assert [t["title"] for t in found] == ["sooner", "later"]
+    assert [t["days_away"] for t in found] == [1, 5]
+
+
+def test_upcoming_carries_project_and_tags_for_context():
+    import mcp_tools.things_tool as things
+    state = {
+        "p1": _payload(tt="Klaus", tp=1),
+        "g1": {"_class": "Tag4", "tt": "Errand"},
+        "t1": _payload(tt="task", sr=things.iso_to_day("2026-08-12"),
+                       pr=["p1"], tg=["g1"]),
+    }
+    with _patch_things(state):
+        entry = _store().get_upcoming("2026-08-11")[0]
+    assert entry["project"] == "Klaus" and entry["tags"] == ["Errand"]
+
+
+def test_upcoming_window_is_configurable():
+    import mcp_tools.things_tool as things
+    state = {"t1": _payload(tt="in 10 days", sr=things.iso_to_day("2026-08-21"))}
+    with _patch_things(state):
+        store = _store()
+        assert store.get_upcoming("2026-08-11") == []
+        assert len(store.get_upcoming("2026-08-11", days=14)) == 1
+
+
+def test_upcoming_survives_a_bad_date():
+    with _patch_things({"t1": _payload()}):
+        assert _store().get_upcoming("not-a-date") == []
 
 
 def test_today_and_overdue_now_carries_real_tags():

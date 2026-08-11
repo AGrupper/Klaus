@@ -55,6 +55,7 @@ _SIDECAR_FIELDS = (
     "calendar_event_id",
 )
 
+_DEFAULT_UPCOMING_DAYS = 7       # "the coming week" horizon
 _DEFAULT_FRESHNESS_TTL = 60      # seconds between head-index checks
 _FIRESTORE_BATCH = 400           # under the 500-op batch ceiling
 
@@ -322,6 +323,64 @@ class ThingsTaskStore:
             logger.warning("ThingsTaskStore.get_summary failed", exc_info=True)
             return {"due_today": 0, "overdue": 0}
 
+    def get_upcoming(self, today_iso: str, days: int = _DEFAULT_UPCOMING_DAYS) -> list[dict]:
+        """To-dos landing within the next ``days`` days, soonest first.
+
+        Checks **both** Things date fields, because they mean different things and
+        either one makes a to-do part of the coming week:
+
+          * ``due_date``  — the scheduled date (Things ``sr``, "when I'll do it")
+          * ``hard_deadline_at`` — the deadline (Things ``dd``, "when it's due")
+
+        A to-do due Friday but never scheduled is invisible if you only read the
+        scheduled field, which is the trap this method exists to avoid.
+
+        One entry per to-do.  ``date`` is whichever in-window date comes first and
+        ``kind`` says which field that was, so a caller can tell "I planned to do
+        this Tuesday" from "this is due Tuesday".  Overdue items are excluded —
+        :meth:`get_today_and_overdue` owns those.  Never raises.
+        """
+        from datetime import date as _date, timedelta
+
+        try:
+            start = _date.fromisoformat(today_iso)
+        except ValueError:
+            logger.warning("ThingsTaskStore.get_upcoming: bad date %r", today_iso)
+            return []
+        horizon = (start + timedelta(days=max(0, days))).isoformat()
+
+        upcoming: list[dict] = []
+        try:
+            for task in self.list():
+                candidates = [
+                    (task.get("due_date"), "scheduled"),
+                    (task.get("hard_deadline_at"), "deadline"),
+                ]
+                in_window = sorted(
+                    (d, kind) for d, kind in candidates
+                    if d and today_iso <= d <= horizon
+                )
+                if not in_window:
+                    continue
+                when, kind = in_window[0]
+                upcoming.append({
+                    "id": task["id"],
+                    "title": task.get("title", ""),
+                    "date": when,
+                    "kind": kind,
+                    "days_away": (_date.fromisoformat(when) - start).days,
+                    "due_date": task.get("due_date"),
+                    "hard_deadline_at": task.get("hard_deadline_at"),
+                    "project": task.get("project_name"),
+                    "area": task.get("area_name"),
+                    "tags": task.get("tags") or [],
+                })
+        except Exception:
+            logger.warning("ThingsTaskStore.get_upcoming failed", exc_info=True)
+            return []
+
+        return sorted(upcoming, key=lambda t: (t["date"], t["title"]))
+
     def get_today_and_overdue(self, today_iso: str) -> dict:
         """Today's + overdue to-dos in the shape the crons consume.
 
@@ -332,11 +391,20 @@ class ThingsTaskStore:
         Unlike the Firestore-native store, ``tags`` is now populated — Things has
         real tags — and ``staleness_warning`` is meaningful: it is set when Things
         Cloud could not be reached and these lists came from the mirror.
+
+        Two **additive** keys extend the legacy shape without breaking it:
+        ``upcoming`` (the coming week, via :meth:`get_upcoming`) and ``open_count``.
+        Existing readers ignore them; new prompts can use them.  ``upcoming`` is the
+        one Amit actually cares about — he dates almost nothing, so ``today`` and
+        ``overdue`` are usually empty and would leave Klaus with nothing to say.
         """
         today: list[dict] = []
         overdue: list[dict] = []
+        open_count = 0
         try:
-            for task in self.list():
+            tasks = self.list()
+            open_count = len(tasks)
+            for task in tasks:
                 due = task.get("due_date")
                 if not due:
                     continue
@@ -354,6 +422,8 @@ class ThingsTaskStore:
             "overdue": overdue,
             "due_today": [],
             "staleness_warning": self._staleness(),
+            "upcoming": self.get_upcoming(today_iso),
+            "open_count": open_count,
         }
 
     # -------------------------------------------------------------- #
