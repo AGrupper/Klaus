@@ -36,4 +36,3 @@
 4. Trigger the morning route exactly once when a fresh target-date slot is available.
 5. Verify the correlated run reaches a terminal success state, exactly one review is persisted/published, push delivery is recorded, the Hub shows the full review, and the exact Claude routine session is available for follow-up.
 6. Confirm no unrelated task/calendar/action state changed and no new Cloud Run errors appeared.
-
