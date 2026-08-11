@@ -5365,12 +5365,18 @@ class RoutineRunStore:
 
     def patch(self, correlation_id: str, **fields) -> dict:
         """Merge non-status trigger metadata into an existing run."""
+        from datetime import datetime, timezone
+
         current = self.get(correlation_id)
         if current is None:
             raise ValueError("routine run not found")
-        patch = {**fields, "updated_at": firestore.SERVER_TIMESTAMP}
-        self._col.document(correlation_id).set(patch, merge=True)
-        return _jsonsafe_doc({**current, **patch})
+        stored_patch = {**fields, "updated_at": firestore.SERVER_TIMESTAMP}
+        returned_patch = {
+            **fields,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._col.document(correlation_id).set(stored_patch, merge=True)
+        return _jsonsafe_doc({**current, **returned_patch})
 
     def list_recent(self, limit: int = 20) -> list[dict]:
         """Return newest routine runs for Hub status and usage reporting."""

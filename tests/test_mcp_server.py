@@ -629,10 +629,12 @@ def test_publish_review_replay_sanitizes_legacy_cached_run_without_mutating_it(
         assert len(audit_calls) == 1
 
 
+@pytest.mark.parametrize("delivery_mode", ["live", "shadow"])
 def test_registered_publish_review_structured_output_serializes_atomic_run(
     monkeypatch,
+    delivery_mode,
 ):
-    """The real registered MCP converter must serialize a fresh atomic result."""
+    """The real registered MCP converter must serialize live and shadow results."""
     import core.push_sender
     import interfaces.mcp_server as mcp_server
     import memory.firestore_db
@@ -657,6 +659,7 @@ def test_registered_publish_review_structured_output_serializes_atomic_run(
         target_date="2026-08-11",
         trigger="wake",
         correlation_id="mcp-json-safe",
+        delivery_mode=delivery_mode,
     )
 
     class IdempotencyStore:
