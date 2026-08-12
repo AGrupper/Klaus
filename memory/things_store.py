@@ -466,6 +466,22 @@ class ThingsTaskStore:
                 fields.get("due_date"), fields.get("due_time"),
             )
             encoded.update(reschedule["p"])
+        if "list_id" in fields:
+            list_id = fields["list_id"] or "inbox"
+            if list_id == "inbox":
+                # A direct project link and heading ancestor would otherwise keep
+                # the task filed even after a Hub move back to Inbox.
+                encoded.update({"pr": [], "ar": [], "agr": [], "st": things.ST_INBOX})
+            else:
+                state = self._refresh()
+                project = state.get(str(list_id))
+                if not project or (
+                    project.get("_class") != things.CLASS_TASK
+                    or project.get("tp") != things.TP_PROJECT
+                    or project.get("tr")
+                ):
+                    raise ValueError(f"unknown Things project list {list_id!r}")
+                encoded.update({"pr": [str(list_id)], "ar": [], "agr": []})
 
         if encoded:
             self._refresh()
@@ -484,6 +500,78 @@ class ThingsTaskStore:
         self._refresh()
         self._commit(task_id, things.build_complete())
         return {"next_id": None}
+
+    def undo_complete(self, task_id: str) -> None:
+        """Undo a Hub completion or trash operation in Things Cloud.
+
+        The retained Hub deliberately uses one Undo control for both actions.
+        A completed Things to-do is reopened by clearing ``sp`` and restoring
+        ``ss=open``; a trashed item is restored by clearing ``tr``.  Both are
+        journal edits, not Firestore mutations.
+        """
+        state = self._refresh()
+        task = state.get(task_id)
+        if (
+            not task
+            or task.get("_class") != things.CLASS_TASK
+            or task.get("tp") != things.TP_TODO
+        ):
+            raise ValueError(f"unknown Things task {task_id!r}")
+        if task.get("tr"):
+            self._commit(task_id, things.build_edit({"tr": False}))
+            return
+        if task.get("ss") == things.SS_COMPLETED:
+            self._commit(
+                task_id,
+                things.build_edit({"ss": things.SS_OPEN, "sp": None}),
+            )
+            return
+        raise ValueError(f"Things task {task_id!r} is not undoable")
+
+    def list_lists(self) -> list[dict]:
+        """Return open, untrashed Things projects in the Hub list contract."""
+        state = self._refresh()
+        return [
+            {"id": uuid, "name": payload.get("tt") or ""}
+            for uuid, payload in state.items()
+            if payload.get("_class") == things.CLASS_TASK
+            and payload.get("tp") == things.TP_PROJECT
+            and not payload.get("tr")
+        ]
+
+    def create_list(self, name: str) -> dict:
+        """Create a Hub task list as a Things project."""
+        self._refresh()
+        uuid, record = things.build_project_create(name)
+        self._commit(uuid, record)
+        return {"id": uuid, "name": name}
+
+    def rename_list(self, list_id: str, name: str) -> dict:
+        """Rename an existing Things project and preserve the Hub response."""
+        state = self._refresh()
+        project = state.get(list_id)
+        if (
+            not project
+            or project.get("_class") != things.CLASS_TASK
+            or project.get("tp") != things.TP_PROJECT
+            or project.get("tr")
+        ):
+            raise ValueError(f"unknown Things project list {list_id!r}")
+        self._commit(list_id, things.build_edit({"tt": name}))
+        return {"id": list_id, "name": name}
+
+    def delete_list(self, list_id: str) -> None:
+        """Trash a Things project; its children remain recoverable in Things."""
+        state = self._refresh()
+        project = state.get(list_id)
+        if (
+            not project
+            or project.get("_class") != things.CLASS_TASK
+            or project.get("tp") != things.TP_PROJECT
+            or project.get("tr")
+        ):
+            raise ValueError(f"unknown Things project list {list_id!r}")
+        self._commit(list_id, things.build_trash())
 
     def delete(self, task_id: str) -> None:
         """Move a to-do to the Things trash.  Re-raises on failure.

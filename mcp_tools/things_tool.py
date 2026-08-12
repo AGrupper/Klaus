@@ -624,6 +624,28 @@ def build_create(
     return uuid, {"t": OP_CREATE, "e": CLASS_TASK, "p": payload}
 
 
+def build_project_create(title: str) -> tuple[str, dict]:
+    """Build a Things project, which is the authoritative Hub task list.
+
+    Projects use the same ``Task6`` journal class as to-dos; their ``tp`` value
+    distinguishes them.  The remaining observed defaults match a normal Things
+    project so the native clients can continue to edit it.
+    """
+    uuid = new_uuid()
+    now = datetime.now(timezone.utc).timestamp()
+    payload = {
+        **_TASK_DEFAULTS,
+        "tt": title,
+        "nt": build_note(None),
+        "tp": TP_PROJECT,
+        "ss": SS_OPEN,
+        "st": ST_ANYTIME,
+        "cd": now,
+        "md": now,
+    }
+    return uuid, {"t": OP_CREATE, "e": CLASS_TASK, "p": payload}
+
+
 def build_edit(fields: dict) -> dict:
     """Build an edit record carrying only ``fields`` as a sparse delta.
 

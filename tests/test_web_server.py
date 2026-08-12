@@ -1533,16 +1533,15 @@ def _make_list_store_mock(
 ) -> MagicMock:
     """Return a MagicMock mimicking TaskListStore with sensible defaults."""
     store = MagicMock(name="TaskListStore")
-    store.create.return_value = created or {"id": "list-xyz", "name": "Work"}
-    store.list.return_value = listed if listed is not None else [
+    store.create_list.return_value = created or {"id": "list-xyz", "name": "Work"}
+    store.list_lists.return_value = listed if listed is not None else [
         {"id": "list-xyz", "name": "Work"}
     ]
-    store.rename.return_value = renamed or {"id": "list-xyz", "name": "Renamed"}
-    store.delete.return_value = None
+    store.rename_list.return_value = renamed or {"id": "list-xyz", "name": "Renamed"}
+    store.delete_list.return_value = None
     return store
 
 
-@pytest.mark.skip(reason="native Firestore task endpoints were superseded by authoritative Things task tests")
 class TestTaskRoutes:
     """Integration tests for /api/tasks* CRUD + summary routes.
 
@@ -1589,8 +1588,7 @@ class TestTaskRoutes:
             import interfaces.web_server as ws  # noqa: PLC0415
             import interfaces.hub_auth as hub_auth  # noqa: PLC0415
 
-            with patch("memory.firestore_db.TaskStore", side_effect=_patched_task_store), \
-                 patch("memory.firestore_db.TaskListStore", side_effect=_patched_list_store):
+            with patch("memory.firestore_db.get_task_store", side_effect=_patched_task_store):
                 with patch.dict(os.environ, _BASE_ENV):
                     if authed:
                         ws.app.dependency_overrides[hub_auth.require_hub_session] = (
@@ -1806,7 +1804,7 @@ class TestTaskRoutes:
         list_store = _make_list_store_mock(
             created={"id": "list-xyz", "name": "Work"}
         )
-        for client, _ws, _ha in self._build_client(list_store=list_store):
+        for client, _ws, _ha in self._build_client(task_store=list_store):
             resp = client.post("/api/task-lists", json={"name": "Work"})
         assert resp.status_code == 200, resp.text
         assert resp.json().get("name") == "Work"
@@ -1816,7 +1814,7 @@ class TestTaskRoutes:
         list_store = _make_list_store_mock(
             listed=[{"id": "list-xyz", "name": "Work"}]
         )
-        for client, _ws, _ha in self._build_client(list_store=list_store):
+        for client, _ws, _ha in self._build_client(task_store=list_store):
             resp = client.get("/api/task-lists")
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -1831,7 +1829,7 @@ class TestTaskRoutes:
         list_store = _make_list_store_mock(
             renamed={"id": "list-xyz", "name": "Personal"}
         )
-        for client, _ws, _ha in self._build_client(list_store=list_store):
+        for client, _ws, _ha in self._build_client(task_store=list_store):
             resp = client.patch("/api/task-lists/list-xyz", json={"name": "Personal"})
         assert resp.status_code == 200, resp.text
         assert resp.json().get("name") == "Personal"
@@ -1839,10 +1837,10 @@ class TestTaskRoutes:
     def test_delete_task_lists_returns_200(self):
         """DELETE /api/task-lists/{id} removes the list and returns ok."""
         list_store = _make_list_store_mock()
-        for client, _ws, _ha in self._build_client(list_store=list_store):
+        for client, _ws, _ha in self._build_client(task_store=list_store):
             resp = client.delete("/api/task-lists/list-xyz")
         assert resp.status_code == 200, resp.text
-        list_store.delete.assert_called_once_with("list-xyz")
+        list_store.delete_list.assert_called_once_with("list-xyz")
 
 
 class TestAuthGoogleCookie:

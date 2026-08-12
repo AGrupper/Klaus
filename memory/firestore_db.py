@@ -3902,7 +3902,12 @@ class TaskStore:
 
 
 class TaskListStore:
-    """User-creatable task lists.
+    """Deprecated Firestore task-list storage retained only for migration reads.
+
+    The runtime never constructs this class: Things projects are authoritative
+    for every retained task-list endpoint, while Firestore's Things mirror is
+    cache/outbox only. This implementation remains temporarily so historical
+    migration tools can inspect legacy documents without becoming a fallback.
 
     Collection: ``task_lists/{list_id}``
 

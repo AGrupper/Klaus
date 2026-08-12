@@ -78,3 +78,67 @@ the focused/rebaselined Python tests listed in the commit.
   bodies and test blocks wholesale.
 - The full Python runner has a pre-existing process-persistence/hang around
   48%; no task regression was observed before termination.
+
+## Fix round 1/5 — Things task/list authority and quarantine
+
+### Implementation
+
+- Added `ThingsTaskStore.undo_complete`. It emits a Things journal edit that
+  reopens completed tasks (`ss=open`, `sp=None`) or restores trashed tasks
+  (`tr=False`), so the retained Hub Undo control no longer calls a missing
+  method or writes Firestore task state.
+- Added authoritative Things project-list operations: `list_lists`,
+  `create_list`, `rename_list`, and `delete_list`. The Hub task-list endpoints
+  now obtain the same authoritative Things store as task endpoints; Firestore
+  `TaskListStore` is explicitly deprecated and not used as a runtime fallback.
+- Added `build_project_create` and task `list_id` moves to Things. A project
+  move writes the Things project relation (`pr`), and moving to Inbox clears
+  project/area/heading relations. Unknown/trashed project IDs fail visibly.
+- Added pre-routing Hub-chat quarantine. Every retired `/api/chat*` path and
+  `/internal/process-hub-message` returns `410` before session/OIDC auth,
+  including in production-mode tests; retained Hub routes retain their normal
+  authentication.
+- Strengthened the no-model regression test from handler-only inspection to
+  inspect the deterministic evaluator and all of its default loader/delivery
+  modules (`life_snapshot`, lightweight heartbeat, Web Push) for forbidden
+  model/autonomous/Telegram imports.
+- Unskipped the retained `/api/tasks*` and `/api/task-lists*` route suite and
+  updated it to mock `get_task_store`, the real authority boundary. Remaining
+  skips are only tombstoned Telegram, autonomous, Hub AI, and Cloud Tasks
+  composer surfaces.
+
+### RED evidence
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_things_store.py tests/test_web_server.py::TestTaskRoutes`
+
+Result: **8 failed, 53 passed**. Failures proved the missing
+`undo_complete`/project-list APIs and showed retained list routes were still
+constructing Firestore `TaskListStore` (the test project correctly rejected the
+unexpected Firestore call).
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_claude_first_cutover.py`
+
+Result: **6 failed, 16 passed**. In production mode, retired Hub chat paths
+returned `401` before their `410` tombstone, proving the auth-order defect.
+
+### GREEN evidence
+
+- `pytest -q tests/test_claude_first_cutover.py tests/test_things_store.py
+  tests/test_web_server.py::TestTaskRoutes`: **83 passed**.
+- Full focused fix suite:
+  `pytest -q tests/test_claude_first_cutover.py tests/test_things_store.py
+  tests/test_things_tool.py tests/test_web_server.py tests/test_deterministic_alerts.py
+  tests/test_subscription_routines.py tests/test_tools.py
+  tests/test_deploy_workflow_cutovers.py tests/test_conversational_review_rollout.py`:
+  **336 passed, 44 skipped in 2.14s**.
+- `python -m compileall -q interfaces/web_server.py memory/things_store.py
+  mcp_tools/things_tool.py` and `git diff --check`: passed.
+
+### Fix-round self-review
+
+- The public task/list response shapes are unchanged (`Task`, `{lists: [...]}`,
+  `{ok: true}`, and `{next_id: null}` contracts stay intact), so frontend API
+  shapes did not change and no frontend rebuild was required for this round.
+- `GEMINI_EMBEDDING_API_KEY` was left intact as the approved embedding-only
+  exception; no generic model fallback was reintroduced.
+- No deployment or production mutation was performed.

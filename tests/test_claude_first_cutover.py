@@ -73,6 +73,34 @@ def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
     assert names.isdisjoint(forbidden)
 
 
+def test_deterministic_default_dependency_path_has_no_model_or_telegram_modules():
+    """The evaluator's default loaders are just as quarantined as its route."""
+    import ast
+    import inspect
+    import core.deterministic_alerts as deterministic
+    import core.heartbeat as heartbeat
+    import core.life_snapshot as life_snapshot
+    import core.push_sender as push_sender
+
+    forbidden = {
+        "core.autonomous", "core.llm_client", "core.pricing",
+        "core.scheduled_message", "core.tick_brain", "telegram",
+    }
+    for module in (deterministic, heartbeat, life_snapshot, push_sender):
+        tree = ast.parse(inspect.getsource(module))
+        imported = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        } | {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module
+        }
+        assert imported.isdisjoint(forbidden), (module.__name__, imported & forbidden)
+
+
 def test_startup_only_initializes_retained_claude_mcp_runtime():
     """A cold start cannot resurrect the Telegram/agent singleton runtime."""
     import inspect
@@ -91,6 +119,26 @@ def test_hub_chat_is_a_hard_tombstone_even_if_a_legacy_flag_is_set(monkeypatch):
     with pytest.raises(web_server.HTTPException) as exc_info:
         web_server._require_legacy_hub_chat()
     assert exc_info.value.status_code == 410
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("post", "/internal/process-hub-message"),
+        ("post", "/api/chat"),
+        ("post", "/api/chat/upload"),
+        ("get", "/api/chat/messages"),
+        ("post", "/api/chat/regenerate"),
+        ("post", "/api/chat/stop"),
+    ],
+)
+def test_hub_chat_tombstones_return_410_before_production_auth(method, path):
+    """Removed chat processors never expose an auth distinction to callers."""
+    web_server = _web_server()
+    production_env = {**_ENV, "CRON_DEV_BYPASS": "false"}
+    with patch.dict(os.environ, production_env):
+        response = getattr(TestClient(web_server.app), method)(path)
+    assert response.status_code == 410
 
 
 @pytest.mark.parametrize(

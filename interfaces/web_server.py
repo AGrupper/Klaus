@@ -131,6 +131,14 @@ def _require_legacy_hub_chat() -> None:
 
 
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
+_RETIRED_HUB_CHAT_PATHS = frozenset({
+    "/internal/process-hub-message",
+    "/api/chat",
+    "/api/chat/upload",
+    "/api/chat/messages",
+    "/api/chat/regenerate",
+    "/api/chat/stop",
+})
 
 
 @app.middleware("http")
@@ -144,6 +152,14 @@ async def _normalize_mcp_mount_path(request: Request, call_next):
     and avoids a redirect that could drop the request body or bearer header.
     """
     path = request.scope.get("path")
+    # This quarantine sits before FastAPI dependency resolution.  Otherwise a
+    # retired Hub chat route leaks a 401/403 distinction instead of its stable
+    # 410 contract when called without an old session or Cloud Tasks token.
+    if path in _RETIRED_HUB_CHAT_PATHS:
+        return JSONResponse(
+            status_code=410,
+            content={"detail": {"error": "Hub chat retired; use the configured Claude Project"}},
+        )
     if path in _MCP_MOUNT_PATHS:
         request.scope["path"] = f"{path}/"
         request.scope["raw_path"] = f"{path}/".encode("ascii")
@@ -2936,9 +2952,10 @@ async def internal_process_hub_message(request: Request) -> JSONResponse:
         HTTPException 401/403: OIDC verification failed (T-26-05-02).
         HTTPException 500: Orchestrator not initialised (Cloud Tasks retries).
     """
+    _require_legacy_hub_chat()
+
     # OIDC gate — same verification as /internal/process-update (T-26-05-02)
     await _verify_cron_request(request)
-    _require_legacy_hub_chat()
 
     # Singleton guard — orchestrator must be initialised (lifespan startup)
     if _orchestrator is None:
@@ -3134,7 +3151,7 @@ async def api_create_task(
     body: CreateTaskInput,
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
-    """Create a new task in TaskStore.
+    """Create a new task in the authoritative Things store.
 
     POST /api/tasks with a CreateTaskInput body.  list_id defaults to "inbox"
     when None is supplied (Inbox is implicit — no Firestore doc exists for it).
@@ -3332,13 +3349,13 @@ async def api_hard_delete_task(
     task_id: str,
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
-    """Hard-delete a task from Firestore — only allowed when status='completing'.
+    """Trash a completing Things task after the Hub undo window.
 
     POST /api/tasks/{task_id}/hard-delete — T-27-REP.
 
-    A replayed or forged hard-delete of an active task is rejected with 409:
-    the task must first go through the soft-complete flow so the UI always has
-    an undo window before the doc is permanently removed.
+    A replayed or forged delete of an active task is rejected with 409: the task
+    must first go through the soft-complete flow so the UI always has an undo
+    window. Things receives a recoverable trash edit, never a hard delete.
 
     Returns:
         JSONResponse: {"ok": True}
@@ -3383,14 +3400,14 @@ async def api_create_task_list(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskListStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    created = await loop.run_in_executor(None, store.create, body.name)
+    created = await loop.run_in_executor(None, store.create_list, body.name)
     return JSONResponse(content=_jsonsafe_doc(created))
 
 
@@ -3402,8 +3419,8 @@ async def api_list_task_lists(
 
     GET /api/task-lists — TASK-02.
 
-    WHY Inbox is prepended: the "inbox" list_id is implicit (no Firestore doc);
-    TaskListStore.list() never returns it.  The route always inserts it at
+    WHY Inbox is prepended: the "inbox" list_id is implicit (no Things project).
+    The route always inserts it at
     position 0 so the frontend can render a stable "Inbox" entry without
     special-casing an empty-document fallback.
 
@@ -3412,14 +3429,14 @@ async def api_list_task_lists(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskListStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    user_lists = await loop.run_in_executor(None, store.list)
+    user_lists = await loop.run_in_executor(None, store.list_lists)
     # Prepend implicit Inbox (decision from 27-01: Inbox has no Firestore doc)
     lists = [{"id": "inbox", "name": "Inbox"}, *user_lists]
     return JSONResponse(content=_jsonsafe_doc({"lists": lists}))
@@ -3440,14 +3457,14 @@ async def api_rename_task_list(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskListStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskListStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    updated = await loop.run_in_executor(None, store.rename, list_id, body.name)
+    updated = await loop.run_in_executor(None, store.rename_list, list_id, body.name)
     return JSONResponse(content=_jsonsafe_doc(updated))
 
 
@@ -3470,14 +3487,14 @@ async def api_delete_task_list(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskListStore  # lazy import
+    from memory.firestore_db import get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskListStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
-    await loop.run_in_executor(None, store.delete, list_id)
+    await loop.run_in_executor(None, store.delete_list, list_id)
     return JSONResponse(content={"ok": True})
 
 

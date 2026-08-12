@@ -410,6 +410,59 @@ def test_create_commits_a_create_record():
     assert record["t"] == 0 and record["p"]["tt"] == "new task"
 
 
+def test_undo_complete_reopens_completed_things_task():
+    """Hub undo must reopen the Things item, not call the retired Firestore API."""
+    store = _store()
+    state = {"t1": _payload(ss=3, sp=1776062349.2)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.undo_complete("t1")
+
+    record = commit.call_args.args[1]
+    assert record["p"]["ss"] == 0
+    assert record["p"]["sp"] is None
+
+
+def test_undo_complete_restores_a_trashed_things_task():
+    """The shared Undo control also reverses the retained delete-to-trash flow."""
+    store = _store()
+    state = {"t1": _payload(tr=True)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.undo_complete("t1")
+
+    assert commit.call_args.args[1]["p"]["tr"] is False
+
+
+def test_projects_are_authoritative_task_lists_and_task_moves_use_them():
+    """Lists and task moves are Things projects, never Firestore list documents."""
+    store = _store()
+    state = {
+        "p1": _payload(tt="Work", tp=1),
+        "t1": _payload(tt="Loose task"),
+    }
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        assert store.list_lists() == [{"id": "p1", "name": "Work"}]
+        store.update("t1", {"list_id": "p1"})
+
+    record = commit.call_args.args[1]
+    assert record["p"]["pr"] == ["p1"]
+    assert record["p"]["agr"] == []
+
+
+def test_project_list_writes_use_things_records():
+    store = _store()
+    state = {"p1": _payload(tt="Work", tp=1)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.create_list("New Work")
+        store.rename_list("p1", "Deep Work")
+        store.delete_list("p1")
+
+    records = [call.args[1] for call in commit.call_args_list]
+    assert records[0]["p"]["tp"] == 1
+    assert records[0]["p"]["tt"] == "New Work"
+    assert records[1]["p"]["tt"] == "Deep Work"
+    assert records[2]["p"]["tr"] is True
+
+
 def test_complete_never_spawns_a_recurrence():
     """Things owns recurrence — Klaus creating the next instance would duplicate."""
     store = _store()
