@@ -142,3 +142,46 @@ returned `401` before their `410` tombstone, proving the auth-order defect.
 - `GEMINI_EMBEDDING_API_KEY` was left intact as the approved embedding-only
   exception; no generic model fallback was reintroduced.
 - No deployment or production mutation was performed.
+
+## Fix round 2/5 — transitive deterministic-runtime quarantine
+
+### Implementation
+
+- Replaced the four-module text-style deterministic guard with an AST guard over
+  an explicit allowlist of the actual default execution closure. It covers the
+  scheduler evaluator, lightweight heartbeat, Life Snapshot defaults, the three
+  `core.tools.dispatch` handlers Life Snapshot invokes, Web Push delivery, and
+  every specific Hub `_today_*` helper reached through the Life Snapshot Hub
+  boundary. The function-level allowlist deliberately avoids scanning legacy,
+  unreachable bodies still present in `interfaces.web_server`/`core.tools` for
+  Task 2.
+- The guard rejects forbidden import paths (`core.autonomous`, LLM client,
+  pricing, scheduled-message delivery, tick brain, Telegram) and direct calls
+  (`LLMClient`, `AgentOrchestrator`, autonomous execution, metering, delivery)
+  using parsed Python AST rather than substring matching. A synthetic unsafe
+  loader proves the guard fails on a future LLM import.
+
+### RED evidence
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_claude_first_cutover.py::test_deterministic_guard_reaches_the_life_snapshot_tool_and_hub_defaults`
+
+Result: **1 failed**. The former shallow evaluator scan found only direct
+`run_rule_evaluator` imports and missed `core.tools` and
+`interfaces.web_server`, which Life Snapshot imports lazily on its default
+path.
+
+### GREEN evidence
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_claude_first_cutover.py tests/test_deterministic_alerts.py tests/test_life_snapshot.py`
+
+Result: **29 passed in 0.51s**.
+
+`python -m compileall -q tests/test_claude_first_cutover.py
+core/deterministic_alerts.py core/life_snapshot.py core/heartbeat.py
+core/push_sender.py` and `git diff --check`: passed.
+
+### Fix-round self-review
+
+- The test imports only retained modules. It does not import or execute any
+  removed LLM/autonomous/Telegram runtime module to validate the quarantine.
+- No production/deployment command was run.

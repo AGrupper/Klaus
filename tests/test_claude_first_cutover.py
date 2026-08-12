@@ -73,32 +73,124 @@ def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
     assert names.isdisjoint(forbidden)
 
 
-def test_deterministic_default_dependency_path_has_no_model_or_telegram_modules():
-    """The evaluator's default loaders are just as quarantined as its route."""
-    import ast
-    import inspect
+_FORBIDDEN_DETERMINISTIC_MODULES = (
+    "core.autonomous",
+    "core.llm_client",
+    "core.pricing",
+    "core.scheduled_message",
+    "core.tick_brain",
+    "telegram",
+)
+_FORBIDDEN_DETERMINISTIC_CALLS = {
+    "AgentOrchestrator",
+    "LLMClient",
+    "compute_cost",
+    "run_autonomous_tick",
+    "send_and_inject",
+}
+
+
+def _deterministic_execution_nodes():
+    """Return the concrete default call closure of deterministic alerts.
+
+    This is intentionally an explicit retained-function allowlist rather than a
+    whole-module scan: ``interfaces.web_server`` and ``core.tools`` still carry
+    unreachable legacy bodies pending Task 2. These nodes are the only
+    functions the evaluator reaches through its default loaders.
+    """
     import core.deterministic_alerts as deterministic
     import core.heartbeat as heartbeat
     import core.life_snapshot as life_snapshot
     import core.push_sender as push_sender
+    import core.tools as tools
+    import interfaces.web_server as hub
 
-    forbidden = {
-        "core.autonomous", "core.llm_client", "core.pricing",
-        "core.scheduled_message", "core.tick_brain", "telegram",
+    return (
+        ("core.deterministic_alerts", deterministic.run_rule_evaluator),
+        ("core.heartbeat", heartbeat.collect_deterministic_signals),
+        ("core.heartbeat", heartbeat._read_cron_ledger),
+        ("core.heartbeat", heartbeat._as_utc),
+        ("core.heartbeat", heartbeat.check_cron_health),
+        ("core.heartbeat", heartbeat.check_mcp_routine_health),
+        ("core.heartbeat", heartbeat._check_push_health),
+        ("core.heartbeat", heartbeat.check_deployment_identity),
+        ("core.life_snapshot", life_snapshot.build_life_snapshot),
+        ("core.life_snapshot", life_snapshot._normalized_hub_today),
+        ("core.life_snapshot", life_snapshot._default_directives_loader),
+        ("core.life_snapshot", life_snapshot._default_reviews_loader),
+        ("core.push_sender", push_sender.send_push_to_all),
+        ("core.push_sender", push_sender._get_vapid_private_key),
+        ("core.push_sender", push_sender._get_subscription_store),
+        ("core.push_sender", push_sender._safe_destination),
+        ("core.tools", tools.dispatch),
+        ("core.tools", tools._handle_task_list),
+        ("core.tools", tools._handle_get_habit_adherence),
+        ("core.tools", tools._handle_get_self_status),
+        ("core.tools", tools._get_task_store),
+        ("core.tools", tools._get_habit_store),
+        ("core.tools", tools._task_today_iso),
+        ("interfaces.web_server", hub._today_calendar),
+        ("interfaces.web_server", hub._today_garmin),
+        ("interfaces.web_server", hub._today_weather),
+        ("interfaces.web_server", hub._today_meals),
+        ("interfaces.web_server", hub._today_training),
+        ("interfaces.web_server", hub._today_coach_note),
+        ("interfaces.web_server", hub._sanitize_coach_note),
+        ("interfaces.web_server", hub._today_routes),
+        ("interfaces.web_server", hub._today_nutrition_totals),
+    )
+
+
+def _assert_deterministic_node_is_quarantined(label, function):
+    """Reject forbidden imports and calls using syntax, not source text."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    imports = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module
     }
-    for module in (deterministic, heartbeat, life_snapshot, push_sender):
-        tree = ast.parse(inspect.getsource(module))
-        imported = {
-            alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-            for alias in node.names
-        } | {
-            node.module
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.module
-        }
-        assert imported.isdisjoint(forbidden), (module.__name__, imported & forbidden)
+    forbidden_imports = {
+        imported
+        for imported in imports
+        if any(imported == forbidden or imported.startswith(f"{forbidden}.")
+               for forbidden in _FORBIDDEN_DETERMINISTIC_MODULES)
+    }
+    calls = {
+        node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, (ast.Name, ast.Attribute))
+    }
+    forbidden_calls = calls & _FORBIDDEN_DETERMINISTIC_CALLS
+    assert not forbidden_imports and not forbidden_calls, (
+        label,
+        {"imports": forbidden_imports, "calls": forbidden_calls},
+    )
+
+
+def test_deterministic_default_execution_closure_is_quarantined():
+    """Every default evaluator dependency is syntax-checked for legacy runtime use."""
+    for label, function in _deterministic_execution_nodes():
+        _assert_deterministic_node_is_quarantined(label, function)
+
+
+def test_deterministic_closure_guard_rejects_a_synthetic_llm_import():
+    """Prove the AST guard fails when a future default dependency imports an LLM."""
+    def unsafe_default_loader():
+        from core.llm_client import LLMClient
+        return LLMClient
+
+    with pytest.raises(AssertionError, match="core.llm_client"):
+        _assert_deterministic_node_is_quarantined("synthetic", unsafe_default_loader)
 
 
 def test_startup_only_initializes_retained_claude_mcp_runtime():
