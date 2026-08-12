@@ -321,7 +321,7 @@ class GoogleAuthManager:
             # the payload came from a file, Secret Manager, or any other source.
             credential_info = json.loads(payload)
             scopes = set(credential_info.get("scopes") or [])
-            if scopes and scopes != set(self.scopes):
+            if scopes != set(self.scopes):
                 logger.info("Cached Google token has retired scopes; re-consent is required.")
                 return None
             return Credentials.from_authorized_user_info(credential_info, self.scopes)

@@ -393,13 +393,7 @@ class MemoryStore:
     def _get_genai(self):
         if self._genai is None:
             from google import genai
-            # v7 keeps Gemini solely for embeddings, so the credential has a
-            # dedicated name. The legacy smart-agent variable remains a
-            # temporary rolling-deploy alias and can be removed after every
-            # Cloud Run revision and local environment has migrated.
-            api_key = os.environ.get("GEMINI_EMBEDDING_API_KEY") or os.environ.get(
-                "SMART_AGENT_API_KEY"
-            )
+            api_key = os.environ.get("GEMINI_EMBEDDING_API_KEY")
             if not api_key:
                 raise RuntimeError(
                     "GEMINI_EMBEDDING_API_KEY is required for Gemini embeddings"

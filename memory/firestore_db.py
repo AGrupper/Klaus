@@ -4640,29 +4640,16 @@ class PushSubscriptionStore:
 
 
 class HubSettingsStore:
-    """Runtime Telegram-mirror flag + push transition state (D-08/D-09/D-14).
+    """Retained Hub and Web Push settings state.
 
     Config doc lives at collection='config', document='hub_settings'. This is
-    a RUNTIME Firestore toggle, not an env var — Klaus (via the
-    `toggle_telegram_mirror` tool) and the /api/settings route both mutate it.
-
-    Default `telegram_mirror_enabled` is True (mirror ON) — Telegram keeps
-    receiving every message until Amit has run the hub with push for at
-    least a week (D-08/D-09).
-
-    No `chat_visible_until` field here: the D-02 in-hub chat-visibility gate
-    is an in-process module variable in core/scheduled_message.py (RESEARCH
-    A5, single Cloud Run instance) — persisting it here would always be
-    stale/misleading across instance restarts.
-
-    Phase 29 — PUSH-03.
+    Historical fields remain in Firestore but are not read or written here.
     """
 
     _COLLECTION = "config"
     _DOCUMENT = "hub_settings"
 
     _DEFAULTS: dict = {
-        "telegram_mirror_enabled": True,
         "push_enabled_at": None,
     }
 

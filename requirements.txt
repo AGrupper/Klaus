@@ -20,6 +20,7 @@ google-cloud-tasks>=2.16           # Routine timeout fallback dispatch
 # --- Vector memory (Pinecone: unstructured RAG) ---
 # NOTE: the legacy 'pinecone-client' package is deprecated; the new SDK is 'pinecone'.
 pinecone>=5.0
+google-genai>=1.0                  # embedding client only
 
 # --- Interface ---
 fastapi>=0.115                     # Cloud Run webhook server

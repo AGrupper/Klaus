@@ -15,7 +15,8 @@ def enqueue_routine_fallback(correlation_id: str, delay_seconds: int) -> bool:
     project = os.environ.get("GCP_PROJECT_ID", "")
     location = os.environ.get("CLOUD_TASKS_LOCATION", "")
     service_url = os.environ.get("CLOUD_RUN_URL", "").rstrip("/")
-    if not all((queue, project, location, service_url)):
+    service_account = os.environ.get("CLOUD_SCHEDULER_SA_EMAIL", "")
+    if not all((queue, project, location, service_url, service_account)):
         return False
     schedule = timestamp_pb2.Timestamp()
     schedule.FromDatetime(datetime.now(timezone.utc) + timedelta(seconds=delay_seconds))
@@ -26,6 +27,10 @@ def enqueue_routine_fallback(correlation_id: str, delay_seconds: int) -> bool:
             "url": f"{service_url}/internal/routine-fallback",
             "headers": {"Content-Type": "application/json"},
             "body": json.dumps({"correlation_id": correlation_id}).encode(),
+            "oidc_token": {
+                "service_account_email": service_account,
+                "audience": service_url,
+            },
         },
     }
     try:

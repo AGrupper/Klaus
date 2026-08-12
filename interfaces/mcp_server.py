@@ -367,14 +367,12 @@ class MCPServerBundle:
 
 
 def _schema_metadata() -> dict[str, dict[str, Any]]:
-    # Parse the registry rather than importing it just to obtain prose.  This
-    # keeps capability discovery free of Google/Telegram SDK initialization
-    # and mirrors SELF.md's dependency-neutral manifest generation.
-    from core.self_manifest import _get_source_root, _load_tool_data
+    """Return retained MCP metadata without importing the removed manifest."""
+    from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
 
     return {
-        str(item["name"]): item
-        for item in _load_tool_data(_get_source_root())
+        name: {"purpose": name.replace("_", " ").capitalize(), "input_schema": schema}
+        for name, schema in CUSTOM_TOOL_SCHEMAS.items()
     }
 
 

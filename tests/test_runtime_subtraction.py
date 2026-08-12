@@ -56,12 +56,21 @@ def test_web_server_imports_without_retired_provider_credentials(monkeypatch) ->
     for name in forbidden:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("KLAUS_USER_ID", "123456")
-    monkeypatch.setenv("KLAUS_MCP_ENABLED", "false")
+    monkeypatch.setenv("KLAUS_MCP_ENABLED", "true")
+    monkeypatch.setenv("KLAUS_CLAUDE_LIVE_ENABLED", "true")
+    monkeypatch.setenv("KLAUS_CLAUDE_ROUTINES_ENABLED", "true")
 
     sys.modules.pop("interfaces.web_server", None)
     web_server = importlib.import_module("interfaces.web_server")
 
     assert web_server.app is not None
+
+
+def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:
+    """Both nightly trigger entrypoints must use a helper independent of old code."""
+    from interfaces.web_server import nightly_target_date_now
+
+    assert len(nightly_target_date_now()) == 10
 
 
 def test_single_user_identity_requires_explicit_provider_neutral_setting(monkeypatch) -> None:
