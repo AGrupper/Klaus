@@ -905,12 +905,11 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_self_status",
         "description": (
-            "Return Klaus's current operational status: container uptime, today's "
-            "conversation message count (proxied via LLM call count), today's and "
-            "month's LLM cost in USD, and latest heartbeat status. "
+            "Return Klaus's retained operational state: container uptime, current "
+            "status timestamp, and the latest reflection journal summary. "
             "Call this directly — do NOT delegate to the worker. "
-            "Use when asked about current status, costs, uptime, or health. "
-            "Journal field will be blank until Phase 17 (reflection) is deployed."
+            "Use when asked about current status, uptime, or health. "
+            "It deliberately excludes model usage, costs, and fallback telemetry."
         ),
         "input_schema": {
             "type": "object",
@@ -2554,7 +2553,7 @@ def _handle_search_own_source(query: str, max_results: int = 20) -> str:
 
 
 def _handle_get_self_status() -> str:
-    """Return Klaus's operational status: uptime, message count, costs, heartbeat."""
+    """Return retained operational state without model, cost, or fallback telemetry."""
     import os as _os
     from datetime import datetime, timezone
 
@@ -2571,27 +2570,6 @@ def _handle_get_self_status() -> str:
     except (OSError, ValueError):
         # macOS / local dev — /proc/uptime not available
         result["uptime"] = "unavailable (local dev or non-Linux)"
-
-    # --- LLM usage: today's cost and message count proxy ---
-    try:
-        project_id = _os.environ.get("GCP_PROJECT_ID")
-        database = _os.environ.get("FIRESTORE_DATABASE", "(default)")
-        if project_id:
-            from memory.firestore_db import LLMUsageStore
-            store = LLMUsageStore(project_id=project_id, database=database)
-            today_data = store.summary("today")
-            month_data = store.summary("month")
-            # smart_calls proxy for "messages from user" — one smart call ≈ one user message
-            result["today_messages"] = today_data.get("smart_calls", 0)
-            result["today_cost_usd"] = round(today_data.get("total_cost_usd", 0.0), 6)
-            result["month_cost_usd"] = round(month_data.get("total_cost_usd", 0.0), 4)
-            result["today_llm_calls"] = today_data.get("call_count", 0)
-        else:
-            result["today_messages"] = "unavailable (GCP_PROJECT_ID not set)"
-            result["today_cost_usd"] = "unavailable"
-            result["month_cost_usd"] = "unavailable"
-    except Exception as exc:
-        result["cost_error"] = str(exc)
 
     # --- Timestamp ---
     result["status_at"] = datetime.now(timezone.utc).isoformat()

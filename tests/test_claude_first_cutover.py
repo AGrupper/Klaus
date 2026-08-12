@@ -84,10 +84,30 @@ _FORBIDDEN_DETERMINISTIC_MODULES = (
 _FORBIDDEN_DETERMINISTIC_CALLS = {
     "AgentOrchestrator",
     "LLMClient",
+    "LLMUsageStore",
     "compute_cost",
     "run_autonomous_tick",
     "send_and_inject",
 }
+
+
+def _life_snapshot_dispatch_nodes(tools):
+    """Resolve Life Snapshot's string tool keys through the live handler table."""
+    import inspect
+
+    nodes = []
+    for tool_name in ("task_list", "get_habit_adherence", "get_self_status"):
+        registered = tools._HANDLERS[tool_name]
+        referenced = [
+            value
+            for name, value in inspect.getclosurevars(registered).globals.items()
+            if name.startswith("_handle_") and inspect.isfunction(value)
+        ]
+        assert len(referenced) == 1, (
+            f"{tool_name} must map to exactly one retained handler", referenced
+        )
+        nodes.append((f"core.tools._HANDLERS[{tool_name!r}]", referenced[0]))
+    return tuple(nodes)
 
 
 def _deterministic_execution_nodes():
@@ -123,9 +143,7 @@ def _deterministic_execution_nodes():
         ("core.push_sender", push_sender._get_subscription_store),
         ("core.push_sender", push_sender._safe_destination),
         ("core.tools", tools.dispatch),
-        ("core.tools", tools._handle_task_list),
-        ("core.tools", tools._handle_get_habit_adherence),
-        ("core.tools", tools._handle_get_self_status),
+        *_life_snapshot_dispatch_nodes(tools),
         ("core.tools", tools._get_task_store),
         ("core.tools", tools._get_habit_store),
         ("core.tools", tools._task_today_iso),
@@ -191,6 +209,16 @@ def test_deterministic_closure_guard_rejects_a_synthetic_llm_import():
 
     with pytest.raises(AssertionError, match="core.llm_client"):
         _assert_deterministic_node_is_quarantined("synthetic", unsafe_default_loader)
+
+
+def test_deterministic_closure_guard_rejects_a_synthetic_usage_meter():
+    """Model/cost storage is forbidden even when no LLM module is imported."""
+    def unsafe_status_loader():
+        from memory.firestore_db import LLMUsageStore
+        return LLMUsageStore("project").summary("today")
+
+    with pytest.raises(AssertionError, match="LLMUsageStore"):
+        _assert_deterministic_node_is_quarantined("synthetic-meter", unsafe_status_loader)
 
 
 def test_startup_only_initializes_retained_claude_mcp_runtime():

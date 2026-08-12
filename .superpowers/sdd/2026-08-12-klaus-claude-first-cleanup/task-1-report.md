@@ -185,3 +185,46 @@ core/push_sender.py` and `git diff --check`: passed.
 - The test imports only retained modules. It does not import or execute any
   removed LLM/autonomous/Telegram runtime module to validate the quarantine.
 - No production/deployment command was run.
+
+## Fix round 3/5 — meter-free self status and dispatch-derived closure
+
+### Implementation
+
+- Removed the active `LLMUsageStore` reads, model/cost fields, fallback proxy,
+  and cost-error path from `core.tools._handle_get_self_status`. The retained
+  response now provides uptime, status timestamp, and latest journal summary
+  only; its tool schema now describes that meter-free contract.
+- Changed the deterministic closure guard to resolve Life Snapshot's actual
+  string keys (`task_list`, `get_habit_adherence`, `get_self_status`) through
+  `core.tools._HANDLERS`, inspect each registered lambda's real handler target,
+  and scan those functions. This prevents the allowlist from silently drifting
+  if dispatch changes.
+- Added `LLMUsageStore` to the forbidden call set and a synthetic meter/store
+  negative proof, in addition to the direct LLM-import negative proof.
+
+### RED evidence
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_tools.py::test_self_status_avoids_the_legacy_llm_usage_meter`
+
+Result: **1 failed**. The `LLMUsageStore` trap was called once by
+`_handle_get_self_status`, proving the active default Life Snapshot path still
+read legacy model/cost state.
+
+### GREEN evidence
+
+`/Users/amitgrupper/Desktop/Klaus/.venv/bin/pytest -q tests/test_claude_first_cutover.py tests/test_life_snapshot.py tests/test_tools.py tests/test_deterministic_alerts.py`
+
+Result: **179 passed in 0.57s**.
+
+`python -m compileall -q core/tools.py tests/test_claude_first_cutover.py
+core/life_snapshot.py core/deterministic_alerts.py` and `git diff --check`:
+passed.
+
+### Fix-round self-review
+
+- The guard's `get_self_status` target comes from the live `_HANDLERS` table,
+  not a separately named function list; a remap without exactly one retained
+  `_handle_*` target fails the test.
+- Journal state remains available in retained self status, while no model meter,
+  pricing, fallback, or generic model configuration is read.
+- No deployment or production mutation was performed.

@@ -2517,3 +2517,24 @@ class TestGetRecentDecisions:
         raw = tools.dispatch("get_recent_decisions", {"days": 7})
         result = json.loads(raw)
         assert result["days"] == 7
+
+
+def test_self_status_avoids_the_legacy_llm_usage_meter(monkeypatch):
+    """Life Snapshot may request self-status without touching model-cost state."""
+    import memory.firestore_db as firestore_db
+
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    meter = MagicMock(side_effect=AssertionError("legacy meter must stay unused"))
+    journal = MagicMock()
+    journal.return_value.get_recent.return_value = [
+        {"date": "2026-08-12", "summary": "steady", "mood": "focused"}
+    ]
+    with patch.object(firestore_db, "LLMUsageStore", meter), \
+         patch.object(firestore_db, "JournalStore", journal):
+        status = json.loads(tools._handle_get_self_status())
+
+    meter.assert_not_called()
+    assert "status_at" in status
+    assert "today_cost_usd" not in status
+    assert "today_llm_calls" not in status
+    assert status["journal"]["summary"] == "steady"
