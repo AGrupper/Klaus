@@ -1,4 +1,4 @@
-"""Persistent Google OAuth 2.0 manager for Gmail + Calendar.
+"""Persistent Google OAuth 2.0 manager for Calendar.
 
 Implements the Phase-1 auth boilerplate (per `docs/TECHNICAL_PLAN.md` §3.1
 and §4). Holds a refresh token so the agent can call Google APIs indefinitely
@@ -51,24 +51,15 @@ _GOOGLE_API_TIMEOUT_ENV = "GOOGLE_API_TIMEOUT_SECONDS"
 _GOOGLE_API_TIMEOUT_DEFAULT = "30"
 
 
-# OAuth scopes the agent needs.
-#  - gmail.modify  : read inbox, mark read, send drafts (broad enough for Phase 3 tools).
-#  - calendar      : full read/write on the primary calendar.
-# IMPORTANT: editing this list invalidates the cached token — delete it to re-auth.
-GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+# Calendar is the only retained Google OAuth capability. Any cached token that
+# carries a different grant is intentionally discarded so Google re-consent is
+# required instead of silently preserving broader historical access.
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
-# PHASE 19 — read-only nutrition access for Google Fit (Lifesum sync).
-# Adding this scope invalidates the cached token; operator MUST re-consent
-# before redeploy or Gmail+Calendar calls will start returning 401 (Pitfall 1).
-FITNESS_NUTRITION_READ_SCOPE = "https://www.googleapis.com/auth/fitness.nutrition.read"
 
 
 def required_google_scopes() -> list[str]:
-    """Return the least-privilege scopes for the active runtime mode."""
-    legacy_enabled = os.environ.get(
-        "KLAUS_LEGACY_RUNTIME_ENABLED", "true"
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    return [GMAIL_SCOPE, CALENDAR_SCOPE] if legacy_enabled else [CALENDAR_SCOPE]
+    """Return the fixed least-privilege scope set for the retained runtime."""
+    return [CALENDAR_SCOPE]
 
 
 # ------------------------------------------------------------------ #
@@ -203,7 +194,7 @@ class SecretManagerTokenStorage:
 # ------------------------------------------------------------------ #
 
 class GoogleAuthManager:
-    """Manages a single Google OAuth credential covering Gmail + Calendar.
+    """Manages a single Calendar OAuth credential.
 
     Delegates all token persistence to an injected `TokenStorage` backend,
     which makes the manager storage-agnostic and independently testable.
@@ -216,7 +207,7 @@ class GoogleAuthManager:
            no user interaction.
     """
 
-    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE]
+    SCOPES: list[str] = [CALENDAR_SCOPE]
 
     def __init__(self, credentials_path: str, token_storage: TokenStorage) -> None:
         """
@@ -293,13 +284,6 @@ class GoogleAuthManager:
     # Service builders — thin convenience wrappers over googleapiclient. #
     # ------------------------------------------------------------------ #
 
-    def gmail_service(self) -> Any:
-        """Return an authenticated Gmail v1 service resource."""
-        # cache_discovery=False silences a noisy warning on Cloud Run where
-        # the local discovery cache directory isn't writable.
-        return build("gmail", "v1", http=self._authorized_http(),
-                     cache_discovery=False)
-
     def calendar_service(self) -> Any:
         """Return an authenticated Calendar v3 service resource."""
         return build("calendar", "v3", http=self._authorized_http(),
@@ -335,9 +319,12 @@ class GoogleAuthManager:
             # WHY: from_authorized_user_info accepts a dict parsed from the
             # JSON string. This is storage-backend-agnostic — it works whether
             # the payload came from a file, Secret Manager, or any other source.
-            return Credentials.from_authorized_user_info(
-                json.loads(payload), self.scopes
-            )
+            credential_info = json.loads(payload)
+            scopes = set(credential_info.get("scopes") or [])
+            if scopes and scopes != set(self.scopes):
+                logger.info("Cached Google token has retired scopes; re-consent is required.")
+                return None
+            return Credentials.from_authorized_user_info(credential_info, self.scopes)
         except (ValueError, GoogleAuthError) as exc:
             # WHY: a corrupt token should not crash the whole agent —
             # treat it as "no token" so the consent flow can run.

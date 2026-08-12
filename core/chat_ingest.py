@@ -9,8 +9,7 @@ Each tick processes up to BATCH_MAX_FILES files within BATCH_TIME_BUDGET_SEC,
 persisting progress in Firestore (chat_ingest/state) so the backlog drains
 over multiple ticks (idempotent — generation-token dedup).
 
-NOTE: user_id = first entry of TELEGRAM_ALLOWED_USER_IDS — single-user
-system assumption. Klaus is not a multi-tenant product.
+NOTE: user_id comes from KLAUS_USER_ID — the explicit single-user namespace.
 
 Local dry-run:
     python -m core.chat_ingest --dry-run --file ~/.claude/projects/.../foo.jsonl
@@ -341,81 +340,9 @@ def _make_chunk(
 # ------------------------------------------------------------------ #
 
 def summarize_conversation(conv: ParsedConversation) -> tuple[str, str, list[str]]:
-    """Summarise a conversation via the Worker Agent LLM.
-
-    Builds a role-prefixed transcript capped at ~12000 chars, calls the
-    configured Flash model, and parses the JSON response.
-
-    Returns:
-        (title_str, summary_str, topics_list) — deterministic fallback on any error.
-        On failure, title falls back to the original conv.title so callers can
-        always assign conv.title = title safely.
-    """
-    # Build transcript
-    transcript_parts: list[str] = []
-    total_chars = 0
-    for turn in conv.turns:
-        entry = f"{turn.role.upper()}: {turn.text[:600]}"
-        if total_chars + len(entry) > 12000:
-            break
-        transcript_parts.append(entry)
-        total_chars += len(entry)
-    transcript = "\n\n".join(transcript_parts)
-
-    # Load system prompt
-    prompt_path = Path(__file__).parent.parent / "prompts" / "chat_summary.md"
-    try:
-        system_prompt = prompt_path.read_text(encoding="utf-8")
-    except OSError:
-        logger.warning("chat_ingest: chat_summary.md prompt missing — using inline fallback")
-        system_prompt = (
-            "Summarise the following Claude Code conversation in JSON: "
-            '{"title": "<one past-tense sentence>", "summary": "<one-paragraph summary>", "topics": ["<topic>", ...]}'
-        )
-
-    user_message = f"Conversation title: {conv.title}\n\n{transcript}"
-
-    try:
-        from core.llm_client import LLMClient
-        client = LLMClient(
-            backend=os.environ["WORKER_AGENT_BACKEND"],
-            model=os.environ["WORKER_AGENT_MODEL"],
-            api_key=os.environ["WORKER_AGENT_API_KEY"],
-            base_url=os.environ.get("WORKER_AGENT_BASE_URL"),
-        )
-        response = client.chat(
-            messages=[{"role": "user", "content": user_message}],
-            system=system_prompt,
-        )
-        raw_text = (response.get("text") or "").strip()
-
-        # Strip markdown code fences if present
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("```")[1]
-            if raw_text.startswith("json"):
-                raw_text = raw_text[4:]
-            raw_text = raw_text.strip()
-
-        parsed = json.loads(raw_text)
-        title = str(parsed.get("title", "")).strip()
-        summary = str(parsed.get("summary", "")).strip()
-        topics = [str(t) for t in parsed.get("topics", []) if t]
-        if summary:
-            return (title or conv.title, summary, topics)
-    except Exception:
-        logger.warning(
-            "chat_ingest: summarization failed for session %s",
-            conv.session_id,
-            exc_info=True,
-        )
-
-    # Deterministic fallback — keep original title untouched
-    fallback_summary = "No summary available"
-    for turn in conv.turns:
-        if turn.role == "assistant" and turn.text:
-            fallback_summary = turn.text[:200]
-            break
-    return conv.title, fallback_summary, []
+    """Create a deterministic index summary without a generative request."""
+    first_text = next((turn.text for turn in conv.turns if turn.text), "")
+    return conv.title, (first_text[:200] or "No summary available"), []
 
 
 # ------------------------------------------------------------------ #

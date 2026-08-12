@@ -34,7 +34,7 @@ def _settings() -> tuple[str, str]:
 
 
 def _positive_user_id(value: str, *, setting: str) -> int:
-    """Parse a positive canonical Telegram user ID from one setting."""
+    """Parse a positive canonical Klaus user ID from one setting."""
     try:
         user_id = int(value.strip())
     except (AttributeError, TypeError, ValueError) as exc:
@@ -49,26 +49,7 @@ def _resolve_single_user_id() -> int:
     explicit = os.environ.get("KLAUS_USER_ID")
     if explicit is not None:
         return _positive_user_id(explicit, setting="KLAUS_USER_ID")
-
-    legacy = os.environ.get("TELEGRAM_ALLOWED_USER_IDS")
-    if legacy is not None:
-        for candidate in legacy.split(","):
-            candidate = candidate.strip()
-            if not candidate:
-                continue
-            try:
-                return _positive_user_id(candidate, setting="TELEGRAM_ALLOWED_USER_IDS")
-            except RuntimeError:
-                continue
-        raise RuntimeError(
-            "TELEGRAM_ALLOWED_USER_IDS must contain at least one positive integer"
-        )
-
-    if os.environ.get("ENVIRONMENT", "development").strip().lower() == "production":
-        raise RuntimeError(
-            "A canonical Klaus user ID is required in production; set KLAUS_USER_ID"
-        )
-    return 0
+    raise RuntimeError("A canonical Klaus user ID is required; set KLAUS_USER_ID")
 
 
 def dispatch_for_single_user(tool_name: str, arguments: dict) -> Any:

@@ -1666,7 +1666,6 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
 # built on the first actual tool call, not at module load time.
 
 from core.auth_google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402 (post-constant import)
-from mcp_tools.gmail_tool import GmailTool              # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from mcp_tools.weather_tool import fetch_weather        # noqa: E402
 from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
@@ -1683,7 +1682,6 @@ from mcp_tools.memory import MemoryTool                 # noqa: E402
 import os                                               # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None
-_gmail_tool: GmailTool | None = None
 _calendar_tool: GoogleCalendarManager | None = None
 _memory_store: MemoryStore | None = None
 _memory_tool: MemoryTool | None = None
@@ -1702,13 +1700,6 @@ def _get_auth_manager() -> GoogleAuthManager:
         _auth_manager = build_auth_manager_from_env()
     return _auth_manager
 
-
-def _get_gmail_tool() -> GmailTool:
-    """Return the shared GmailTool instance, building it on first call."""
-    global _gmail_tool
-    if _gmail_tool is None:
-        _gmail_tool = GmailTool(auth_manager=_get_auth_manager())
-    return _gmail_tool
 
 
 def _get_calendar_tool() -> GoogleCalendarManager:
@@ -2099,18 +2090,6 @@ def _handle_update_calendar_event(
         ]
         detail = f"{event_id}: {', '.join(changed)}" if changed else event_id
         result["action_id"] = _record_action(action="calendar_update", detail=detail)
-    return json.dumps(result)
-
-
-def _handle_list_unread_emails(max_results: int = 10) -> str:
-    """Delegate to GmailTool.list_unread and serialise the result."""
-    emails = _get_gmail_tool().list_unread(max_results=max_results)
-    return json.dumps({"emails": emails, "count": len(emails)})
-
-
-def _handle_get_email(message_id: str) -> str:
-    """Delegate to GmailTool.get_message and serialise the result."""
-    result = _get_gmail_tool().get_message(message_id)
     return json.dumps(result)
 
 

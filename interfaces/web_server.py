@@ -1630,12 +1630,11 @@ def _sanitize_coach_note(note: str) -> str:
     React escapes HTML, so this is hardening, not XSS defense (CR-04).
     """
     import unicodedata
-    from core.telegram_format import to_plain_text
     cleaned = "".join(
         ch for ch in str(note)
         if ch in ("\n", "\t") or not unicodedata.category(ch).startswith("C")
     )
-    return to_plain_text(cleaned).lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
+    return cleaned.replace("**", "").replace("*", "").lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
 
 
 def _today_coach_note(today_iso: str) -> str | None:

@@ -11,7 +11,7 @@ token. **Everything here is gitignored** except this README.
 3. Configure the **OAuth consent screen** with **User Type = Internal**
    (this is what makes refresh tokens persist indefinitely — see
    `docs/TECHNICAL_PLAN.md` §3.1).
-4. Enable the **Gmail API** and **Google Calendar API**.
+4. Enable the **Google Calendar API**.
 5. Create an OAuth 2.0 Client ID of type **Desktop app**.
 6. Download the JSON and save it here as `credentials.json`.
 
