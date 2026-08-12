@@ -2118,13 +2118,11 @@ def _handle_get_email(message_id: str) -> str:
 # --- Native TaskStore handlers (Phase 27 Plan 03 — replaces _handle_add_task) ---
 
 def _get_task_store():
-    """Return the active task store, selected by the ``TASK_BACKEND`` env var.
+    """Return the sole authoritative Things task store.
 
-    ``things`` (default) reads and writes Amit's real Things 3 list via Things
-    Cloud; ``firestore`` falls back to the Phase 27 native store.  Both satisfy the
-    same interface, so the six ``_handle_task_*`` handlers below are backend-blind.
-
-    Set ``TASK_BACKEND=firestore`` to roll back without a deploy.
+    Firestore retains only the Things mirror and Klaus-specific sidecar/outbox
+    fields during the soak.  ``TASK_BACKEND`` is intentionally ignored so a
+    configuration typo or outage cannot turn Firestore into a silent authority.
     """
     from memory.firestore_db import get_task_store
     return get_task_store()

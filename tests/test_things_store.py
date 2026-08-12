@@ -294,35 +294,36 @@ def test_today_and_overdue_now_carries_real_tags():
     ThingsAuthError("bad password"),
     ThingsUnavailableError("network down"),
 ])
-def test_reads_serve_stale_mirror_when_things_is_down(failure):
-    """A broken protocol must not 500 the morning briefing."""
+def test_reads_raise_when_things_is_down_instead_of_serving_the_mirror(failure):
+    """Firestore is a mirror/outbox and must not become task-read authority."""
     store = _store()
     with _patch_things({"t1": _payload(tt="cached")}):
         store.list()                                   # warm the cache
 
     store_mod._cache["checked_at"] = 0.0               # force a refresh attempt
     with patch.object(store_mod.things, "fetch_history_key", side_effect=failure):
-        tasks = store.list()
-        result = store.get_today_and_overdue("2026-08-11")
-
-    assert [t["title"] for t in tasks] == ["cached"], "stale mirror should still serve"
-    assert result["staleness_warning"] is not None
+        with pytest.raises(type(failure)):
+            store.list()
 
 
-def test_reads_return_empty_when_cold_and_things_is_down():
+def test_reads_raise_when_cold_and_things_is_down():
     store = _store()
     with patch.object(store_mod.things, "fetch_history_key",
                       side_effect=ThingsUnavailableError("down")):
-        assert store.list() == []
-        assert store.get("t1") is None
-        assert store.get_summary("2026-08-11") == {"due_today": 0, "overdue": 0}
+        with pytest.raises(ThingsUnavailableError):
+            store.list()
+        with pytest.raises(ThingsUnavailableError):
+            store.get("t1")
+        with pytest.raises(ThingsUnavailableError):
+            store.get_summary("2026-08-11")
 
 
 def test_staleness_clears_after_a_successful_refresh():
     store = _store()
     with patch.object(store_mod.things, "fetch_history_key",
                       side_effect=ThingsUnavailableError("down")):
-        store.list()
+        with pytest.raises(ThingsUnavailableError):
+            store.list()
     assert store_mod._cache["stale_reason"] is not None
 
     store_mod._cache["checked_at"] = 0.0

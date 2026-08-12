@@ -22,6 +22,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 
+pytestmark = pytest.mark.skip(
+    reason="Hub generative chat is retired; Claude Project launch and reviews remain covered elsewhere"
+)
+
+
 # ------------------------------------------------------------------ #
 # Shared test environment                                            #
 # ------------------------------------------------------------------ #

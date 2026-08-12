@@ -87,6 +87,7 @@ def _stub_web_server_imports() -> dict:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.skip(reason="autonomous LLM tick is a 410 tombstone in Claude-first runtime")
 class TestCronAutonomousTick:
     """Behavioral tests for the POST /cron/autonomous-tick endpoint."""
 
@@ -285,6 +286,7 @@ class TestCronAutonomousTick:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.skip(reason="retired Cloud Tasks weekly composer; Claude Routine coverage is in test_claude_first_cutover")
 class TestCronWeeklyTrainingReview:
     """Behavioral tests for the POST /cron/weekly-training-review endpoint.
 
@@ -868,6 +870,7 @@ def _make_update(update_id: int) -> MagicMock:
     return update
 
 
+@pytest.mark.skip(reason="Telegram ingress is a 410 tombstone in Claude-first runtime")
 class TestTelegramWebhook:
     """Behavioral tests for POST /telegram-webhook (instant ACK + dedup)."""
 
@@ -991,6 +994,7 @@ class TestTelegramWebhook:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.skip(reason="Telegram update processor is a 410 tombstone in Claude-first runtime")
 class TestInternalProcessUpdate:
     """POST /internal/process-update — OIDC-protected Cloud Tasks target that
     runs the agent turn inside a tracked request (full CPU)."""
@@ -1055,6 +1059,7 @@ class TestInternalProcessUpdate:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.skip(reason="retired Cloud Tasks morning composer; Claude Routine coverage is in test_claude_first_cutover")
 class TestTriggerMorning:
     """POST /trigger/morning — dedicated MORNING_TRIGGER_TOKEN auth, enqueue-only
     (never composes inside the request — D-31 dark ship / D-32 fix)."""
@@ -1182,6 +1187,7 @@ class TestTriggerMorning:
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.skip(reason="legacy review composers are 410 tombstones in Claude-first runtime")
 class TestInternalProcessOccasion:
     """POST /internal/process-occasion — OIDC-gated Cloud Tasks target that
     dispatches nightly/morning/weekly_review composes with full CPU."""
@@ -1536,6 +1542,7 @@ def _make_list_store_mock(
     return store
 
 
+@pytest.mark.skip(reason="native Firestore task endpoints were superseded by authoritative Things task tests")
 class TestTaskRoutes:
     """Integration tests for /api/tasks* CRUD + summary routes.
 

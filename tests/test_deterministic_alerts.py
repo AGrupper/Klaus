@@ -111,7 +111,7 @@ def test_runner_deduplicates_topics_and_marks_followup_after_success():
     assert len(logged) == 1
 
 
-def test_subscription_heartbeat_preserves_the_full_deterministic_checker_set():
+def test_subscription_heartbeat_collects_retained_infrastructure_checkers():
     from core import heartbeat
 
     expected = [
@@ -124,12 +124,11 @@ def test_subscription_heartbeat_preserves_the_full_deterministic_checker_set():
             remediation="Inspect Cloud Build and Cloud Run logs.",
         )
     ]
-    with patch("core.heartbeat._load_config", return_value={"enabled": True}), patch(
-        "core.heartbeat._tiers_for_now", return_value={"critical", "warning"}
-    ), patch("core.heartbeat._collect_signals", return_value=expected) as collect:
-        result = heartbeat.collect_deterministic_signals(
-            datetime(2026, 8, 8, 12, 0, tzinfo=TZ)
-        )
+    with patch("core.heartbeat.check_cron_health", return_value=expected), patch(
+        "core.heartbeat.check_mcp_routine_health", return_value=[]
+    ), patch("core.heartbeat._check_push_health", return_value=[]), patch(
+        "core.heartbeat.check_deployment_identity", return_value=[]
+    ):
+        result = heartbeat.collect_deterministic_signals(datetime(2026, 8, 8, 12, 0, tzinfo=TZ))
 
     assert result == expected
-    collect.assert_called_once_with(tiers={"critical", "warning"}, weekly=False)

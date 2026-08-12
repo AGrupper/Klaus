@@ -4,11 +4,12 @@ This module is the cloud entry point for the Klaus agent when deployed on
 Google Cloud Run.  It exposes a minimal FastAPI application with two routes:
 
     GET  /healthz            — liveness/startup probe (no auth, no init).
-    POST /telegram-webhook   — receives Telegram Updates via webhook.
+    POST /cron/deterministic-alerts — runs explicit notification rules.
+    POST /mcp/*                    — serves scoped Claude capabilities.
 
-The ``AgentOrchestrator`` and the python-telegram-bot ``Application`` are
-created lazily inside the FastAPI lifespan handler so that ``/healthz`` can
-respond on cold start *before* any heavyweight initialisation completes.
+The retired Telegram and in-process agent runtimes are deliberately not
+initialised at startup.  Cold start opens only the retained Claude MCP session
+managers, so health and Hub surfaces stay available without an LLM runtime.
 
 Container entry point:
     uvicorn interfaces.web_server:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1
@@ -23,21 +24,15 @@ import asyncio
 import hmac
 import logging
 import os
-from collections import OrderedDict
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import date as _date_cls, datetime, timedelta
 from typing import AsyncGenerator
 from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
-from telegram import Update
-from telegram.ext import Application
 
-from core.main import AgentOrchestrator
-from core.task_dispatch import enqueue_hub_message, enqueue_occasion, enqueue_update
-from interfaces._router import MessageRouter, parse_allowed_user_ids
 from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
 # WHY: override=True ensures .env values win even when the shell has already
@@ -56,22 +51,10 @@ logger = logging.getLogger(__name__)
 # Module-level singletons (populated during lifespan startup)        #
 # ------------------------------------------------------------------ #
 
-# WHY: these are module-level so the /telegram-webhook handler can reference
-# them without passing objects through FastAPI's dependency system, keeping
-# the routing code straightforward and easy to follow.
-_orchestrator: AgentOrchestrator | None = None
-_router: MessageRouter | None = None
-_application: Application | None = None
 _mcp_bundle = None
-
-# Recently accepted Telegram update_ids, used to drop webhook retries.
-# WHY: Telegram re-delivers an Update if it doesn't get a 200 quickly. We now
-# ACK before processing, but a retry can still arrive for an update we already
-# accepted (e.g. the first ACK was lost in transit). In-process only — a cold
-# start forgets it, which is fine because Telegram retries arrive within
-# seconds of the original, never across container restarts.
-_recent_update_ids: "OrderedDict[int, None]" = OrderedDict()
-_RECENT_UPDATE_IDS_MAX = 256
+# Compatibility sentinel for retained data/health tests.  It is never
+# initialised or read by any live route after the Telegram runtime tombstone.
+_application = None
 
 
 # ------------------------------------------------------------------ #
@@ -94,8 +77,6 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
     Yields:
         None — control returns to FastAPI, which starts serving requests.
     """
-    global _orchestrator, _router, _application  # noqa: PLW0603
-
     mcp_stack = AsyncExitStack()
     await mcp_stack.__aenter__()
     if _mcp_bundle is not None:
@@ -107,49 +88,9 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
             await mcp_stack.enter_async_context(_mcp_bundle.routine.session_manager.run())
         logger.info("Klaus MCP session managers initialised.")
 
-    if not _flag_enabled("KLAUS_LEGACY_RUNTIME_ENABLED", default=True):
-        logger.info("Legacy Telegram/generative runtime disabled by feature flag.")
-        try:
-            yield
-        finally:
-            await mcp_stack.aclose()
-        return
-
-    telegram_bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
-
-    # WHY: ``Application.initialize()`` registers the Bot, sets up the
-    # internal request queue, and validates the token with the Telegram API.
-    # We must await it before any Update can be deserialized via app.bot.
-    _application = Application.builder().token(telegram_bot_token).build()
-    await _application.initialize()
-    logger.info("Telegram Application initialised.")
-
-    # WHY: ``AgentOrchestrator`` loads both LLM clients and reads prompt files
-    # from disk — doing this at startup avoids per-request latency on the first
-    # real message while still not blocking the health probe.
-    _orchestrator = AgentOrchestrator()
-    # Phase 20: expose the Bot on the orchestrator so non-callback code paths can
-    # send messages. Button taps get the bot from the callback query, but a typed
-    # training-note reply (core.training_checkin.attach_note /
-    # attach_skipreason_other_note) reaches the bot only via the orchestrator.
-    _orchestrator.bot = _application.bot
-    logger.info("AgentOrchestrator initialised.")
-
-    # Build the router with the allow-listed user IDs from the environment.
-    _router = MessageRouter(
-        orchestrator=_orchestrator,
-        allowed_user_ids=parse_allowed_user_ids(),
-    )
-    logger.info("MessageRouter initialised.")
-
     try:
         yield  # Server is live and handling requests from here.
     finally:
-        # ---- Shutdown ----
-        # WHY: graceful shutdown flushes any in-flight Telegram API calls and
-        # releases the underlying HTTP connections cleanly.
-        await _application.shutdown()
-        logger.info("Telegram Application shut down.")
         await mcp_stack.aclose()
 
 
@@ -182,12 +123,11 @@ def _subscription_capability_gate() -> dict:
 
 
 def _require_legacy_hub_chat() -> None:
-    """Fail closed after the independently reversible Hub-chat cutover."""
-    if not _flag_enabled("KLAUS_HUB_CHAT_ENABLED", default=True):
-        raise HTTPException(
-            status_code=410,
-            detail={"error": "Hub chat retired; use the configured Claude Project"},
-        )
+    """Tombstone Hub AI chat; the retained Hub is dashboard-only."""
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Hub chat retired; use the configured Claude Project"},
+    )
 
 
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
@@ -290,32 +230,8 @@ async def health_check() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
-async def _handle_update_background(update: Update) -> None:
-    """Fallback: process a Telegram Update in-process, off the critical path.
-
-    WHY this is only a fallback: a Starlette BackgroundTask runs AFTER the
-    response is sent, so no request is in flight while the agent turn runs
-    and Cloud Run throttles the container CPU — the turn crawls (observed
-    2026-06-12: an 18-minute reply). The primary path is Cloud Tasks
-    (``core.task_dispatch.enqueue_update``), which re-delivers the update to
-    /internal/process-update inside a tracked, full-CPU request. This path
-    survives a Cloud Tasks outage or unset queue config: slow beats dropped.
-    Errors are logged here since they can no longer surface in the response.
-    """
-    try:
-        await _router.handle_update(update)
-    except Exception:
-        logger.exception(
-            "Background processing failed for update_id=%s", update.update_id
-        )
-
-
 @app.post("/telegram-webhook")
-async def telegram_webhook(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    x_telegram_bot_api_secret_token: str | None = Header(default=None),
-) -> JSONResponse:
+async def telegram_webhook(request: Request) -> JSONResponse:
     """Receive and dispatch a Telegram Update sent by the Telegram Bot API.
 
     Telegram calls this endpoint for every incoming message, command, or
@@ -347,6 +263,11 @@ async def telegram_webhook(
                            waits for the lifespan startup to complete before
                            routing traffic).
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Telegram runtime retired; use the configured Claude Project"},
+    )
+
     # ---- Token validation ----
     expected_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
 
@@ -428,6 +349,11 @@ async def internal_process_update(request: Request) -> JSONResponse:
         HTTPException 401/403: OIDC verification failed.
         HTTPException 500: Singletons not initialised (Cloud Tasks retries).
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Telegram processing retired; use the configured Claude Project"},
+    )
+
     await _verify_cron_request(request)
 
     if _application is None or _router is None:
@@ -468,6 +394,11 @@ async def internal_process_occasion(request: Request) -> JSONResponse:
         HTTPException 500: Singletons not initialised (Cloud Tasks retries).
         HTTPException 400: Unknown occasion value, or a malformed target_date.
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Legacy review composer retired; Claude Routines publish reviews"},
+    )
+
     await _verify_cron_request(request)
 
     if _application is None:
@@ -810,6 +741,11 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
     Returns:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Legacy proactive review composer retired; Claude Routines publish reviews"},
+    )
+
     await _verify_cron_request(request)
     if _application is None:
         raise HTTPException(status_code=500, detail={"error": "Not initialised"})
@@ -830,6 +766,15 @@ async def cron_proactive_alerts(request: Request) -> JSONResponse:
 # fires — so a separate 22:00 reflect job would only duplicate that work (and overwrite
 # the nightly's journal on early-wind-down nights). core.reflection.run_reflection lives
 # on and is invoked by the nightly flow.
+
+
+@app.post("/cron/reflect")
+async def cron_reflect_tombstone() -> JSONResponse:
+    """Tombstone for the retired standalone reflection scheduler."""
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Standalone reflection retired; use the Claude nightly Routine"},
+    )
 
 
 @app.post("/trigger/nightly")
@@ -860,20 +805,10 @@ async def trigger_nightly(request: Request) -> JSONResponse:
     target = nightly_target_date_now()
     if _routine_cutover_enabled("nightly"):
         return await _start_subscription_routine("nightly", target, "focus")
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    loop = asyncio.get_running_loop()
-    # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
-    # api_chat_send's enqueue_hub_message dispatch.
-    ok = await loop.run_in_executor(
-        None, lambda: enqueue_occasion("nightly", trigger="focus", target_date=target),
+    raise HTTPException(
+        status_code=503,
+        detail={"error": "Claude nightly Routine cutover is unavailable"},
     )
-    if not ok:
-        return JSONResponse(
-            status_code=503,
-            content={"accepted": False, "error": "dispatch unavailable"},
-        )
-    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 def nightly_target_date_now() -> str:
@@ -914,20 +849,10 @@ async def trigger_morning(request: Request) -> JSONResponse:
     today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     if _routine_cutover_enabled("morning"):
         return await _start_subscription_routine("morning", today_iso, "wake")
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    loop = asyncio.get_running_loop()
-    # WHY run_in_executor: the Cloud Tasks client is synchronous — mirrors
-    # api_chat_send's enqueue_hub_message dispatch.
-    ok = await loop.run_in_executor(
-        None, lambda: enqueue_occasion("morning", trigger="focus", target_date=today_iso),
+    raise HTTPException(
+        status_code=503,
+        detail={"error": "Claude morning Routine cutover is unavailable"},
     )
-    if not ok:
-        return JSONResponse(
-            status_code=503,
-            content={"accepted": False, "error": "dispatch unavailable"},
-        )
-    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/nightly-backstop")
@@ -957,20 +882,11 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
         response = await _start_subscription_routine("nightly", target, "backstop")
         _log_cron_run("nightly-backstop", ok=response.status_code == 202)
         return response
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    loop = asyncio.get_running_loop()
-    ok = await loop.run_in_executor(
-        None, lambda: enqueue_occasion("nightly", trigger="backstop", target_date=target),
+    _log_cron_run("nightly-backstop", ok=False)
+    raise HTTPException(
+        status_code=503,
+        detail={"error": "Claude nightly Routine cutover is unavailable"},
     )
-    if not ok:
-        _log_cron_run("nightly-backstop", ok=False)
-        return JSONResponse(
-            status_code=503,
-            content={"accepted": False, "error": "dispatch unavailable"},
-        )
-    _log_cron_run("nightly-backstop", ok=True)
-    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/morning-backstop")
@@ -988,54 +904,28 @@ async def cron_morning_backstop(request: Request) -> JSONResponse:
     return response
 
 
+@app.post("/cron/deterministic-alerts")
+async def cron_deterministic_alerts(request: Request) -> JSONResponse:
+    """Run deterministic daytime rules with no legacy runtime dependency."""
+    await _verify_cron_request(request)
+    from core.deterministic_alerts import run_rule_evaluator
+
+    try:
+        result = await run_rule_evaluator()
+        _log_cron_run("deterministic-alerts", ok=True)
+    except Exception:
+        _log_cron_run("deterministic-alerts", ok=False)
+        raise
+    return JSONResponse(content={"ok": True, **result})
+
+
 @app.post("/cron/autonomous-tick")
 async def cron_autonomous_tick(request: Request) -> JSONResponse:
-    """Autonomous tick — judgment-driven proactive outreach.
-
-    Schedule: */20 7-21 * * *  (Asia/Jerusalem) — 43 ticks/day.
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Flow (Phase 18 — AUTO-06):
-      1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
-      2. Guard: _application must be initialised (mirrors cron_proactive_alerts
-         — the bot is required to send).
-      3. Delegate to core.autonomous.run_autonomous_tick, which runs the full
-         3-layer pipeline (gather → triage → compose) and only on success
-         appends to outreach_log (D-10).
-      4. Record success or failure to the heartbeat liveness ledger via
-         _log_cron_run('autonomous-tick', ok=...). Failure path re-raises so
-         Cloud Run logs the 500 and the consecutive_failures streak ticks up.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    await _verify_cron_request(request)
-    if _flag_enabled("KLAUS_DETERMINISTIC_ALERTS_ENABLED"):
-        from core.deterministic_alerts import run_rule_evaluator
-
-        try:
-            result = await run_rule_evaluator()
-            _log_cron_run("autonomous-tick", ok=True)
-        except Exception:
-            _log_cron_run("autonomous-tick", ok=False)
-            raise
-        return JSONResponse(content={"ok": True, **result})
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    # WHY: imported inside the handler so the heavy core.autonomous module
-    # (which pulls in tick_brain + the orchestrator graph) does not load at
-    # web_server import time — keeps /health cold-start fast.
-    import core.autonomous as _auto
-    try:
-        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-        # run_autonomous_tick is async — it wraps the sync _run_smart_loop
-        # in an executor internally, so the route just awaits the coroutine.
-        await _auto.run_autonomous_tick(_application.bot, now)
-        _log_cron_run("autonomous-tick", ok=True)
-    except Exception:
-        _log_cron_run("autonomous-tick", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
+    """Tombstone for the removed autonomous LLM cascade."""
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Autonomous tick retired; use /cron/deterministic-alerts"},
+    )
 
 
 @app.post("/cron/weekly-training-review")
@@ -1069,20 +959,11 @@ async def cron_weekly_training_review(request: Request) -> JSONResponse:
         response = await _start_subscription_routine("weekly", today, "cron")
         _log_cron_run("weekly-training-review", ok=response.status_code == 202)
         return response
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    loop = asyncio.get_running_loop()
-    ok = await loop.run_in_executor(
-        None, lambda: enqueue_occasion("weekly_review", trigger="cron", target_date=today),
+    _log_cron_run("weekly-training-review", ok=False)
+    raise HTTPException(
+        status_code=503,
+        detail={"error": "Claude weekly Routine cutover is unavailable"},
     )
-    if not ok:
-        _log_cron_run("weekly-training-review", ok=False)
-        return JSONResponse(
-            status_code=503,
-            content={"accepted": False, "error": "dispatch unavailable"},
-        )
-    _log_cron_run("weekly-training-review", ok=True)
-    return JSONResponse(status_code=202, content={"accepted": True})
 
 
 @app.post("/cron/healthkit-sync")
@@ -1163,6 +1044,11 @@ async def cron_ingest_chats(request: Request) -> JSONResponse:
     Returns:
         JSONResponse: batch status dict with ok, processed, remaining, done.
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Chat-ingest trigger retired"},
+    )
+
     await _verify_cron_request(request)
     import asyncio as _asyncio
     import core.chat_ingest as _ingest
@@ -1190,6 +1076,11 @@ async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
     Returns:
         JSONResponse: batch status dict with ok, processed, remaining, done.
     """
+    raise HTTPException(
+        status_code=410,
+        detail={"error": "Chat-export ingest trigger retired"},
+    )
+
     await _verify_cron_request(request)
     import asyncio as _asyncio
     import core.chat_export_ingest as _export_ingest
@@ -1333,29 +1224,15 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-    if _flag_enabled("KLAUS_DETERMINISTIC_ALERTS_ENABLED"):
-        from core.deterministic_alerts import run_rule_evaluator
-        from core.heartbeat import collect_deterministic_signals
+    from core.heartbeat import collect_deterministic_signals
 
-        try:
-            result = await run_rule_evaluator(
-                infrastructure_loader=collect_deterministic_signals
-            )
-            _log_cron_run("heartbeat", ok=True)
-        except Exception:
-            _log_cron_run("heartbeat", ok=False)
-            raise
-        return JSONResponse(content={"ok": True, **result})
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.heartbeat as _heartbeat
     try:
-        await _heartbeat.run_tick(_application.bot)
+        signals = await asyncio.to_thread(collect_deterministic_signals)
         _log_cron_run("heartbeat", ok=True)
     except Exception:
         _log_cron_run("heartbeat", ok=False)
         raise
-    return JSONResponse(content={"ok": True})
+    return JSONResponse(content={"ok": True, "signals": [signal.__dict__ for signal in signals]})
 
 
 # --------------------------------------------------------------------------- #
@@ -3268,7 +3145,7 @@ async def api_create_task(
         HTTPException 401: No valid session cookie.
         HTTPException 422: Pydantic validation failure (T-27-IV).
     """
-    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import — Shared Pattern 5
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import — Shared Pattern 5
 
     task_dict = body.model_dump(exclude_none=False, mode="json")
     # Coerce None list_id → "inbox" (D-07 from RESEARCH: Inbox is implicit)
@@ -3276,7 +3153,7 @@ async def api_create_task(
         task_dict["list_id"] = "inbox"
 
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3301,11 +3178,11 @@ async def api_tasks_summary(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3327,10 +3204,10 @@ async def api_list_tasks(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3354,13 +3231,13 @@ async def api_update_task(
         HTTPException 401: No valid session cookie.
         HTTPException 422: Pydantic validation failure (T-27-IV).
     """
-    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     # Only pass fields that were explicitly provided (exclude unset so None
     # values don't overwrite set fields that weren't sent in this PATCH).
     patch = body.model_dump(exclude_unset=True, mode="json")
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3384,11 +3261,11 @@ async def api_complete_task(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskStore, _jsonsafe_doc  # lazy import
+    from memory.firestore_db import _jsonsafe_doc, get_task_store  # lazy import
 
     completed_on_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3410,10 +3287,10 @@ async def api_undo_task(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskStore  # lazy import
+    from memory.firestore_db import get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3439,10 +3316,10 @@ async def api_soft_delete_task(
     Raises:
         HTTPException 401: No valid session cookie.
     """
-    from memory.firestore_db import TaskStore  # lazy import
+    from memory.firestore_db import get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )
@@ -3469,10 +3346,10 @@ async def api_hard_delete_task(
         HTTPException 401: No valid session cookie.
         HTTPException 409: Task is not in 'completing' state (T-27-REP).
     """
-    from memory.firestore_db import TaskStore  # lazy import
+    from memory.firestore_db import get_task_store  # lazy import
 
     loop = asyncio.get_running_loop()
-    store = TaskStore(
+    store = get_task_store(
         project_id=os.environ.get("GCP_PROJECT_ID", ""),
         database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
     )

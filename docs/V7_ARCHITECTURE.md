@@ -85,8 +85,10 @@ changes are recommendations only.
 
 ## Deterministic daytime behavior
 
-`KLAUS_DETERMINISTIC_ALERTS_ENABLED=true` changes the existing waking-hours
-scheduler endpoint from the LLM cascade to `core/deterministic_alerts.py`.
+`POST /cron/deterministic-alerts` is the canonical waking-hours scheduler
+endpoint and routes only to `core/deterministic_alerts.py`. The former
+`/cron/autonomous-tick` endpoint is a `410 Gone` tombstone. The deterministic
+route has no LLM, autonomous-engine, model-meter, or Telegram-delivery path.
 Only these explicit conditions can push:
 
 - a due timed follow-up;
@@ -112,12 +114,12 @@ failed push delivery is not logged as sent and does not complete the follow-up.
 
 ## Rollback and subtraction
 
-Every cutover is reversible. Keep `KLAUS_LEGACY_RUNTIME_ENABLED=true` and
-`KLAUS_HUB_CHAT_ENABLED=true` through capability proof, shadow runs, independent
-routine cutovers, and a seven-day observation window. Only after that window may
-the operator disable legacy runtime and remove Telegram, Gmail, Readwise,
-chat-import schedules, tick-brain/cascade/worker code, generative SDKs, and old
-model secrets. Historical conversations, vectors, logs, and data are retained.
+The deterministic Claude-first runtime has all three Remote Routines cut over
+(morning, nightly, and weekly) and the Hub's embedded chat disabled. The Hub
+retains dashboards, reviews, settings, authentication, Web Push, and Ask Claude
+launch links. Legacy Telegram/chat processors and retired reflection/ingest
+triggers respond with `410 Gone`; historical conversations, vectors, logs,
+reviews, and data remain retained.
 
 With the legacy runtime off, Google OAuth requests Calendar only. The container
 starts without generative-model keys; the dedicated Gemini embedding key and

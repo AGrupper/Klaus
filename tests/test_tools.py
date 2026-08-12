@@ -986,15 +986,10 @@ class TestNativeTaskTools:
         from core import tools
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
         monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
-        # Pin the legacy backend: this test patches memory.firestore_db.TaskStore
-        # specifically, and TASK_BACKEND now defaults to the Things store.
-        monkeypatch.setenv("TASK_BACKEND", "firestore")
-
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t1", "title": "Call dentist", "status": "active"}
-        mock_store_cls = MagicMock(return_value=mock_store)
 
-        with patch("memory.firestore_db.TaskStore", mock_store_cls):
+        with patch("core.tools._get_task_store", return_value=mock_store):
             result = tools._HANDLERS["task_create"]({"title": "Call dentist", "due_date": "2026-06-25"})
 
         # create was called once, with a single positional dict (not kwargs)
@@ -1039,17 +1034,17 @@ class TestNativeTaskTools:
         from memory.things_store import ThingsTaskStore
         assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
-    def test_task_backend_firestore_rolls_back_without_a_deploy(self, monkeypatch):
+    def test_task_backend_firestore_cannot_replace_things_authority(self, monkeypatch):
         from core import tools
-        from memory.firestore_db import TaskStore
+        from memory.things_store import ThingsTaskStore
         monkeypatch.setenv("TASK_BACKEND", "firestore")
-        assert isinstance(tools._get_task_store(), TaskStore)
+        assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
-    def test_task_backend_is_case_and_space_tolerant(self, monkeypatch):
+    def test_task_backend_value_is_ignored_for_authority(self, monkeypatch):
         from core import tools
-        from memory.firestore_db import TaskStore
+        from memory.things_store import ThingsTaskStore
         monkeypatch.setenv("TASK_BACKEND", "  FireStore ")
-        assert isinstance(tools._get_task_store(), TaskStore)
+        assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
     def test_no_core_module_constructs_taskstore_directly(self):
         """Every proactive reader must resolve its store via get_task_store().

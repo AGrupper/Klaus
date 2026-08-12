@@ -3539,24 +3539,15 @@ def is_auto_schedule_candidate(task: dict) -> bool:
 
 
 def get_task_store(project_id: str | None = None, database: str | None = None):
-    """Return the active task store, selected by the ``TASK_BACKEND`` env var.
+    """Return the one authoritative Things task store.
 
-    ``things`` (default) reads and writes Amit's real Things 3 list;
-    ``firestore`` returns the Phase 27 native :class:`TaskStore`.  Both satisfy the
-    same interface, so callers are backend-blind.
-
-    **Use this rather than constructing ``TaskStore`` directly.**  The morning
-    briefing, nightly review, reflection, and autonomous tick each built their own
-    ``TaskStore``, so flipping the backend in ``core/tools.py`` alone left every
-    proactive feature silently reading the abandoned store — connected to Things
-    for conversation, blind to it everywhere else.
+    Firestore retains a Things mirror and outbox only during the soak.  It is
+    deliberately not selectable as a runtime authority: an unavailable Things
+    account must surface as unavailable rather than silently serving abandoned
+    Klaus-owned task data.
     """
-    backend = os.environ.get("TASK_BACKEND", "things").strip().lower()
     project_id = project_id if project_id is not None else os.environ.get("GCP_PROJECT_ID", "")
     database = database if database is not None else os.environ.get("FIRESTORE_DATABASE", "(default)")
-
-    if backend == "firestore":
-        return TaskStore(project_id=project_id, database=database)
 
     from memory.things_store import ThingsTaskStore
     return ThingsTaskStore(project_id=project_id, database=database)
