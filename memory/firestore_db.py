@@ -3977,7 +3977,7 @@ class ActionIdempotencyStore:
         origin: str,
     ) -> dict:
         """Atomically claim a key or return its exact prior execution record."""
-        from datetime import datetime, timezone
+        from datetime import datetime, timedelta, timezone
 
         if not isinstance(idempotency_key, str) or not idempotency_key.strip():
             raise ValueError("idempotency_key is required")
@@ -3993,6 +3993,7 @@ class ActionIdempotencyStore:
             "result": None,
             "error": None,
             "created_at": datetime.now(timezone.utc).isoformat(),
+            "expire_at": datetime.now(timezone.utc) + timedelta(days=30),
         }
         doc = self._col.document(self._document_id(idempotency_key))
         try:
@@ -4106,6 +4107,7 @@ class PendingApprovalStore:
 
         now = datetime.now(timezone.utc)
         identifier = action_id or uuid.uuid4().hex
+        expires_at = now + timedelta(seconds=expires_in_seconds)
         record = {
             "action_id": identifier,
             "action_type": action_type,
@@ -4115,7 +4117,8 @@ class PendingApprovalStore:
             "risk_category": risk_category or action_type,
             "status": "pending",
             "created_at": now.isoformat(),
-            "expires_at": (now + timedelta(seconds=expires_in_seconds)).isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "expire_at": expires_at,
             "confirmation_state": "awaiting_user",
         }
         doc_ref = self._col.document(identifier)

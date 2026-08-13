@@ -1178,6 +1178,7 @@ class TestPendingApprovalStore:
 
             assert prepared["status"] == "pending"
             assert len(prepared["payload_hash"]) == 64
+            assert prepared["expire_at"].tzinfo is not None
             with pytest.raises(ValueError, match="payload hash"):
                 store.confirm("approval-1", "0" * 64)
 
@@ -1743,6 +1744,7 @@ def test_action_idempotency_store_binds_key_to_payload_and_replays_result():
         assert replay["is_new"] is False
         assert replay["status"] == "succeeded"
         assert replay["result"] == {"id": "task-1"}
+        assert replay["expire_at"].endswith("+00:00")
 
         with pytest.raises(ValueError, match="different payload"):
             store.begin(

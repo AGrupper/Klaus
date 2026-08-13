@@ -3,10 +3,27 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+
+def test_firestore_oauth_store_adds_native_ttl_timestamp(monkeypatch):
+    """OAuth records keep epoch expiry and gain a Firestore TTL timestamp."""
+    from interfaces.mcp_oauth import FirestoreOAuthStore
+
+    client = MagicMock()
+    monkeypatch.setattr(
+        "memory.firestore_db._make_firestore_client", lambda *_args: client
+    )
+    store = FirestoreOAuthStore("project", "database")
+    store.put_code("digest", {"expires_at": 1_800_000_000, "consumed": False})
+
+    stored = client.collection.return_value.document.return_value.set.call_args.args[0]
+    assert stored["expires_at"] == 1_800_000_000
+    assert stored["expire_at"].tzinfo is not None
 
 
 def _challenge(verifier: str) -> str:

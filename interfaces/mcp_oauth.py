@@ -18,6 +18,7 @@ import secrets
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -153,7 +154,16 @@ class FirestoreOAuthStore:
         return self._client.collection(self._COLLECTIONS[kind]).document(document_id)
 
     def _put(self, kind: str, document_id: str, record: dict[str, Any]) -> None:
-        self._doc(kind, document_id).set(record)
+        stored = dict(record)
+        # Firestore TTL requires a timestamp field.  Keep the integer
+        # ``expires_at`` protocol value for OAuth comparisons and add a
+        # provider-native ``expire_at`` solely for deterministic cleanup.
+        expires_at = stored.get("expires_at")
+        if kind in {"codes", "access", "refresh"} and expires_at is not None:
+            stored["expire_at"] = datetime.fromtimestamp(
+                int(expires_at), tz=timezone.utc
+            )
+        self._doc(kind, document_id).set(stored)
 
     def _get(self, kind: str, document_id: str) -> dict[str, Any] | None:
         snap = self._doc(kind, document_id).get()
