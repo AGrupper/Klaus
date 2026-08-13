@@ -434,6 +434,68 @@ def test_create_ids_are_unique_and_things_shaped():
 
 
 # ------------------------------------------------------------------ #
+# Base58 ids — a Base62 id crashes the Things client on launch        #
+# ------------------------------------------------------------------ #
+
+def test_generated_ids_never_contain_base58_lookalikes():
+    """0, O, I and l are excluded from Base58; Things asserts on them.
+
+    Three separate app outages on 2026-08-13 came from Base62 ids.
+    """
+    ids = [things.new_uuid() for _ in range(500)]
+    offenders = [i for i in ids if set(i) & set("0OIl")]
+    assert not offenders, f"illegal characters in generated ids: {offenders[:5]}"
+
+
+def test_generated_ids_are_22_chars_and_unique():
+    ids = {things.new_uuid() for _ in range(500)}
+    assert len(ids) == 500
+    assert all(len(i) == 22 for i in ids)
+
+
+@pytest.mark.parametrize("uuid,valid", [
+    ("EBWLFi2RmKetSzECJK6uJn", True),    # real Things id
+    ("3k8SpmuxT9pDcQ2mEaGcyy", True),    # real Things id
+    ("iz5LraR8qT7LNIwEbc8uph", False),   # crashed the app — contains I
+    ("D8Zal9pYHxffHfAscO1sfe", False),   # crashed the app — contains O and l
+    ("FWqYjhZIE0Hs8XYhd0sUS4", False),   # crashed the app — contains 0 and I
+    ("tooshort", False),
+    ("", False),
+])
+def test_uuid_validation_matches_reality(uuid, valid):
+    assert things.is_valid_uuid(uuid) is valid
+
+
+def test_commit_refuses_a_malformed_id(monkeypatch):
+    """The guard that would have prevented all three outages."""
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    with patch.object(things, "_get_session") as sess:
+        with pytest.raises(ValueError, match="Base58"):
+            things.commit("hk", {"badIdWith0AndI000000000": {"t": 0, "e": "Task6", "p": {}}}, 1)
+        sess.return_value.request.assert_not_called()
+
+
+def test_commit_refuses_a_bad_note_checksum(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()
+    record = {"t": 0, "e": "Task6",
+              "p": {"nt": {"_t": "tx", "ch": 0, "v": "real text", "t": 1}}}
+    with patch.object(things, "_get_session") as sess:
+        with pytest.raises(ValueError, match="crc32"):
+            things.commit("hk", {uuid: record}, 1)
+        sess.return_value.request.assert_not_called()
+
+
+def test_commit_accepts_a_well_formed_record(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid, record = things.build_create("fine", notes="hello")
+    with patch.object(things, "_get_session") as sess:
+        sess.return_value.request.return_value = _response(200, {"server-head-index": 2})
+        things.commit("hk", {uuid: record}, 1)
+        sess.return_value.request.assert_called_once()
+
+
+# ------------------------------------------------------------------ #
 # Note checksum — a wrong value crashes the Things client on launch   #
 # ------------------------------------------------------------------ #
 
@@ -646,9 +708,10 @@ def test_commit_blocked_when_writes_disabled():
 
 def test_commit_allowed_when_writes_enabled(monkeypatch):
     monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()          # must be a real Base58 id — the guard checks
     with patch.object(things, "_get_session") as sess:
         sess.return_value.request.return_value = _response(200, {"server-head-index": 340})
-        things.commit("hk", {"t1": {"t": 0, "e": "Task6", "p": {}}}, 339)
+        things.commit("hk", {uuid: {"t": 0, "e": "Task6", "p": {}}}, 339)
         kwargs = sess.return_value.request.call_args.kwargs
         assert kwargs["params"]["ancestor-index"] == "339"
 

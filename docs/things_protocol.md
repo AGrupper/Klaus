@@ -207,6 +207,22 @@ Two distinct encodings, do not mix them:
 **Constant across all 423 rows** — echo back unchanged on write, never synthesize:
 `do=0`, `sb=0`, `dl=[]`, `dds=null`, `rmd=null`, `acrd=null`, `rp=null`, `icp=false`.
 
+### ☠️ Item ids are Base58 — a Base62 id crashes the app
+
+Things ids are 22 characters of **Base58**: the alphabet omits the look-alikes
+`0` (zero), `O`, `I` and `l`.
+
+All 212 Things-authored ids in the live account are Base58-clean. Committing an
+id containing a forbidden character is accepted by the server and then **crashes
+every client on launch**, with `decodeBase58String.mapBase58` visible in the
+crash trace — the same unrecoverable, append-only failure as a bad note checksum.
+
+Mint ids only with `things_tool.new_uuid()`. `commit()` validates every id and
+note checksum before sending and refuses rather than poisoning the journal.
+
+*(2026-08-13: Base62 ids caused three separate outages. The Base58 symbol was
+present in the very first crash report and went unread for hours.)*
+
 ### ☠️ Notes: `ch` must be the CRC32 of the text — a wrong value crashes the app
 
 ```json

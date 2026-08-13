@@ -583,11 +583,36 @@ def build_name_index(state: dict[str, dict]) -> dict[str, str]:
 # Write                                                               #
 # ------------------------------------------------------------------ #
 
+# Things identifiers are Base58 — the Bitcoin alphabet, which omits the
+# look-alike characters 0 (zero), O, I and l.
+_BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_BASE58_FORBIDDEN = frozenset("0OIl")
+
+
 def new_uuid() -> str:
-    """Generate a Things-style 22-character base62 identifier."""
+    """Generate a Things-style 22-character **Base58** identifier.
+
+    The alphabet is not decorative.  Things decodes item ids with a Base58
+    decoder (``decodeBase58String.mapBase58`` in the crash trace), and a single
+    ``0``, ``O``, ``I`` or ``l`` makes it assert — which **crashes the app on
+    launch, on every device**, exactly like a bad note checksum does.
+
+    Using Base62 here caused three separate outages on 2026-08-13 before the
+    cause was spotted.  All 212 Things-authored ids in the live account are
+    Base58-clean; none has ever contained a forbidden character.
+    """
     import secrets
-    alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-    return "".join(secrets.choice(alphabet) for _ in range(22))
+    return "".join(secrets.choice(_BASE58) for _ in range(22))
+
+
+def is_valid_uuid(value: str) -> bool:
+    """True when ``value`` is a Things-shaped Base58 id, safe to commit."""
+    return (
+        isinstance(value, str)
+        and len(value) == 22
+        and not (set(value) & _BASE58_FORBIDDEN)
+        and all(c in _BASE58 for c in value)
+    )
 
 
 def build_note(text: str | None) -> dict:
@@ -794,6 +819,25 @@ def commit(history_key: str, records: dict[str, dict], ancestor_index: int) -> d
         ThingsWriteDisabledError: When THINGS_WRITE_ENABLED is off.
     """
     _require_writes(f"commit {len(records)} record(s)")
+
+    # Last line of defence. A malformed id or note checksum is accepted by the
+    # server and then crashes every Things client on launch, and the journal is
+    # append-only so it cannot be taken back. Refuse to send instead.
+    for uuid, record in records.items():
+        if not is_valid_uuid(uuid):
+            raise ValueError(
+                f"refusing to commit malformed Things id {uuid!r} — ids must be "
+                "22 Base58 characters (no 0, O, I or l); sending one crashes the app"
+            )
+        note = (record.get("p") or {}).get("nt")
+        if isinstance(note, dict) and note.get("v"):
+            expected = zlib.crc32(note["v"].encode("utf-8"))
+            if note.get("ch") != expected:
+                raise ValueError(
+                    f"refusing to commit note with checksum {note.get('ch')!r}; "
+                    f"expected crc32 {expected} — a mismatch crashes the app"
+                )
+
     logger.info("things: committing %d record(s) at ancestor-index=%d",
                 len(records), ancestor_index)
     return _request(
