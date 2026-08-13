@@ -1680,32 +1680,20 @@ class TestNativeHabitTools:
 
 
 class TestPushSelfAwarenessTools:
-    """Push self-awareness tool registration in core/tools.py (Phase 29 Plan 05).
-
-    Covers PUSH-03/D-13: toggle_telegram_mirror + get_push_health, both
-    brain-direct — registered in SMART_AGENT_DIRECT_TOOLS, TOOL_SCHEMAS,
-    _HANDLERS, and surfaced to the brain via get_smart_schemas.
-    """
+    """Web Push self-awareness stays registered without transport controls."""
 
     def _schema_names(self):
         from core.tools import TOOL_SCHEMAS
         return [s["name"] for s in TOOL_SCHEMAS]
 
-    def test_both_tools_in_direct_tools_frozenset(self):
-        assert "toggle_telegram_mirror" in tools.SMART_AGENT_DIRECT_TOOLS
+    def test_only_push_health_is_in_direct_tools_frozenset(self):
+        assert "toggle_telegram_mirror" not in tools.SMART_AGENT_DIRECT_TOOLS
         assert "get_push_health" in tools.SMART_AGENT_DIRECT_TOOLS
 
-    def test_both_tools_registered_in_tool_schemas(self):
+    def test_only_push_health_is_registered_in_tool_schemas(self):
         names = self._schema_names()
-        assert "toggle_telegram_mirror" in names
+        assert "toggle_telegram_mirror" not in names
         assert "get_push_health" in names
-
-    def test_toggle_telegram_mirror_schema_requires_enabled_bool(self):
-        from core.tools import TOOL_SCHEMAS
-        schema = next(s for s in TOOL_SCHEMAS if s["name"] == "toggle_telegram_mirror")
-        props = schema["input_schema"]["properties"]
-        assert props["enabled"]["type"] == "boolean"
-        assert "enabled" in schema["input_schema"]["required"]
 
     def test_get_push_health_schema_takes_no_args(self):
         from core.tools import TOOL_SCHEMAS
@@ -1713,33 +1701,15 @@ class TestPushSelfAwarenessTools:
         assert schema["input_schema"]["properties"] == {}
         assert schema["input_schema"]["required"] == []
 
-    def test_both_tools_registered_in_handlers(self):
+    def test_only_push_health_is_registered_in_handlers(self):
         from core.tools import _HANDLERS
-        assert "toggle_telegram_mirror" in _HANDLERS
+        assert "toggle_telegram_mirror" not in _HANDLERS
         assert "get_push_health" in _HANDLERS
 
-    def test_both_tools_surfaced_via_get_smart_schemas(self):
+    def test_only_push_health_is_surfaced_via_get_smart_schemas(self):
         smart_names = {s["name"] for s in tools.get_smart_schemas()}
-        assert "toggle_telegram_mirror" in smart_names
+        assert "toggle_telegram_mirror" not in smart_names
         assert "get_push_health" in smart_names
-
-    def test_toggle_telegram_mirror_handler_calls_hub_settings_set(self, monkeypatch):
-        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-        mock_store = MagicMock()
-        with patch("memory.firestore_db.HubSettingsStore", return_value=mock_store):
-            result = tools._HANDLERS["toggle_telegram_mirror"]({"enabled": False})
-
-        mock_store.set.assert_called_once_with({"telegram_mirror_enabled": False})
-        parsed = json.loads(result)
-        assert parsed == {"telegram_mirror_enabled": False}
-
-    def test_toggle_telegram_mirror_handler_enables_mirror(self, monkeypatch):
-        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-        mock_store = MagicMock()
-        with patch("memory.firestore_db.HubSettingsStore", return_value=mock_store):
-            tools._HANDLERS["toggle_telegram_mirror"]({"enabled": True})
-
-        mock_store.set.assert_called_once_with({"telegram_mirror_enabled": True})
 
     def test_get_push_health_handler_reads_subscriptions_and_settings(self, monkeypatch):
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -1764,16 +1734,14 @@ class TestPushSelfAwarenessTools:
         assert parsed["subscription_count"] == 1
         assert parsed["devices"][0]["user_agent"] == "iPhone Safari"
         assert parsed["devices"][0]["failure_count"] == 0
-        assert parsed["telegram_mirror_enabled"] is True
+        assert "telegram_mirror_enabled" not in parsed
         assert parsed["push_enabled_at"] == "2026-06-27T00:00:00+00:00"
         # T-29-09: encryption keys must never be surfaced
         assert "keys" not in parsed["devices"][0]
         assert "SECRET_KEY" not in result
         assert "SECRET_AUTH" not in result
 
-    def test_get_push_health_handler_no_chat_visible_until_field(self, monkeypatch):
-        """D-13: chat_visible_until must never appear — it's an in-process
-        variable in core/scheduled_message.py, not Firestore-backed here."""
+    def test_get_push_health_handler_omits_retired_delivery_fields(self, monkeypatch):
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
         mock_sub_store = MagicMock()
         mock_sub_store.list_all.return_value = []
@@ -1789,6 +1757,7 @@ class TestPushSelfAwarenessTools:
 
         parsed = json.loads(result)
         assert "chat_visible_until" not in parsed
+        assert "telegram_mirror_enabled" not in parsed
         assert parsed["subscription_count"] == 0
 
 

@@ -1,7 +1,7 @@
 /**
  * useTaskLists.ts — Optimistic task list CRUD hooks.
  *
- * Mirrors the useChat optimistic-mutation pattern for create, rename, and
+ * Uses the standard optimistic-mutation pattern for create, rename, and
  * delete list operations. Inbox is implicit (never in the server response)
  * and must be prepended by the calling component.
  *

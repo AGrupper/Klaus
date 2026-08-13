@@ -366,14 +366,24 @@ class MCPServerBundle:
     gateway: KlausMCPGateway
 
 
+@lru_cache(maxsize=1)
 def _schema_metadata() -> dict[str, dict[str, Any]]:
-    """Return retained MCP metadata without importing the removed manifest."""
+    """Return canonical retained schemas without the removed self manifest."""
+    from core.tools import get_all_schemas
     from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
 
-    return {
+    metadata = {
+        schema["name"]: {
+            "purpose": schema.get("description", schema["name"]),
+            "input_schema": schema.get("input_schema", {}),
+        }
+        for schema in get_all_schemas()
+    }
+    metadata.update({
         name: {"purpose": name.replace("_", " ").capitalize(), "input_schema": schema}
         for name, schema in CUSTOM_TOOL_SCHEMAS.items()
-    }
+    })
+    return metadata
 
 
 def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, name: str) -> None:

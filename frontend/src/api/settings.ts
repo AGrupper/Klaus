@@ -9,7 +9,6 @@ import { apiFetch } from './client'
 export interface HubSettings {
   /** ISO timestamp of the first successful push subscribe, or null (D-14). */
   push_enabled_at: string | null
-  [key: string]: unknown
 }
 
 /** Fetch the current hub settings. */

@@ -76,8 +76,7 @@ SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
     # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
     "fetch_recent_meals",
     "fetch_nutrition_trend",
-    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
-    "toggle_telegram_mirror",
+    # Web Push delivery health is retained for operational self-awareness.
     "get_push_health",
     # Phase 31 — standing directives (DIR-01/DIR-04/DIR-05): brain-direct only
     "set_standing_directive",
@@ -918,34 +917,11 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
-        "name": "toggle_telegram_mirror",
-        "description": (
-            "Flip the Telegram-mirror flag on or off. When ON (the default), every "
-            "hub message is also mirrored to Telegram; turning it OFF hands delivery "
-            "fully to Web Push — this is the conversational D-11 Telegram-retirement "
-            "path, executed by you when Amit asks to 'kill the mirror' after at least "
-            "a week of stable push delivery. "
-            "Call this directly — do NOT delegate to the worker."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "enabled": {
-                    "type": "boolean",
-                    "description": "True to keep/turn the Telegram mirror ON, False to turn it OFF.",
-                },
-            },
-            "required": ["enabled"],
-        },
-    },
-    {
         "name": "get_push_health",
         "description": (
             "Return Web Push self-awareness data: how many devices are subscribed, "
             "each device's user agent / last successful delivery timestamp / failure "
-            "count, whether the Telegram mirror is currently on, and when push was "
-            "first enabled. Use this before deciding whether it is safe to retire the "
-            "Telegram mirror. "
+            "count, and when push was first enabled. "
             "Call this directly — do NOT delegate to the worker."
         ),
         "input_schema": {
@@ -2600,24 +2576,8 @@ def _get_push_subscription_store():
     )
 
 
-def _handle_toggle_telegram_mirror(enabled: bool) -> str:
-    """Flip the runtime Telegram-mirror flag (D-11 conversational retirement path).
-
-    Executes Klaus's side of "kill the mirror": a single HubSettingsStore.set
-    call, no code deployment required. Reversible — Amit can ask to turn it
-    back on at any time.
-    """
-    store = _get_hub_settings_store()
-    store.set({"telegram_mirror_enabled": enabled})
-    return json.dumps({"telegram_mirror_enabled": enabled})
-
-
 def _handle_get_push_health() -> str:
-    """Report Web Push subscription health + mirror state (D-13 self-awareness).
-
-    Deliberately omits chat_visible_until — that D-02 visibility gate lives as
-    an in-process variable in core/scheduled_message.py (Plan 08) and would
-    always read back null/stale from Firestore here, misleading Klaus.
+    """Report Web Push subscription health (D-13 self-awareness).
 
     T-29-09 mitigation: only user_agent/last_success_at/failure_count are
     surfaced per subscription — the p256dh/auth encryption keys and the VAPID
@@ -2642,7 +2602,6 @@ def _handle_get_push_health() -> str:
     return json.dumps({
         "subscription_count": len(devices),
         "devices": devices,
-        "telegram_mirror_enabled": settings.get("telegram_mirror_enabled"),
         "push_enabled_at": settings.get("push_enabled_at"),
     })
 
@@ -3734,8 +3693,7 @@ _HANDLERS: dict[str, object] = {
     "get_goal_projection":     lambda args: _handle_get_goal_projection(**args),
     # Phase 28 Plan 03 — native HabitStore tools (HABIT-05)
     "get_habit_adherence":     lambda args: _handle_get_habit_adherence(**args),
-    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
-    "toggle_telegram_mirror":  lambda args: _handle_toggle_telegram_mirror(**args),
+    # Web Push self-awareness.
     "get_push_health":         lambda args: _handle_get_push_health(),
     # Phase 31 — standing directives (DIR-01/DIR-04)
     "set_standing_directive":       lambda args: _handle_set_standing_directive(**args),

@@ -14,22 +14,13 @@ _ENV = {
     "CRON_DEV_BYPASS": "true",
     "GCP_PROJECT_ID": "test-project",
     "FIRESTORE_DATABASE": "(default)",
-    "TELEGRAM_ALLOWED_USER_IDS": "123456",
 }
 
 
 def _web_server():
-    """Import the HTTP boundary with its legacy SDKs isolated."""
-    stubs = {
-        "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
-        "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
-        "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.main": MagicMock(name="core.main"),
-        "interfaces._router": MagicMock(name="interfaces._router"),
-    }
+    """Import a fresh copy of the retained HTTP boundary."""
     sys.modules.pop("interfaces.web_server", None)
-    with patch.dict(sys.modules, stubs):
-        import interfaces.web_server as web_server
+    import interfaces.web_server as web_server
     return web_server
 
 
@@ -232,15 +223,6 @@ def test_startup_only_initializes_retained_claude_mcp_runtime():
     assert "telegram" not in source.lower()
 
 
-def test_hub_chat_is_a_hard_tombstone_even_if_a_legacy_flag_is_set(monkeypatch):
-    """An accidental environment override cannot restore Hub generative chat."""
-    web_server = _web_server()
-    monkeypatch.setenv("KLAUS_HUB_CHAT_ENABLED", "true")
-    with pytest.raises(web_server.HTTPException) as exc_info:
-        web_server._require_legacy_hub_chat()
-    assert exc_info.value.status_code == 410
-
-
 @pytest.mark.parametrize(
     ("method", "path"),
     [
@@ -265,6 +247,7 @@ def test_hub_chat_tombstones_return_410_before_production_auth(method, path):
     "path",
     [
         "/cron/autonomous-tick",
+        "/cron/proactive-alerts",
         "/telegram-webhook",
         "/cron/reflect",
         "/cron/ingest-chats",

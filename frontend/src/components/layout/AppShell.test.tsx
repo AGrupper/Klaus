@@ -53,11 +53,9 @@ describe('AppShell — global UndoToast mount', () => {
  * Bug: the root used `minHeight: 100dvh`. A *min*-height lets the flex
  * container grow past the viewport to fit tall content, so `<main>`'s
  * `overflow-y-auto` never becomes the real scrolling element — the
- * container itself grows and the page/body scrolls instead. Downstream,
- * ChatWindow's message list relies on a `height: 100%` chain through this
- * root to become its own bounded scroll region; an unbounded root breaks
- * that chain, which is why chat always opened at the top of history
- * instead of the latest message on phone.
+ * container itself grows and the page/body scrolls instead. Child pages rely
+ * on a `height: 100%` chain through this root to keep their own scroll regions
+ * bounded.
  *
  * `height: 100dvh` is a definite viewport-relative value — locking it here
  * (not `minHeight`) is the regression guard for that root cause.

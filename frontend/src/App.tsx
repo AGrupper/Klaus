@@ -12,7 +12,7 @@
  *   /klaus    → Ask Claude launch surface
  *   /habits   → HabitsPage (real content: 28-04)
  *   /health   → HealthPage (Training / Nutrition / Sleep sub-tabs)
- *   /settings → SettingsPage (enable-push + Telegram-mirror toggle, D-15: Phase 29)
+ *   /settings → SettingsPage (Web Push controls)
  *
  * SW → router bridge (D-12, Phase 29): a `navigator.serviceWorker` 'message'
  * listener calls `navigate(event.data.path ?? '/')` on `{type:'NAVIGATE'}` —

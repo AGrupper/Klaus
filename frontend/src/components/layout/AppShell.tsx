@@ -2,7 +2,7 @@
  * AppShell.tsx — Root responsive layout.
  *
  * Desktop (md: >= 768px): horizontal flex row
- *   [Sidebar 64px] | [main flex-1 min-w-0] | [GlanceRail 280px] | [DockChat 360px collapsible→48px]
+ *   [Sidebar 64px] | [main flex-1 min-w-0] | [GlanceRail 280px] | [Claude launcher]
  *
  * Phone (< md): vertical column
  *   [full-width content area] + [BottomTabs fixed 64px at bottom]
@@ -16,17 +16,13 @@
  *   The root was previously `minHeight: 100dvh`. A *min*-height lets the
  *   flex container grow past the viewport to fit its content, which means
  *   `<main>`'s `overflow-y-auto` never becomes the scrolling element for
- *   tall content (e.g. a long chat) — the container itself grows instead
- *   and the document/body scrolls. Downstream, ChatWindow's own message
- *   list relies on `height: 100%` all the way up this chain to become its
- *   own bounded scroll region; with an unbounded ancestor that percentage
- *   chain never resolves, so `scrollHeight` and `clientHeight` stay equal
- *   and the initial-scroll-to-bottom effect's guard never passes (WhatsApp-
- *   style "always open at the latest message" silently failed on phone).
+ *   tall content — the container itself grows instead and the document/body
+ *   scrolls. Child pages rely on `height: 100%` through this chain to keep
+ *   their own scroll regions bounded.
  *   `height: 100dvh` is a definite viewport-relative value (not a
  *   percentage), so it does not depend on html/body/#root having an
  *   explicit height — it bounds the root outright, `<main>` becomes a real
- *   scroll container, and the percentage chain into ChatWindow resolves.
+ *   scroll container and keeps child layouts bounded.
  */
 import type { ReactNode } from 'react'
 import { Sidebar } from './Sidebar'

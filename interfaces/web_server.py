@@ -1,22 +1,18 @@
-"""Cloud Run webhook server for Klaus.
+"""Cloud Run service boundary for Klaus.
 
 This module is the cloud entry point for the Klaus agent when deployed on
-Google Cloud Run.  It exposes a minimal FastAPI application with two routes:
+Google Cloud Run. It exposes retained Hub, MCP, routine, and sync routes:
 
-    GET  /healthz            — liveness/startup probe (no auth, no init).
+    GET  /health             — liveness/startup probe (no auth, no init).
     POST /cron/deterministic-alerts — runs explicit notification rules.
     POST /mcp/*                    — serves scoped Claude capabilities.
 
-The retired Telegram and in-process agent runtimes are deliberately not
-initialised at startup.  Cold start opens only the retained Claude MCP session
-managers, so health and Hub surfaces stay available without an LLM runtime.
+Cold start opens only the retained Claude MCP session managers, so health and
+Hub surfaces remain independent of any in-process generative runtime.
 
 Container entry point:
     uvicorn interfaces.web_server:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1
 
-Single worker is required: ``ConversationManager`` is an in-process singleton.
-Multiple workers would split per-user conversation history across processes,
-causing the agent to lose context mid-conversation.
 """
 from __future__ import annotations
 
@@ -52,9 +48,6 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------ #
 
 _mcp_bundle = None
-# Compatibility sentinel for retained data/health tests.  It is never
-# initialised or read by any live route after the Telegram runtime tombstone.
-_application = None
 
 
 # ------------------------------------------------------------------ #
@@ -67,7 +60,7 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
 
     Runs once when the Cloud Run container becomes ready to serve traffic.
     Keeping all heavyweight initialisation here (rather than at import time)
-    means ``/healthz`` responds immediately even if Firestore, Anthropic, or
+    means ``/health`` responds immediately even if Firestore, MCP, or
     Google OAuth are still waking up.
 
     Args:
@@ -99,8 +92,8 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
 # ------------------------------------------------------------------ #
 
 app = FastAPI(
-    title="Klaus – Cloud Run webhook server",
-    description="Telegram webhook entry point for the Klaus personal AI agent.",
+    title="Klaus – Cloud Run service",
+    description="Authorization, data, action, routine, and Hub boundary for Klaus.",
     lifespan=lifespan,
 )
 
@@ -122,23 +115,7 @@ def _subscription_capability_gate() -> dict:
     return {**checks, "passed": all(checks.values())}
 
 
-def _require_legacy_hub_chat() -> None:
-    """Tombstone Hub AI chat; the retained Hub is dashboard-only."""
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Hub chat retired; use the configured Claude Project"},
-    )
-
-
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
-_RETIRED_HUB_CHAT_PATHS = frozenset({
-    "/internal/process-hub-message",
-    "/api/chat",
-    "/api/chat/upload",
-    "/api/chat/messages",
-    "/api/chat/regenerate",
-    "/api/chat/stop",
-})
 
 
 @app.middleware("http")
@@ -152,14 +129,6 @@ async def _normalize_mcp_mount_path(request: Request, call_next):
     and avoids a redirect that could drop the request body or bearer header.
     """
     path = request.scope.get("path")
-    # This quarantine sits before FastAPI dependency resolution.  Otherwise a
-    # retired Hub chat route leaks a 401/403 distinction instead of its stable
-    # 410 contract when called without an old session or Cloud Tasks token.
-    if path in _RETIRED_HUB_CHAT_PATHS:
-        return JSONResponse(
-            status_code=410,
-            content={"detail": {"error": "Hub chat retired; use the configured Claude Project"}},
-        )
     if path in _MCP_MOUNT_PATHS:
         request.scope["path"] = f"{path}/"
         request.scope["raw_path"] = f"{path}/".encode("ascii")
@@ -247,252 +216,33 @@ async def health_check() -> JSONResponse:
 
 
 @app.post("/telegram-webhook")
-async def telegram_webhook(request: Request) -> JSONResponse:
-    """Receive and dispatch a Telegram Update sent by the Telegram Bot API.
-
-    Telegram calls this endpoint for every incoming message, command, or
-    callback when webhook mode is active.  The endpoint:
-
-    1. Validates the ``X-Telegram-Bot-Api-Secret-Token`` header via constant-time
-       comparison to prevent timing-based token disclosure.
-    2. Deserialises the JSON body into a python-telegram-bot ``Update`` object.
-    3. Drops the Update if its ``update_id`` was already accepted (Telegram
-       webhook retry), then ACKs with 200 immediately and delegates the Update
-       to ``MessageRouter.handle_update`` as a background task so a slow agent
-       turn can never trigger a Telegram re-delivery.
-
-    Args:
-        request:
-            The raw FastAPI ``Request`` object, used to read the JSON body.
-        x_telegram_bot_api_secret_token:
-            Value of the ``X-Telegram-Bot-Api-Secret-Token`` header injected
-            by Telegram on every webhook call.  Compared against
-            ``TELEGRAM_WEBHOOK_SECRET`` from the environment.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200 on success.
-
-    Raises:
-        HTTPException 401: If the secret token header is absent or incorrect.
-        HTTPException 500: If the singletons are not yet initialised (should
-                           never happen in normal operation because Cloud Run
-                           waits for the lifespan startup to complete before
-                           routing traffic).
-    """
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Telegram runtime retired; use the configured Claude Project"},
-    )
-
-    # ---- Token validation ----
-    expected_secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
-
-    # WHY: ``hmac.compare_digest`` does a constant-time string comparison.
-    # A plain ``==`` leaks timing information: an attacker who sends thousands
-    # of probes can measure how many characters match, and eventually reconstruct
-    # the secret.  ``compare_digest`` always takes the same amount of time
-    # regardless of how many characters match.
-    provided_secret = x_telegram_bot_api_secret_token or ""
-    token_is_valid = hmac.compare_digest(provided_secret, expected_secret)
-
-    if not token_is_valid:
-        logger.warning(
-            "Rejected webhook request — invalid or missing secret token."
-        )
-        raise HTTPException(
-            status_code=401,
-            detail={"error": "Unauthorised: invalid or missing secret token."},
-        )
-
-    # ---- Singleton guard ----
-    # WHY: in normal Cloud Run operation the lifespan startup always completes
-    # before traffic is routed, so this branch should never fire.  The guard is
-    # a defensive safety net for unusual startup edge cases.
-    if _application is None or _router is None:
-        logger.error(
-            "Webhook received before singletons were initialised — "
-            "this should not happen in normal Cloud Run operation."
-        )
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Server is still initialising; please retry."},
-        )
-
-    # ---- Deserialise the Update ----
-    request_json: dict = await request.json()
-
-    # WHY: ``Update.de_json`` is the canonical python-telegram-bot factory for
-    # converting raw Telegram JSON into a typed ``Update`` object.  The ``bot``
-    # argument is required because some nested objects (e.g. ``Message``) call
-    # back to the bot for helper methods like ``reply_text``.
-    update = Update.de_json(data=request_json, bot=_application.bot)
-
-    # ---- Retry dedup ----
-    update_id = update.update_id
-    if update_id in _recent_update_ids:
-        logger.info(
-            "Duplicate Telegram update_id=%s — already accepted, ignoring retry.",
-            update_id,
-        )
-        return JSONResponse(content={"ok": True})
-    _recent_update_ids[update_id] = None
-    while len(_recent_update_ids) > _RECENT_UPDATE_IDS_MAX:
-        _recent_update_ids.popitem(last=False)
-
-    # ---- Dispatch ----
-    # Primary: hand the update to Cloud Tasks so the agent turn runs inside
-    # /internal/process-update — a tracked request with full CPU. Fallback:
-    # in-process background task (throttled CPU, but the update is never
-    # dropped) when the queue is unconfigured or Cloud Tasks errors.
-    if not enqueue_update(request_json):
-        background_tasks.add_task(_handle_update_background, update)
-
-    return JSONResponse(content={"ok": True})
-
-
 @app.post("/internal/process-update")
-async def internal_process_update(request: Request) -> JSONResponse:
-    """Cloud Tasks target: process one Telegram Update with full CPU.
-
-    The webhook enqueues the raw update JSON via
-    ``core.task_dispatch.enqueue_update``; Cloud Tasks POSTs it here with an
-    OIDC token from the same service account the Cloud Scheduler crons use,
-    verified by ``_verify_cron_request``. Because the agent turn runs inside
-    this request, Cloud Run allocates full CPU for its whole duration —
-    unlike a BackgroundTask, which runs after the response on throttled CPU.
-
-    Raises:
-        HTTPException 401/403: OIDC verification failed.
-        HTTPException 500: Singletons not initialised (Cloud Tasks retries).
-    """
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Telegram processing retired; use the configured Claude Project"},
-    )
-
-    await _verify_cron_request(request)
-
-    if _application is None or _router is None:
-        logger.error("/internal/process-update before singletons initialised")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Server is still initialising; please retry."},
-        )
-
-    request_json: dict = await request.json()
-    update = Update.de_json(data=request_json, bot=_application.bot)
-
-    # WHY no try/except: the router already shields user-facing errors (it
-    # replies with an apology and swallows orchestrator exceptions). Anything
-    # that escapes is infrastructure-level — let it surface as a 500 so Cloud
-    # Tasks retries the turn.
-    await _router.handle_update(update)
-
-    return JSONResponse(content={"ok": True})
-
-
 @app.post("/internal/process-occasion")
-async def internal_process_occasion(request: Request) -> JSONResponse:
-    """Cloud Tasks target: run one occasion compose (nightly/morning/weekly_review)
-    with full CPU (D-32).
-
-    ``core.task_dispatch.enqueue_occasion`` enqueues
-    ``{occasion, trigger, target_date}``; Cloud Tasks POSTs it here with an
-    OIDC token from the same service account the Cloud Scheduler crons use,
-    verified by ``_verify_cron_request``. Because the compose runs inside this
-    tracked request, Cloud Run allocates full CPU for its whole duration —
-    unlike a BackgroundTask, which runs after the response on throttled CPU.
-    This closes the D-32 defect: ``/trigger/nightly`` used to compose in a
-    Starlette BackgroundTask.
-
-    Raises:
-        HTTPException 401/403: OIDC verification failed.
-        HTTPException 500: Singletons not initialised (Cloud Tasks retries).
-        HTTPException 400: Unknown occasion value, or a malformed target_date.
-    """
-    raise HTTPException(
+@app.post("/cron/proactive-alerts")
+@app.post("/cron/reflect")
+@app.post("/cron/autonomous-tick")
+@app.post("/cron/ingest-chats")
+@app.post("/cron/ingest-chat-exports")
+async def retired_cloud_agent_runtime() -> JSONResponse:
+    """Quarantine removed Cloud-hosted conversation and reasoning routes."""
+    return JSONResponse(
         status_code=410,
-        detail={"error": "Legacy review composer retired; Claude Routines publish reviews"},
+        content={"detail": {"error": "Cloud agent runtime retired; use Claude"}},
     )
 
-    await _verify_cron_request(request)
 
-    if _application is None:
-        logger.error("/internal/process-occasion before singletons initialised")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Server is still initialising; please retry."},
-        )
-
-    request_json: dict = await request.json()
-    occasion = request_json.get("occasion", "")
-    trigger = request_json.get("trigger", "")
-    target_date = request_json.get("target_date")
-
-    if occasion not in {"nightly", "morning", "weekly_review"}:
-        raise HTTPException(
-            status_code=400, detail={"error": f"unknown occasion: {occasion!r}"},
-        )
-
-    # WR-07 — T-33-13 ("a caller-supplied string never reaches a Firestore
-    # document id unvalidated") was only half enforced: `occasion` was
-    # whitelisted, `target_date` went straight from the request JSON into
-    # was_sent(target_date) -> collection("nightly_reviews").document(<value>)
-    # and into date.fromisoformat() in the weekly. A value containing "/" splits
-    # the Firestore path; a non-date string raises an uncaught ValueError, which
-    # this handler's `except: raise` turns into a 500 -> Cloud Tasks retry ->
-    # dead-letter rather than a terminal 400.
-    if target_date is not None:
-        try:
-            _date_cls.fromisoformat(str(target_date))
-        except (TypeError, ValueError):
-            raise HTTPException(
-                status_code=400,
-                detail={"error": f"invalid target_date: {target_date!r}"},
-            )
-        target_date = str(target_date)
-
-    # WHY lazy imports: every other cron route in this file imports its
-    # target module inside the handler, not at module load time, to keep
-    # /health cold-start fast.
-    # WR-07 — named `resolved_date`, not `date`: the old local shadowed the
-    # conventional `datetime.date` name and would have collided the moment
-    # anyone imported it into this module (which the validation above now does).
-    try:
-        if occasion == "nightly":
-            import core.nightly_review as _nightly
-            resolved_date = target_date or nightly_target_date_now()
-            await _nightly.run_nightly(
-                _application.bot, resolved_date, trigger=trigger,
-            )
-        elif occasion == "morning":
-            import core.morning_briefing as _morning
-            resolved_date = (
-                target_date
-                or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-            )
-            # CR-04 — a manual "brief me" (the D-14 chat tool) must ignore
-            # dedup: Amit asking explicitly overrides any terminal status
-            # already recorded for today. Derived from the trigger rather
-            # than carried as its own payload field so the enqueue side stays
-            # a single source of truth.
-            await _morning.run_morning_briefing_triggered(
-                _application.bot, resolved_date, trigger=trigger,
-                dedup=(trigger != "manual"),
-            )
-        else:  # "weekly_review"
-            import core.weekly_training_review as _review
-            resolved_date = (
-                target_date
-                or datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
-            )
-            await _review.run_weekly_review(_application.bot, resolved_date)
-        _log_cron_run(f"occasion-{occasion}", ok=True)
-    except Exception:
-        _log_cron_run(f"occasion-{occasion}", ok=False)
-        raise
-
-    return JSONResponse(content={"ok": True})
+@app.post("/internal/process-hub-message")
+@app.post("/api/chat")
+@app.post("/api/chat/upload")
+@app.get("/api/chat/messages")
+@app.post("/api/chat/regenerate")
+@app.post("/api/chat/stop")
+async def retired_hub_chat_runtime() -> JSONResponse:
+    """Quarantine removed Hub chat and attachment routes."""
+    return JSONResponse(
+        status_code=410,
+        content={"detail": {"error": "Hub chat retired; use the configured Claude Project"}},
+    )
 
 
 @app.post("/internal/routine-fallback")
@@ -747,52 +497,6 @@ async def _start_subscription_routine(
 
 
 
-@app.post("/cron/proactive-alerts")
-async def cron_proactive_alerts(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler evening tick and run the proactive alerts scan.
-
-    Schedule: 30 21 * * *  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Returns:
-        JSONResponse: ``{"ok": true}`` with HTTP 200.
-    """
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Legacy proactive review composer retired; Claude Routines publish reviews"},
-    )
-
-    await _verify_cron_request(request)
-    if _application is None:
-        raise HTTPException(status_code=500, detail={"error": "Not initialised"})
-    import core.proactive_alerts as _proactive
-    try:
-        tomorrow = (datetime.now(ZoneInfo("Asia/Jerusalem")) + timedelta(days=1)).date().isoformat()
-        await _proactive.run_proactive_alerts(_application.bot, tomorrow)
-        _log_cron_run("proactive-alerts", ok=True)
-    except Exception:
-        _log_cron_run("proactive-alerts", ok=False)
-        raise
-    return JSONResponse(content={"ok": True})
-
-
-# NOTE: the standalone /cron/reflect (22:00) route was retired in WS2. The nightly
-# review (_ensure_reflection) writes the journal/self_state when Amit winds down, and
-# /cron/nightly-backstop (01:00) guarantees it on nights the Sleep-Focus trigger never
-# fires — so a separate 22:00 reflect job would only duplicate that work (and overwrite
-# the nightly's journal on early-wind-down nights). core.reflection.run_reflection lives
-# on and is invoked by the nightly flow.
-
-
-@app.post("/cron/reflect")
-async def cron_reflect_tombstone() -> JSONResponse:
-    """Tombstone for the retired standalone reflection scheduler."""
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Standalone reflection retired; use the Claude nightly Routine"},
-    )
-
-
 @app.post("/trigger/nightly")
 async def trigger_nightly(request: Request) -> JSONResponse:
     """Receive the iOS Sleep-Focus automation and enqueue the nightly review.
@@ -934,40 +638,9 @@ async def cron_deterministic_alerts(request: Request) -> JSONResponse:
     return JSONResponse(content={"ok": True, **result})
 
 
-@app.post("/cron/autonomous-tick")
-async def cron_autonomous_tick(request: Request) -> JSONResponse:
-    """Tombstone for the removed autonomous LLM cascade."""
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Autonomous tick retired; use /cron/deterministic-alerts"},
-    )
-
-
 @app.post("/cron/weekly-training-review")
 async def cron_weekly_training_review(request: Request) -> JSONResponse:
-    """Weekly training review — Sunday 10:00 Asia/Jerusalem.
-
-    Phase 20 — REVIEW-01. Phase 33-10 — D-32.
-
-    Flow:
-      1. Verify OIDC bearer (or honour CRON_DEV_BYPASS in local dev).
-      2. Guard: _application must be initialised (bot is required to send).
-      3. Enqueue via Cloud Tasks (core.task_dispatch.enqueue_occasion) instead
-         of composing inline. Honest caveat: this route was NOT broken today —
-         holding the request open kept CPU allocated for the inline compose —
-         it moves for consistency and request-timeout headroom now that Layer 2
-         can run up to 12 tool-calling turns; this surface also has a 500-
-         incident history (blocking work starving the send). The compose
-         outcome is now logged by /internal/process-occasion under
-         occasion-weekly_review.
-      4. Record the enqueue outcome to the heartbeat liveness ledger via
-         _log_cron_run('weekly-training-review', ok=...).
-
-    Returns:
-        JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful
-            enqueue, or ``{"accepted": false, "error": "dispatch unavailable"}``
-            with HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
-    """
+    """Start the Sunday Claude subscription routine after OIDC verification."""
     await _verify_cron_request(request)
     today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
     if _routine_cutover_enabled("weekly"):
@@ -987,10 +660,8 @@ async def cron_healthkit_sync(request: Request) -> JSONResponse:
 
     Phase 19.1 — HEALTHKIT-04 / HEALTHKIT-05; CONTEXT.md D-09 / D-10.
 
-    Upsert-only — judgment is deferred to the next */20 autonomous tick via
-    ``meals_since_last_tick``. Deliberately does NOT depend on _application:
-    no orchestrator, no Telegram, no LLM call. The route's only sink is
-    ``MealStore.upsert``.
+    Upsert-only and independent of any conversation runtime. The route's only
+    sink is ``MealStore.upsert``; Claude reads the data later through MCP.
 
     Flow:
       1. Verify the shared-secret bearer (or honour CRON_DEV_BYPASS).
@@ -1046,69 +717,6 @@ async def cron_healthkit_sync(request: Request) -> JSONResponse:
     return JSONResponse(content={"upserted": result["upserted_count"]})
 
 
-@app.post("/cron/ingest-chats")
-async def cron_ingest_chats(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler daily tick and run a bounded chat-log ingestion batch.
-
-    Schedule: 0 4 * * *  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Processes up to BATCH_MAX_FILES files within BATCH_TIME_BUDGET_SEC.
-    Re-run until the response shows done:true to drain the full backlog.
-
-    Returns:
-        JSONResponse: batch status dict with ok, processed, remaining, done.
-    """
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Chat-ingest trigger retired"},
-    )
-
-    await _verify_cron_request(request)
-    import asyncio as _asyncio
-    import core.chat_ingest as _ingest
-    try:
-        loop = _asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _ingest.run_one_batch)
-        _log_cron_run("ingest-chats", ok=True, backlog_done=result.get("done"))
-        return JSONResponse(content=result)
-    except Exception:
-        _log_cron_run("ingest-chats", ok=False)
-        raise
-
-
-@app.post("/cron/ingest-chat-exports")
-async def cron_ingest_chat_exports(request: Request) -> JSONResponse:
-    """Receive Cloud Scheduler daily tick and run a bounded web-chat export ingestion batch.
-
-    Schedule: 30 4 * * *  (Asia/Jerusalem)
-    Authenticated via OIDC bearer token from Cloud Scheduler.
-
-    Processes up to CHAT_EXPORT_BATCH_MAX_CONVERSATIONS conversations within
-    CHAT_EXPORT_TIME_BUDGET_SEC from zips uploaded to chat-exports/ in GCS.
-    Re-run until the response shows done:true to drain the full backlog.
-
-    Returns:
-        JSONResponse: batch status dict with ok, processed, remaining, done.
-    """
-    raise HTTPException(
-        status_code=410,
-        detail={"error": "Chat-export ingest trigger retired"},
-    )
-
-    await _verify_cron_request(request)
-    import asyncio as _asyncio
-    import core.chat_export_ingest as _export_ingest
-    try:
-        loop = _asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _export_ingest.run_one_batch)
-        _log_cron_run("ingest-chat-exports", ok=True, backlog_done=result.get("done"))
-        return JSONResponse(content=result)
-    except Exception:
-        _log_cron_run("ingest-chat-exports", ok=False)
-        raise
-
-
 @app.post("/cron/strength-sync")
 async def cron_strength_sync(request: Request) -> JSONResponse:
     """Receive Cloud Scheduler daily tick and run a bounded Hevy strength-sync batch.
@@ -1116,7 +724,7 @@ async def cron_strength_sync(request: Request) -> JSONResponse:
     Schedule: 0 5 * * *  (Asia/Jerusalem)
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
-    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is
+    Pull-only with no conversation-runtime dependency. The only sink is
     StrengthSessionStore (via core.strength_ingest.run_one_batch). On the first
     run this backfills full Hevy history over several ticks; thereafter it applies
     incremental workout events. Re-run until the response shows done:true.
@@ -1144,7 +752,7 @@ async def cron_things_sync(request: Request) -> JSONResponse:
     Schedule: */30 6-23 * * *  (Asia/Jerusalem)
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
-    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is the
+    Pull-only with no conversation-runtime dependency. The only sink is the
     Firestore mirror (via core.things_ingest.run_one_batch).
 
     A backstop, not the primary path: ThingsTaskStore checks the journal head on
@@ -1176,7 +784,7 @@ async def cron_run_sync(request: Request) -> JSONResponse:
     to spread Garmin login load.
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
-    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is
+    Pull-only with no conversation-runtime dependency. The only sink is
     RunDetailStore (via core.run_ingest.run_one_batch). On the first run this
     backfills per-run detail over several ticks; thereafter it pulls detail for
     new runs only. Kept a SEPARATE job from strength-sync so a Garmin rate-limit
@@ -1206,7 +814,7 @@ async def cron_biometric_sync(request: Request) -> JSONResponse:
     to spread Garmin login load.
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
-    Pull-only — no orchestrator, no Telegram, no LLM call. The only sink is
+    Pull-only with no conversation-runtime dependency. The only sink is
     the Postgres daily_biometrics table (via core.biometric_ingest.run_one_batch),
     which powers rolling HRV/resting-HR baselines. On the first run this
     backfills ~90 days over several ticks; thereafter it heals today+yesterday
@@ -2523,557 +2131,6 @@ async def api_health_sleep(
 
 
 # --------------------------------------------------------------------------- #
-# Hub chat routes — /api/chat (Plan 26-05, CHAT-01..04)                       #
-#                                                                             #
-# POST /api/chat — append user message to shared Firestore conversation and   #
-# enqueue the agent turn via Cloud Tasks full-CPU path (D-09 / CLAUDE.md:     #
-# never a Starlette BackgroundTask). CHAT-01 / CHAT-02.                       #
-#                                                                             #
-# GET /api/chat/messages — return the full conversation window for polling    #
-# and fast first paint (D-08 / CHAT-03 / CHAT-04).                           #
-#                                                                             #
-# POST /internal/process-hub-message — OIDC-gated Cloud Tasks target; runs   #
-# the agent turn inside the tracked request with full CPU, appends the        #
-# assistant reply to the shared conversation without a Telegram send (D-09).  #
-#                                                                             #
-# All three routes MUST be registered BEFORE the SPA mount (Pitfall 1).      #
-# --------------------------------------------------------------------------- #
-
-
-# POST /api/chat body validation (ASVS V5: non-empty, max length) is done
-# inline in api_chat_send — web_server.py does not import pydantic at module
-# level, and the check is equivalent (non-empty + max-length on the raw dict).
-_CHAT_CONTENT_MAX_LEN = 4000  # ASVS V5 — reasonable upper bound for one message
-
-
-# Process-lifetime cache for _resolve_hub_user_id (WR-06). The hub maps to a
-# single, effectively-static account for the lifetime of the Cloud Run
-# instance (set once by the 26-02 operator step) — re-resolving it on every
-# chat send and every 2.5s poll costs a Firestore read + a lazy import for no
-# benefit. None means "not yet resolved"; a successful resolution is cached
-# and reused. A failed resolution (ValueError) is NOT cached, so a transient
-# Firestore outage doesn't permanently wedge the hub once it recovers.
-_hub_user_id_cache: int | None = None
-
-
-def _resolve_hub_user_id() -> int:
-    """Resolve the Telegram user_id to key FirestoreConversationStore.
-
-    Reads UserProfileStore.telegram_user_id (set by 26-02 operator step).
-    Falls back to the first id in TELEGRAM_ALLOWED_USER_IDS — the same
-    convention used by core/autonomous.py and core/scheduled_message.py.
-
-    WHY this approach: the hub always operates on Amit's single account; there
-    is no per-hub-session telegram_user_id mapping needed for v5.0.
-
-    The resolved value is memoized at module scope for the lifetime of the
-    process (WR-06) — this is called on every /api/chat send and every
-    2.5s /api/chat/messages poll, and the mapping never changes at runtime.
-    """
-    global _hub_user_id_cache
-    if _hub_user_id_cache is not None:
-        return _hub_user_id_cache
-
-    try:
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-        if project_id:
-            from memory.firestore_db import UserProfileStore  # lazy import
-            profile = UserProfileStore(project_id=project_id, database=database).load()
-            tid = profile.get("telegram_user_id")
-            if tid is not None:
-                _hub_user_id_cache = int(tid)
-                return _hub_user_id_cache
-    except Exception:
-        logger.warning("_resolve_hub_user_id: UserProfileStore lookup failed", exc_info=True)
-
-    # Fallback: first entry of TELEGRAM_ALLOWED_USER_IDS (mirrors autonomous.py convention)
-    raw = os.environ.get("TELEGRAM_ALLOWED_USER_IDS", "").split(",")[0].strip()
-    if raw:
-        _hub_user_id_cache = int(raw)
-        return _hub_user_id_cache
-    raise ValueError("Cannot resolve hub user_id: telegram_user_id not in profile and TELEGRAM_ALLOWED_USER_IDS unset")
-
-
-@app.post("/api/chat")
-async def api_chat_send(
-    request: Request,
-    _email: str = Depends(require_hub_session),
-) -> JSONResponse:
-    """Receive a hub chat message and enqueue the agent turn via Cloud Tasks.
-
-    CHAT-01: appends the user message to the shared FirestoreConversationStore
-    keyed on telegram_user_id — the same document the Telegram path uses —
-    so hub + Telegram share one continuous conversation (one Klaus).
-
-    CHAT-02: the agent turn is enqueued to Cloud Tasks via enqueue_hub_message
-    which targets /internal/process-hub-message. NEVER runs the agent turn in
-    a Starlette BackgroundTask (D-09 / CLAUDE.md invariant: CPU-throttled after
-    response → 18-minute replies observed 2026-06-12).
-
-    Returns:
-        JSONResponse: {"ok": True} on success.
-        JSONResponse: {"ok": False, "error": "..."} with HTTP 503 if Cloud
-                      Tasks enqueue fails. Clients should retry.
-
-    Raises:
-        HTTPException 400: Missing or empty content, or content too long.
-        HTTPException 401: No valid session cookie (via require_hub_session).
-    """
-    _require_legacy_hub_chat()
-    body = await request.json()
-    content = body.get("content", "")
-    attachments = body.get("attachments") or None
-
-    # Attachment metadata validation (hub attachments feature): shape-check the
-    # echoed /api/chat/upload metadata before it rides the Cloud Tasks payload.
-    # Ids are 32 lowercase hex (uuid4.hex) — anything else never reaches GCS.
-    if attachments is not None:
-        from core.hub_attachments import ALLOWED_MIMES, MAX_ATTACHMENTS_PER_MESSAGE
-        valid_kinds = set(ALLOWED_MIMES.values())
-        if (
-            not isinstance(attachments, list)
-            or len(attachments) > MAX_ATTACHMENTS_PER_MESSAGE
-            or not all(
-                isinstance(a, dict)
-                and isinstance(a.get("id"), str)
-                and len(a["id"]) == 32
-                and all(c in "0123456789abcdef" for c in a["id"])
-                and a.get("kind") in valid_kinds
-                for a in attachments
-            )
-        ):
-            raise HTTPException(status_code=400, detail={"error": "invalid attachments"})
-
-    # Input validation (ASVS V5 / T-26-05-04). An empty content is allowed when
-    # attachments are present (image-only sends).
-    if (not content or not content.strip()) and not attachments:
-        raise HTTPException(status_code=400, detail={"error": "content must be non-empty"})
-    if len(content) > _CHAT_CONTENT_MAX_LEN:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": f"content exceeds maximum length of {_CHAT_CONTENT_MAX_LEN} characters"},
-        )
-
-    # Resolve the hub user_id (keyed on telegram_user_id per CHAT-01)
-    loop = asyncio.get_running_loop()
-    try:
-        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
-    except ValueError as exc:
-        logger.error("api_chat_send: cannot resolve user_id: %s", exc)
-        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
-
-    # Enqueue the agent turn via Cloud Tasks full-CPU path (CHAT-01/02 / D-09).
-    # We do NOT append the user message here: the worker's handle_message
-    # (core/main.py) appends BOTH the user turn and the assistant reply to the
-    # shared FirestoreConversationStore. Appending here too would double the user
-    # turn; appending BEFORE a failed enqueue would strand a user message with no
-    # agent turn → a permanent "Klaus is thinking…" plus a double-send on retry
-    # (CR-03). Enqueue is the single atomic effect — on failure nothing is
-    # persisted and the client safely retries.
-    # NEVER use background_tasks.add_task — it runs after the response and gets
-    # CPU-throttled by Cloud Run.
-    if attachments:
-        ok = await loop.run_in_executor(
-            None, enqueue_hub_message, content, user_id, attachments
-        )
-    else:
-        ok = await loop.run_in_executor(None, enqueue_hub_message, content, user_id)
-    if not ok:
-        logger.error("api_chat_send: enqueue_hub_message returned False (user_id=%s)", user_id)
-        return JSONResponse(
-            status_code=503,
-            content={"ok": False, "error": "Could not dispatch the message — please retry"},
-        )
-
-    return JSONResponse(content={"ok": True})
-
-
-@app.post("/api/chat/upload")
-async def api_chat_upload(
-    request: Request,
-    filename: str = Query("", max_length=255),
-    _email: str = Depends(require_hub_session),
-) -> JSONResponse:
-    """Receive one attachment (raw body) and stage it in GCS for the next send.
-
-    The client POSTs the file bytes directly as the request body with the
-    file's own Content-Type header (raw body, not multipart — avoids a
-    python-multipart dependency and works through the hub's apiFetch wrapper).
-    The returned metadata dict is echoed back verbatim in POST /api/chat's
-    ``attachments`` list; the worker re-downloads the bytes by id. Transient:
-    nothing is written to conversation history.
-
-    Raises:
-        HTTPException 400: unsupported/mismatched type or empty body.
-        HTTPException 413: body exceeds MAX_ATTACHMENT_BYTES.
-    """
-    _require_legacy_hub_chat()
-    from core.hub_attachments import MAX_ATTACHMENT_BYTES, save_attachment
-
-    data = await request.body()
-    if len(data) > MAX_ATTACHMENT_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail={"error": f"attachment exceeds {MAX_ATTACHMENT_BYTES} bytes"},
-        )
-    mime = (request.headers.get("content-type") or "").split(";")[0].strip()
-
-    loop = asyncio.get_running_loop()
-    try:
-        meta = await loop.run_in_executor(
-            None, save_attachment, data, mime, filename or "attachment"
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail={"error": str(exc)})
-    return JSONResponse(content=meta)
-
-
-@app.get("/api/chat/messages")
-async def api_chat_messages(
-    chat_visible: int = 0,
-    limit: int = Query(50, ge=1, le=200),
-    before: int | None = Query(None, ge=0),
-    _email: str = Depends(require_hub_session),
-) -> JSONResponse:
-    """Return a page of the conversation for polling / infinite scroll-up.
-
-    UAT gap-closure (2026-07): previously this route returned the ENTIRE
-    stored window (up to max_messages ~100) on every 2.5s poll, and the
-    client sliced the newest 50 client-side. That shipped the whole history
-    over the wire on every poll tick. Now the server does the windowing:
-
-      - No `before`: return the newest `limit` messages (the poll tail).
-      - `before=<seq>`: return the `limit` messages immediately OLDER than
-        that seq (message list "load earlier messages" / scroll-to-top).
-
-    `has_more` in the response tells the client whether an even-older page
-    exists so it can stop trying once the true start of history is reached.
-
-    Storage note: FirestoreConversationStore keeps the whole conversation as
-    ONE array field on a single document (see memory/firestore_conversation
-    .py) — there is no native Firestore query/pagination primitive to push
-    this down to (it isn't a per-message subcollection). So this route still
-    reads the full stored array (bounded at max_messages, currently 100) in
-    one document read and slices in Python; the wire savings for the 2.5s
-    poll come from only ever sending `limit` messages to the client, not
-    from a cheaper backend read. A `before` cursor of `seq` can drift once
-    the stored array is truncated at max_messages (oldest messages evicted,
-    remaining seqs shift) — an inherent limitation of the capped single-doc
-    array schema. That's the same drift the existing unread-badge math
-    already tolerates (see frontend/src/hooks/useUnread.ts).
-
-    Each message dict carries a stable-for-the-current-window `seq` index
-    (absolute position in the full stored array at read time) so the client
-    can compute the unread badge (CHAT-04 / D-11) and page cursors:
-      badge = latest_seq + 1 - last_seen_seq
-
-    Phase 29 (D-02): `?chat_visible=1` reports that the hub chat view is
-    genuinely on-screen (the client only ever sends this while its own
-    isVisible flag is true — see frontend/src/hooks/useChat.ts). This marks
-    the server-side visibility window (core.scheduled_message
-    .mark_chat_visible) so send_and_inject suppresses push while Amit is
-    looking at the chat. This route itself is read-only and never pushes.
-
-    Returns:
-        JSONResponse: {"messages": [{"seq": int, "role": str, "content": str}, ...],
-                       "has_more": bool}
-
-    Raises:
-        HTTPException 401: No valid session cookie (via require_hub_session).
-    """
-    _require_legacy_hub_chat()
-    from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 + Pitfall 4
-
-    if chat_visible == 1:
-        from core.scheduled_message import mark_chat_visible  # lazy import
-        mark_chat_visible()
-
-    loop = asyncio.get_running_loop()
-    try:
-        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
-    except ValueError as exc:
-        logger.error("api_chat_messages: cannot resolve user_id: %s", exc)
-        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
-
-    def _get_messages() -> tuple[list[dict], bool]:
-        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-        store = FirestoreConversationStore(project_id=project_id, database=database)
-        # get_full (not get): the hub shows the whole continuous conversation,
-        # not just the active session window the agent uses (CR-02).
-        msgs = store.get_full(user_id)
-        # Add stable (for this read) seq index for unread badge + pagination.
-        numbered = [{"seq": i, **msg} for i, msg in enumerate(msgs)]
-
-        if before is not None:
-            older = [m for m in numbered if m["seq"] < before]
-            window = older[-limit:]
-            has_more = len(older) > len(window)
-        else:
-            window = numbered[-limit:]
-            has_more = len(numbered) > len(window)
-        return window, has_more
-
-    messages, has_more = await loop.run_in_executor(None, _get_messages)
-
-    # Hub streaming: while a turn is in flight (last message is the user's),
-    # surface the live draft so the client can render the streaming bubble.
-    # Skipped entirely otherwise — no extra Firestore read on idle polls.
-    draft = None
-    if messages and messages[-1].get("role") == "user":
-        def _read_draft():
-            d = _get_hub_stream_store().get_draft(user_id)
-            if d and d.get("status") == "generating":
-                return {"text": d.get("text", ""), "status": "generating"}
-            return None
-        draft = await loop.run_in_executor(None, _read_draft)
-
-    # _jsonsafe_doc on the full response (Pitfall 4 / T-26-05-06)
-    payload = _jsonsafe_doc({"messages": messages, "has_more": has_more, "draft": draft})
-    return JSONResponse(content=payload)
-
-
-# Process-lifetime HubStreamStore singleton (same pattern as the memoized
-# _resolve_hub_user_id): one client per Cloud Run instance, not per poll.
-_hub_stream_store = None
-
-
-def _get_hub_stream_store():
-    global _hub_stream_store
-    if _hub_stream_store is None:
-        from memory.firestore_db import HubStreamStore  # lazy import
-        _hub_stream_store = HubStreamStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
-    return _hub_stream_store
-
-
-@app.post("/api/chat/regenerate")
-async def api_chat_regenerate(
-    _email: str = Depends(require_hub_session),
-) -> JSONResponse:
-    """Regenerate Klaus's last reply (hub message actions).
-
-    Transactionally pops the trailing assistant message from the shared
-    conversation and re-enqueues the preceding user message with the
-    regenerate flag, so the worker re-runs the turn WITHOUT re-appending the
-    user message (it is already the trailing history entry). Attachments from
-    the original turn are not re-injected — their bytes are transient.
-
-    Returns 409 when there is nothing to regenerate (empty history, or a turn
-    already in flight) — the pop is the guard, so a double-tap can't enqueue
-    two turns for one popped reply.
-    """
-    _require_legacy_hub_chat()
-    loop = asyncio.get_running_loop()
-    try:
-        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
-    except ValueError as exc:
-        logger.error("api_chat_regenerate: cannot resolve user_id: %s", exc)
-        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
-
-    def _pop() -> str | None:
-        from memory.firestore_conversation import FirestoreConversationStore  # lazy import
-        store = FirestoreConversationStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.environ.get("FIRESTORE_DATABASE", "(default)"),
-        )
-        return store.pop_trailing_assistant(user_id)
-
-    user_text = await loop.run_in_executor(None, _pop)
-    if user_text is None:
-        raise HTTPException(status_code=409, detail={"error": "nothing to regenerate"})
-
-    ok = await loop.run_in_executor(
-        None,
-        lambda: enqueue_hub_message(user_text, user_id, regenerate=True),
-    )
-    if not ok:
-        logger.error("api_chat_regenerate: enqueue failed (user_id=%s)", user_id)
-        return JSONResponse(
-            status_code=503,
-            content={"ok": False, "error": "Could not dispatch the regenerate — please retry"},
-        )
-    return JSONResponse(content={"ok": True})
-
-
-@app.post("/api/chat/stop")
-async def api_chat_stop(
-    _email: str = Depends(require_hub_session),
-) -> JSONResponse:
-    """Stop the in-flight hub turn (hub streaming feature).
-
-    Sets cancel_requested on the user's draft doc; the Cloud Tasks worker's
-    stream sink reads the flag back on its next throttled draft write (~1s)
-    and aborts the turn, persisting the partial reply with a cutoff marker.
-    Idempotent and safe with no turn in flight — the flag is simply reset by
-    the next start_turn.
-    """
-    _require_legacy_hub_chat()
-    loop = asyncio.get_running_loop()
-    try:
-        user_id = await loop.run_in_executor(None, _resolve_hub_user_id)
-    except ValueError as exc:
-        logger.error("api_chat_stop: cannot resolve user_id: %s", exc)
-        raise HTTPException(status_code=500, detail={"error": "Server misconfigured: user identity unresolvable"})
-
-    await loop.run_in_executor(None, _get_hub_stream_store().request_cancel, user_id)
-    return JSONResponse(content={"ok": True})
-
-
-@app.post("/internal/process-hub-message")
-async def internal_process_hub_message(request: Request) -> JSONResponse:
-    """Cloud Tasks target: run one hub chat agent turn with full CPU.
-
-    POST /api/chat enqueues the hub message via enqueue_hub_message; Cloud
-    Tasks POSTs it here with an OIDC token from the same service account the
-    Cloud Scheduler crons use, verified by _verify_cron_request.
-
-    The agent turn runs INSIDE this tracked request via asyncio.to_thread so
-    Cloud Run allocates full CPU for its duration — unlike a BackgroundTask,
-    which runs after the response on throttled CPU (D-09 / CLAUDE.md invariant).
-
-    Reply is appended to the shared FirestoreConversationStore by
-    handle_message itself; the hub polls /api/chat/messages to receive it.
-
-    Phase 29 (PUSH-02/03, D-01/D-08): the reply is ALSO pushed + mirrored to
-    Telegram (while the mirror flag is on) via the Plan-1 lazy-Bot
-    send_and_inject path (core.scheduled_message), so a hub reply reaches
-    Amit even when the hub tab isn't open. inject_into_conversation=False —
-    handle_message already appended the reply; re-injecting would double it
-    (CR-03 class bug).
-
-    Raises:
-        HTTPException 401/403: OIDC verification failed (T-26-05-02).
-        HTTPException 500: Orchestrator not initialised (Cloud Tasks retries).
-    """
-    _require_legacy_hub_chat()
-
-    # OIDC gate — same verification as /internal/process-update (T-26-05-02)
-    await _verify_cron_request(request)
-
-    # Singleton guard — orchestrator must be initialised (lifespan startup)
-    if _orchestrator is None:
-        logger.error("/internal/process-hub-message before orchestrator initialised")
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "Server is still initialising; please retry."},
-        )
-
-    request_json: dict = await request.json()
-    content = request_json.get("content", "")
-    # Reject a missing/zero user_id explicitly rather than silently defaulting
-    # to 0 (WR-04) — a malformed payload would otherwise run the agent turn
-    # against the phantom conversation document "0" and the reply would never
-    # be visible to the real user. This endpoint is OIDC-gated and only ever
-    # called by enqueue_hub_message (which always supplies a resolved int),
-    # so this guard should be unreachable in practice — but fail loudly
-    # rather than silently misrouting if that assumption is ever violated.
-    raw_user_id = request_json.get("user_id")
-    if not raw_user_id:
-        raise HTTPException(status_code=400, detail={"error": "missing user_id"})
-    user_id = int(raw_user_id)
-
-    # Hub attachments: re-download staged bytes from GCS by id and hand them to
-    # the orchestrator as InboundAttachment objects for this single turn. A
-    # missing blob (e.g. lifecycle-expired between upload and dispatch) drops
-    # that attachment but never fails the turn — the text must still reach the
-    # agent.
-    attachments = None
-    att_meta_list = request_json.get("attachments") or []
-    if att_meta_list:
-        from core.hub_attachments import load_attachment  # lazy import
-        from core.main import InboundAttachment  # lazy import
-
-        loop = asyncio.get_running_loop()
-        attachments = []
-        for entry in att_meta_list:
-            try:
-                data, mime, _name = await loop.run_in_executor(
-                    None, load_attachment, entry.get("id", "")
-                )
-                attachments.append(
-                    InboundAttachment(
-                        data=data, mime_type=mime, kind=entry.get("kind", "image")
-                    )
-                )
-            except (FileNotFoundError, ValueError):
-                logger.warning(
-                    "process-hub-message: dropping unavailable attachment id=%s",
-                    entry.get("id"),
-                )
-
-    # Run the agent turn inside this tracked request (full CPU — D-09).
-    # handle_message is the single writer: it appends BOTH the user turn and the
-    # assistant reply to the shared FirestoreConversationStore (core/main.py
-    # lines 481/501), with no Telegram send on this hub path — the client polls
-    # /api/chat/messages to receive the reply. We do NOT append here (doing so
-    # double-wrote the assistant reply, CR-03).
-    # asyncio.to_thread is safe: handle_message uses thread-local tool_registry.
-    #
-    # Hub streaming: the turn streams its text into a HubStreamStore draft doc
-    # via a throttled sink; the poll surfaces it as a live bubble and the Stop
-    # button flips the doc's cancel flag (handled inside handle_message as
-    # TurnCancelled → partial reply). finish_turn runs on EVERY exit path — a
-    # draft stuck in status 'generating' would leave a phantom typing bubble.
-    import uuid as _uuid
-    from core.hub_stream import FirestoreStreamSink  # lazy import
-
-    stream_store = _get_hub_stream_store()
-    turn_id = _uuid.uuid4().hex
-    sink = FirestoreStreamSink(stream_store, user_id=user_id, turn_id=turn_id)
-
-    # Hub regenerate: the route already popped the old reply, leaving the user
-    # message as the trailing history entry — re-appending it would double it.
-    persist_user_message = not bool(request_json.get("regenerate"))
-
-    def _run_turn() -> str:
-        stream_store.start_turn(user_id, turn_id)
-        return _orchestrator.handle_message(
-            content, user_id, attachments, stream_sink=sink,
-            persist_user_message=persist_user_message,
-        )
-
-    try:
-        reply_text = await asyncio.to_thread(_run_turn)
-    finally:
-        try:
-            await asyncio.to_thread(stream_store.finish_turn, user_id, turn_id)
-        except Exception:
-            logger.warning("process-hub-message: finish_turn failed", exc_info=True)
-
-    # Phase 29 (PUSH-02/03, D-01/D-08): push + mirror this reply too. bot=None
-    # lets send_and_inject lazily build/reuse its own module-level Bot (this
-    # route has no bot instance of its own). inject_into_conversation=False —
-    # handle_message already wrote the reply above (CR-03).
-    try:
-        from core.scheduled_message import send_and_inject  # lazy import
-        await send_and_inject(
-            None, reply_text, message_class="chat_reply", inject_into_conversation=False
-        )
-    except Exception:
-        logger.warning(
-            "internal_process_hub_message: push/mirror delivery failed for user_id=%s",
-            user_id,
-            exc_info=True,
-        )
-
-    return JSONResponse(content={"ok": True})
-
-
-# --------------------------------------------------------------------------- #
-# Task + Task-list routes — /api/tasks/* and /api/task-lists/*                #
-# Plan 27-02, TASK-01 / TASK-07                                               #
-#                                                                             #
-# All routes are behind Depends(require_hub_session) (T-27-AC).              #
-# All sync Firestore calls run via loop.run_in_executor (Pitfall 2).         #
-# All Firestore output passes through _jsonsafe_doc (Pitfall 4).             #
-# Place BEFORE the SPA mount so these routes are reachable (Pitfall 1).      #
-# --------------------------------------------------------------------------- #
-
 from pydantic import BaseModel, Field  # noqa: E402 (lazy placement — keeps cold-start fast)
 from typing import Literal  # noqa: E402
 
@@ -3914,9 +2971,9 @@ async def api_hard_delete_habit(
 # All routes are behind Depends(require_hub_session) (T-29-10). Every         #
 # subscribe input is validated (https endpoint + p256dh/auth keys present,    #
 # T-29-11) before it ever reaches PushSubscriptionStore.upsert. PATCH         #
-# /api/settings accepts ONLY telegram_mirror_enabled — no other keys are      #
-# ever forwarded to HubSettingsStore.set (T-29-12). All sync Firestore calls  #
-# run via loop.run_in_executor (Pitfall 2). Place BEFORE the SPA mount so     #
+# Settings are read-only and expose only retained Web Push state. All sync    #
+# Firestore calls run via loop.run_in_executor (Pitfall 2). Place BEFORE the  #
+# SPA mount so                                                               #
 # these routes are reachable (Pitfall 1).                                    #
 # --------------------------------------------------------------------------- #
 
@@ -4029,8 +3086,10 @@ async def api_get_settings(
     from memory.firestore_db import _jsonsafe_doc  # lazy import — Shared Pattern 5 / Pitfall 4
 
     loop = asyncio.get_running_loop()
-    settings = await loop.run_in_executor(None, _get_hub_settings_store().get)
-    return JSONResponse(content=_jsonsafe_doc(settings))
+    settings = _jsonsafe_doc(
+        await loop.run_in_executor(None, _get_hub_settings_store().get)
+    )
+    return JSONResponse(content={"push_enabled_at": settings.get("push_enabled_at")})
 
 
 # --------------------------------------------------------------------------- #

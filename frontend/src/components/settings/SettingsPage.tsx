@@ -1,13 +1,9 @@
 /**
  * SettingsPage.tsx — Minimal /settings skeleton (D-15).
  *
- * Composes exactly two controls this phase needs:
- *   (a) Enable-push — usePush().enablePush wired to a real button click (the
- *       only gesture-driven path to the iOS permission prompt, T-29-21). Shows
- *       a re-enable hint when `needsReenable` (D-19) and a confirmed-enabled
- *       state once `isSubscribed`.
- *   (b) Telegram-mirror toggle — GET/PATCH /api/settings (D-09). Optimistic
- *       via react-query's onSuccess cache write; disabled while in flight.
+ * Provides the retained Web Push control. usePush().enablePush is wired to a
+ * real button click (the only gesture-driven path to the iOS permission
+ * prompt, T-29-21), with re-enable and subscribed states.
  *
  * Deliberately kept a skeleton — no sign-out/preferences/app-version here.
  * Sign-out already lives in Sidebar; this page grows in later phases

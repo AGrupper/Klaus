@@ -1,7 +1,7 @@
 /**
  * useTasks.ts — Optimistic task CRUD hooks.
  *
- * Mirrors the useChat optimistic-mutation pattern (onMutate/onError/onSettled)
+ * Uses the standard optimistic-mutation pattern (onMutate/onError/onSettled)
  * for create, update, and complete operations.
  *
  * Query key: ['tasks', listId] — one cache entry per list (including 'inbox').

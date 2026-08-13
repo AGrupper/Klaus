@@ -2,9 +2,12 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import sys
+import textwrap
+import ast
 from pathlib import Path
 
 import pytest
@@ -64,6 +67,80 @@ def test_web_server_imports_without_retired_provider_credentials(monkeypatch) ->
     web_server = importlib.import_module("interfaces.web_server")
 
     assert web_server.app is not None
+
+
+def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
+    """Retired HTTP contracts stay registered without keeping dead runtimes."""
+    from interfaces.web_server import app
+
+    retired_routes = {
+        ("POST", "/telegram-webhook"),
+        ("POST", "/internal/process-update"),
+        ("POST", "/internal/process-occasion"),
+        ("POST", "/internal/process-hub-message"),
+        ("POST", "/cron/proactive-alerts"),
+        ("POST", "/cron/reflect"),
+        ("POST", "/cron/autonomous-tick"),
+        ("POST", "/cron/ingest-chats"),
+        ("POST", "/cron/ingest-chat-exports"),
+        ("POST", "/api/chat"),
+        ("POST", "/api/chat/upload"),
+        ("GET", "/api/chat/messages"),
+        ("POST", "/api/chat/regenerate"),
+        ("POST", "/api/chat/stop"),
+    }
+    registered = {
+        (method, route.path): route.endpoint
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
+
+    for key in retired_routes:
+        endpoint = registered[key]
+        tree = ast.parse(textwrap.dedent(inspect.getsource(endpoint)))
+        function = next(
+            node for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        assert len(function.body) <= 2, key
+        assert not any(isinstance(node, (ast.Import, ast.ImportFrom)) for node in ast.walk(function)), key
+
+
+def test_retired_web_and_frontend_implementations_are_physically_absent() -> None:
+    """Source subtraction removes dead chat/transport bodies, not just reachability."""
+    web_source = (ROOT / "interfaces" / "web_server.py").read_text(encoding="utf-8")
+    tools_source = (ROOT / "core" / "tools.py").read_text(encoding="utf-8")
+
+    for forbidden in (
+        "core.hub_attachments",
+        "core.scheduled_message",
+        "core.chat_ingest",
+        "core.chat_export_ingest",
+        "core.proactive_alerts",
+        "core.nightly_review",
+        "core.morning_briefing",
+        "core.weekly_training_review",
+        "AgentOrchestrator",
+        "enqueue_hub_message",
+        "TELEGRAM_ALLOWED_USER_IDS",
+        "TELEGRAM_WEBHOOK_SECRET",
+    ):
+        assert forbidden not in web_source
+
+    assert "toggle_telegram_mirror" not in tools_source
+    assert "telegram_mirror_enabled" not in tools_source
+
+    retired_paths = (
+        ROOT / "core" / "hub_attachments.py",
+        ROOT / "frontend" / "src" / "api" / "chat.ts",
+        ROOT / "frontend" / "src" / "components" / "chat",
+        ROOT / "frontend" / "src" / "components" / "layout" / "DockChat.tsx",
+        ROOT / "frontend" / "src" / "components" / "shared" / "UnreadBadge.tsx",
+        ROOT / "frontend" / "src" / "hooks" / "useAppBadge.ts",
+        ROOT / "frontend" / "src" / "hooks" / "useChat.ts",
+        ROOT / "frontend" / "src" / "hooks" / "useUnread.ts",
+    )
+    assert [str(path.relative_to(ROOT)) for path in retired_paths if path.exists()] == []
 
 
 def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:

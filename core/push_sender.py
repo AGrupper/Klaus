@@ -168,8 +168,7 @@ def send_push_to_all(
         # DEVIATION (justified, D-12): D-12 calls for "full message text" as
         # the body, but APNs caps encrypted push payloads at ~4KB
         # (RESEARCH.md Assumption A8) and iOS truncates/expands the display
-        # regardless. Nothing is lost: the full text is always available in
-        # the Firestore conversation store + Telegram mirror.
+        # regardless. Canonical reviews remain available in the Hub.
         "body": text[:1000],
         "url": _safe_destination(destination),
         "class": message_class,
