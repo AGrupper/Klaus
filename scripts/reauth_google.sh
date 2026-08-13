@@ -5,7 +5,7 @@
 #   google.auth.exceptions.RefreshError: invalid_grant: Token has been expired or revoked.
 #
 # Google revokes the refresh token whenever the account password changes, because
-# the grant includes Gmail scopes — this is a Google security policy, not a Klaus
+# the previous grant included broader scopes — this is a Google security policy, not a Klaus
 # bug, and it cannot be disabled. See docs/DEPLOYMENT.md section 7.
 set -euo pipefail
 
@@ -30,4 +30,4 @@ gcloud secrets versions add "$SECRET_NAME" \
   --data-file="./${TOKEN_PATH}" \
   --project="$PROJECT_ID"
 
-echo "Done. Klaus's next Calendar/Gmail call will pick up the new token."
+echo "Done. Klaus's next Calendar call will pick up the new token."

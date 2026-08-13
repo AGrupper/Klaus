@@ -29,7 +29,6 @@ READ_TOOLS = frozenset(
         "task_list",
         "get_habit_adherence",
         "recall",
-        "get_recent_decisions",
         "fetch_weather",
         "fetch_garmin_today",
         "notion_search",

@@ -4,8 +4,8 @@ Two halves:
 1. The fetch_recent_meals window bug fix — a >48h window must enumerate EVERY
    calendar date it touches (the old two-endpoint union silently skipped the
    days in between).
-2. The new fetch_nutrition_trend tool — registration (brain-direct,
-   worker-excluded) and handler math (averages over days-with-data only,
+2. The new fetch_nutrition_trend tool — registration (MCP-registered,
+   single-catalog) and handler math (averages over days-with-data only,
    missing_dates, targets/per-kg comparison, clamp, fail-open).
 """
 from __future__ import annotations
@@ -76,13 +76,6 @@ def test_recent_meals_default_window_queries_at_most_two_dates():
 # fetch_nutrition_trend — registration                                #
 # ------------------------------------------------------------------ #
 
-def test_nutrition_trend_registered_brain_direct_worker_excluded():
-    assert "fetch_nutrition_trend" in tools.SMART_AGENT_DIRECT_TOOLS
-    names = {s["name"] for s in tools.TOOL_SCHEMAS}
-    assert "fetch_nutrition_trend" in names
-    worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-    assert "fetch_nutrition_trend" not in worker_names
-    assert "fetch_nutrition_trend" in tools._HANDLERS
 
 
 def test_nutrition_trend_schema_days_optional_integer():

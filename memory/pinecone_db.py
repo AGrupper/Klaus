@@ -3,13 +3,13 @@
 Stores durable facts and contextual chunks about the user as vector
 embeddings (Gemini gemini-embedding-2 truncated to 768-dim) for semantic search.
 
-Four kinds of memory:
+Three active kinds of memory:
   "fact"  — short atomic statement ("Amit's gym is Mon/Wed/Fri").
   "chunk" — longer contextual passage (a story, evolving situation).
-  "chat"  — ingested Claude Code chat-log chunk (Phase 12+).
-  "self"  — journal/self-memory entry written by the reflection cron (Phase 17).
+  "self"  — journal/self-memory entry written by Claude's nightly routine.
 
-All four are stored in the same serverless index, distinguished by the
+Existing archived chat vectors remain in the index but have no runtime read or
+write path. Active memories are distinguished by the
 "kind" metadata field. `recall` queries fact/chunk by default and returns
 results ranked by semantic similarity.
 
@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 logger = logging.getLogger(__name__)
 
 CONTENT_MAX_CHARS = 2000
-_VALID_KINDS = frozenset({"fact", "chunk", "chat", "self"})  # D-06: "self" added Phase 17
+_VALID_KINDS = frozenset({"fact", "chunk", "self"})
 
 
 def _blend_recency(cosine: float, ts: str | None) -> float:
@@ -48,10 +48,6 @@ def _blend_recency(cosine: float, ts: str | None) -> float:
     age_days = max(0.0, age_days)
     decay = 0.5 ** (age_days / _RECENCY_HALF_LIFE_DAYS)
     return cosine * ((1.0 - _RECENCY_WEIGHT) + _RECENCY_WEIGHT * decay)
-
-# Texts per Gemini embed_content call — also matches Pinecone's recommended
-# upsert batch size, so one embed round-trip feeds one upsert slice.
-_EMBED_BATCH_SIZE = 100
 
 # Recency re-ranking (recall): pure cosine ranking surfaces a 2-year-old fact
 # over yesterday's if the wording matches, so recall over-fetches and blends
@@ -145,7 +141,7 @@ class MemoryStore:
             k:       Number of results to return (clamped to 10).
             kinds:   If provided, filter results to only these memory kinds.
                      If None (default), returns only "fact" and "chunk" memories
-                     (chat chunks excluded to avoid polluting curated memory recall).
+                     (archived imports are excluded from curated memory recall).
 
         Returns:
             List of dicts: [{"kind", "content", "score", "ts"}, ...]
@@ -266,53 +262,6 @@ class MemoryStore:
         }])
         return vector_id
 
-    def upsert_chat_chunks(self, user_id: int, chunks: list[dict]) -> int:
-        """Embed and upsert a batch of chat chunks to Pinecone.
-
-        Each chunk dict must have:
-          - "id": deterministic vector ID (e.g. "cc-{session_id}-{uuid}-{n}")
-          - "content": text to embed
-          - "metadata": dict with kind="chat" and other metadata fields
-
-        Args:
-            user_id: Telegram user ID (injected into each chunk's metadata).
-            chunks:  List of chunk dicts from _chunk_conversation.
-
-        Returns:
-            Number of vectors upserted.
-        """
-        if not chunks:
-            return 0
-
-        # Embed in batches — one API round-trip per _EMBED_BATCH_SIZE texts
-        # instead of one call (plus a rate-limit sleep) per chunk. The old
-        # per-chunk 500ms sleep made a 100-chunk file take ~50s, blowing the
-        # chat-ingest cron's 45s time budget; batching brings it to one call.
-        contents = [chunk["content"] for chunk in chunks]
-        embeddings: list[list[float]] = []
-        for i in range(0, len(contents), _EMBED_BATCH_SIZE):
-            embeddings.extend(self._embed_batch(contents[i : i + _EMBED_BATCH_SIZE]))
-
-        vectors = []
-        for chunk, vector in zip(chunks, embeddings):
-            meta = dict(chunk.get("metadata", {}))
-            meta["user_id"] = str(user_id)
-            meta.setdefault("kind", "chat")
-            meta["content"] = chunk["content"]
-            vectors.append({
-                "id": chunk["id"],
-                "values": vector,
-                "metadata": meta,
-            })
-
-        # Upsert in slices of 100 (Pinecone recommended batch size)
-        index = self._get_index()
-        for i in range(0, len(vectors), 100):
-            index.upsert(vectors=vectors[i : i + 100])
-
-        logger.debug("Upserted %d chat chunk(s) for user_id=%d.", len(vectors), user_id)
-        return len(vectors)
-
     # ------------------------------------------------------------------ #
     # Internal helpers                                                   #
     # ------------------------------------------------------------------ #
@@ -335,30 +284,6 @@ class MemoryStore:
         )
         self._record_embedding_usage(response, item_count=1)
         return list(response.embeddings[0].values)
-
-    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts in a single Gemini API call.
-
-        Returns one 768-dim embedding per input text, in order. Callers
-        slice to _EMBED_BATCH_SIZE.
-
-        WHY explicit Content objects: google-genai coerces a plain
-        ``list[str]`` into ONE multi-part content and returns a single
-        embedding for the whole batch (verified live against SDK 2.8.0).
-        Wrapping each text in its own ``types.Content`` is what makes the
-        API treat them as separate inputs.
-        """
-        from google.genai import types
-        client = self._get_genai()
-        response = client.models.embed_content(
-            model="gemini-embedding-2",
-            contents=[
-                types.Content(parts=[types.Part(text=text)]) for text in texts
-            ],
-            config=types.EmbedContentConfig(output_dimensionality=768),
-        )
-        self._record_embedding_usage(response, item_count=len(texts))
-        return [list(e.values) for e in response.embeddings]
 
     @staticmethod
     def _record_embedding_usage(response, *, item_count: int) -> None:

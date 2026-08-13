@@ -7,24 +7,59 @@ from pathlib import Path
 
 
 _FORBIDDEN_MARKERS = (
-    "anthropic",
-    "openai",
-    "deepseek",
-    "groq",
-    "telegram",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
     "TELEGRAM_BOT_TOKEN",
-    "tiktoken",
-    "SMART_AGENT",
-    "WORKER_AGENT",
-    "TICK_BRAIN",
+    "TELEGRAM_WEBHOOK_SECRET",
+    "TELEGRAM_ALLOWED_USER_IDS",
     "KLAUS_LEGACY_RUNTIME_ENABLED",
     "KLAUS_HUB_CHAT_ENABLED",
     "OCCASION_CASCADE",
-    "LLM_TIMEOUT_SECONDS",
     "gemini-3.5",
     "gpt-oss",
+    "deepseek-v4",
+    "core.llm_client",
+    "core.tick_brain",
+    "core.autonomous",
+    "core.scheduled_message",
+    "core.proactive_alerts",
+    "core.morning_briefing",
+    "core.nightly_review",
+    "core.reflection",
+    "core.task_dispatch",
+    "core.chat_ingest",
+    "core.chat_export_ingest",
+    "HeartbeatConfigStore",
+    "IncidentStore",
+    "LLMUsageStore",
+    "PendingPromptStore",
+    "CostTripwireLogStore",
+    "GroqTokenLedgerStore",
+    "TickSignatureStore",
+    "OccasionInFlightStore",
+    "CoachingTopicStore",
+    "TickLogStore",
 )
-_SKIPPED_PREFIXES = (".git/", "frontend/", ".venv/", "tests/", ".superpowers/", "docs/", ".planning/", ".pytest_cache/")
+_FORBIDDEN_ENV_PREFIXES = (
+    "SMART_AGENT_",
+    "WORKER_AGENT_",
+    "TICK_BRAIN_",
+)
+_SKIPPED_PREFIXES = (
+    ".git/",
+    ".venv/",
+    "tests/",
+    ".superpowers/",
+    "docs/",
+    ".planning/",
+    ".pytest_cache/",
+    "frontend/node_modules/",
+    "frontend/dist/",
+)
 
 
 def _is_scanned(relative: Path) -> bool:
@@ -32,7 +67,9 @@ def _is_scanned(relative: Path) -> bool:
     value = relative.as_posix()
     if value.startswith(_SKIPPED_PREFIXES):
         return False
-    return relative.suffix in {".py", ".yml", ".yaml", ".txt"} or relative.name in {"Dockerfile", ".env.example", "requirements.txt"}
+    return relative.suffix in {
+        ".py", ".yml", ".yaml", ".txt", ".sh", ".json", ".toml", ".ts", ".tsx",
+    } or relative.name in {"Dockerfile", ".env.example", "requirements.txt"}
 
 
 def find_violations(root: Path) -> list[str]:
@@ -64,13 +101,15 @@ def find_violations(root: Path) -> list[str]:
                 (node.module or "").split(".", 1)[0]
                 for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
             }
-            for marker in ("anthropic", "openai", "telegram", "tiktoken"):
+            for marker in ("anthropic", "openai", "groq", "telegram", "tiktoken"):
                 if marker in imports:
                     violations.append(f"{relative}: forbidden SDK import {marker}")
-        else:
-            for marker in _FORBIDDEN_MARKERS:
-                if marker.lower() in text.lower():
-                    violations.append(f"{relative}: forbidden marker {marker}")
+        for marker in _FORBIDDEN_MARKERS:
+            if marker.lower() in text.lower():
+                violations.append(f"{relative}: forbidden marker {marker}")
+        for prefix in _FORBIDDEN_ENV_PREFIXES:
+            if prefix in text:
+                violations.append(f"{relative}: forbidden model configuration {prefix}")
     return violations
 
 

@@ -6,6 +6,7 @@ import inspect
 import json
 import os
 import sys
+import subprocess
 import textwrap
 import ast
 from pathlib import Path
@@ -21,13 +22,40 @@ def test_cleanup_guard_rejects_forbidden_runtime_markers(tmp_path: Path) -> None
     from scripts.check_claude_first_runtime import find_violations
 
     source = tmp_path / "unsafe.py"
-    source.write_text("import openai\n", encoding="utf-8")
+    source.write_text(
+        "import openai\n"
+        "secret_name = 'TELEGRAM_BOT_TOKEN'\n"
+        "legacy_module = 'core.morning_briefing'\n",
+        encoding="utf-8",
+    )
     (tmp_path / ".env.example").write_text("TELEGRAM_BOT_TOKEN=bad\n", encoding="utf-8")
 
     violations = find_violations(tmp_path)
 
     assert any("openai" in violation for violation in violations)
     assert any("TELEGRAM_BOT_TOKEN" in violation for violation in violations)
+    assert any("core.morning_briefing" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    "content,marker",
+    (
+        ("GEMINI_API_KEY='bad'\n", "GEMINI_API_KEY"),
+        ("import groq\n", "groq"),
+        ("import core.chat_ingest\n", "core.chat_ingest"),
+        (
+            "SMART_AGENT_MODEL='bad'\nSMART_AGENT_DIRECT_TOOLS=set()\n",
+            "SMART_AGENT_",
+        ),
+    ),
+)
+def test_cleanup_guard_rejects_bypass_cases(
+    tmp_path: Path, content: str, marker: str,
+) -> None:
+    from scripts.check_claude_first_runtime import find_violations
+
+    (tmp_path / "unsafe.py").write_text(content, encoding="utf-8")
+    assert any(marker in violation for violation in find_violations(tmp_path))
 
 
 def test_cleanup_guard_accepts_the_checked_in_runtime() -> None:
@@ -67,6 +95,31 @@ def test_web_server_imports_without_retired_provider_credentials(monkeypatch) ->
     web_server = importlib.import_module("interfaces.web_server")
 
     assert web_server.app is not None
+
+
+def test_clean_process_imports_web_server_without_local_dotenv_or_provider_keys(
+    tmp_path: Path,
+) -> None:
+    """A fresh deploy-like interpreter must boot with no retired credentials."""
+    clean_env = {
+        "PATH": os.environ.get("PATH", ""),
+        "PYTHONPATH": str(ROOT),
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "KLAUS_SKIP_DOTENV": "true",
+        "KLAUS_USER_ID": "123456",
+        "KLAUS_MCP_ENABLED": "false",
+    }
+    completed = subprocess.run(
+        [sys.executable, "-c", "import interfaces.web_server; print('boot-ok')"],
+        cwd=tmp_path,
+        env=clean_env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == "boot-ok"
 
 
 def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
@@ -129,9 +182,37 @@ def test_retired_web_and_frontend_implementations_are_physically_absent() -> Non
 
     assert "toggle_telegram_mirror" not in tools_source
     assert "telegram_mirror_enabled" not in tools_source
+    assert "run_morning_briefing" not in tools_source
+
+    firestore_source = (ROOT / "memory" / "firestore_db.py").read_text(encoding="utf-8")
+    assert "class HubStreamStore" not in firestore_source
+    memory_source = (ROOT / "memory" / "pinecone_db.py").read_text(encoding="utf-8")
+    memory_tool_source = (ROOT / "mcp_tools" / "memory.py").read_text(encoding="utf-8")
+    assert "def upsert_chat_chunks" not in memory_source
+    assert "def search_chat_history" not in memory_tool_source
 
     retired_paths = (
         ROOT / "core" / "hub_attachments.py",
+        ROOT / "core" / "chat_ingest.py",
+        ROOT / "core" / "chat_export_ingest.py",
+        ROOT / "mcp_tools" / "self_inspect.py",
+        ROOT / "mcp_tools" / "readwise_tool.py",
+        ROOT / "scripts" / "run_chat_export_backfill.sh",
+        ROOT / "scripts" / "smoke_test_chat_export.py",
+        ROOT / "scripts" / "smoke_test_chat_ingest.py",
+        ROOT / "scripts" / "upload_chat_export.sh",
+        ROOT / "scripts" / "upload_claude_logs.sh",
+        ROOT / "scripts" / "upload_claude_logs.ps1",
+        ROOT / "scripts" / "export_tick_logs.py",
+        ROOT / "evals" / "tick_brain",
+        ROOT / "tests" / "test_hub_stream_store.py",
+        ROOT / "tests" / "test_chat_export_ingest.py",
+        ROOT / "tests" / "test_self_inspect.py",
+        ROOT / "tests" / "test_llm_usage_store.py",
+        ROOT / "tests" / "test_export_tick_logs.py",
+        ROOT / "tests" / "test_evals.py",
+        ROOT / "tests" / "test_conversational_review_rollout.py",
+        ROOT / "tests" / "memory" / "test_pinecone_upsert.py",
         ROOT / "frontend" / "src" / "api" / "chat.ts",
         ROOT / "frontend" / "src" / "components" / "chat",
         ROOT / "frontend" / "src" / "components" / "layout" / "DockChat.tsx",
@@ -141,6 +222,22 @@ def test_retired_web_and_frontend_implementations_are_physically_absent() -> Non
         ROOT / "frontend" / "src" / "hooks" / "useUnread.ts",
     )
     assert [str(path.relative_to(ROOT)) for path in retired_paths if path.exists()] == []
+
+    retired_store_classes = {
+        "HeartbeatConfigStore",
+        "IncidentStore",
+        "LLMUsageStore",
+        "PendingPromptStore",
+        "CostTripwireLogStore",
+        "GroqTokenLedgerStore",
+        "TickSignatureStore",
+        "OccasionInFlightStore",
+        "CoachingTopicStore",
+        "TickLogStore",
+    }
+    assert not any(
+        f"class {name}" in firestore_source for name in retired_store_classes
+    )
 
 
 def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:

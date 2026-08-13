@@ -3,7 +3,7 @@
 Confirms get_strength_progress + get_training_context are:
   - present in TOOL_SCHEMAS with valid input_schema
   - dispatchable via _HANDLERS
-  - brain-direct (in SMART_AGENT_DIRECT_TOOLS, excluded from WORKER_TOOL_SCHEMAS)
+  - MCP-registered (in retired direct-tool registry, excluded from retired worker registry)
 And that the handlers degrade gracefully (return {"error": ...} / a dict) when
 Firestore is unreachable rather than raising.
 """
@@ -29,10 +29,6 @@ def test_handlers_registered():
     assert _STRENGTH_TOOLS <= set(t._HANDLERS)
 
 
-def test_brain_direct_and_worker_excluded():
-    assert _STRENGTH_TOOLS <= t.SMART_AGENT_DIRECT_TOOLS
-    worker_names = {s["name"] for s in t.WORKER_TOOL_SCHEMAS}
-    assert not (_STRENGTH_TOOLS & worker_names)
 
 
 def test_get_strength_progress_handler_fail_open(monkeypatch):

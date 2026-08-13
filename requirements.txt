@@ -7,12 +7,11 @@
 google-auth>=2.30
 google-auth-oauthlib>=1.2
 google-auth-httplib2>=0.2
-google-api-python-client>=2.140    # Gmail + Calendar service builders
+google-api-python-client>=2.140    # Calendar service builder
 
 # --- Cloud state (Firestore: Things 3 queue + user profile) ---
 google-cloud-firestore>=2.18
 google-cloud-secret-manager>=2.20  # OAuth token persistence on Cloud Run
-google-cloud-storage>=2.18         # GCS: chat-log staging bucket (Phase 12)
 google-cloud-monitoring>=2.20      # Cloud Monitoring: heartbeat 5xx metrics
 google-cloud-run>=0.10             # Cloud Run revision checks (Phase 14)
 google-cloud-tasks>=2.16           # Routine timeout fallback dispatch

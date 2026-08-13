@@ -32,9 +32,12 @@ from fastapi.responses import JSONResponse
 from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
 # WHY: override=True ensures .env values win even when the shell has already
-# exported the variable — the default behaviour silently ignores .env in that
-# case, which causes confusing "wrong token" failures in local dev.
-load_dotenv(override=True)
+# exported the variable. Tests may explicitly bypass local developer secrets so
+# credential-free cold-start coverage is hermetic.
+if os.environ.get("KLAUS_SKIP_DOTENV", "false").strip().lower() not in {
+    "1", "true", "yes", "on",
+}:
+    load_dotenv(override=True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -504,8 +507,8 @@ async def trigger_nightly(request: Request) -> JSONResponse:
     Triggered when Amit's phone winds down (organic), so there is no fixed schedule.
     Authenticated via the shared-secret NIGHTLY_TRIGGER_TOKEN.
 
-    Acknowledges immediately (202) and enqueues the compose via Cloud Tasks
-    (core.task_dispatch.enqueue_occasion) — never a Starlette BackgroundTask.
+    Acknowledges immediately (202) and starts the remote Claude Routine —
+    never a Starlette BackgroundTask.
     This closes the D-32 defect: composing here used to run in a BackgroundTask,
     which runs AFTER the response and gets CPU-throttled by Cloud Run (the
     mistaken belief that "the request is still in-flight, so CPU stays
@@ -552,11 +555,9 @@ async def trigger_morning(request: Request) -> JSONResponse:
     Authenticated via the dedicated MORNING_TRIGGER_TOKEN (D-13 — least
     privilege, no shared secret with the nightly trigger).
 
-    Acknowledges immediately (202) and enqueues the compose via Cloud Tasks
-    (core.task_dispatch.enqueue_occasion) — never a Starlette BackgroundTask
-    (D-32 / CLAUDE.md invariant). Idempotent downstream: run_morning_briefing_
-    triggered's dedup-via-state-doc no-ops a snooze/second alarm/Focus
-    toggled off-on-off (D-12).
+    Acknowledges immediately (202) and starts the remote Claude Routine —
+    never a Starlette BackgroundTask. The routine coordinator's correlation
+    record makes a snooze/second alarm/Focus toggle safe to retry.
 
     Returns:
         JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful
@@ -582,13 +583,9 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
     Idempotent: run_nightly no-ops if the trigger already sent tonight's review, so
     on a normal night this fires, sees "already sent", and does nothing.
 
-    D-32: enqueues via Cloud Tasks (core.task_dispatch.enqueue_occasion) instead
-    of composing inline. Honest caveat: this route was NOT broken today — holding
-    the request open kept CPU allocated for the inline compose — it moves for
-    consistency and request-timeout headroom now that Layer 2 can run up to 12
-    tool-calling turns. The compose outcome (sent vs. skipped_by_judgment) is now
-    logged by /internal/process-occasion under occasion-nightly; this route's
-    _log_cron_run only reflects the enqueue outcome.
+    The backstop starts the same remote Claude Routine instead of composing
+    anything in Cloud Run. Its result record remains idempotent, and this
+    route's cron log reflects only whether the remote run was accepted.
 
     Returns:
         JSONResponse: ``{"accepted": true}`` with HTTP 202 on successful enqueue,
@@ -3394,9 +3391,6 @@ async def api_agent_status(
                     "morning_cutover": _routine_cutover_enabled("morning"),
                     "nightly_cutover": _routine_cutover_enabled("nightly"),
                     "weekly_cutover": _routine_cutover_enabled("weekly"),
-                    "legacy_runtime": _flag_enabled(
-                        "KLAUS_LEGACY_RUNTIME_ENABLED", default=True
-                    ),
                 },
                 "recent_runs": [public_routine_run(run) for run in runs],
                 "usage": {

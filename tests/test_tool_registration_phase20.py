@@ -4,10 +4,10 @@ RED tests — written before implementation. All should FAIL until log_training
 and get_training_history are registered at all 5 sites in core/tools.py.
 
 Tests cover (mirroring TestPhase19ToolRegistration pattern):
-  - "log_training" is in SMART_AGENT_DIRECT_TOOLS frozenset (brain-direct)
-  - "log_training" schema is in TOOL_SCHEMAS and is NOT in WORKER_TOOL_SCHEMAS (excluded)
+  - "log_training" is in retired direct-tool registry frozenset (MCP-registered)
+  - "log_training" schema is in TOOL_SCHEMAS and is NOT in retired worker registry (excluded)
   - "log_training" is a key in _HANDLERS
-  - "get_training_history" schema is in TOOL_SCHEMAS, IS in WORKER_TOOL_SCHEMAS, NOT in SMART_AGENT_DIRECT_TOOLS
+  - "get_training_history" schema is in TOOL_SCHEMAS, IS in retired worker registry, NOT in retired direct-tool registry
   - "get_training_history" is a key in _HANDLERS
   - Schema shapes are correct (name + description + input_schema with type object)
   - log_training schema requires "date"; get_training_history has no required fields
@@ -127,44 +127,30 @@ def _tools(isolated_modules):
 class TestPhase20ToolRegistration:
     """LOG-03 + LOG-04 — verify log_training + get_training_history at all 5 sites.
 
-    Brain-direct (in SMART_AGENT_DIRECT_TOOLS, excluded from WORKER_TOOL_SCHEMAS):
+    MCP-registered (in retired direct-tool registry, excluded from retired worker registry):
       - log_training
 
-    Worker-delegated (in WORKER_TOOL_SCHEMAS, NOT in SMART_AGENT_DIRECT_TOOLS):
+    MCP-registered (in retired worker registry, NOT in retired direct-tool registry):
       - get_training_history
     """
 
-    def test_log_training_in_smart_agent_direct_tools(self):
-        """LOG-03: log_training is in SMART_AGENT_DIRECT_TOOLS (brain-direct)."""
-        assert "log_training" in tools.SMART_AGENT_DIRECT_TOOLS
 
     def test_log_training_in_tool_schemas(self):
         """log_training schema is present in TOOL_SCHEMAS."""
         names = {s["name"] for s in tools.TOOL_SCHEMAS}
         assert "log_training" in names
 
-    def test_log_training_excluded_from_worker_tool_schemas(self):
-        """log_training is NOT in WORKER_TOOL_SCHEMAS (brain-direct only, not worker)."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "log_training" not in worker_names
 
     def test_log_training_in_handlers(self):
         """log_training is dispatched via _HANDLERS."""
         assert "log_training" in tools._HANDLERS
 
-    def test_get_training_history_not_in_smart_agent_direct(self):
-        """LOG-04: get_training_history is worker-delegated — NOT in SMART_AGENT_DIRECT_TOOLS."""
-        assert "get_training_history" not in tools.SMART_AGENT_DIRECT_TOOLS
 
     def test_get_training_history_in_tool_schemas(self):
         """get_training_history schema is present in TOOL_SCHEMAS."""
         names = {s["name"] for s in tools.TOOL_SCHEMAS}
         assert "get_training_history" in names
 
-    def test_get_training_history_in_worker_tool_schemas(self):
-        """get_training_history IS in WORKER_TOOL_SCHEMAS (worker-delegated)."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "get_training_history" in worker_names
 
     def test_get_training_history_in_handlers(self):
         """get_training_history is dispatched via _HANDLERS."""

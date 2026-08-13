@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 # WHY explicit + configurable: googleapiclient's own build_http() already sets
 # a 60s httplib2 socket timeout when nothing else is specified, but that
 # default is buried in the library and not something Klaus's operator can see
-# or tune. Mirrors the LLM_TIMEOUT_SECONDS invariant (CLAUDE.md §6): every
-# outbound client Klaus owns gets an explicit, bounded, env-driven timeout
+# or tune. Every outbound client Klaus owns gets an explicit, bounded,
+# env-driven timeout
 # rather than relying on an SDK default. 30s keeps a single stalled Calendar/
-# Gmail read well under the Cloud Run request deadline instead of eating up
+# Calendar read well under the Cloud Run request deadline instead of eating up
 # to 60s of it (observed recurring in production 2026-08-01..03 as
 # `TimeoutError: The read operation timed out` from httplib2/ssl during
 # calendar gather).
@@ -416,7 +416,7 @@ def build_auth_manager_from_env() -> GoogleAuthManager:
 # ---------------------------------------------------------------------- #
 
 def _smoke_test() -> int:
-    """Authenticate and print the active Gmail address. Exit code 0 on success."""
+    """Authenticate and list a bounded Calendar window. Exit code 0 on success."""
     from dotenv import load_dotenv
     load_dotenv(override=True)
     
@@ -426,23 +426,25 @@ def _smoke_test() -> int:
     manager = build_auth_manager_from_env()
 
     try:
-        gmail = manager.gmail_service()
-        # users().getProfile is the cheapest authenticated call we can make —
-        # it confirms the token works and returns the active email address.
-        profile = gmail.users().getProfile(userId="me").execute()
+        from datetime import datetime, timedelta, timezone
+        calendar = manager.calendar_service()
+        start = datetime.now(timezone.utc)
+        result = calendar.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=(start + timedelta(days=1)).isoformat(),
+            maxResults=1,
+            singleEvents=True,
+        ).execute()
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 2
-    except HttpError as exc:
+    except (GoogleAuthError, HttpError) as exc:
         logger.error("Google API rejected the request: %s", exc)
         return 3
-    except GoogleAuthError as exc:
-        logger.error("Authentication failed: %s", exc)
-        return 4
 
     storage_backend = os.getenv("GOOGLE_TOKEN_STORAGE", "file")
-    print(f"Authenticated as: {profile.get('emailAddress', '<unknown>')}")
-    print(f"Total messages in mailbox: {profile.get('messagesTotal', '?')}")
+    print(f"Calendar access verified; returned {len(result.get('items', []))} event(s).")
     print(f"Token storage backend: {storage_backend}")
     return 0
 
