@@ -11,6 +11,7 @@
       "TZ": "Asia/Jerusalem",
       "FIRESTORE_DATABASE": "klaus-firestore",
       "KLAUS_USER_ID": "<required>",
+      "CLAUDE_PROJECT_URL": "<required>",
       "KLAUS_MCP_ENABLED": "true",
       "KLAUS_MCP_READ_ONLY_MODE": "false",
       "KLAUS_CLAUDE_LIVE_ENABLED": "true",

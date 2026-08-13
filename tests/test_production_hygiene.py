@@ -320,6 +320,12 @@ def test_deploy_still_uses_workload_identity_federation():
         "GEMINI_EMBEDDING_API_KEY=klaus-gemini-embedding-key:latest" in workflow
     )
     assert "GEMINI_EMBEDDING_API_KEY=klaus-gemini-key:latest" not in workflow
+    assert "--set-env-vars" in workflow
+    assert "--set-secrets" in workflow
+    assert "--clear-env-vars" not in workflow
+    assert "--clear-secrets" not in workflow
+    assert "--update-secrets" not in workflow
+    assert "CLAUDE_PROJECT_URL=${{ vars.CLAUDE_PROJECT_URL }}" in workflow
     for binding in (
         "NOTION_API_TOKEN=klaus-notion-api-token:latest",
         "GARMIN_EMAIL=klaus-garmin-email:latest",
