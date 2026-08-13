@@ -1,0 +1,7 @@
+{
+  "bucket": "klaus-chat-logs-klaus-agent",
+  "storage_class": "ARCHIVE",
+  "runtime_access": "none",
+  "preserve_historical_objects": true,
+  "ingestion_jobs": "retired"
+}

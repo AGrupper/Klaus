@@ -64,6 +64,7 @@ _SKIPPED_PREFIXES = (
     ".venv/",
     "tests/",
     ".superpowers/",
+    "ops/",
     "docs/",
     ".planning/",
     ".pytest_cache/",

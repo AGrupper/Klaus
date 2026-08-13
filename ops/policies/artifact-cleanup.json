@@ -1,0 +1,23 @@
+[
+  {
+    "name": "keep-production",
+    "action": {"type": "Keep"},
+    "condition": {
+      "tagState": "tagged",
+      "tagPrefixes": ["production", "deployed-"]
+    }
+  },
+  {
+    "name": "keep-ten-most-recent",
+    "action": {"type": "Keep"},
+    "mostRecentVersions": {"keepCount": 10}
+  },
+  {
+    "name": "delete-images-older-than-30-days",
+    "action": {"type": "Delete"},
+    "condition": {
+      "tagState": "any",
+      "olderThan": "2592000s"
+    }
+  }
+]

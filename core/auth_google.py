@@ -126,13 +126,18 @@ class SecretManagerTokenStorage:
 
     IAM requirement:
         The runtime service account needs the `secretmanager.secretVersionAdder`
-        role on the secret to call `add_secret_version`.
+        and `secretmanager.secretVersionManager` roles on this secret. The
+        latter is used only for best-effort retention after a successful save.
 
     WHY immutable versions:
         Secret Manager versions are immutable — you can never overwrite a
         version's payload. Each token refresh therefore creates a new version.
         `load` always reads `latest`, which automatically resolves to the
-        most recently added version.
+        most recently added version. After each successful write, Klaus keeps
+        the newest working version plus one rollback version. Older enabled
+        versions are disabled; versions already disabled by an earlier refresh
+        are destroyed. Retention failure never turns a successful save into a
+        failed Calendar operation.
     """
 
     def __init__(self, project_id: str, secret_name: str) -> None:
@@ -187,6 +192,35 @@ class SecretManagerTokenStorage:
             }
         )
         logger.debug("Saved new token version to secret '%s'.", self.secret_name)
+        try:
+            self._prune_versions(client, parent)
+        except Exception:
+            # WHY: a refreshed access token is already durably persisted. IAM
+            # drift in retention must be visible, but it must not make the
+            # Calendar call fail or tempt the caller to re-run token refresh.
+            logger.warning(
+                "OAuth token retention cleanup failed for secret '%s'; "
+                "the newly saved token remains usable.",
+                self.secret_name,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _prune_versions(client: Any, parent: str) -> None:
+        """Keep latest+rollback using separate disable and destroy phases."""
+        from core.secret_retention import apply_plan, plan_for_client
+
+        # No age gate is needed in the hourly runtime path because destruction
+        # is limited to versions observed as DISABLED before this invocation.
+        # A version disabled below therefore survives at least until a later
+        # refresh, while the two newest usable versions are always retained.
+        plan = plan_for_client(
+            client,
+            parent,
+            keep_count=2,
+            destroy_grace_days=0,
+        )
+        apply_plan(client, parent, plan)
 
 
 # ------------------------------------------------------------------ #

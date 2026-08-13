@@ -30,4 +30,14 @@ gcloud secrets versions add "$SECRET_NAME" \
   --data-file="./${TOKEN_PATH}" \
   --project="$PROJECT_ID"
 
+# Keep the latest working token plus one rollback. The script prints the plan
+# by default and applies only because the exact secret name is repeated as a
+# confirmation. Newly-disabled versions cannot be destroyed in this same run.
+python scripts/manage_secret_versions.py \
+  --project "$PROJECT_ID" \
+  --secret "$SECRET_NAME" \
+  --destroy-grace-days 7 \
+  --apply \
+  --confirm-secret "$SECRET_NAME"
+
 echo "Done. Klaus's next Calendar call will pick up the new token."

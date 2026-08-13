@@ -1,0 +1,34 @@
+{
+  "minimum_observation_days": 7,
+  "required_access_count": 0,
+  "required_generative_usage_count": 0,
+  "resources": {
+    "scheduler_jobs": [
+      "klaus-autonomous-tick",
+      "klaus-reflect",
+      "klaus-proactive-alerts",
+      "klaus-ingest-chats",
+      "klaus-ingest-chat-exports"
+    ],
+    "service_accounts": [
+      "klaus-log-uploader@klaus-agent.iam.gserviceaccount.com"
+    ],
+    "secrets": [
+      "klaus-anthropic-key",
+      "klaus-deepseek-key",
+      "klaus-tick-brain-key",
+      "klaus-gemini-key",
+      "klaus-telegram-token",
+      "klaus-telegram-webhook-secret",
+      "klaus-readwise-token",
+      "klaus-github-token"
+    ]
+  },
+  "deletion_gate": [
+    "resource remained paused or disabled for the full observation window",
+    "Cloud Logging shows zero successful dependency access",
+    "Claude morning, nightly, and weekly routines completed",
+    "no generative provider usage was recorded",
+    "operator captured a final read-only audit snapshot"
+  ]
+}

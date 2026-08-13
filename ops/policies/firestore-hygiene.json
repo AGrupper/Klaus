@@ -1,0 +1,22 @@
+{
+  "database": "klaus-firestore",
+  "deletion_protection": true,
+  "ttl_fields": [
+    {"collection_group": "oauth_authorization_codes", "field": "expire_at"},
+    {"collection_group": "oauth_access_tokens", "field": "expire_at"},
+    {"collection_group": "oauth_refresh_tokens", "field": "expire_at"},
+    {"collection_group": "action_idempotency", "field": "expire_at"},
+    {"collection_group": "pending_approvals", "field": "expire_at"}
+    ,{"collection_group": "routes_cache", "field": "expires_at"}
+  ],
+  "preserved_collections": [
+    "journals",
+    "routine_reviews",
+    "conversations",
+    "memories",
+    "training_logs",
+    "strength_sessions",
+    "run_details",
+    "meals"
+  ]
+}
