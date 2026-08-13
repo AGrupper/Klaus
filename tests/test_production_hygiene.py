@@ -69,7 +69,15 @@ def _clean_snapshot(manifest: dict) -> dict:
             for job in manifest["schedulers"]["required"]
         ],
         "secrets": [
-            {"name": name, "enabled_versions": 2}
+            {
+                "name": name,
+                "enabled_versions": 2,
+                "api_key_uid": (
+                    manifest["embedding"]["api_key_uid"]
+                    if name == manifest["embedding"]["secret"]
+                    else None
+                ),
+            }
             for name in manifest["secrets"]["runtime_access"]
         ],
         "project_iam": {
@@ -96,6 +104,7 @@ def _clean_snapshot(manifest: dict) -> dict:
         ),
         "observed_routes": list(manifest["routes"]["retained"])
         + list(manifest["routes"]["tombstones"]),
+        "tombstones": list(manifest["routes"]["tombstones"]),
         "connectors": list(manifest["connectors"]),
         "embedding": {
             "project": manifest["embedding"]["project"],
@@ -104,7 +113,10 @@ def _clean_snapshot(manifest: dict) -> dict:
             "model": manifest["embedding"]["model"],
             "daily_request_limit": manifest["embedding"]["daily_request_limit"],
             "api_keys": [
-                {"services": ["generativelanguage.googleapis.com"]}
+                {
+                    "uid": manifest["embedding"]["api_key_uid"],
+                    "services": ["generativelanguage.googleapis.com"],
+                }
             ],
             "budget": {
                 "amount_ils": manifest["embedding"]["monthly_budget_ils"],
@@ -156,6 +168,7 @@ def test_manifest_pins_claude_first_production_boundary():
         "project": "klaus-embeddings-838733",
         "model": "gemini-embedding-2",
         "secret": "klaus-gemini-embedding-key",
+        "api_key_uid": "01ec21d8-6962-4c99-9baf-d9da003ad965",
         "daily_request_limit": 200,
         "monthly_budget_ils": 15,
         "budget_alert_thresholds_percent": [50, 90, 100],
@@ -190,7 +203,7 @@ def test_live_runtime_inventory_is_fetched_instead_of_copied_from_manifest(monke
             return False
 
         def read(self):
-            return b'{"observed_routes":["GET /health"],"connectors":["calendar"],"embedding":{"model":"gemini-embedding-2","daily_request_limit":200}}'
+            return b'{"observed_routes":["GET /health"],"connectors":["calendar"],"tombstones":["POST /telegram-webhook"],"embedding":{"model":"gemini-embedding-2","daily_request_limit":200}}'
 
     monkeypatch.setattr(
         "scripts.audit_production_drift.urllib.request.urlopen",
@@ -200,6 +213,7 @@ def test_live_runtime_inventory_is_fetched_instead_of_copied_from_manifest(monke
     assert _fetch_runtime_inventory("https://klaus.example") == {
         "observed_routes": ["GET /health"],
         "connectors": ["calendar"],
+        "tombstones": ["POST /telegram-webhook"],
         "runtime_embedding": {
             "model": "gemini-embedding-2",
             "daily_request_limit": 200,
@@ -275,6 +289,36 @@ def test_bucket_storage_class_normalizes_gcloud_snake_case():
                 {"name": "klaus-groq-key", "enabled_versions": 1}
             ),
             "forbidden secret remains usable",
+        ),
+        (
+            lambda snapshot, manifest: snapshot["service"]["secret_bindings"].update(
+                ANTHROPIC_API_KEY="klaus-anthropic-key"
+            ),
+            "forbidden environment variable present",
+        ),
+        (
+            lambda snapshot, manifest: snapshot["secrets"][0].update(
+                enabled_versions=0
+            ),
+            "retained secret has no enabled version",
+        ),
+        (
+            lambda snapshot, manifest: snapshot["secrets"][
+                [item["name"] for item in snapshot["secrets"]].index(
+                    manifest["embedding"]["secret"]
+                )
+            ].update(api_key_uid="wrong-key"),
+            "embedding secret API key identity drift",
+        ),
+        (
+            lambda snapshot, manifest: snapshot.update(tombstones=[]),
+            "expected 410 tombstone missing",
+        ),
+        (
+            lambda snapshot, manifest: snapshot["embedding"]["budget"].update(
+                amount_ils=999
+            ),
+            "embedding monthly budget drift",
         ),
     ],
 )

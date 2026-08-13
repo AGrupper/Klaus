@@ -120,6 +120,9 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
             findings.append(f"missing retained secret: {name}")
         elif int(secret.get("enabled_versions") or 0) < 1:
             findings.append(f"retained secret has no enabled version: {name}")
+    embedding_secret = live_secrets.get(manifest["embedding"]["secret"], {})
+    if embedding_secret.get("api_key_uid") != manifest["embedding"]["api_key_uid"]:
+        findings.append("embedding secret API key identity drift")
     for name in manifest["secrets"]["forbidden"]:
         secret = live_secrets.get(name)
         if secret and int(secret.get("enabled_versions") or 0) > 0:
@@ -176,9 +179,12 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
         )
     if snapshot.get("inventory_error"):
         findings.append(str(snapshot["inventory_error"]))
-    for route in manifest["routes"]["retained"] + manifest["routes"]["tombstones"]:
+    for route in manifest["routes"]["retained"]:
         if route not in snapshot.get("observed_routes", []):
             findings.append(f"expected route missing from runtime: {route}")
+    for route in manifest["routes"]["tombstones"]:
+        if route not in snapshot.get("tombstones", []):
+            findings.append(f"expected 410 tombstone missing from runtime: {route}")
     for connector in manifest["connectors"]:
         if connector not in snapshot.get("connectors", []):
             findings.append(f"retained connector missing: {connector}")
@@ -195,7 +201,11 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
         findings.append("embedding daily request limit drift")
     api_keys = live_embedding.get("api_keys", [])
     expected_api_services = ["generativelanguage.googleapis.com"]
-    if len(api_keys) != 1 or api_keys[0].get("services") != expected_api_services:
+    if (
+        len(api_keys) != 1
+        or api_keys[0].get("uid") != desired_embedding["api_key_uid"]
+        or api_keys[0].get("services") != expected_api_services
+    ):
         findings.append("embedding API key restriction drift")
     budget = live_embedding.get("budget", {})
     if budget.get("amount_ils") != desired_embedding["monthly_budget_ils"]:
@@ -317,11 +327,13 @@ def _fetch_runtime_inventory(public_url: str) -> dict[str, Any]:
         return {
             "observed_routes": [],
             "connectors": [],
+            "tombstones": [],
             "inventory_error": f"runtime inventory unavailable: {type(exc).__name__}",
         }
     return {
         "observed_routes": list(payload.get("observed_routes") or []),
         "connectors": list(payload.get("connectors") or []),
+        "tombstones": list(payload.get("tombstones") or []),
         "runtime_embedding": dict(payload.get("embedding") or {}),
         "inventory_error": payload.get("inventory_error"),
     }
@@ -358,6 +370,7 @@ def _capture_embedding_state(manifest: dict[str, Any]) -> dict[str, Any]:
         "billing_enabled": billing.get("billingEnabled") is True,
         "api_keys": [
             {
+                "uid": key.get("uid"),
                 "services": sorted(
                     target.get("service")
                     for target in key.get("restrictions", {}).get("apiTargets", [])
@@ -407,11 +420,23 @@ def capture_live_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         | set(manifest["secrets"]["forbidden"])
     )
     existing = {_basename(item.get("name", "")) for item in listed_secrets or []}
-    secrets = [
-        {"name": name, "enabled_versions": _count_enabled_versions(project, name)}
+    secret_metadata = {
+        name: _gcloud_json("secrets", "describe", name, "--project", project)
         for name in secret_names
         if name in existing
-    ]
+    }
+    secrets = []
+    for name in secret_names:
+        if name not in existing:
+            continue
+        labels = secret_metadata[name].get("labels") or {}
+        secrets.append(
+            {
+                "name": name,
+                "enabled_versions": _count_enabled_versions(project, name),
+                "api_key_uid": labels.get("api-key-uid"),
+            }
+        )
     secret_iam = {
         name: _gcloud_json(
             "secrets",

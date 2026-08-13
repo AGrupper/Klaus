@@ -521,12 +521,43 @@ class TestSPAMountRegression:
             import interfaces.web_server as ws  # noqa: PLC0415
             from fastapi.testclient import TestClient  # noqa: PLC0415
 
+            registered_tools = {
+                "list_calendar_events",
+                "create_calendar_event",
+                "task_list",
+                "task_create",
+                "notion_search",
+                "notion_create_page",
+                "fetch_garmin_today",
+                "get_strength_progress",
+                "fetch_weather",
+                "recall",
+                "remember",
+                "query_health_database",
+                "get_routine_status",
+                "get_push_health",
+            }
+            manager = lambda tools: type(
+                "ToolManager", (), {"_tools": {name: object() for name in tools}}
+            )()
+            server = lambda tools: type(
+                "Server", (), {"_tool_manager": manager(tools)}
+            )()
+            ws._mcp_bundle = type(
+                "Bundle",
+                (),
+                {
+                    "interactive": server(registered_tools),
+                    "routine": server(registered_tools),
+                },
+            )()
             response = TestClient(ws.app).get("/health/inventory")
 
         assert response.status_code == 200
         payload = response.json()
         assert "GET /health/inventory" in payload["observed_routes"]
         assert "POST /telegram-webhook" in payload["observed_routes"]
+        assert "POST /telegram-webhook" in payload["tombstones"]
         assert "calendar" in payload["connectors"]
         assert "postgresql" in payload["connectors"]
 

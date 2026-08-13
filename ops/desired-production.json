@@ -190,6 +190,7 @@
     "project": "klaus-embeddings-838733",
     "model": "gemini-embedding-2",
     "secret": "klaus-gemini-embedding-key",
+    "api_key_uid": "01ec21d8-6962-4c99-9baf-d9da003ad965",
     "daily_request_limit": 200,
     "monthly_budget_ils": 15,
     "budget_alert_thresholds_percent": [50, 90, 100]

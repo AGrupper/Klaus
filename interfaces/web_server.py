@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import importlib.util
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -121,20 +120,20 @@ def _subscription_capability_gate() -> dict:
 
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
 
-_CONNECTOR_MODULES = {
-    "calendar": "mcp_tools.calendar_tool",
-    "google_routes": "mcp_tools.routes_tool",
-    "things": "mcp_tools.things_tool",
-    "notion": "mcp_tools.notion_tool",
-    "garmin": "mcp_tools.garmin_tool",
-    "hevy": "mcp_tools.hevy_tool",
-    "healthkit_lifesum": "mcp_tools.healthkit_tool",
-    "weather": "mcp_tools.weather_tool",
-    "pinecone": "memory.pinecone_db",
-    "postgresql": "mcp_tools.database_tool",
-    "firestore": "memory.firestore_db",
-    "web_push": "core.push_sender",
-    "cloud_tasks": "core.routine_dispatch",
+_CONNECTOR_EVIDENCE = {
+    "calendar": {"tools": {"list_calendar_events", "create_calendar_event"}},
+    "google_routes": {"routes": {"GET /api/today"}},
+    "things": {"tools": {"task_list", "task_create"}},
+    "notion": {"tools": {"notion_search", "notion_create_page"}},
+    "garmin": {"tools": {"fetch_garmin_today"}},
+    "hevy": {"tools": {"get_strength_progress"}},
+    "healthkit_lifesum": {"routes": {"POST /cron/healthkit-sync"}},
+    "weather": {"tools": {"fetch_weather"}},
+    "pinecone": {"tools": {"recall", "remember"}},
+    "postgresql": {"tools": {"query_health_database"}},
+    "firestore": {"tools": {"get_routine_status"}},
+    "web_push": {"tools": {"get_push_health"}, "routes": {"POST /api/push/subscribe"}},
+    "cloud_tasks": {"routes": {"POST /internal/routine-fallback"}},
 }
 
 
@@ -148,15 +147,21 @@ def _runtime_inventory() -> dict:
                 routes.add(f"{method} {path}")
     if _mcp_bundle is not None:
         routes.update(f"POST {path}" for path in _MCP_MOUNT_PATHS)
-    connectors: set[str] = set()
-    for name, module in _CONNECTOR_MODULES.items():
-        try:
-            available = importlib.util.find_spec(module) is not None
-        except (ImportError, ValueError):
-            available = module in __import__("sys").modules
-        if available:
-            connectors.add(name)
+    registered_tools: set[str] = set()
     if _mcp_bundle is not None:
+        registered_tools.update(
+            getattr(_mcp_bundle.interactive, "_tool_manager")._tools
+        )
+        registered_tools.update(getattr(_mcp_bundle.routine, "_tool_manager")._tools)
+    connectors = {
+        name
+        for name, evidence in _CONNECTOR_EVIDENCE.items()
+        if set(evidence.get("tools", ())).issubset(registered_tools)
+        and set(evidence.get("routes", ())).issubset(routes)
+    }
+    if _mcp_bundle is not None and _MCP_MOUNT_PATHS.issubset(
+        {route.removeprefix("POST ") for route in routes if route.startswith("POST ")}
+    ):
         connectors.add("claude_mcp")
     return {
         "observed_routes": sorted(routes),
@@ -167,6 +172,14 @@ def _runtime_inventory() -> dict:
                 "memory.pinecone_db", fromlist=["EMBEDDING_DAILY_REQUEST_LIMIT"]
             ).EMBEDDING_DAILY_REQUEST_LIMIT,
         },
+        "tombstones": sorted(
+            f"{method} {route.path}"
+            for route in app.routes
+            if getattr(route, "endpoint", None)
+            in {retired_cloud_agent_runtime, retired_hub_chat_runtime}
+            for method in getattr(route, "methods", None) or ()
+            if method not in {"HEAD", "OPTIONS"}
+        ),
     }
 
 
