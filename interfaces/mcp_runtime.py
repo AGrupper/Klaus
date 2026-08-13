@@ -53,7 +53,7 @@ def _resolve_single_user_id() -> int:
 
 
 def dispatch_for_single_user(tool_name: str, arguments: dict) -> Any:
-    """Set Klaus's identity before running a legacy core tool dispatcher call."""
+    """Set Klaus's identity before running a canonical tool dispatcher call."""
     from core.tools import dispatch, set_current_user_id
 
     set_current_user_id(_resolve_single_user_id())

@@ -47,7 +47,7 @@ _STATE_DOC = "state"
 
 
 # ------------------------------------------------------------------ #
-# Firestore helpers (mirror core/chat_ingest)                        #
+# Firestore helpers                                                  #
 # ------------------------------------------------------------------ #
 
 def _make_firestore_client():

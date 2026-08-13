@@ -24,7 +24,7 @@ class MemoryTool:
         """Store a memory and return a confirmation dict.
 
         Args:
-            user_id: Telegram user ID.
+            user_id: Canonical Klaus user ID.
             content: Text to store (max 2000 chars).
             kind:    "fact" or "chunk".
 

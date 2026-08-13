@@ -330,7 +330,7 @@ class KlausMCPGateway:
 
     @staticmethod
     def _outward_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-        """Sanitize legacy cached results only where the routine-run contract applies."""
+        """Sanitize stored results only where the routine-run contract applies."""
         if tool_name != "publish_review" or "run" not in result:
             return result
         from core.review_delivery import public_routine_run
@@ -424,7 +424,7 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
 
     # MCPServer derives the published JSON schema from the callable signature.
     # Keep the stable outer ``arguments`` envelope used by the gateway, but
-    # annotate it with the canonical legacy tool schema so clients can see the
+    # annotate it with the canonical retained tool schema so clients can see the
     # exact field names, types, and required set.  Without this, every tool is
     # advertised as an unrestricted object and models must guess parameter
     # names (for example start_date instead of time_min_iso).

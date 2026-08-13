@@ -1,5 +1,5 @@
 # =====================================================================
-# Klaus — Personal Hybrid Agent
+# Klaus — Claude-first Personal OS
 # Python 3.11+
 # =====================================================================
 
@@ -12,8 +12,6 @@ google-api-python-client>=2.140    # Calendar service builder
 # --- Cloud state (Firestore: Things 3 queue + user profile) ---
 google-cloud-firestore>=2.18
 google-cloud-secret-manager>=2.20  # OAuth token persistence on Cloud Run
-google-cloud-monitoring>=2.20      # Cloud Monitoring: heartbeat 5xx metrics
-google-cloud-run>=0.10             # Cloud Run revision checks (Phase 14)
 google-cloud-tasks>=2.16           # Routine timeout fallback dispatch
 
 # --- Vector memory (Pinecone: unstructured RAG) ---

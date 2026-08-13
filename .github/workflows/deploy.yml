@@ -57,9 +57,6 @@ jobs:
       - name: Push Docker image to Artifact Registry
         run: docker push "$IMAGE"
 
-      # TODO: Set CHAT_LOGS_BUCKET and NOTION_CHAT_LOG_DB_ID as GitHub Actions secrets
-      # (or repository variables) and reference them here before going to production.
-      # For now they are wired as empty strings so the env vars exist in Cloud Run.
       - name: Deploy to Cloud Run
         run: |
           # --service-account: runs as the runtime SA (datastore.user +
