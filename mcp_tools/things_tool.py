@@ -391,11 +391,27 @@ def apply_records(
 # ------------------------------------------------------------------ #
 
 def _notes_text(payload: dict) -> str | None:
-    """Extract plain text from the ``nt`` note envelope ``{_t, ch, v, t}``."""
+    """Extract plain text from the ``nt`` note envelope.
+
+    Things uses **two** note shapes, both live in the same account:
+
+      * ``t = 1`` — flat: ``{"_t": "tx", "t": 1, "ch": <crc32>, "v": <text>}``
+      * ``t = 2`` — paragraphs: ``{"_t": "tx", "t": 2, "ps": [{"r": <text>,
+        "ch": <crc32>, "l": 0, "p": 0}, ...]}``
+
+    Reading only ``v`` silently returns an empty note for every ``t = 2`` record,
+    which is how notes Amit had actually written came back blank.
+    """
     note = payload.get("nt")
-    if isinstance(note, dict):
-        return note.get("v") or None
-    return note or None
+    if not isinstance(note, dict):
+        return note or None
+
+    if note.get("ps"):
+        text = "\n".join(
+            para.get("r", "") for para in note["ps"] if isinstance(para, dict)
+        )
+        return text or None
+    return note.get("v") or None
 
 
 def is_live_todo(payload: dict) -> bool:
@@ -633,6 +649,92 @@ def build_create(
         "md": now,
     }
     return uuid, {"t": OP_CREATE, "e": CLASS_TASK, "p": payload}
+
+
+_CHECKLIST_DEFAULTS = {"ss": SS_OPEN, "sp": None, "lt": False,
+                       "xx": {"sn": {}, "_t": "oo"}}
+
+
+def build_checklist_items(task_uuid: str, titles: list[str]) -> dict[str, dict]:
+    """Build ``ChecklistItem3`` create records for a to-do's checklist.
+
+    Checklist rows are **separate entities**, not a field on the to-do: each one
+    points back at its parent through ``ts``.  ``ix`` orders them; Things uses
+    descending negatives, so the sequence here keeps the given order.
+
+    Returns ``{uuid: record}``, ready to merge into a commit alongside the to-do.
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    records: dict[str, dict] = {}
+    for position, title in enumerate(titles):
+        records[new_uuid()] = {
+            "t": OP_CREATE,
+            "e": CLASS_CHECKLIST,
+            "p": {**_CHECKLIST_DEFAULTS, "tt": title, "ts": [task_uuid],
+                  "ix": -(position + 1) * 100, "cd": now, "md": now},
+        }
+    return records
+
+
+# Recurrence cadences, read off real rules in the live account.  `fu` selects the
+# unit and `of` carries the matching offset key — the two must agree.
+_CADENCES = {
+    "daily":   {"fu": 16,  "of": [{"dy": 0}]},
+    "weekly":  {"fu": 256, "of": [{"wd": 0}]},
+    "monthly": {"fu": 8,   "of": [{"dy": 0}]},
+    "yearly":  {"fu": 4,   "of": [{"dy": 0}]},
+}
+
+# Things treats this as "no end date".
+_NO_END_DATE = 64092211200
+
+
+def build_recurrence(cadence: str, start_iso: str) -> dict:
+    """Build an ``rr`` recurrence rule.
+
+    Only ``daily`` and ``weekly`` are confirmed against real rules in the live
+    account; ``monthly`` and ``yearly`` are inferred from the same shape and are
+    **not** verified.  Verify one in the app before relying on them.
+
+    Raises:
+        ValueError: On an unknown cadence.
+    """
+    if cadence not in _CADENCES:
+        raise ValueError(
+            f"unknown cadence {cadence!r} — expected one of {sorted(_CADENCES)}"
+        )
+    anchor = iso_to_day(start_iso)
+    return {
+        **_CADENCES[cadence],
+        "rrv": 4, "tp": 0, "ts": 0, "rc": 0, "fa": 1,
+        "ia": anchor, "sr": anchor, "ed": _NO_END_DATE,
+    }
+
+
+def build_repeating_create(
+    title: str,
+    cadence: str,
+    start_iso: str,
+    **kwargs,
+) -> tuple[str, dict]:
+    """Build the **template** for a repeating to-do.  Returns ``(uuid, record)``.
+
+    A repeating to-do is two kinds of entity: this template, which carries ``rr``
+    and lives in Someday (``st = 2``) with no scheduled date of its own, and the
+    instances Things spawns from it, which carry ``rt`` pointing back here.
+
+    **Klaus creates only the template.**  Things generates every instance itself —
+    creating them here would duplicate what the app already does.
+    """
+    uuid, record = build_create(title, **kwargs)
+    record["p"].update({
+        "rr": build_recurrence(cadence, start_iso),
+        "st": ST_SOMEDAY,          # templates live in Someday, not Anytime
+        "sr": None,                # the template itself is never scheduled
+        "tir": iso_to_day(start_iso),
+        "icsd": iso_to_day(start_iso),   # when the next instance is due to spawn
+    })
+    return uuid, record
 
 
 def build_edit(fields: dict) -> dict:

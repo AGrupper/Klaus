@@ -319,6 +319,20 @@ def test_notes_extracted_from_envelope():
     assert things.normalize_task("t1", payload)["notes"] == "note body"
 
 
+def test_notes_read_from_the_paragraph_format():
+    """Things uses two note shapes; reading only `v` blanks every t=2 note."""
+    payload = _task(nt={"_t": "tx", "t": 2, "ps": [
+        {"r": "first line", "ch": 1, "l": 0, "p": 0},
+        {"r": "second line", "ch": 2, "l": 0, "p": 0},
+    ]})
+    assert things.normalize_task("t1", payload)["notes"] == "first line\nsecond line"
+
+
+def test_empty_paragraph_note_reads_as_none():
+    payload = _task(nt={"_t": "tx", "t": 2, "ps": []})
+    assert things.normalize_task("t1", payload)["notes"] is None
+
+
 def test_completed_task_maps_to_completing_status():
     out = things.normalize_task("t1", _task(ss=things.SS_COMPLETED, sp=1776062503.9))
     assert out["status"] == "completing"
@@ -464,6 +478,72 @@ def test_create_embeds_a_correct_note_checksum():
     import zlib
     _, rec = things.build_create("x", notes="hello")
     assert rec["p"]["nt"]["ch"] == zlib.crc32(b"hello")
+
+
+# ------------------------------------------------------------------ #
+# Checklists and recurrence                                           #
+# ------------------------------------------------------------------ #
+
+def test_checklist_items_are_separate_entities_linked_by_ts():
+    """Checklist rows are ChecklistItem3 records, not a field on the to-do."""
+    records = things.build_checklist_items("task-1", ["milk", "eggs"])
+    assert len(records) == 2
+    for record in records.values():
+        assert record["e"] == things.CLASS_CHECKLIST
+        assert record["p"]["ts"] == ["task-1"]
+        assert record["p"]["ss"] == things.SS_OPEN
+
+
+def test_checklist_items_preserve_given_order():
+    records = things.build_checklist_items("t", ["one", "two", "three"])
+    ordered = sorted(records.values(), key=lambda r: -r["p"]["ix"])
+    assert [r["p"]["tt"] for r in ordered] == ["one", "two", "three"]
+
+
+def test_empty_checklist_builds_nothing():
+    assert things.build_checklist_items("t", []) == {}
+
+
+@pytest.mark.parametrize("cadence,fu,offset", [
+    ("daily", 16, {"dy": 0}),
+    ("weekly", 256, {"wd": 0}),
+])
+def test_recurrence_cadence_matches_observed_rules(cadence, fu, offset):
+    """daily and weekly are confirmed against real rules in the live account."""
+    rule = things.build_recurrence(cadence, "2026-08-11")
+    assert rule["fu"] == fu
+    assert rule["of"] == [offset]
+    assert rule["rrv"] == 4
+
+
+def test_recurrence_rejects_unknown_cadence():
+    with pytest.raises(ValueError):
+        things.build_recurrence("fortnightly", "2026-08-11")
+
+
+def test_repeating_template_lives_in_someday_and_is_never_scheduled():
+    """Templates carry rr and sit in Someday; only spawned instances get dates."""
+    _, record = things.build_repeating_create("water plants", "daily", "2026-08-11")
+    payload = record["p"]
+    assert payload["rr"]["fu"] == 16
+    assert payload["st"] == things.ST_SOMEDAY
+    assert payload["sr"] is None
+    assert payload["icsd"] == things.iso_to_day("2026-08-11")
+
+
+def test_repeating_template_carries_no_instance_link():
+    """rt belongs to spawned instances; a template must not claim one."""
+    _, record = things.build_repeating_create("x", "weekly", "2026-08-11")
+    assert record["p"]["rt"] == []
+
+
+def test_repeating_template_keeps_notes_and_tags():
+    import zlib
+    _, record = things.build_repeating_create(
+        "x", "daily", "2026-08-11", notes="body", tag_ids=["tag-1"],
+    )
+    assert record["p"]["nt"]["ch"] == zlib.crc32(b"body")
+    assert record["p"]["tg"] == ["tag-1"]
 
 
 def test_edit_is_sparse_so_unknown_fields_survive():
