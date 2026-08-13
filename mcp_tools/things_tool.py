@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import os
+import zlib
 from datetime import date, datetime, timezone
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -576,11 +577,21 @@ def new_uuid() -> str:
 def build_note(text: str | None) -> dict:
     """Build the ``nt`` note envelope.
 
-    The real client stores a checksum in ``ch``; the algorithm is unknown, and 0
-    is used here.  Verify note round-trips explicitly during live testing — if
-    Things rejects or mangles notes, this is the first thing to suspect.
+    ``ch`` is the **CRC32 of the note text encoded as UTF-8** — verified against
+    all 64 non-empty notes in the live account, and consistent with the 142 empty
+    notes that carry ``ch = 0`` (``crc32(b"") == 0``).
+
+    This must be correct.  Writing a note whose checksum does not match its text
+    does not fail the request: Things accepts it, then **crashes on launch** when
+    the sync client replays that record — on every device, with an assertion
+    failure inside ``LegacySCHistoryPerformSync``.  Recovering means appending a
+    delete record for the poisoned item, because the journal is append-only.
+
+    Sending ``ch = 0`` looks harmless in testing because it is genuinely correct
+    for an empty note; it only detonates once real text is attached.
     """
-    return {"_t": "tx", "ch": 0, "v": text or "", "t": 1}
+    body = text or ""
+    return {"_t": "tx", "ch": zlib.crc32(body.encode("utf-8")), "v": body, "t": 1}
 
 
 def build_create(

@@ -42,6 +42,41 @@ def _clear_firestore_read_cache():
         mod._READ_CACHE.clear()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_things_cloud(monkeypatch):
+    """Keep the test suite off Amit's real Things account.
+
+    ``TASK_BACKEND`` defaults to ``things``, so any test that exercises a task
+    path without explicitly patching the store would otherwise build a real
+    ``ThingsTaskStore`` and hit Things Cloud over the network — using whatever
+    credentials happen to be in the developer's ``.env``. That actually happened:
+    an autonomous-tick test asserting ``[]`` came back holding a live to-do
+    pulled from the real account, and the suite behaved differently locally than
+    in CI.
+
+    Clearing the credentials makes an unpatched store raise ``ThingsAuthError``
+    on the first call, before any socket is opened. Reads are documented never to
+    raise, so they degrade to empty — exactly what those tests expect. Tests that
+    genuinely want Things behaviour patch ``things_tool`` or set the env vars
+    themselves, and both still work.
+
+    The module-level mirror cache is cleared on both sides so state cannot leak
+    between tests.
+    """
+    monkeypatch.delenv("THINGS_EMAIL", raising=False)
+    monkeypatch.delenv("THINGS_PASSWORD", raising=False)
+    monkeypatch.delenv("THINGS_WRITE_ENABLED", raising=False)
+
+    def _reset():
+        mod = sys.modules.get("memory.things_store")
+        if mod is not None and hasattr(mod, "reset_cache"):
+            mod.reset_cache()
+
+    _reset()
+    yield
+    _reset()
+
+
 @pytest.fixture
 def isolated_modules():
     """Snapshot ``sys.modules``; on teardown drop keys the test added and restore

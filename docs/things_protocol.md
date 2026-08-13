@@ -181,7 +181,7 @@ Two distinct encodings, do not mix them:
 | Key | Type | Meaning | Klaus mapping |
 |---|---|---|---|
 | `tt` | str | title | `title` |
-| `nt` | dict | notes: `{"_t":"tx","v":<text>,"ch":<checksum>,"t":1}` | `notes` (read `.v`) |
+| `nt` | dict | notes — see the checksum warning below | `notes` (read `.v`) |
 | `sr` | day\|null | **scheduled date** ("when") | `due_date` |
 | `dd` | day\|null | **deadline** (hard due) | `hard_deadline_at` |
 | `ato` | int\|null | reminder, seconds after midnight (`36000` = 10:00) | `due_time` |
@@ -206,6 +206,32 @@ Two distinct encodings, do not mix them:
 
 **Constant across all 423 rows** — echo back unchanged on write, never synthesize:
 `do=0`, `sb=0`, `dl=[]`, `dds=null`, `rmd=null`, `acrd=null`, `rp=null`, `icp=false`.
+
+### ☠️ Notes: `ch` must be the CRC32 of the text — a wrong value crashes the app
+
+```json
+"nt": {"_t": "tx", "v": "<note text>", "ch": <crc32 of v as utf-8>, "t": 1}
+```
+
+Verified against **all 64** non-empty notes in the live account, and consistent
+with the 142 empty ones (`ch = 0`, and `crc32(b"") == 0`).
+
+**This is the single most dangerous field in the protocol.** Writing a note whose
+checksum does not match its text is accepted by the server without error. The
+damage lands later: every Things client that replays that record **crashes on
+launch**, on every device, with an assertion failure (`EXC_BREAKPOINT`, `brk 1`)
+inside `LegacySCHistoryPerformSync`. The user cannot open the app to fix it.
+
+Because the journal is append-only the record cannot be edited away — recovery is
+to append a delete (`{"t": 2, "e": "Task6", "p": {}}`) for the poisoned UUID and
+hope clients fold the batch before validating. That worked here, but it is luck,
+not a guarantee. The fallback is Cultured Code support resetting the history.
+
+The trap is that a placeholder `ch = 0` looks completely fine in testing: it is
+genuinely correct for an empty note, so reads round-trip and nothing complains.
+It only detonates the first time real text is attached.
+
+*(2026-08-13: this took down Amit's Mac and iPhone simultaneously.)*
 
 ### Recurrence
 

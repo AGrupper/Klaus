@@ -419,6 +419,53 @@ def test_create_ids_are_unique_and_things_shaped():
     assert all(len(i) == 22 and i.isalnum() for i in ids)
 
 
+# ------------------------------------------------------------------ #
+# Note checksum — a wrong value crashes the Things client on launch   #
+# ------------------------------------------------------------------ #
+
+def test_note_checksum_is_crc32_of_utf8_text():
+    """Verified against all 64 non-empty notes in the live account.
+
+    A mismatched checksum is accepted by the server and then crashes every
+    Things client replaying that record. This must never regress.
+    """
+    import zlib
+    text = "Created by Klaus to verify the Things Cloud write path."
+    assert things.build_note(text)["ch"] == zlib.crc32(text.encode("utf-8"))
+
+
+def test_empty_note_checksum_is_zero():
+    """142 empty notes in the account carry ch=0, and crc32(b"") == 0."""
+    assert things.build_note("")["ch"] == 0
+    assert things.build_note(None)["ch"] == 0
+
+
+def test_note_checksum_is_never_a_placeholder_for_real_text():
+    """The exact bug: ch=0 is right for an empty note and catastrophic with text."""
+    assert things.build_note("any real note body")["ch"] != 0
+
+
+@pytest.mark.parametrize("text", [
+    "plain ascii",
+    "עברית עם ניקוד",
+    "emoji 🎓 and — punctuation",
+    "multi\nline\nnotes",
+    "x" * 5000,
+])
+def test_note_checksum_handles_unicode_and_length(text):
+    import zlib
+    note = things.build_note(text)
+    assert note["ch"] == zlib.crc32(text.encode("utf-8"))
+    assert note["v"] == text
+    assert note["_t"] == "tx"
+
+
+def test_create_embeds_a_correct_note_checksum():
+    import zlib
+    _, rec = things.build_create("x", notes="hello")
+    assert rec["p"]["nt"]["ch"] == zlib.crc32(b"hello")
+
+
 def test_edit_is_sparse_so_unknown_fields_survive():
     rec = things.build_edit({"tt": "new title"})
     assert set(rec["p"]) == {"tt", "md"}
