@@ -190,6 +190,7 @@
     "project": "klaus-embeddings-838733",
     "model": "gemini-embedding-2",
     "secret": "klaus-gemini-embedding-key",
+    "daily_request_limit": 200,
     "monthly_budget_ils": 15,
     "budget_alert_thresholds_percent": [50, 90, 100]
   },
@@ -254,6 +255,7 @@
   "routes": {
     "retained": [
       "GET /health",
+      "GET /health/inventory",
       "POST /mcp/interactive",
       "POST /mcp/routine",
       "POST /trigger/nightly",

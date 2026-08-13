@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import importlib.util
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -120,6 +121,54 @@ def _subscription_capability_gate() -> dict:
 
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
 
+_CONNECTOR_MODULES = {
+    "calendar": "mcp_tools.calendar_tool",
+    "google_routes": "mcp_tools.routes_tool",
+    "things": "mcp_tools.things_tool",
+    "notion": "mcp_tools.notion_tool",
+    "garmin": "mcp_tools.garmin_tool",
+    "hevy": "mcp_tools.hevy_tool",
+    "healthkit_lifesum": "mcp_tools.healthkit_tool",
+    "weather": "mcp_tools.weather_tool",
+    "pinecone": "memory.pinecone_db",
+    "postgresql": "mcp_tools.database_tool",
+    "firestore": "memory.firestore_db",
+    "web_push": "core.push_sender",
+    "cloud_tasks": "core.routine_dispatch",
+}
+
+
+def _runtime_inventory() -> dict:
+    """Describe capabilities actually registered in this running revision."""
+    routes: set[str] = set()
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        for method in getattr(route, "methods", None) or ():
+            if method not in {"HEAD", "OPTIONS"}:
+                routes.add(f"{method} {path}")
+    if _mcp_bundle is not None:
+        routes.update(f"POST {path}" for path in _MCP_MOUNT_PATHS)
+    connectors: set[str] = set()
+    for name, module in _CONNECTOR_MODULES.items():
+        try:
+            available = importlib.util.find_spec(module) is not None
+        except (ImportError, ValueError):
+            available = module in __import__("sys").modules
+        if available:
+            connectors.add(name)
+    if _mcp_bundle is not None:
+        connectors.add("claude_mcp")
+    return {
+        "observed_routes": sorted(routes),
+        "connectors": sorted(connectors),
+        "embedding": {
+            "model": __import__("memory.pinecone_db", fromlist=["EMBEDDING_MODEL"]).EMBEDDING_MODEL,
+            "daily_request_limit": __import__(
+                "memory.pinecone_db", fromlist=["EMBEDDING_DAILY_REQUEST_LIMIT"]
+            ).EMBEDDING_DAILY_REQUEST_LIMIT,
+        },
+    }
+
 
 @app.middleware("http")
 async def _normalize_mcp_mount_path(request: Request, call_next):
@@ -216,6 +265,12 @@ async def health_check() -> JSONResponse:
         JSONResponse: ``{"status": "ok"}`` with HTTP status 200.
     """
     return JSONResponse(content={"status": "ok"})
+
+
+@app.get("/health/inventory")
+async def health_inventory() -> JSONResponse:
+    """Expose non-sensitive live capability metadata for drift audits."""
+    return JSONResponse(content={"status": "ok", **_runtime_inventory()})
 
 
 @app.post("/telegram-webhook")

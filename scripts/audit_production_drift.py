@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -72,17 +74,19 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
             findings.append(
                 f"environment drift for {key}: expected {expected!r}, got {actual!r}"
             )
+    bindings = live_service.get("secret_bindings", {})
     for key in desired_service["forbidden_environment"]:
-        if key in environment:
+        if key in environment or key in bindings:
             findings.append(f"forbidden environment variable present: {key}")
 
-    bindings = live_service.get("secret_bindings", {})
     for variable, secret_name in desired_service["secret_bindings"].items():
         if bindings.get(variable) != secret_name:
             findings.append(
                 f"secret binding drift for {variable}: expected {secret_name!r}, "
                 f"got {bindings.get(variable)!r}"
             )
+    for variable in sorted(set(bindings) - set(desired_service["secret_bindings"])):
+        findings.append(f"unexpected secret binding present: {variable}")
 
     live_jobs = {job.get("name"): job for job in snapshot.get("schedulers", [])}
     for expected in manifest["schedulers"]["required"]:
@@ -111,11 +115,14 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
 
     live_secrets = {item.get("name"): item for item in snapshot.get("secrets", [])}
     for name in manifest["secrets"]["runtime_access"]:
-        if name not in live_secrets:
+        secret = live_secrets.get(name)
+        if not secret:
             findings.append(f"missing retained secret: {name}")
+        elif int(secret.get("enabled_versions") or 0) < 1:
+            findings.append(f"retained secret has no enabled version: {name}")
     for name in manifest["secrets"]["forbidden"]:
         secret = live_secrets.get(name)
-        if secret and int(secret.get("usable_versions") or 0) > 0:
+        if secret and int(secret.get("enabled_versions") or 0) > 0:
             findings.append(f"forbidden secret remains usable: {name}")
 
     runtime_member = (
@@ -167,12 +174,37 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
             "missing Artifact Registry cleanup policies: "
             + ", ".join(sorted(wanted_policies - actual_policies))
         )
+    if snapshot.get("inventory_error"):
+        findings.append(str(snapshot["inventory_error"]))
     for route in manifest["routes"]["retained"] + manifest["routes"]["tombstones"]:
         if route not in snapshot.get("observed_routes", []):
             findings.append(f"expected route missing from runtime: {route}")
     for connector in manifest["connectors"]:
         if connector not in snapshot.get("connectors", []):
             findings.append(f"retained connector missing: {connector}")
+
+    desired_embedding = manifest["embedding"]
+    live_embedding = snapshot.get("embedding", {})
+    if live_embedding.get("project") != desired_embedding["project"]:
+        findings.append("embedding project drift")
+    if live_embedding.get("billing_enabled") is not True:
+        findings.append("embedding project billing is not enabled")
+    if live_embedding.get("model") != desired_embedding["model"]:
+        findings.append("embedding model drift")
+    if live_embedding.get("daily_request_limit") != desired_embedding["daily_request_limit"]:
+        findings.append("embedding daily request limit drift")
+    api_keys = live_embedding.get("api_keys", [])
+    expected_api_services = ["generativelanguage.googleapis.com"]
+    if len(api_keys) != 1 or api_keys[0].get("services") != expected_api_services:
+        findings.append("embedding API key restriction drift")
+    budget = live_embedding.get("budget", {})
+    if budget.get("amount_ils") != desired_embedding["monthly_budget_ils"]:
+        findings.append("embedding monthly budget drift")
+    if budget.get("thresholds_percent") != desired_embedding["budget_alert_thresholds_percent"]:
+        findings.append("embedding budget thresholds drift")
+    project_number = live_embedding.get("project_number")
+    if not project_number or f"projects/{project_number}" not in budget.get("projects", []):
+        findings.append("embedding budget is not scoped to the embedding project")
     return findings
 
 
@@ -254,8 +286,8 @@ def _normalize_bucket_storage_class(raw: dict[str, Any]) -> str | None:
     )
 
 
-def _count_usable_versions(project: str, name: str) -> int:
-    """Count enabled or disabled secret versions without reading payloads."""
+def _count_enabled_versions(project: str, name: str) -> int:
+    """Count enabled secret versions without reading payloads."""
     versions = _gcloud_json(
         "secrets",
         "versions",
@@ -267,8 +299,82 @@ def _count_usable_versions(project: str, name: str) -> int:
     return sum(
         1
         for version in versions or []
-        if str(version.get("state", "")).upper() in {"ENABLED", "DISABLED"}
+        if str(version.get("state", "")).upper() == "ENABLED"
     )
+
+
+def _fetch_runtime_inventory(public_url: str) -> dict[str, Any]:
+    """Read the deployed app's self-reported route and connector inventory."""
+    request = urllib.request.Request(
+        public_url.rstrip("/") + "/health/inventory",
+        headers={"Accept": "application/json"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        return {
+            "observed_routes": [],
+            "connectors": [],
+            "inventory_error": f"runtime inventory unavailable: {type(exc).__name__}",
+        }
+    return {
+        "observed_routes": list(payload.get("observed_routes") or []),
+        "connectors": list(payload.get("connectors") or []),
+        "runtime_embedding": dict(payload.get("embedding") or {}),
+        "inventory_error": payload.get("inventory_error"),
+    }
+
+
+def _capture_embedding_state(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Read dedicated embedding-project key, billing, and budget metadata."""
+    desired = manifest["embedding"]
+    project = desired["project"]
+    project_meta = _gcloud_json("projects", "describe", project)
+    project_number = str(project_meta.get("projectNumber") or "")
+    billing = _gcloud_json("billing", "projects", "describe", project)
+    keys = _gcloud_json("services", "api-keys", "list", "--project", project)
+    billing_account = _basename(billing.get("billingAccountName", ""))
+    budgets = _gcloud_json(
+        "billing", "budgets", "list", "--billing-account", billing_account
+    )
+    matched_budget = next(
+        (
+            budget
+            for budget in budgets or []
+            if f"projects/{project_number}"
+            in budget.get("budgetFilter", {}).get("projects", [])
+        ),
+        {},
+    )
+    amount = matched_budget.get("amount", {}).get("specifiedAmount", {})
+    amount_ils = None
+    if amount.get("currencyCode") == "ILS":
+        amount_ils = int(amount.get("units") or 0)
+    return {
+        "project": project,
+        "project_number": project_number,
+        "billing_enabled": billing.get("billingEnabled") is True,
+        "api_keys": [
+            {
+                "services": sorted(
+                    target.get("service")
+                    for target in key.get("restrictions", {}).get("apiTargets", [])
+                    if target.get("service")
+                )
+            }
+            for key in keys or []
+        ],
+        "budget": {
+            "amount_ils": amount_ils,
+            "projects": matched_budget.get("budgetFilter", {}).get("projects", []),
+            "thresholds_percent": sorted(
+                int(float(rule.get("thresholdPercent", 0)) * 100)
+                for rule in matched_budget.get("thresholdRules", [])
+            ),
+        },
+    }
 
 
 def capture_live_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -302,7 +408,7 @@ def capture_live_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
     )
     existing = {_basename(item.get("name", "")) for item in listed_secrets or []}
     secrets = [
-        {"name": name, "usable_versions": _count_usable_versions(project, name)}
+        {"name": name, "enabled_versions": _count_enabled_versions(project, name)}
         for name in secret_names
         if name in existing
     ]
@@ -373,6 +479,9 @@ def capture_live_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         for binding in bucket_policy.get("bindings", [])
         if str(binding.get("role", "")).startswith("roles/storage.")
     )
+    runtime_inventory = _fetch_runtime_inventory(service["public_url"])
+    embedding = _capture_embedding_state(manifest)
+    embedding.update(runtime_inventory.pop("runtime_embedding", {}))
     return {
         "service": _normalize_service(raw_service, manifest),
         "schedulers": [_normalize_scheduler(job) for job in jobs or []],
@@ -392,11 +501,8 @@ def capture_live_snapshot(manifest: dict[str, Any]) -> dict[str, Any]:
         "artifact_cleanup_policy_names": sorted(
             (repository.get("cleanupPolicies") or {}).keys()
         ),
-        # Route/connector lists are checked against the checked-in app in CI;
-        # GCP does not expose application route metadata.
-        "observed_routes": list(manifest["routes"]["retained"])
-        + list(manifest["routes"]["tombstones"]),
-        "connectors": list(manifest["connectors"]),
+        "embedding": embedding,
+        **runtime_inventory,
     }
 
 

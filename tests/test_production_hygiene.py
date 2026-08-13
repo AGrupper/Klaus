@@ -11,6 +11,7 @@ import pytest
 
 from core.secret_retention import build_retention_plan
 from scripts.audit_production_drift import (
+    _fetch_runtime_inventory,
     _normalize_bucket_storage_class,
     audit_snapshot,
     load_manifest,
@@ -68,7 +69,7 @@ def _clean_snapshot(manifest: dict) -> dict:
             for job in manifest["schedulers"]["required"]
         ],
         "secrets": [
-            {"name": name, "usable_versions": 2}
+            {"name": name, "enabled_versions": 2}
             for name in manifest["secrets"]["runtime_access"]
         ],
         "project_iam": {
@@ -96,6 +97,23 @@ def _clean_snapshot(manifest: dict) -> dict:
         "observed_routes": list(manifest["routes"]["retained"])
         + list(manifest["routes"]["tombstones"]),
         "connectors": list(manifest["connectors"]),
+        "embedding": {
+            "project": manifest["embedding"]["project"],
+            "project_number": "269181672466",
+            "billing_enabled": True,
+            "model": manifest["embedding"]["model"],
+            "daily_request_limit": manifest["embedding"]["daily_request_limit"],
+            "api_keys": [
+                {"services": ["generativelanguage.googleapis.com"]}
+            ],
+            "budget": {
+                "amount_ils": manifest["embedding"]["monthly_budget_ils"],
+                "projects": ["projects/269181672466"],
+                "thresholds_percent": manifest["embedding"][
+                    "budget_alert_thresholds_percent"
+                ],
+            },
+        },
     }
 
 
@@ -138,6 +156,7 @@ def test_manifest_pins_claude_first_production_boundary():
         "project": "klaus-embeddings-838733",
         "model": "gemini-embedding-2",
         "secret": "klaus-gemini-embedding-key",
+        "daily_request_limit": 200,
         "monthly_budget_ils": 15,
         "budget_alert_thresholds_percent": [50, 90, 100],
     }
@@ -159,6 +178,44 @@ def test_matching_snapshot_has_no_drift():
     manifest = load_manifest(MANIFEST_PATH)
 
     assert audit_snapshot(manifest, _clean_snapshot(manifest)) == []
+
+
+def test_live_runtime_inventory_is_fetched_instead_of_copied_from_manifest(monkeypatch):
+    """Production route/connector drift must come from the deployed revision."""
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"observed_routes":["GET /health"],"connectors":["calendar"],"embedding":{"model":"gemini-embedding-2","daily_request_limit":200}}'
+
+    monkeypatch.setattr(
+        "scripts.audit_production_drift.urllib.request.urlopen",
+        lambda request, timeout: Response(),
+    )
+
+    assert _fetch_runtime_inventory("https://klaus.example") == {
+        "observed_routes": ["GET /health"],
+        "connectors": ["calendar"],
+        "runtime_embedding": {
+            "model": "gemini-embedding-2",
+            "daily_request_limit": 200,
+        },
+        "inventory_error": None,
+    }
+
+
+def test_inventory_failure_is_reported_as_drift():
+    manifest = load_manifest(MANIFEST_PATH)
+    snapshot = _clean_snapshot(manifest)
+    snapshot["inventory_error"] = "runtime inventory unavailable: HTTPError"
+
+    assert "runtime inventory unavailable" in "\n".join(
+        audit_snapshot(manifest, snapshot)
+    )
 
 
 def test_bucket_storage_class_normalizes_gcloud_snake_case():
@@ -215,7 +272,7 @@ def test_bucket_storage_class_normalizes_gcloud_snake_case():
         ),
         (
             lambda snapshot, manifest: snapshot["secrets"].append(
-                {"name": "klaus-groq-key", "usable_versions": 1}
+                {"name": "klaus-groq-key", "enabled_versions": 1}
             ),
             "forbidden secret remains usable",
         ),

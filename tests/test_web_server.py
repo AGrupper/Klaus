@@ -514,6 +514,22 @@ class TestSPAMountRegression:
                 except OSError:
                     pass
 
+    def test_health_inventory_reports_registered_routes_and_connectors(self):
+        """The drift endpoint reflects the running app rather than a manifest copy."""
+        stubs = _stub_web_server_imports()
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws  # noqa: PLC0415
+            from fastapi.testclient import TestClient  # noqa: PLC0415
+
+            response = TestClient(ws.app).get("/health/inventory")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert "GET /health/inventory" in payload["observed_routes"]
+        assert "POST /telegram-webhook" in payload["observed_routes"]
+        assert "calendar" in payload["connectors"]
+        assert "postgresql" in payload["connectors"]
+
     def test_root_serves_spa_index_and_falls_back_for_client_routes(self):
         """GET / (and unknown client-side routes) must serve index.html, not 500.
 
