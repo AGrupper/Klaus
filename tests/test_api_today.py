@@ -35,6 +35,7 @@ _ENV = {
     "CRON_DEV_BYPASS": "true",
     "GCP_PROJECT_ID": "test-project",
     "FIRESTORE_DATABASE": "(default)",
+    "KLAUS_USER_ID": "123456",
     "TELEGRAM_BOT_TOKEN": "1234:fake",
     "TELEGRAM_ALLOWED_USER_IDS": "123456",
 }
@@ -371,7 +372,7 @@ def test_today_routes_computes_iso_leave_by_and_get_ready():
             with patch(
                 "mcp_tools.routes_tool.get_travel_time",
                 return_value={"duration_minutes": 30, "summary": "30 min"},
-            ):
+            ) as travel_time:
                 out = ws._today_routes(calendar, "2026-06-15")
 
     ev = out["timed"][0]
@@ -382,6 +383,39 @@ def test_today_routes_computes_iso_leave_by_and_get_ready():
     start_dt = datetime.fromisoformat(start)
     assert leave_by == start_dt - timedelta(minutes=30)
     assert get_ready == leave_by - timedelta(minutes=45)
+    travel_time.assert_called_once_with(
+        origin="Tel Aviv",
+        destination="Tel Aviv Gym",
+        departure_time_iso=start,
+        user_id="123456",
+        event_id="e1",
+    )
+
+
+def test_today_routes_omits_travel_fields_when_cost_breaker_blocks():
+    """A Routes cap hit must leave the calendar usable and unmodified."""
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        calendar = {
+            "all_day": [],
+            "timed": [{
+                "id": "blocked-event",
+                "title": "Dinner",
+                "start": "2026-06-15T18:00:00+03:00",
+                "end": "2026-06-15T19:00:00+03:00",
+                "location": "Jaffa",
+            }],
+        }
+        with patch.dict(os.environ, _ENV), patch(
+            "mcp_tools.routes_tool.get_travel_time", return_value=None
+        ):
+            out = ws._today_routes(calendar, "2026-06-15")
+
+    assert out is calendar
+    assert "leave_by" not in out["timed"][0]
+    assert "get_ready_at" not in out["timed"][0]
 
 
 def test_sanitize_coach_note_strips_controls_and_markdown_header():

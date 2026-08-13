@@ -1609,16 +1609,22 @@ class TestReadCache:
 
 
 class TestEmbeddingUsageStore:
-    def test_record_tracks_billable_tokens_requests_items_and_configured_cost(self):
+    def test_reserve_then_record_tracks_request_tokens_items_and_cost(self):
         client = _ActionLogFakeClient()
         with patch.object(firestore_db, "_make_firestore_client", return_value=client):
             store = firestore_db.EmbeddingUsageStore("test-project")
-            store.record(input_tokens=250, item_count=2, cost_usd=0.00005)
+            assert store.reserve("amit") is True
+            store.record(
+                user_id="amit",
+                input_tokens=250,
+                item_count=2,
+                cost_usd=0.00005,
+            )
 
         stored = client._data["embedding_usage"]
         assert len(stored) == 1
         document = next(iter(stored.values()))
-        assert document["embedding_calls"].value == 1
+        assert document["embedding_calls"] == 1
         assert document["embedding_input_tokens"].value == 250
         assert document["embedding_items"].value == 2
         assert document["embedding_cost_usd"].value == 0.00005

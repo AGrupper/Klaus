@@ -985,11 +985,9 @@ async def api_auth_me(request: Request) -> JSONResponse:
 # MUST be registered BEFORE the SPA mount (Pitfall 1).                        #
 # --------------------------------------------------------------------------- #
 
-# Module-level in-process cache for Routes API results (TIME-05 / T-26-04-04).
-# Key: (event_id, departure_iso) → (cache_epoch_seconds, result_dict | None)
-# TTL: 30 minutes — avoids re-hitting the Routes API on D-05 refresh-on-focus.
-_routes_cache: dict = {}
-_ROUTES_CACHE_TTL_SECONDS = 1800  # 30 minutes
+# Process-local TTL for non-billable Hub health aggregation. Billable Routes
+# caching lives in the persisted RoutesUsageStore boundary.
+_HEALTH_CACHE_TTL_SECONDS = 1800  # 30 minutes
 
 
 def _today_calendar(today_iso: str) -> dict:
@@ -1269,15 +1267,14 @@ def _today_coach_note(today_iso: str) -> str | None:
 def _today_routes(calendar: dict, today_iso: str) -> dict:
     """Attach leave_by + get_ready_at to timed events that have a location.
 
-    TIME-05: calls routes_tool.get_travel_time() per located event. Results are
-    cached 30 minutes in the module-level _routes_cache dict (T-26-04-04) so
-    repeated /api/today calls (D-05 refresh-on-focus) don't exhaust Routes API quota.
+    TIME-05: calls routes_tool.get_travel_time() per located event. That retained
+    boundary owns the persisted event/departure-window cache and atomic cost
+    limits, so this HTTP layer must not keep a divergent process-local cache.
 
     Returns the same calendar dict with leave_by/get_ready_at fields added to
     located timed events. All errors are swallowed per-event — one bad Routes call
     must not prevent the rest of the calendar from rendering.
     """
-    import time as _time
     from datetime import datetime as _dt, timedelta as _td
 
     # Get Ready block before leaving (USER.md: 45 min prep before departure).
@@ -1301,20 +1298,6 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
     try:
         from mcp_tools.routes_tool import get_travel_time  # lazy import
 
-        now_epoch = _time.time()
-
-        # Opportunistically evict expired keys (IN-03). The cache is only
-        # TTL-checked on read, so without this it accumulates one stale entry
-        # per past (event_id, start_iso) over a long-lived Cloud Run instance.
-        # Pruning here (once per /api/today routes pass) bounds the growth to
-        # roughly the set of events seen within one TTL window.
-        expired = [
-            k for k, (ts, _) in _routes_cache.items()
-            if now_epoch - ts >= _ROUTES_CACHE_TTL_SECONDS
-        ]
-        for k in expired:
-            del _routes_cache[k]
-
         timed_events = calendar.get("timed", [])
         for ev in timed_events:
             location = ev.get("location", "")
@@ -1322,24 +1305,14 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
                 continue
             event_id = ev.get("id", "")
             start_iso = ev.get("start", "")
-            cache_key = (event_id, start_iso)
-
-            # Check in-process TTL cache first (T-26-04-04).
-            cached = _routes_cache.get(cache_key)
-            if cached is not None:
-                cache_ts, cached_result = cached
-                if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
-                    if cached_result:
-                        _attach_leave_by(ev, start_iso, cached_result.get("duration_minutes"))
-                    continue
-
             try:
                 result = get_travel_time(
                     origin="Tel Aviv",  # Amit's home base per USER.md
                     destination=location,
                     departure_time_iso=start_iso,
+                    user_id=os.environ.get("KLAUS_USER_ID", ""),
+                    event_id=event_id,
                 )
-                _routes_cache[cache_key] = (now_epoch, result)
                 if result:
                     _attach_leave_by(ev, start_iso, result.get("duration_minutes"))
             except Exception:
@@ -1347,7 +1320,6 @@ def _today_routes(calendar: dict, today_iso: str) -> dict:
                     "_today_routes: get_travel_time failed for event %s → %s",
                     event_id, location, exc_info=True
                 )
-                _routes_cache[cache_key] = (now_epoch, None)  # negative cache
 
         return calendar
     except Exception:
@@ -1750,7 +1722,8 @@ _SLOT_LABELS_HEALTH: dict[str, str] = _SLOT_LABELS  # alias — same canonical m
 
 # Single per-day read pass cache (Pitfall 1 — MealStore has no range-read method;
 # a 1y nutrition request would otherwise be ~365 sequential Firestore reads on
-# every request). Reuses the exact TTL-dict shape as _routes_cache (T-30-02-03).
+# every request). The cache is process-local because this endpoint is not a
+# paid provider boundary (T-30-02-03).
 _nutrition_daily_cache: dict = {}
 
 
@@ -1787,7 +1760,7 @@ def _health_nutrition_daily(start: str, end: str) -> dict:
     cached = _nutrition_daily_cache.get(cache_key)
     if cached is not None:
         cache_ts, cached_result = cached
-        if now_epoch - cache_ts < _ROUTES_CACHE_TTL_SECONDS:
+        if now_epoch - cache_ts < _HEALTH_CACHE_TTL_SECONDS:
             return cached_result
 
     try:
@@ -3368,14 +3341,31 @@ async def api_agent_status(
     project_url = os.environ.get("CLAUDE_PROJECT_URL", "")
     gate = _subscription_capability_gate()
     embedding_usage = {}
+    routes_usage = {}
+    canonical_user_id = os.environ.get("KLAUS_USER_ID", "")
     try:
         from memory.firestore_db import EmbeddingUsageStore
 
         embedding_usage = await asyncio.get_running_loop().run_in_executor(
-            None, EmbeddingUsageStore(project, database).summary, "today"
+            None,
+            EmbeddingUsageStore(project, database).summary,
+            canonical_user_id,
+            "today",
         )
     except Exception:
-        logger.warning("Could not read embedding usage for agent status", exc_info=True)
+        logger.warning("Could not read embedding quota health", exc_info=True)
+    try:
+        from memory.firestore_db import RoutesUsageStore
+
+        routes_usage = await asyncio.get_running_loop().run_in_executor(
+            None,
+            RoutesUsageStore(project, database).summary,
+            canonical_user_id,
+        )
+    except Exception:
+        logger.warning("Could not read Routes quota health", exc_info=True)
+    embedding_request_count = max(0, int(embedding_usage.get("embedding_calls", 0)))
+    embedding_daily_limit = max(1, int(embedding_usage.get("daily_limit", 200)))
     return JSONResponse(
         content=_jsonsafe_doc(
             {
@@ -3401,7 +3391,11 @@ async def api_agent_status(
                     },
                     "gemini_embeddings": {
                         "cost_usd": embedding_usage.get("embedding_cost_usd"),
-                        "request_count": embedding_usage.get("embedding_calls", 0),
+                        "request_count": embedding_request_count,
+                        "daily_limit": embedding_daily_limit,
+                        "daily_remaining": max(
+                            0, embedding_daily_limit - embedding_request_count
+                        ),
                         "input_tokens": embedding_usage.get("embedding_input_tokens", 0),
                         "item_count": embedding_usage.get("embedding_items", 0),
                         "measurement": (
@@ -3409,6 +3403,16 @@ async def api_agent_status(
                             if os.environ.get("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS")
                             else "provider_tokens_only_rate_not_configured"
                         ),
+                    },
+                    "google_routes": {
+                        "request_count": routes_usage.get("computation_count", 0),
+                        "daily_limit": routes_usage.get("daily_limit", 25),
+                        "daily_remaining": routes_usage.get("daily_remaining", 25),
+                        "rolling_minute_count": routes_usage.get(
+                            "rolling_minute_count", 0
+                        ),
+                        "minute_limit": routes_usage.get("minute_limit", 5),
+                        "minute_remaining": routes_usage.get("minute_remaining", 5),
                     },
                 },
             }

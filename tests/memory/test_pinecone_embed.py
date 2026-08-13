@@ -20,7 +20,7 @@ def test_embed_returns_768_dim_vector():
     """End-to-end: real Gemini call returns a 768-dim float vector."""
     from memory.pinecone_db import MemoryStore
     store = MemoryStore(api_key="unused-for-this-test", index_name="unused")
-    vec = store._embed("Amit's gym is on Mon/Wed/Fri")
+    vec = store._embed("Amit's gym is on Mon/Wed/Fri", user_id="live-test")
     assert isinstance(vec, list)
     assert len(vec) == 768
     assert all(isinstance(x, float) for x in vec)

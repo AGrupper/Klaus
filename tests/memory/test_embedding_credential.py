@@ -32,7 +32,6 @@ def test_embedding_call_records_provider_usage_with_configured_rate(monkeypatch)
     monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
     monkeypatch.setenv("FIRESTORE_DATABASE", "test-db")
     monkeypatch.setenv("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS", "0.20")
-    monkeypatch.setenv("KLAUS_EMBEDDING_METER_ENABLED", "true")
     store = MemoryStore(api_key="pinecone", index_name="index")
     response = MagicMock()
     response.embeddings = [MagicMock(values=[0.1] * 768)]
@@ -41,10 +40,16 @@ def test_embedding_call_records_provider_usage_with_configured_rate(monkeypatch)
     store._genai.models.embed_content.return_value = response
 
     usage = MagicMock()
+    usage.reserve.return_value = True
     with patch("memory.firestore_db.EmbeddingUsageStore", return_value=usage):
-        store._embed("remember this")
+        store._embed("remember this", user_id="123456")
 
+    usage.reserve.assert_called_once_with("123456", limit=200)
+    assert store._genai.models.embed_content.call_args.kwargs["model"] == (
+        "gemini-embedding-2"
+    )
     usage.record.assert_called_once_with(
+        user_id="123456",
         input_tokens=250,
         item_count=1,
         cost_usd=0.00005,

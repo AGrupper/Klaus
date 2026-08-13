@@ -27,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 CONTENT_MAX_CHARS = 2000
 _VALID_KINDS = frozenset({"fact", "chunk", "self"})
+EMBEDDING_MODEL = "gemini-embedding-2"
+EMBEDDING_DAILY_REQUEST_LIMIT = 200
+
+
+class EmbeddingQuotaExceeded(RuntimeError):
+    """Raised before provider invocation when usage cannot be reserved."""
 
 
 def _blend_recency(cosine: float, ts: str | None) -> float:
@@ -75,7 +81,13 @@ class MemoryStore:
     on first use so that importing this module never triggers network I/O.
     """
 
-    def __init__(self, api_key: str, index_name: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        index_name: str,
+        *,
+        embedding_usage_store=None,
+    ) -> None:
         """
         Args:
             api_key:    Pinecone API key.
@@ -86,6 +98,7 @@ class MemoryStore:
         self._index_name = index_name
         self._index = None   # lazy: Pinecone Index object
         self._genai = None   # lazy: google.genai Client
+        self._embedding_usage_store = embedding_usage_store
 
     # ------------------------------------------------------------------ #
     # Public interface                                                   #
@@ -95,7 +108,7 @@ class MemoryStore:
         """Embed and store a memory.
 
         Args:
-            user_id: Telegram user ID (used to scope the memory to one user).
+            user_id: Canonical Klaus user ID used to isolate and meter memory.
             content: Text to store. Max CONTENT_MAX_CHARS characters.
             kind:    "fact" for atomic statements, "chunk" for longer passages.
 
@@ -115,7 +128,7 @@ class MemoryStore:
                 "limit. Summarise before saving."
             )
 
-        vector = self._embed(content)
+        vector = self._embed(content, user_id=user_id)
         vector_id = str(uuid.uuid4())
         ts = datetime.now(tz=timezone.utc).isoformat()
 
@@ -201,7 +214,7 @@ class MemoryStore:
         the over-fetched list.
         """
         _kinds = kinds if kinds is not None else ["fact", "chunk"]
-        vector = self._embed(query)
+        vector = self._embed(query, user_id=user_id)
         result = self._get_index().query(
             vector=vector,
             # Over-fetch so the recency re-rank has candidates to promote —
@@ -236,7 +249,7 @@ class MemoryStore:
         owner (Security Domain: cross-user leak mitigation).
 
         Args:
-            user_id:  Telegram user ID (scopes the vector to one user).
+            user_id:  Canonical Klaus user ID (scopes the vector to one user).
             date_str: YYYY-MM-DD date string — forms the deterministic vector
                       ID ``self-{date_str}``.
             content:  Text to embed (typically summary + highlights). Truncated
@@ -247,7 +260,7 @@ class MemoryStore:
         """
         if len(content) > CONTENT_MAX_CHARS:
             content = content[:CONTENT_MAX_CHARS]
-        vector = self._embed(content)
+        vector = self._embed(content, user_id=user_id)
         vector_id = f"self-{date_str}"
         ts = datetime.now(tz=timezone.utc).isoformat()
         self._get_index().upsert(vectors=[{
@@ -273,25 +286,50 @@ class MemoryStore:
             self._index = pc.Index(self._index_name)
         return self._index
 
-    def _embed(self, text: str) -> list[float]:
-        """Embed text using Gemini gemini-embedding-2 truncated to 768-dim."""
+    def _embed(self, text: str, *, user_id: str | int | None = None) -> list[float]:
+        """Reserve quota, then embed with the sole approved Gemini model."""
+        canonical_user = str(user_id or os.environ.get("KLAUS_USER_ID", "")).strip()
+        if not canonical_user:
+            raise EmbeddingQuotaExceeded(
+                "Embedding quota unavailable: KLAUS_USER_ID is not configured"
+            )
+        usage_store = self._get_embedding_usage_store()
+        try:
+            reserved = usage_store.reserve(
+                canonical_user,
+                limit=EMBEDDING_DAILY_REQUEST_LIMIT,
+            )
+        except Exception as exc:
+            raise EmbeddingQuotaExceeded(
+                "Embedding quota unavailable; provider call was blocked"
+            ) from exc
+        if not reserved:
+            raise EmbeddingQuotaExceeded(
+                f"Embedding daily request limit ({EMBEDDING_DAILY_REQUEST_LIMIT}) reached"
+            )
+
         from google.genai import types
         client = self._get_genai()
         response = client.models.embed_content(
-            model="gemini-embedding-2",
+            model=EMBEDDING_MODEL,
             contents=text,
             config=types.EmbedContentConfig(output_dimensionality=768),
         )
-        self._record_embedding_usage(response, item_count=1)
+        self._record_embedding_usage(
+            response,
+            user_id=canonical_user,
+            item_count=1,
+        )
         return list(response.embeddings[0].values)
 
-    @staticmethod
-    def _record_embedding_usage(response, *, item_count: int) -> None:
+    def _record_embedding_usage(
+        self,
+        response,
+        *,
+        user_id: str | int,
+        item_count: int,
+    ) -> None:
         """Best-effort meter using provider-reported tokens and an operator rate."""
-        if os.environ.get("KLAUS_EMBEDDING_METER_ENABLED", "false").strip().lower() not in {
-            "1", "true", "yes", "on",
-        }:
-            return
         try:
             metadata = getattr(response, "usage_metadata", None)
             token_value = getattr(metadata, "prompt_token_count", None)
@@ -302,18 +340,25 @@ class MemoryStore:
                 os.environ.get("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS", "0")
             )
             cost_usd = input_tokens * per_million / 1_000_000
-            from memory.firestore_db import EmbeddingUsageStore
-
-            EmbeddingUsageStore(
-                os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
-                os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
-            ).record(
+            self._get_embedding_usage_store().record(
+                user_id=user_id,
                 input_tokens=input_tokens,
                 item_count=item_count,
                 cost_usd=cost_usd,
             )
         except Exception:
             logger.warning("Could not record Gemini embedding usage", exc_info=True)
+
+    def _get_embedding_usage_store(self):
+        """Build the persisted ledger lazily without network I/O at import."""
+        if self._embedding_usage_store is None:
+            from memory.firestore_db import EmbeddingUsageStore
+
+            self._embedding_usage_store = EmbeddingUsageStore(
+                os.environ.get("GCP_PROJECT_ID", "klaus-agent"),
+                os.environ.get("FIRESTORE_DATABASE", "klaus-firestore"),
+            )
+        return self._embedding_usage_store
 
     def _get_genai(self):
         if self._genai is None:
