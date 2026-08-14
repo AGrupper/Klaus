@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's nightly Remote Routine, incl
 
 # Klaus Nightly Review
 
-Skill version: 7.1.0
+Skill version: 7.2.0
 
 Run only for a Klaus nightly routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
