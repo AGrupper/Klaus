@@ -180,7 +180,8 @@ def test_manifest_pins_claude_first_production_boundary():
     assert manifest["iam"]["forbidden_project_roles"] == [
         "roles/secretmanager.secretAccessor"
     ]
-    assert manifest["iam"]["oauth_secret_additional_roles"] == [
+    assert manifest["iam"]["oauth_secret_additional_roles"] == []
+    assert manifest["iam"]["oauth_secret_forbidden_roles"] == [
         "roles/secretmanager.secretVersionAdder",
         "roles/secretmanager.secretVersionManager",
     ]
@@ -191,6 +192,25 @@ def test_matching_snapshot_has_no_drift():
     manifest = load_manifest(MANIFEST_PATH)
 
     assert audit_snapshot(manifest, _clean_snapshot(manifest)) == []
+
+
+def test_runtime_cannot_write_or_manage_calendar_token_versions():
+    """A runtime OAuth version-writer grant is production drift."""
+    manifest = load_manifest(MANIFEST_PATH)
+    snapshot = _clean_snapshot(manifest)
+    runtime_member = (
+        "serviceAccount:" + manifest["service"]["runtime_service_account"]
+    )
+    snapshot["secret_iam"]["klaus-google-oauth-token"]["bindings"].append(
+        {
+            "role": "roles/secretmanager.secretVersionAdder",
+            "members": [runtime_member],
+        }
+    )
+
+    findings = audit_snapshot(manifest, snapshot)
+
+    assert any("forbidden OAuth secret role" in finding for finding in findings)
 
 
 def test_live_runtime_inventory_is_fetched_instead_of_copied_from_manifest(monkeypatch):

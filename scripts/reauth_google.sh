@@ -4,9 +4,9 @@
 # Needed whenever Cloud Run logs show:
 #   google.auth.exceptions.RefreshError: invalid_grant: Token has been expired or revoked.
 #
-# Google revokes the refresh token whenever the account password changes, because
-# the previous grant included broader scopes — this is a Google security policy, not a Klaus
-# bug, and it cannot be disabled. See docs/DEPLOYMENT.md section 7.
+# Run this only after the user revokes access, an admin policy invalidates the
+# grant, or Google returns invalid_grant. Ordinary access-token renewal is
+# automatic and stays in Cloud Run memory; it never rotates this secret.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -40,4 +40,4 @@ python scripts/manage_secret_versions.py \
   --apply \
   --confirm-secret "$SECRET_NAME"
 
-echo "Done. Klaus's next Calendar call will pick up the new token."
+echo "Done. Deploy or restart Cloud Run so each process loads the new grant."
