@@ -201,10 +201,15 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "task_create",
         "description": (
-            "Add a to-do to Amit's Things 3 list. Goes to the Inbox unless a date or "
-            "project is given. Set due_date for when Amit plans to DO it, and "
-            "hard_deadline_at for when it is actually DUE — these are different "
-            "fields in Things and either alone is fine."
+            "Add a to-do to Amit's Things 3 list. Set due_date for when Amit plans "
+            "to DO it, and hard_deadline_at for when it is actually DUE — these are "
+            "different fields in Things and either alone is fine. "
+            "Always try to file it: pass list_id with the project or area it "
+            "belongs to rather than letting it fall into the Inbox, which is where "
+            "Amit's to-dos go to die. Use task_list to see what projects and areas "
+            "exist. Only set a date when the timing is genuinely implied — do not "
+            "invent one to make the to-do look scheduled; an undated to-do is "
+            "honest, a fabricated date is noise."
         ),
         "input_schema": {
             "type": "object",
@@ -266,7 +271,12 @@ TOOL_SCHEMAS: list[dict] = [
             "all to see the whole list, including project, area, and tag labels. "
             "Use upcoming_days to see the week ahead; note that Amit dates very few "
             "to-dos, so most of his list has no date at all and a date filter will "
-            "usually come back empty."
+            "usually come back empty. "
+            "Every to-do also carries created_at (how long it has been sitting — "
+            "the median age of his list is around four months, so this is how you "
+            "spot what has gone stale), hard_deadline_at (a real deadline, distinct "
+            "from the scheduled date), and bucket (inbox, anytime, upcoming or "
+            "someday). An item in 'inbox' is unfiled and probably needs a home."
         ),
         "input_schema": {
             "type": "object",

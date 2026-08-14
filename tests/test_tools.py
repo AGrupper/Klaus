@@ -128,6 +128,35 @@ def fake_action_log(monkeypatch):
     yield _FakeActionLogStore
 
 
+# ============================================================================
+# Module-level test helpers for schema validation
+# ============================================================================
+
+def _schema(name: str) -> dict:
+    from core.tools import TOOL_SCHEMAS
+    return next(s for s in TOOL_SCHEMAS if s["name"] == name)
+
+
+def test_task_list_schema_documents_the_returned_fields():
+    """Klaus cannot reason over fields he is not told come back.
+
+    Staleness needs created_at, deadline lookahead needs hard_deadline_at, and
+    placement needs bucket. All three are returned by normalize_task(); without
+    this text Klaus has no reason to believe they exist.
+    """
+    description = _schema("task_list")["description"]
+    for field in ("created_at", "hard_deadline_at", "bucket"):
+        assert field in description, f"task_list must document {field}"
+
+
+def test_task_create_schema_tells_klaus_to_file_and_not_invent_dates():
+    """The two behaviours from spec section 3.1 that live in the schema."""
+    description = _schema("task_create")["description"]
+    assert "list_id" in description
+    assert "Inbox" in description
+    assert "invent" in description.lower() or "guess" in description.lower()
+
+
 # ===========================================================================
 # TestFollowupTools — handler behaviour
 # ===========================================================================
