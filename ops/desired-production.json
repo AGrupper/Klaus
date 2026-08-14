@@ -1,0 +1,332 @@
+{
+  "schema_version": 1,
+  "service": {
+    "name": "klaus-agent",
+    "project": "klaus-agent",
+    "region": "me-west1",
+    "public_url": "https://klaus-agent-y2abtypx4q-zf.a.run.app",
+    "runtime_service_account": "klaus-runtime@klaus-agent.iam.gserviceaccount.com",
+    "required_environment": {
+      "ENVIRONMENT": "production",
+      "TZ": "Asia/Jerusalem",
+      "FIRESTORE_DATABASE": "klaus-firestore",
+      "KLAUS_USER_ID": "<required>",
+      "CLAUDE_PROJECT_URL": "<required>",
+      "KLAUS_MCP_ENABLED": "true",
+      "KLAUS_MCP_READ_ONLY_MODE": "false",
+      "KLAUS_CLAUDE_LIVE_ENABLED": "true",
+      "KLAUS_CLAUDE_ROUTINES_ENABLED": "true",
+      "KLAUS_ROUTINE_MORNING_CUTOVER": "true",
+      "KLAUS_ROUTINE_NIGHTLY_CUTOVER": "true",
+      "KLAUS_ROUTINE_WEEKLY_CUTOVER": "true",
+      "KLAUS_DETERMINISTIC_ALERTS_ENABLED": "true",
+      "KLAUS_EMBEDDING_METER_ENABLED": "true",
+      "TASK_BACKEND": "things",
+      "THINGS_WRITE_ENABLED": "true"
+    },
+    "forbidden_environment": [
+      "ANTHROPIC_API_KEY",
+      "DEEPSEEK_API_KEY",
+      "GROQ_API_KEY",
+      "GEMINI_API_KEY",
+      "GOOGLE_API_KEY",
+      "OPENAI_API_KEY",
+      "SMART_AGENT_BACKEND",
+      "SMART_AGENT_MODEL",
+      "SMART_AGENT_API_KEY",
+      "WORKER_AGENT_BACKEND",
+      "WORKER_AGENT_MODEL",
+      "WORKER_AGENT_API_KEY",
+      "TICK_BRAIN_BACKEND",
+      "TICK_BRAIN_MODEL",
+      "TICK_BRAIN_API_KEY",
+      "TELEGRAM_BOT_TOKEN",
+      "TELEGRAM_WEBHOOK_SECRET",
+      "TELEGRAM_ALLOWED_USER_IDS",
+      "READWISE_TOKEN",
+      "KLAUS_GITHUB_TOKEN",
+      "KLAUS_HUB_CHAT_ENABLED",
+      "KLAUS_LEGACY_RUNTIME_ENABLED",
+      "OCCASION_CASCADE",
+      "CHAT_LOGS_BUCKET",
+      "NOTION_CHAT_LOG_DB_ID",
+      "NOTION_AI_CHAT_DB_ID"
+    ],
+    "secret_bindings": {
+      "GEMINI_EMBEDDING_API_KEY": "klaus-gemini-embedding-key",
+      "PINECONE_API_KEY": "klaus-pinecone-key",
+      "NOTION_API_TOKEN": "klaus-notion-api-token",
+      "GARMIN_EMAIL": "klaus-garmin-email",
+      "GARMIN_PASSWORD": "klaus-garmin-password",
+      "HOME_ADDRESS": "klaus-home-address",
+      "PG_CONNECTION_STRING": "klaus-postgres-connection-string",
+      "HEALTHKIT_WEBHOOK_TOKEN": "klaus-healthkit-webhook-token",
+      "HEVY_API_KEY": "klaus-hevy-api-key",
+      "NIGHTLY_TRIGGER_TOKEN": "klaus-nightly-trigger-token",
+      "MORNING_TRIGGER_TOKEN": "klaus-morning-trigger-token",
+      "HUB_SESSION_SECRET": "klaus-hub-session-secret",
+      "CLAUDE_ROUTINE_TRIGGER_TOKEN_MORNING": "klaus-claude-routine-morning-token",
+      "CLAUDE_ROUTINE_TRIGGER_TOKEN_NIGHTLY": "klaus-claude-routine-nightly-token",
+      "CLAUDE_ROUTINE_TRIGGER_TOKEN_WEEKLY": "klaus-claude-routine-weekly-token",
+      "THINGS_EMAIL": "klaus-things-email",
+      "THINGS_PASSWORD": "klaus-things-password"
+    }
+  },
+  "schedulers": {
+    "required": [
+      {
+        "name": "klaus-deterministic-alerts",
+        "category": "deterministic_alerts",
+        "schedule": "*/10 7-21 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/deterministic-alerts"
+      },
+      {
+        "name": "klaus-heartbeat",
+        "category": "health",
+        "schedule": "0 * * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/heartbeat"
+      },
+      {
+        "name": "klaus-morning-backstop",
+        "category": "claude_review_backstop",
+        "schedule": "30 10 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/morning-backstop"
+      },
+      {
+        "name": "klaus-nightly-backstop",
+        "category": "claude_review_backstop",
+        "schedule": "0 1 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/nightly-backstop"
+      },
+      {
+        "name": "klaus-weekly-training-review",
+        "category": "claude_review_backstop",
+        "schedule": "0 10 * * 0",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/weekly-training-review"
+      },
+      {
+        "name": "klaus-things-sync",
+        "category": "things_sync",
+        "schedule": "*/30 6-23 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/things-sync"
+      },
+      {
+        "name": "klaus-run-sync",
+        "category": "garmin_sync",
+        "schedule": "15 5 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/run-sync"
+      },
+      {
+        "name": "klaus-strength-sync",
+        "category": "hevy_sync",
+        "schedule": "0 5 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/strength-sync"
+      },
+      {
+        "name": "klaus-biometric-sync",
+        "category": "biometric_sync",
+        "schedule": "30 5 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/biometric-sync"
+      }
+    ],
+    "forbidden": [
+      "klaus-autonomous-tick",
+      "klaus-reflect",
+      "klaus-proactive-alerts",
+      "klaus-ingest-chats",
+      "klaus-ingest-chat-exports",
+      "klaus-morning-briefing",
+      "klaus-morning-briefing-tick"
+    ]
+  },
+  "secrets": {
+    "runtime_access": [
+      "klaus-google-oauth-token",
+      "klaus-gemini-embedding-key",
+      "klaus-pinecone-key",
+      "klaus-notion-api-token",
+      "klaus-garmin-email",
+      "klaus-garmin-password",
+      "klaus-home-address",
+      "klaus-postgres-connection-string",
+      "klaus-healthkit-webhook-token",
+      "klaus-hevy-api-key",
+      "klaus-nightly-trigger-token",
+      "klaus-morning-trigger-token",
+      "klaus-hub-session-secret",
+      "klaus-vapid-private-key",
+      "klaus-claude-routine-morning-token",
+      "klaus-claude-routine-nightly-token",
+      "klaus-claude-routine-weekly-token",
+      "klaus-things-email",
+      "klaus-things-password"
+    ],
+    "forbidden": [
+      "klaus-anthropic-key",
+      "klaus-deepseek-key",
+      "klaus-groq-key",
+      "klaus-tick-brain-key",
+      "klaus-gemini-key",
+      "klaus-telegram-token",
+      "klaus-telegram-webhook-secret",
+      "klaus-readwise-token",
+      "klaus-github-token",
+      "klaus-ticktick-client-id",
+      "klaus-ticktick-client-secret",
+      "klaus-ticktick-access-token",
+      "klaus-ticktick-refresh-token"
+    ]
+  },
+  "embedding": {
+    "project": "klaus-embeddings-838733",
+    "model": "gemini-embedding-2",
+    "secret": "klaus-gemini-embedding-key",
+    "api_key_uid": "01ec21d8-6962-4c99-9baf-d9da003ad965",
+    "daily_request_limit": 200,
+    "monthly_budget_ils": 15,
+    "budget_alert_thresholds_percent": [50, 90, 100]
+  },
+  "iam": {
+    "required_project_roles": [
+      "roles/datastore.user",
+      "roles/logging.logWriter"
+    ],
+    "forbidden_project_roles": [
+      "roles/secretmanager.secretAccessor"
+    ],
+    "required_per_secret_roles": [
+      "roles/secretmanager.secretAccessor"
+    ],
+    "oauth_secret_additional_roles": [
+      "roles/secretmanager.secretVersionAdder",
+      "roles/secretmanager.secretVersionManager"
+    ]
+  },
+  "firestore": {
+    "database": "klaus-firestore",
+    "deletion_protection": true,
+    "ttl_fields": [
+      {"collection_group": "oauth_authorization_codes", "field": "expire_at"},
+      {"collection_group": "oauth_access_tokens", "field": "expire_at"},
+      {"collection_group": "oauth_refresh_tokens", "field": "expire_at"},
+      {"collection_group": "action_idempotency", "field": "expire_at"},
+      {"collection_group": "pending_approvals", "field": "expire_at"}
+      ,{"collection_group": "routes_cache", "field": "expires_at"}
+    ]
+  },
+  "artifact_registry": {
+    "location": "me-west1",
+    "repository": "klaus",
+    "cleanup_policy_names": [
+      "keep-production",
+      "keep-ten-most-recent",
+      "delete-images-older-than-30-days"
+    ]
+  },
+  "archive": {
+    "bucket": "klaus-chat-logs-klaus-agent",
+    "storage_class": "ARCHIVE",
+    "runtime_access": "none"
+  },
+  "connectors": [
+    "claude_mcp",
+    "calendar",
+    "google_routes",
+    "things",
+    "notion",
+    "garmin",
+    "hevy",
+    "healthkit_lifesum",
+    "weather",
+    "pinecone",
+    "postgresql",
+    "firestore",
+    "web_push",
+    "cloud_tasks"
+  ],
+  "routes": {
+    "retained": [
+      "GET /health",
+      "GET /health/inventory",
+      "POST /mcp/interactive",
+      "POST /mcp/routine",
+      "POST /trigger/nightly",
+      "POST /trigger/morning",
+      "POST /internal/routine-fallback",
+      "POST /cron/nightly-backstop",
+      "POST /cron/morning-backstop",
+      "POST /cron/deterministic-alerts",
+      "POST /cron/weekly-training-review",
+      "POST /cron/healthkit-sync",
+      "POST /cron/strength-sync",
+      "POST /cron/things-sync",
+      "POST /cron/run-sync",
+      "POST /cron/biometric-sync",
+      "POST /cron/heartbeat",
+      "POST /api/auth/google",
+      "POST /api/auth/logout",
+      "POST /api/auth/revoke-all",
+      "GET /api/auth/me",
+      "GET /api/today",
+      "GET /api/health/training",
+      "GET /api/health/nutrition",
+      "GET /api/health/sleep",
+      "GET /api/tasks",
+      "POST /api/tasks",
+      "GET /api/tasks/summary",
+      "PATCH /api/tasks/{task_id}",
+      "POST /api/tasks/{task_id}/complete",
+      "POST /api/tasks/{task_id}/undo",
+      "POST /api/tasks/{task_id}/soft-delete",
+      "POST /api/tasks/{task_id}/hard-delete",
+      "GET /api/task-lists",
+      "POST /api/task-lists",
+      "PATCH /api/task-lists/{list_id}",
+      "DELETE /api/task-lists/{list_id}",
+      "GET /api/habits/summary",
+      "GET /api/habits",
+      "POST /api/habits",
+      "PATCH /api/habits/{habit_id}",
+      "POST /api/habits/{habit_id}/checkin",
+      "GET /api/habits/{habit_id}/history",
+      "POST /api/habits/{habit_id}/soft-delete",
+      "POST /api/habits/{habit_id}/restore",
+      "POST /api/habits/{habit_id}/hard-delete",
+      "POST /api/push/subscribe",
+      "GET /api/push/vapid-public-key",
+      "GET /api/settings",
+      "POST /api/routines/{routine}/shadow",
+      "GET /api/reviews",
+      "GET /api/reviews/{routine}/{target_date}",
+      "GET /api/activity",
+      "GET /api/approvals",
+      "GET /api/portfolio",
+      "GET /api/agent/status"
+    ],
+    "tombstones": [
+      "POST /telegram-webhook",
+      "POST /internal/process-update",
+      "POST /internal/process-occasion",
+      "POST /internal/process-hub-message",
+      "POST /api/chat",
+      "POST /api/chat/upload",
+      "GET /api/chat/messages",
+      "POST /api/chat/regenerate",
+      "POST /api/chat/stop",
+      "POST /cron/proactive-alerts",
+      "POST /cron/reflect",
+      "POST /cron/autonomous-tick",
+      "POST /cron/ingest-chats",
+      "POST /cron/ingest-chat-exports"
+    ]
+  }
+}

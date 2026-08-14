@@ -300,7 +300,7 @@ def build_subscription_routine_coordinator() -> SubscriptionRoutineCoordinator:
     """Build production dependencies lazily for Cloud Run request handlers."""
     from core.life_snapshot import build_life_snapshot
     from core.push_sender import send_push_to_all
-    from core.task_dispatch import enqueue_routine_fallback
+    from core.routine_dispatch import enqueue_routine_fallback
     from memory.firestore_db import RoutineReviewStore, RoutineRunStore
 
     project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")

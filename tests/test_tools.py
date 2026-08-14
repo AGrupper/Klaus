@@ -8,9 +8,8 @@ Covers AUTO-05: the 3 self-scheduled follow-up tools:
 Test scope
 ----------
 - _handle_schedule_followup, _handle_list_followups, _handle_cancel_followup
-- Registration sites (SMART_AGENT_DIRECT_TOOLS, WORKER_TOOL_SCHEMAS, TOOL_SCHEMAS, _HANDLERS)
+- Canonical TOOL_SCHEMAS and _HANDLERS registration sites
 - WARNING 7 regression: ImportError on dateutil must surface as structured error
-- NOTE 4 verification: SMART_AGENT_DIRECT_TOOLS appended at the end (not alphabetical)
 
 Mock strategy
 -------------
@@ -102,10 +101,6 @@ def fake_store(monkeypatch):
 class _FakeActionLogStore:
     instances: list["_FakeActionLogStore"] = []
     raise_on_append: bool = False
-    # Plan 33-09 addition: preset return for get_recent(), read by
-    # get_recent_decisions' "actions" list. Does not affect plan 33-05's
-    # tests (they never call get_recent).
-    get_recent_return: list[dict] = []
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:
         self.project_id = project_id
@@ -118,16 +113,12 @@ class _FakeActionLogStore:
             raise RuntimeError("Firestore write failed")
         self.appended.append((date_str, entry))
 
-    def get_recent(self, days: int, *, today: str | None = None) -> list[dict]:
-        return list(_FakeActionLogStore.get_recent_return)
-
 
 @pytest.fixture
 def fake_action_log(monkeypatch):
     """Patch ActionLogStore in memory.firestore_db and ensure GCP_PROJECT_ID is set."""
     _FakeActionLogStore.instances = []
     _FakeActionLogStore.raise_on_append = False
-    _FakeActionLogStore.get_recent_return = []
 
     monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
     monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
@@ -135,71 +126,6 @@ def fake_action_log(monkeypatch):
     import memory.firestore_db as firestore_db
     monkeypatch.setattr(firestore_db, "ActionLogStore", _FakeActionLogStore)
     yield _FakeActionLogStore
-
-
-# ---------------------------------------------------------------------------
-# Shared fixture: fake TickLogStore + OutreachLogStore for
-# get_recent_decisions (plan 33-09, OCC-07/D-26) tests — a dedicated
-# OutreachLogStore fake so 33-09's tests never collide with any other file's
-# OutreachLogStore monkeypatch.
-# ---------------------------------------------------------------------------
-
-class _FakeTickLogStore:
-    instances: list["_FakeTickLogStore"] = []
-    data: dict[str, list[dict]] = {}
-    raise_on_call: bool = False
-
-    def __init__(self, project_id: str, database: str = "(default)") -> None:
-        self.project_id = project_id
-        self.database = database
-        _FakeTickLogStore.instances.append(self)
-
-    def ticks_for_date(self, date_str: str) -> list[dict]:
-        if _FakeTickLogStore.raise_on_call:
-            raise RuntimeError("Firestore read failed")
-        return list(_FakeTickLogStore.data.get(date_str, []))
-
-
-class _FakeOutreachLogStoreForDecisions:
-    instances: list["_FakeOutreachLogStoreForDecisions"] = []
-    data: dict[str, list[dict]] = {}
-
-    def __init__(self, project_id: str, database: str = "(default)") -> None:
-        self.project_id = project_id
-        self.database = database
-        _FakeOutreachLogStoreForDecisions.instances.append(self)
-
-    def get_today(self, date_str: str) -> list[dict]:
-        return list(_FakeOutreachLogStoreForDecisions.data.get(date_str, []))
-
-
-@pytest.fixture
-def fake_decision_stores(monkeypatch):
-    """Patch TickLogStore/OutreachLogStore/ActionLogStore for
-    get_recent_decisions tests (plan 33-09). Yields a dict of the three fake
-    classes so a test can seed `.data`/`.get_recent_return` per date.
-    """
-    _FakeTickLogStore.instances = []
-    _FakeTickLogStore.data = {}
-    _FakeTickLogStore.raise_on_call = False
-    _FakeOutreachLogStoreForDecisions.instances = []
-    _FakeOutreachLogStoreForDecisions.data = {}
-    _FakeActionLogStore.instances = []
-    _FakeActionLogStore.raise_on_append = False
-    _FakeActionLogStore.get_recent_return = []
-
-    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-    monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
-
-    import memory.firestore_db as firestore_db
-    monkeypatch.setattr(firestore_db, "TickLogStore", _FakeTickLogStore)
-    monkeypatch.setattr(firestore_db, "OutreachLogStore", _FakeOutreachLogStoreForDecisions)
-    monkeypatch.setattr(firestore_db, "ActionLogStore", _FakeActionLogStore)
-    yield {
-        "tick": _FakeTickLogStore,
-        "outreach": _FakeOutreachLogStoreForDecisions,
-        "action": _FakeActionLogStore,
-    }
 
 
 # ===========================================================================
@@ -343,20 +269,7 @@ class TestFollowupTools:
 
     # ----- Registration tests ----- #
 
-    def test_all_three_tools_in_smart_agent_direct_tools(self):
-        """Test 9 — schedule_followup, list_followups, cancel_followup are in SMART_AGENT_DIRECT_TOOLS."""
-        for name in ("schedule_followup", "list_followups", "cancel_followup"):
-            assert name in tools.SMART_AGENT_DIRECT_TOOLS, (
-                f"{name!r} missing from SMART_AGENT_DIRECT_TOOLS"
-            )
 
-    def test_all_three_tools_excluded_from_worker_schemas(self):
-        """Test 10 — none of the 3 tools appear in WORKER_TOOL_SCHEMAS."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        for name in ("schedule_followup", "list_followups", "cancel_followup"):
-            assert name not in worker_names, (
-                f"{name!r} must NOT appear in WORKER_TOOL_SCHEMAS — Klaus brain-only"
-            )
 
     def test_all_three_tools_in_handlers_dispatch(self):
         """Test 11 — all 3 tools are in _HANDLERS."""
@@ -435,48 +348,16 @@ class TestFollowupTools:
 class TestPhase19ToolRegistration:
     """PROFILE-04 + GARMIN-04 — verify 4 new tools at all registration sites.
 
-    Brain-direct (in SMART_AGENT_DIRECT_TOOLS, excluded from WORKER_TOOL_SCHEMAS):
+    MCP-registered (in retired direct-tool registry, excluded from retired worker registry):
       - get_training_profile
       - update_training_profile
 
-    Worker-delegated (in WORKER_TOOL_SCHEMAS, NOT in SMART_AGENT_DIRECT_TOOLS):
+    MCP-registered (in retired worker registry, NOT in retired direct-tool registry):
       - fetch_training_status
       - fetch_recent_activities
     """
 
-    def test_phase19_profile_tools_registered(self):
-        """Brain-direct tools appear at all 4 expected sites."""
-        # Site 1: SMART_AGENT_DIRECT_TOOLS membership
-        assert "get_training_profile" in tools.SMART_AGENT_DIRECT_TOOLS
-        assert "update_training_profile" in tools.SMART_AGENT_DIRECT_TOOLS
-        # Site 2: TOOL_SCHEMAS entry exists (by name)
-        names = {s["name"] for s in tools.TOOL_SCHEMAS}
-        assert "get_training_profile" in names
-        assert "update_training_profile" in names
-        # Site 3: WORKER_TOOL_SCHEMAS EXCLUSION (brain-direct → NOT seen by worker)
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "get_training_profile" not in worker_names
-        assert "update_training_profile" not in worker_names
-        # Site 4: _HANDLERS dispatch
-        assert "get_training_profile" in tools._HANDLERS
-        assert "update_training_profile" in tools._HANDLERS
 
-    def test_phase19_fetch_tools_worker_delegated(self):
-        """fetch_* tools are worker-delegated (NOT in SMART_AGENT_DIRECT_TOOLS)."""
-        # NOT in smart-direct
-        assert "fetch_training_status" not in tools.SMART_AGENT_DIRECT_TOOLS
-        assert "fetch_recent_activities" not in tools.SMART_AGENT_DIRECT_TOOLS
-        # IN tool schemas
-        names = {s["name"] for s in tools.TOOL_SCHEMAS}
-        assert "fetch_training_status" in names
-        assert "fetch_recent_activities" in names
-        # IN worker schemas (delegated through worker)
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "fetch_training_status" in worker_names
-        assert "fetch_recent_activities" in worker_names
-        # IN handlers dispatch
-        assert "fetch_training_status" in tools._HANDLERS
-        assert "fetch_recent_activities" in tools._HANDLERS
 
     def test_phase19_tool_schema_shape(self):
         """Each new schema has name + description + input_schema (object type)."""
@@ -502,24 +383,8 @@ class TestPhase19ToolRegistration:
         )
         assert schema["input_schema"]["required"] == ["patch"]
 
-    # ---- Nutrition: fetch_recent_meals is brain-direct (rebuilt) ----
+    # ---- Nutrition: fetch_recent_meals is MCP-registered (rebuilt) ----
 
-    def test_fetch_recent_meals_brain_direct(self):
-        """fetch_recent_meals is brain-direct so totals are server-computed, not
-        summed by the worker LLM (the source of the wrong/drifting numbers)."""
-        # IN smart-direct (brain tier)
-        assert "fetch_recent_meals" in tools.SMART_AGENT_DIRECT_TOOLS
-        # IN tool schemas
-        names = {s["name"] for s in tools.TOOL_SCHEMAS}
-        assert "fetch_recent_meals" in names
-        # NOT in worker schemas — no worker summarization hop
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "fetch_recent_meals" not in worker_names
-        # Exposed to the brain via get_smart_schemas
-        smart_names = {s["name"] for s in tools.get_smart_schemas()}
-        assert "fetch_recent_meals" in smart_names
-        # IN handlers dispatch
-        assert "fetch_recent_meals" in tools._HANDLERS
 
     def test_fetch_recent_meals_schema_default_hours(self):
         """fetch_recent_meals schema: hours is integer + no required args."""
@@ -576,14 +441,6 @@ class TestPhase19ToolRegistration:
         # the per-meal list is still present for recency/timing reasoning
         assert len(data["meals"]) == 2
 
-    def test_get_acwr_worker_delegated(self):
-        """Phase 19 SC-1 closeout: get_acwr is worker-delegated at all 4 sites."""
-        assert "get_acwr" not in tools.SMART_AGENT_DIRECT_TOOLS
-        names = {s["name"] for s in tools.TOOL_SCHEMAS}
-        assert "get_acwr" in names
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "get_acwr" in worker_names
-        assert "get_acwr" in tools._HANDLERS
 
     def test_get_acwr_schema_no_args(self):
         """get_acwr schema: zero properties, zero required."""
@@ -662,9 +519,6 @@ class TestPhase21UpdatePlanAlias:
         """update_plan must be present in _HANDLERS dispatch table."""
         assert "update_plan" in tools._HANDLERS
 
-    def test_update_plan_in_smart_agent_direct_tools(self):
-        """update_plan must be a brain-direct tool (in SMART_AGENT_DIRECT_TOOLS)."""
-        assert "update_plan" in tools.SMART_AGENT_DIRECT_TOOLS
 
     def test_update_plan_schema_registered(self):
         """update_plan must have a schema entry in TOOL_SCHEMAS."""
@@ -785,25 +639,18 @@ class TestPhase21UpdatePlanAlias:
 
 
 # ---------------------------------------------------------------------------
-# Phase 22 Plan 02 — read_coaching_guide brain-direct tool (COACH-01)
+# Phase 22 Plan 02 — read_coaching_guide MCP-registered tool (COACH-01)
 # ---------------------------------------------------------------------------
 
 class TestPhase22CoachingGuideTool:
     """COACH-01 — verify read_coaching_guide registration at all 4 sites."""
 
-    def test_read_coaching_guide_in_smart_agent_direct_tools(self):
-        """Site 1: read_coaching_guide is in SMART_AGENT_DIRECT_TOOLS."""
-        assert "read_coaching_guide" in tools.SMART_AGENT_DIRECT_TOOLS
 
     def test_read_coaching_guide_in_tool_schemas(self):
         """Site 2: read_coaching_guide schema exists in TOOL_SCHEMAS."""
         names = {s["name"] for s in tools.TOOL_SCHEMAS}
         assert "read_coaching_guide" in names
 
-    def test_read_coaching_guide_not_in_worker_schemas(self):
-        """Brain-direct — worker MUST NOT see this tool (T-22-05 mitigation)."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "read_coaching_guide" not in worker_names
 
     def test_read_coaching_guide_in_handlers_dispatch(self):
         """Site 4: read_coaching_guide is in _HANDLERS dispatch table."""
@@ -986,15 +833,10 @@ class TestNativeTaskTools:
         from core import tools
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
         monkeypatch.setenv("FIRESTORE_DATABASE", "(default)")
-        # Pin the legacy backend: this test patches memory.firestore_db.TaskStore
-        # specifically, and TASK_BACKEND now defaults to the Things store.
-        monkeypatch.setenv("TASK_BACKEND", "firestore")
-
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t1", "title": "Call dentist", "status": "active"}
-        mock_store_cls = MagicMock(return_value=mock_store)
 
-        with patch("memory.firestore_db.TaskStore", mock_store_cls):
+        with patch("core.tools._get_task_store", return_value=mock_store):
             result = tools._HANDLERS["task_create"]({"title": "Call dentist", "due_date": "2026-06-25"})
 
         # create was called once, with a single positional dict (not kwargs)
@@ -1039,17 +881,17 @@ class TestNativeTaskTools:
         from memory.things_store import ThingsTaskStore
         assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
-    def test_task_backend_firestore_rolls_back_without_a_deploy(self, monkeypatch):
+    def test_task_backend_firestore_cannot_replace_things_authority(self, monkeypatch):
         from core import tools
-        from memory.firestore_db import TaskStore
+        from memory.things_store import ThingsTaskStore
         monkeypatch.setenv("TASK_BACKEND", "firestore")
-        assert isinstance(tools._get_task_store(), TaskStore)
+        assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
-    def test_task_backend_is_case_and_space_tolerant(self, monkeypatch):
+    def test_task_backend_value_is_ignored_for_authority(self, monkeypatch):
         from core import tools
-        from memory.firestore_db import TaskStore
+        from memory.things_store import ThingsTaskStore
         monkeypatch.setenv("TASK_BACKEND", "  FireStore ")
-        assert isinstance(tools._get_task_store(), TaskStore)
+        assert isinstance(tools._get_task_store(), ThingsTaskStore)
 
     def test_no_core_module_constructs_taskstore_directly(self):
         """Every proactive reader must resolve its store via get_task_store().
@@ -1225,11 +1067,6 @@ class TestUpdateCalendarEventRegistration:
     def test_update_calendar_event_in_handlers(self):
         assert "update_calendar_event" in tools._HANDLERS
 
-    def test_update_calendar_event_available_to_worker(self):
-        """Calendar mutations run through the worker, so the new tool must be in
-        WORKER_TOOL_SCHEMAS."""
-        names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "update_calendar_event" in names
 
     def test_update_calendar_event_dispatches_to_manager(self, fake_action_log):
         mock_cal = MagicMock()
@@ -1685,32 +1522,17 @@ class TestNativeHabitTools:
 
 
 class TestPushSelfAwarenessTools:
-    """Push self-awareness tool registration in core/tools.py (Phase 29 Plan 05).
-
-    Covers PUSH-03/D-13: toggle_telegram_mirror + get_push_health, both
-    brain-direct — registered in SMART_AGENT_DIRECT_TOOLS, TOOL_SCHEMAS,
-    _HANDLERS, and surfaced to the brain via get_smart_schemas.
-    """
+    """Web Push self-awareness stays registered without transport controls."""
 
     def _schema_names(self):
         from core.tools import TOOL_SCHEMAS
         return [s["name"] for s in TOOL_SCHEMAS]
 
-    def test_both_tools_in_direct_tools_frozenset(self):
-        assert "toggle_telegram_mirror" in tools.SMART_AGENT_DIRECT_TOOLS
-        assert "get_push_health" in tools.SMART_AGENT_DIRECT_TOOLS
 
-    def test_both_tools_registered_in_tool_schemas(self):
+    def test_only_push_health_is_registered_in_tool_schemas(self):
         names = self._schema_names()
-        assert "toggle_telegram_mirror" in names
+        assert "toggle_telegram_mirror" not in names
         assert "get_push_health" in names
-
-    def test_toggle_telegram_mirror_schema_requires_enabled_bool(self):
-        from core.tools import TOOL_SCHEMAS
-        schema = next(s for s in TOOL_SCHEMAS if s["name"] == "toggle_telegram_mirror")
-        props = schema["input_schema"]["properties"]
-        assert props["enabled"]["type"] == "boolean"
-        assert "enabled" in schema["input_schema"]["required"]
 
     def test_get_push_health_schema_takes_no_args(self):
         from core.tools import TOOL_SCHEMAS
@@ -1718,33 +1540,11 @@ class TestPushSelfAwarenessTools:
         assert schema["input_schema"]["properties"] == {}
         assert schema["input_schema"]["required"] == []
 
-    def test_both_tools_registered_in_handlers(self):
+    def test_only_push_health_is_registered_in_handlers(self):
         from core.tools import _HANDLERS
-        assert "toggle_telegram_mirror" in _HANDLERS
+        assert "toggle_telegram_mirror" not in _HANDLERS
         assert "get_push_health" in _HANDLERS
 
-    def test_both_tools_surfaced_via_get_smart_schemas(self):
-        smart_names = {s["name"] for s in tools.get_smart_schemas()}
-        assert "toggle_telegram_mirror" in smart_names
-        assert "get_push_health" in smart_names
-
-    def test_toggle_telegram_mirror_handler_calls_hub_settings_set(self, monkeypatch):
-        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-        mock_store = MagicMock()
-        with patch("memory.firestore_db.HubSettingsStore", return_value=mock_store):
-            result = tools._HANDLERS["toggle_telegram_mirror"]({"enabled": False})
-
-        mock_store.set.assert_called_once_with({"telegram_mirror_enabled": False})
-        parsed = json.loads(result)
-        assert parsed == {"telegram_mirror_enabled": False}
-
-    def test_toggle_telegram_mirror_handler_enables_mirror(self, monkeypatch):
-        monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
-        mock_store = MagicMock()
-        with patch("memory.firestore_db.HubSettingsStore", return_value=mock_store):
-            tools._HANDLERS["toggle_telegram_mirror"]({"enabled": True})
-
-        mock_store.set.assert_called_once_with({"telegram_mirror_enabled": True})
 
     def test_get_push_health_handler_reads_subscriptions_and_settings(self, monkeypatch):
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -1769,16 +1569,14 @@ class TestPushSelfAwarenessTools:
         assert parsed["subscription_count"] == 1
         assert parsed["devices"][0]["user_agent"] == "iPhone Safari"
         assert parsed["devices"][0]["failure_count"] == 0
-        assert parsed["telegram_mirror_enabled"] is True
+        assert "telegram_mirror_enabled" not in parsed
         assert parsed["push_enabled_at"] == "2026-06-27T00:00:00+00:00"
         # T-29-09: encryption keys must never be surfaced
         assert "keys" not in parsed["devices"][0]
         assert "SECRET_KEY" not in result
         assert "SECRET_AUTH" not in result
 
-    def test_get_push_health_handler_no_chat_visible_until_field(self, monkeypatch):
-        """D-13: chat_visible_until must never appear — it's an in-process
-        variable in core/scheduled_message.py, not Firestore-backed here."""
+    def test_get_push_health_handler_omits_retired_delivery_fields(self, monkeypatch):
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
         mock_sub_store = MagicMock()
         mock_sub_store.list_all.return_value = []
@@ -1794,6 +1592,7 @@ class TestPushSelfAwarenessTools:
 
         parsed = json.loads(result)
         assert "chat_visible_until" not in parsed
+        assert "telegram_mirror_enabled" not in parsed
         assert parsed["subscription_count"] == 0
 
 
@@ -2161,32 +1960,13 @@ class TestStandingDirectiveTools:
 
     # ----- Registration tests ----- #
 
-    def test_all_three_tools_in_smart_agent_direct_tools(self):
-        """set/list/cancel_standing_directive are in SMART_AGENT_DIRECT_TOOLS."""
-        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
-            assert name in tools.SMART_AGENT_DIRECT_TOOLS, (
-                f"{name!r} missing from SMART_AGENT_DIRECT_TOOLS"
-            )
 
-    def test_all_three_tools_excluded_from_worker_schemas(self):
-        """None of the 3 directive tools appear in WORKER_TOOL_SCHEMAS."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
-            assert name not in worker_names, (
-                f"{name!r} must NOT appear in WORKER_TOOL_SCHEMAS — Klaus brain-only"
-            )
 
     def test_all_three_tools_in_handlers_dispatch(self):
         """All 3 directive tools are in _HANDLERS."""
         for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
             assert name in tools._HANDLERS, f"{name!r} missing from _HANDLERS"
 
-    def test_all_three_tools_returned_by_get_smart_schemas(self):
-        """Brain-direct: all 3 tools are returned by get_smart_schemas (not worker-delegated)."""
-        schemas = tools.get_smart_schemas()
-        names = {s["name"] for s in schemas}
-        for name in ("set_standing_directive", "list_standing_directives", "cancel_standing_directive"):
-            assert name in names, f"{name!r} missing from get_smart_schemas() output"
 
     def test_all_three_tools_have_correct_schemas(self):
         """Schemas exist in TOOL_SCHEMAS with correct `required` arrays and no-delegate phrasing."""
@@ -2197,18 +1977,18 @@ class TestStandingDirectiveTools:
         assert set(setd["input_schema"]["required"]) == {"text"}
         assert "expires_at" in setd["input_schema"]["properties"]
         assert "condition_text" in setd["input_schema"]["properties"]
-        assert "Call this directly — do NOT delegate to the worker." in setd["description"]
+        assert "Available through Claude MCP." in setd["description"]
 
         assert "list_standing_directives" in schemas_by_name
         listd = schemas_by_name["list_standing_directives"]
         assert listd["input_schema"]["required"] == []
         assert "include_history" in listd["input_schema"]["properties"]
-        assert "Call this directly — do NOT delegate to the worker." in listd["description"]
+        assert "Available through Claude MCP." in listd["description"]
 
         assert "cancel_standing_directive" in schemas_by_name
         cancd = schemas_by_name["cancel_standing_directive"]
         assert set(cancd["input_schema"]["required"]) == {"id"}
-        assert "Call this directly — do NOT delegate to the worker." in cancd["description"]
+        assert "Available through Claude MCP." in cancd["description"]
 
 
 # ---------------------------------------------------------------------------
@@ -2224,8 +2004,8 @@ class TestForgetMemory:
       - a non-string / empty vector_id returns an error dict, never calls
         delete, and never raises (ASVS V5, T-32-04)
       - forget_memory resolves through core/tools.py dispatch by name
-      - registration: SMART_AGENT_DIRECT_TOOLS, excluded from
-        WORKER_TOOL_SCHEMAS, present in TOOL_SCHEMAS + _HANDLERS
+      - registration: retired direct-tool registry, excluded from
+        retired worker registry, present in TOOL_SCHEMAS + _HANDLERS
     """
 
     def test_valid_vector_id_calls_index_delete(self, monkeypatch):
@@ -2291,21 +2071,14 @@ class TestForgetMemory:
 
     # ----- Registration tests ----- #
 
-    def test_forget_memory_in_smart_agent_direct_tools(self):
-        assert "forget_memory" in tools.SMART_AGENT_DIRECT_TOOLS
 
-    def test_forget_memory_excluded_from_worker_schemas(self):
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "forget_memory" not in worker_names, (
-            "forget_memory must NOT appear in WORKER_TOOL_SCHEMAS — brain-only deletion"
-        )
 
     def test_forget_memory_has_schema_with_vector_id_required(self):
         schemas_by_name = {s["name"]: s for s in tools.TOOL_SCHEMAS}
         assert "forget_memory" in schemas_by_name
         schema = schemas_by_name["forget_memory"]
         assert schema["input_schema"]["required"] == ["vector_id"]
-        assert "Call this directly — do NOT delegate to the worker." in schema["description"]
+        assert "hard delete" in schema["description"].lower()
 
 
 def tools_module_memory_tool(store):
@@ -2314,211 +2087,20 @@ def tools_module_memory_tool(store):
     return MemoryTool(memory_store=store)
 
 
-# ===========================================================================
-# TestGetRecentDecisions — OCC-07 / D-26 (plan 33-09)
-# ===========================================================================
+def test_self_status_avoids_legacy_cost_fields(monkeypatch):
+    """The retained status read must not expose removed model-cost fields."""
+    import memory.firestore_db as firestore_db
 
-class TestGetRecentDecisions:
-    """get_recent_decisions(days) — the single self-accountability read tool.
+    monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
+    meter = MagicMock(side_effect=AssertionError("legacy meter must stay unused"))
+    journal = MagicMock()
+    journal.return_value.get_recent.return_value = [
+        {"date": "2026-08-12", "summary": "steady", "mood": "focused"}
+    ]
+    with patch.object(firestore_db, "JournalStore", journal):
+        status = json.loads(tools._handle_get_self_status())
 
-    Covers:
-      - all four D-26 elements populated from TickLog + OutreachLog + ActionLog
-      - occasion vs. tick classification via the "occasion:<name>" doc-id
-        convention plan 33-04 established
-      - days clamping (ASVS V5): 1000 -> 30, -5 -> 1, "3" (string) -> 3
-      - ISO-safety: a value with .isoformat() inside a decision trail survives
-        json.dumps
-      - legacy tick-log entries missing new fields degrade to defaults, never
-        KeyError
-      - a raising store degrades to {"error": ...}, never propagates
-      - registration triad: SMART_AGENT_DIRECT_TOOLS, _HANDLERS, TOOL_SCHEMAS,
-        get_smart_schemas()
-    """
-
-    @staticmethod
-    def _today_and_dates(days: int) -> tuple:
-        from datetime import datetime, timedelta
-        from zoneinfo import ZoneInfo
-        tz = ZoneInfo("Asia/Jerusalem")
-        today = datetime.now(tz).date()
-        dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
-        return today, dates
-
-    def test_get_recent_decisions_returns_all_four_elements(self, fake_decision_stores):
-        today, dates = self._today_and_dates(2)
-        d0, d1 = dates[0], dates[1]
-
-        fake_decision_stores["tick"].data = {
-            d0: [
-                {
-                    "time": "14:20",
-                    "decision_trail": {
-                        "trail": [{"layer1": {"should_act": False, "reason": "quiet night"}}],
-                        "skip_cause": "nothing_happened",
-                        "sent": False,
-                        "composed_via": "",
-                        "topic_key": "",
-                    },
-                },
-            ],
-        }
-        fake_decision_stores["outreach"].data = {
-            d1: [
-                {"time": "09:05", "topic_key": "morning:" + d1,
-                 "occasion": "morning", "final": "Good morning, sir."},
-            ],
-        }
-        fake_decision_stores["action"].get_recent_return = [
-            {"id": "abc123", "action": "calendar_create",
-             "detail": "Upper Body, tomorrow 18:00", "occasion": "nightly",
-             "at": f"{d0}T22:00:00+03:00", "disclosed": False, "date": d0},
-        ]
-
-        result = json.loads(tools._handle_get_recent_decisions(2))
-
-        assert result["days"] == 2
-        assert result["dates"] == dates
-
-        decisions_row = next(r for r in result["decisions"] if r["date"] == d0)
-        assert decisions_row["reason"] == "quiet night"
-        assert decisions_row["should_act"] is False
-        from tests.occasion_helpers import SKIP_CAUSES
-        assert decisions_row["skip_cause"] in SKIP_CAUSES
-
-        sent_row = result["sent"][0]
-        assert sent_row["final"] == "Good morning, sir."
-
-        actions_row = result["actions"][0]
-        assert actions_row["detail"] == "Upper Body, tomorrow 18:00"
-
-    def test_occasion_doc_id_classified_as_occasion(self, fake_decision_stores):
-        today, dates = self._today_and_dates(2)
-        d0 = dates[0]
-        fake_decision_stores["tick"].data = {
-            d0: [
-                {
-                    "time": "occasion:nightly",
-                    "decision_trail": {
-                        "trail": [{"layer1": {"should_act": True, "reason": "wind-down"}}],
-                        "sent": True, "composed_via": "llm", "topic_key": f"nightly:{d0}",
-                        "skip_cause": "",
-                    },
-                },
-                {
-                    "time": "13:40",
-                    "decision_trail": {
-                        "trail": [{"layer1": {"should_act": True, "reason": "overdue task"}}],
-                        "sent": True, "composed_via": "llm", "topic_key": "overdue:x",
-                        "skip_cause": "",
-                    },
-                },
-            ],
-        }
-
-        result = json.loads(tools._handle_get_recent_decisions(2))
-        occasion_row = next(r for r in result["decisions"] if r["time"] == "occasion:nightly")
-        tick_row = next(r for r in result["decisions"] if r["time"] == "13:40")
-
-        assert occasion_row["kind"] == "occasion"
-        assert occasion_row["occasion"] == "nightly"
-        assert tick_row["kind"] == "tick"
-        assert tick_row["occasion"] == ""
-
-    def test_days_clamped_high_low_and_string(self, fake_decision_stores):
-        result_high = json.loads(tools._handle_get_recent_decisions(1000))
-        assert result_high["days"] == 30
-        assert len(result_high["dates"]) == 30
-
-        result_low = json.loads(tools._handle_get_recent_decisions(-5))
-        assert result_low["days"] == 1
-        assert len(result_low["dates"]) == 1
-
-        result_str = json.loads(tools._handle_get_recent_decisions("3"))
-        assert result_str["days"] == 3
-        assert len(result_str["dates"]) == 3
-
-    def test_isoformat_value_in_decision_trail_survives_json_dumps(self, fake_decision_stores):
-        from datetime import datetime, timezone
-        today, dates = self._today_and_dates(2)
-        d0 = dates[0]
-
-        class _FakeTimestamp:
-            """Mimics DatetimeWithNanoseconds — has isoformat(), not a str."""
-            def isoformat(self) -> str:
-                return "2026-07-29T22:14:05+00:00"
-
-        fake_decision_stores["tick"].data = {
-            d0: [
-                {
-                    "time": "22:00",
-                    "captured_at": _FakeTimestamp(),
-                    "decision_trail": {
-                        "trail": [{"layer1": {"should_act": True, "reason": "ok"}}],
-                        "sent": True, "composed_via": "llm", "topic_key": "x",
-                        "skip_cause": "",
-                    },
-                },
-            ],
-        }
-
-        # Must not raise, and the timestamp must round-trip as a plain string.
-        raw = tools._handle_get_recent_decisions(2)
-        parsed = json.loads(raw)
-        assert isinstance(parsed, dict)
-        assert "error" not in parsed
-
-    def test_legacy_tick_log_entry_missing_fields_degrades_gracefully(self, fake_decision_stores):
-        today, dates = self._today_and_dates(2)
-        d0 = dates[0]
-        # A pre-Phase-33 tick log: no skip_cause/composed_via/occasion keys,
-        # no "trail" list at all.
-        fake_decision_stores["tick"].data = {
-            d0: [{"time": "11:00", "decision_trail": {"sent": True}}],
-        }
-
-        result = json.loads(tools._handle_get_recent_decisions(2))
-        row = next(r for r in result["decisions"] if r["time"] == "11:00")
-        assert row["skip_cause"] == ""
-        assert row["composed_via"] == ""
-        assert row["topic_key"] == ""
-        assert row["reason"] == ""
-        assert row["should_act"] is None
-        assert row["kind"] == "tick"
-        assert row["occasion"] == ""
-
-    def test_ticks_for_date_raising_returns_error_not_propagate(self, fake_decision_stores):
-        fake_decision_stores["tick"].raise_on_call = True
-
-        raw = tools._handle_get_recent_decisions(2)
-        result = json.loads(raw)
-        assert "error" in result
-
-    # ----- Registration tests (Task 2) ----- #
-
-    def test_get_recent_decisions_in_smart_agent_direct_tools(self):
-        assert "get_recent_decisions" in tools.SMART_AGENT_DIRECT_TOOLS
-
-    def test_get_recent_decisions_in_handlers_and_dispatches(self, fake_decision_stores):
-        assert "get_recent_decisions" in tools._HANDLERS
-        raw = tools.dispatch("get_recent_decisions", {})
-        result = json.loads(raw)
-        assert "error" not in result
-
-    def test_get_recent_decisions_schema_shape(self):
-        schemas = [s for s in tools.TOOL_SCHEMAS if s["name"] == "get_recent_decisions"]
-        assert len(schemas) == 1
-        schema = schemas[0]
-        assert schema["input_schema"]["required"] == []
-        assert set(schema["input_schema"]["properties"]) == {"days"}
-        assert schema["input_schema"]["properties"]["days"]["type"] == "integer"
-
-    def test_get_recent_decisions_in_smart_schemas_with_direct_call_wording(self):
-        smart_schemas = tools.get_smart_schemas()
-        matches = [s for s in smart_schemas if s["name"] == "get_recent_decisions"]
-        assert len(matches) == 1
-        assert "do NOT delegate" in matches[0]["description"]
-
-    def test_dispatch_passes_days_kwarg_through(self, fake_decision_stores):
-        raw = tools.dispatch("get_recent_decisions", {"days": 7})
-        result = json.loads(raw)
-        assert result["days"] == 7
+    assert "status_at" in status
+    assert "today_cost_usd" not in status
+    assert "today_llm_calls" not in status
+    assert status["journal"]["summary"] == "steady"

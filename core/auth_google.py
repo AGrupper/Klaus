@@ -1,4 +1,4 @@
-"""Persistent Google OAuth 2.0 manager for Gmail + Calendar.
+"""Persistent Google OAuth 2.0 manager for Calendar.
 
 Implements the Phase-1 auth boilerplate (per `docs/TECHNICAL_PLAN.md` §3.1
 and §4). Holds a refresh token so the agent can call Google APIs indefinitely
@@ -40,10 +40,10 @@ logger = logging.getLogger(__name__)
 # WHY explicit + configurable: googleapiclient's own build_http() already sets
 # a 60s httplib2 socket timeout when nothing else is specified, but that
 # default is buried in the library and not something Klaus's operator can see
-# or tune. Mirrors the LLM_TIMEOUT_SECONDS invariant (CLAUDE.md §6): every
-# outbound client Klaus owns gets an explicit, bounded, env-driven timeout
+# or tune. Every outbound client Klaus owns gets an explicit, bounded,
+# env-driven timeout
 # rather than relying on an SDK default. 30s keeps a single stalled Calendar/
-# Gmail read well under the Cloud Run request deadline instead of eating up
+# Calendar read well under the Cloud Run request deadline instead of eating up
 # to 60s of it (observed recurring in production 2026-08-01..03 as
 # `TimeoutError: The read operation timed out` from httplib2/ssl during
 # calendar gather).
@@ -51,24 +51,15 @@ _GOOGLE_API_TIMEOUT_ENV = "GOOGLE_API_TIMEOUT_SECONDS"
 _GOOGLE_API_TIMEOUT_DEFAULT = "30"
 
 
-# OAuth scopes the agent needs.
-#  - gmail.modify  : read inbox, mark read, send drafts (broad enough for Phase 3 tools).
-#  - calendar      : full read/write on the primary calendar.
-# IMPORTANT: editing this list invalidates the cached token — delete it to re-auth.
-GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+# Calendar is the only retained Google OAuth capability. Any cached token that
+# carries a different grant is intentionally discarded so Google re-consent is
+# required instead of silently preserving broader historical access.
 CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
-# PHASE 19 — read-only nutrition access for Google Fit (Lifesum sync).
-# Adding this scope invalidates the cached token; operator MUST re-consent
-# before redeploy or Gmail+Calendar calls will start returning 401 (Pitfall 1).
-FITNESS_NUTRITION_READ_SCOPE = "https://www.googleapis.com/auth/fitness.nutrition.read"
 
 
 def required_google_scopes() -> list[str]:
-    """Return the least-privilege scopes for the active runtime mode."""
-    legacy_enabled = os.environ.get(
-        "KLAUS_LEGACY_RUNTIME_ENABLED", "true"
-    ).strip().lower() in {"1", "true", "yes", "on"}
-    return [GMAIL_SCOPE, CALENDAR_SCOPE] if legacy_enabled else [CALENDAR_SCOPE]
+    """Return the fixed least-privilege scope set for the retained runtime."""
+    return [CALENDAR_SCOPE]
 
 
 # ------------------------------------------------------------------ #
@@ -135,13 +126,18 @@ class SecretManagerTokenStorage:
 
     IAM requirement:
         The runtime service account needs the `secretmanager.secretVersionAdder`
-        role on the secret to call `add_secret_version`.
+        and `secretmanager.secretVersionManager` roles on this secret. The
+        latter is used only for best-effort retention after a successful save.
 
     WHY immutable versions:
         Secret Manager versions are immutable — you can never overwrite a
         version's payload. Each token refresh therefore creates a new version.
         `load` always reads `latest`, which automatically resolves to the
-        most recently added version.
+        most recently added version. After each successful write, Klaus keeps
+        the newest working version plus one rollback version. Older enabled
+        versions are disabled; versions already disabled by an earlier refresh
+        are destroyed. Retention failure never turns a successful save into a
+        failed Calendar operation.
     """
 
     def __init__(self, project_id: str, secret_name: str) -> None:
@@ -196,6 +192,35 @@ class SecretManagerTokenStorage:
             }
         )
         logger.debug("Saved new token version to secret '%s'.", self.secret_name)
+        try:
+            self._prune_versions(client, parent)
+        except Exception:
+            # WHY: a refreshed access token is already durably persisted. IAM
+            # drift in retention must be visible, but it must not make the
+            # Calendar call fail or tempt the caller to re-run token refresh.
+            logger.warning(
+                "OAuth token retention cleanup failed for secret '%s'; "
+                "the newly saved token remains usable.",
+                self.secret_name,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _prune_versions(client: Any, parent: str) -> None:
+        """Keep latest+rollback using separate disable and destroy phases."""
+        from core.secret_retention import apply_plan, plan_for_client
+
+        # No age gate is needed in the hourly runtime path because destruction
+        # is limited to versions observed as DISABLED before this invocation.
+        # A version disabled below therefore survives at least until a later
+        # refresh, while the two newest usable versions are always retained.
+        plan = plan_for_client(
+            client,
+            parent,
+            keep_count=2,
+            destroy_grace_days=0,
+        )
+        apply_plan(client, parent, plan)
 
 
 # ------------------------------------------------------------------ #
@@ -203,7 +228,7 @@ class SecretManagerTokenStorage:
 # ------------------------------------------------------------------ #
 
 class GoogleAuthManager:
-    """Manages a single Google OAuth credential covering Gmail + Calendar.
+    """Manages a single Calendar OAuth credential.
 
     Delegates all token persistence to an injected `TokenStorage` backend,
     which makes the manager storage-agnostic and independently testable.
@@ -216,7 +241,7 @@ class GoogleAuthManager:
            no user interaction.
     """
 
-    SCOPES: list[str] = [GMAIL_SCOPE, CALENDAR_SCOPE]
+    SCOPES: list[str] = [CALENDAR_SCOPE]
 
     def __init__(self, credentials_path: str, token_storage: TokenStorage) -> None:
         """
@@ -293,13 +318,6 @@ class GoogleAuthManager:
     # Service builders — thin convenience wrappers over googleapiclient. #
     # ------------------------------------------------------------------ #
 
-    def gmail_service(self) -> Any:
-        """Return an authenticated Gmail v1 service resource."""
-        # cache_discovery=False silences a noisy warning on Cloud Run where
-        # the local discovery cache directory isn't writable.
-        return build("gmail", "v1", http=self._authorized_http(),
-                     cache_discovery=False)
-
     def calendar_service(self) -> Any:
         """Return an authenticated Calendar v3 service resource."""
         return build("calendar", "v3", http=self._authorized_http(),
@@ -335,9 +353,12 @@ class GoogleAuthManager:
             # WHY: from_authorized_user_info accepts a dict parsed from the
             # JSON string. This is storage-backend-agnostic — it works whether
             # the payload came from a file, Secret Manager, or any other source.
-            return Credentials.from_authorized_user_info(
-                json.loads(payload), self.scopes
-            )
+            credential_info = json.loads(payload)
+            scopes = set(credential_info.get("scopes") or [])
+            if scopes != set(self.scopes):
+                logger.info("Cached Google token has retired scopes; re-consent is required.")
+                return None
+            return Credentials.from_authorized_user_info(credential_info, self.scopes)
         except (ValueError, GoogleAuthError) as exc:
             # WHY: a corrupt token should not crash the whole agent —
             # treat it as "no token" so the consent flow can run.
@@ -429,7 +450,7 @@ def build_auth_manager_from_env() -> GoogleAuthManager:
 # ---------------------------------------------------------------------- #
 
 def _smoke_test() -> int:
-    """Authenticate and print the active Gmail address. Exit code 0 on success."""
+    """Authenticate and list a bounded Calendar window. Exit code 0 on success."""
     from dotenv import load_dotenv
     load_dotenv(override=True)
     
@@ -439,23 +460,25 @@ def _smoke_test() -> int:
     manager = build_auth_manager_from_env()
 
     try:
-        gmail = manager.gmail_service()
-        # users().getProfile is the cheapest authenticated call we can make —
-        # it confirms the token works and returns the active email address.
-        profile = gmail.users().getProfile(userId="me").execute()
+        from datetime import datetime, timedelta, timezone
+        calendar = manager.calendar_service()
+        start = datetime.now(timezone.utc)
+        result = calendar.events().list(
+            calendarId="primary",
+            timeMin=start.isoformat(),
+            timeMax=(start + timedelta(days=1)).isoformat(),
+            maxResults=1,
+            singleEvents=True,
+        ).execute()
     except FileNotFoundError as exc:
         logger.error("%s", exc)
         return 2
-    except HttpError as exc:
+    except (GoogleAuthError, HttpError) as exc:
         logger.error("Google API rejected the request: %s", exc)
         return 3
-    except GoogleAuthError as exc:
-        logger.error("Authentication failed: %s", exc)
-        return 4
 
     storage_backend = os.getenv("GOOGLE_TOKEN_STORAGE", "file")
-    print(f"Authenticated as: {profile.get('emailAddress', '<unknown>')}")
-    print(f"Total messages in mailbox: {profile.get('messagesTotal', '?')}")
+    print(f"Calendar access verified; returned {len(result.get('items', []))} event(s).")
     print(f"Token storage backend: {storage_backend}")
     return 0
 

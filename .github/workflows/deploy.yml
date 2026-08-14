@@ -38,13 +38,13 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Verify the subtraction boundary
+        run: python scripts/check_claude_first_runtime.py
+
       # Configures Docker's credential helper so subsequent docker push calls
       # are automatically authenticated against Artifact Registry.
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
-
-      - name: Generate SELF.md capability manifest
-        run: python core/self_manifest.py
 
       # VITE_GOOGLE_CLIENT_ID is baked into the frontend bundle at build time
       # (the multi-stage Dockerfile accepts it as ARG). It is the public Google
@@ -57,9 +57,6 @@ jobs:
       - name: Push Docker image to Artifact Registry
         run: docker push "$IMAGE"
 
-      # TODO: Set CHAT_LOGS_BUCKET and NOTION_CHAT_LOG_DB_ID as GitHub Actions secrets
-      # (or repository variables) and reference them here before going to production.
-      # For now they are wired as empty strings so the env vars exist in Cloud Run.
       - name: Deploy to Cloud Run
         run: |
           # --service-account: runs as the runtime SA (datastore.user +
@@ -68,20 +65,17 @@ jobs:
           #   --set-env-vars: Cloud Run injects ADC automatically via the
           #   metadata server when a runtime SA is attached.
           #
-          # --ingress all: REQUIRED — Telegram's webhook POSTs come from the
-          #   public Internet, not from within the VPC.
+          # --ingress all: retained Hub, Claude MCP, routine triggers, and
+          #   scheduler calls arrive over HTTPS rather than from the VPC.
           #
-          # --allow-unauthenticated: REQUIRED for the same reason — Telegram
-          #   cannot attach a Google-signed IAM token to its requests.
-          #   Security is enforced by validating the X-Telegram-Bot-Api-Secret-Token
-          #   header on every incoming webhook (see interfaces/web_server.py).
+          # --allow-unauthenticated: required for the retained Hub/MCP
+          #   surfaces. Each protected route enforces its own session, shared
+          #   secret, or Scheduler OIDC check.
           #
           # --min-instances 0: scale-to-zero — at personal usage volumes the
           #   service is idle most of the time, keeping cost near-zero.
           #
-          # --timeout 600: must exceed the Cloud Tasks dispatch deadline
-          #   (540s in core/task_dispatch.py) so a long agent turn inside
-          #   /internal/process-update is never killed from the outside.
+          # --timeout 600: leaves headroom for retained MCP/Routine requests.
           #
           # Worker-count / --concurrency is omitted: the Dockerfile CMD already
           # passes --workers to uvicorn, keeping that concern in one place.
@@ -97,8 +91,8 @@ jobs:
             --cpu 1 \
             --memory 512Mi \
             --timeout 600 \
-            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,GOOGLE_API_TIMEOUT_SECONDS=30,FIRESTORE_DATABASE=klaus-firestore,SMART_AGENT_BACKEND=anthropic,SMART_AGENT_MODEL=claude-sonnet-5,SMART_AGENT_FALLBACK_BACKEND=gemini,SMART_AGENT_FALLBACK_MODEL=gemini-3.5-flash,SMART_AGENT_TERTIARY_BACKEND=anthropic,SMART_AGENT_TERTIARY_MODEL=claude-haiku-4-5,KLAUS_DAILY_COST_ALERT=5,WORKER_AGENT_BACKEND=openai,WORKER_AGENT_MODEL=deepseek-v4-flash,WORKER_AGENT_BASE_URL=https://api.deepseek.com/v1,TICK_BRAIN_BACKEND=openai,TICK_BRAIN_MODEL=openai/gpt-oss-120b,TICK_BRAIN_BASE_URL=https://api.groq.com/openai/v1,TICK_BRAIN_MAX_TOKENS=1024,TICK_BRAIN_TEMPERATURE=0.6,TICK_BRAIN_FALLBACK_BACKEND=gemini,TICK_BRAIN_FALLBACK_MODEL=gemini-3.5-flash,TELEGRAM_ALLOWED_USER_IDS=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }},KLAUS_USER_ID=${{ secrets.TELEGRAM_ALLOWED_USER_IDS }},CONVERSATION_STORE=firestore,PINECONE_INDEX_NAME=klaus-memory,KLAUS_EMBEDDING_METER_ENABLED=true,KLAUS_TRAINING_WRITEBACK_ENABLED=true,CLOUD_RUN_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,KLAUS_PUBLIC_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,KLAUS_MCP_ENABLED=true,KLAUS_MCP_READ_ONLY_MODE=false,KLAUS_CLAUDE_LIVE_ENABLED=true,KLAUS_CLAUDE_ROUTINES_ENABLED=true,CLAUDE_ROUTINE_TRIGGER_URL_MORNING=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_MORNING }},CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY }},CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY }},KLAUS_CAPABILITY_MCP_VERIFIED=true,KLAUS_CAPABILITY_SKILL_VERIFIED=true,KLAUS_CAPABILITY_ROUTINE_VERIFIED=true,KLAUS_CAPABILITY_PUBLISH_VERIFIED=true,KLAUS_ROUTINE_MORNING_CUTOVER=true,KLAUS_ROUTINE_NIGHTLY_CUTOVER=true,KLAUS_ROUTINE_WEEKLY_CUTOVER=false,KLAUS_DETERMINISTIC_ALERTS_ENABLED=false,KLAUS_HUB_CHAT_ENABLED=true,KLAUS_LEGACY_RUNTIME_ENABLED=true,CLOUD_SCHEDULER_SA_EMAIL=klaus-heartbeat@klaus-agent.iam.gserviceaccount.com,CLOUD_TASKS_QUEUE=klaus-updates,CLOUD_TASKS_LOCATION=me-central1,PROACTIVE_RAIN_THRESHOLD=20,PROACTIVE_TEMP_MAX=38,PROACTIVE_TEMP_MIN=8,PROACTIVE_FREE_TIME_MIN=60,PROACTIVE_GAP_MIN=30,CHAT_LOGS_BUCKET=klaus-chat-logs-klaus-agent,NOTION_CHAT_LOG_DB_ID=36134a332bc280f7912cfa8ce56f295f,NOTION_AI_CHAT_DB_ID=${{ secrets.NOTION_AI_CHAT_DB_ID }},KLAUS_GITHUB_REPO=${{ secrets.KLAUS_GITHUB_REPO }},GOOGLE_OAUTH_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }},VAPID_PUBLIC_KEY=BP-LvQ0tHd1EOnZOqknpOfIVLVNi1bM_iKzI0MhbpuKWR-SW2Boldv5gnM6wmfuYD-YbeBQfbKeyo5plAYl6EH0,OCCASION_CASCADE=true,TICK_MORNING_GATE_UNTIL_HOUR=11,TASK_BACKEND=things,THINGS_WRITE_ENABLED=true" \
-            --update-secrets "SMART_AGENT_API_KEY=klaus-anthropic-key:latest,SMART_AGENT_FALLBACK_API_KEY=klaus-gemini-key:latest,SMART_AGENT_TERTIARY_API_KEY=klaus-anthropic-key:latest,TICK_BRAIN_FALLBACK_API_KEY=klaus-gemini-key:latest,WORKER_AGENT_API_KEY=klaus-deepseek-key:latest,GEMINI_EMBEDDING_API_KEY=klaus-gemini-key:latest,TELEGRAM_BOT_TOKEN=klaus-telegram-token:latest,TELEGRAM_WEBHOOK_SECRET=klaus-telegram-webhook-secret:latest,PINECONE_API_KEY=klaus-pinecone-key:latest,NOTION_API_TOKEN=NOTION_API_TOKEN:latest,GARMIN_EMAIL=GARMIN_EMAIL:latest,GARMIN_PASSWORD=GARMIN_PASSWORD:latest,READWISE_TOKEN=READWISE_TOKEN:latest,HOME_ADDRESS=klaus-home-address:latest,KLAUS_GITHUB_TOKEN=klaus-github-token:latest,PG_CONNECTION_STRING=PG_CONNECTION_STRING:latest,HEALTHKIT_WEBHOOK_TOKEN=klaus-healthkit-webhook-token:latest,HEVY_API_KEY=klaus-hevy-api-key:latest,NIGHTLY_TRIGGER_TOKEN=klaus-nightly-trigger-token:latest,MORNING_TRIGGER_TOKEN=klaus-morning-trigger-token:latest,HUB_SESSION_SECRET=klaus-hub-session-secret:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_MORNING=klaus-claude-routine-morning-token:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_NIGHTLY=klaus-claude-routine-nightly-token:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_WEEKLY=klaus-claude-routine-weekly-token:latest,THINGS_EMAIL=klaus-things-email:latest,THINGS_PASSWORD=klaus-things-password:latest" \
+            --set-env-vars "ENVIRONMENT=production,TZ=Asia/Jerusalem,GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }},GOOGLE_TOKEN_STORAGE=secret_manager,GOOGLE_TOKEN_SECRET_NAME=klaus-google-oauth-token,GOOGLE_API_TIMEOUT_SECONDS=30,FIRESTORE_DATABASE=klaus-firestore,KLAUS_USER_ID=${{ secrets.KLAUS_USER_ID }},PINECONE_INDEX_NAME=klaus-memory,KLAUS_EMBEDDING_METER_ENABLED=true,KLAUS_TRAINING_WRITEBACK_ENABLED=true,CLOUD_RUN_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,KLAUS_PUBLIC_URL=https://klaus-agent-y2abtypx4q-zf.a.run.app,CLAUDE_PROJECT_URL=${{ vars.CLAUDE_PROJECT_URL }},KLAUS_MCP_ENABLED=true,KLAUS_MCP_READ_ONLY_MODE=false,KLAUS_CLAUDE_LIVE_ENABLED=true,KLAUS_CLAUDE_ROUTINES_ENABLED=true,CLAUDE_ROUTINE_TRIGGER_URL_MORNING=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_MORNING }},CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY }},CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY=${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY }},KLAUS_CAPABILITY_MCP_VERIFIED=true,KLAUS_CAPABILITY_SKILL_VERIFIED=true,KLAUS_CAPABILITY_ROUTINE_VERIFIED=true,KLAUS_CAPABILITY_PUBLISH_VERIFIED=true,KLAUS_ROUTINE_MORNING_CUTOVER=true,KLAUS_ROUTINE_NIGHTLY_CUTOVER=true,KLAUS_ROUTINE_WEEKLY_CUTOVER=true,KLAUS_DETERMINISTIC_ALERTS_ENABLED=true,CLOUD_SCHEDULER_SA_EMAIL=klaus-heartbeat@klaus-agent.iam.gserviceaccount.com,CLOUD_TASKS_QUEUE=klaus-updates,CLOUD_TASKS_LOCATION=me-central1,GOOGLE_OAUTH_CLIENT_ID=${{ vars.VITE_GOOGLE_CLIENT_ID }},VAPID_PUBLIC_KEY=BP-LvQ0tHd1EOnZOqknpOfIVLVNi1bM_iKzI0MhbpuKWR-SW2Boldv5gnM6wmfuYD-YbeBQfbKeyo5plAYl6EH0,TASK_BACKEND=things,THINGS_WRITE_ENABLED=true" \
+            --set-secrets "GEMINI_EMBEDDING_API_KEY=klaus-gemini-embedding-key:latest,PINECONE_API_KEY=klaus-pinecone-key:latest,NOTION_API_TOKEN=klaus-notion-api-token:latest,GARMIN_EMAIL=klaus-garmin-email:latest,GARMIN_PASSWORD=klaus-garmin-password:latest,HOME_ADDRESS=klaus-home-address:latest,PG_CONNECTION_STRING=klaus-postgres-connection-string:latest,HEALTHKIT_WEBHOOK_TOKEN=klaus-healthkit-webhook-token:latest,HEVY_API_KEY=klaus-hevy-api-key:latest,NIGHTLY_TRIGGER_TOKEN=klaus-nightly-trigger-token:latest,MORNING_TRIGGER_TOKEN=klaus-morning-trigger-token:latest,HUB_SESSION_SECRET=klaus-hub-session-secret:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_MORNING=klaus-claude-routine-morning-token:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_NIGHTLY=klaus-claude-routine-nightly-token:latest,CLAUDE_ROUTINE_TRIGGER_TOKEN_WEEKLY=klaus-claude-routine-weekly-token:latest,THINGS_EMAIL=klaus-things-email:latest,THINGS_PASSWORD=klaus-things-password:latest" \
             --quiet
 
       # Fetch the live URL and hit /health to confirm the new revision is

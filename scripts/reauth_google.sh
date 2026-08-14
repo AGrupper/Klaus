@@ -5,7 +5,7 @@
 #   google.auth.exceptions.RefreshError: invalid_grant: Token has been expired or revoked.
 #
 # Google revokes the refresh token whenever the account password changes, because
-# the grant includes Gmail scopes — this is a Google security policy, not a Klaus
+# the previous grant included broader scopes — this is a Google security policy, not a Klaus
 # bug, and it cannot be disabled. See docs/DEPLOYMENT.md section 7.
 set -euo pipefail
 
@@ -30,4 +30,14 @@ gcloud secrets versions add "$SECRET_NAME" \
   --data-file="./${TOKEN_PATH}" \
   --project="$PROJECT_ID"
 
-echo "Done. Klaus's next Calendar/Gmail call will pick up the new token."
+# Keep the latest working token plus one rollback. The script prints the plan
+# by default and applies only because the exact secret name is repeated as a
+# confirmation. Newly-disabled versions cannot be destroyed in this same run.
+python scripts/manage_secret_versions.py \
+  --project "$PROJECT_ID" \
+  --secret "$SECRET_NAME" \
+  --destroy-grace-days 7 \
+  --apply \
+  --confirm-secret "$SECRET_NAME"
+
+echo "Done. Klaus's next Calendar call will pick up the new token."

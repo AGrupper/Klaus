@@ -3,18 +3,15 @@
 Phase 29 — PUSH-01, PUSH-03 (TDD — Task 1 subscribe/vapid, Task 2 settings)
 
 Covers:
-  - test_push_and_settings_routes_require_session: no session → 401 on all 4 routes
+  - test_push_and_settings_routes_require_session: no session → 401
   - TestSubscribeEndpoint: non-https endpoint → 400; missing keys → 400; valid → 200 + upsert
   - TestPushEnabledAtStamp: first successful subscribe stamps push_enabled_at (D-14);
     a later subscribe with push_enabled_at already set does not re-stamp
   - test_vapid_public_key_returns_env_key: GET returns {"key": VAPID_PUBLIC_KEY}
-  - TestSettingsEndpoint: GET returns HubSettingsStore.get() jsonsafe; PATCH toggles
-    telegram_mirror_enabled; PATCH with a non-bool value → 400
+  - TestSettingsEndpoint: GET exposes only retained Web Push settings; PATCH is absent
 
-Mock strategy (mirrors tests/test_habits_api.py / tests/test_hub_chat.py):
+Mock strategy:
   - Firestore mocked at sys.modules level before any memory.firestore_db import.
-  - Heavy web_server deps (telegram, core.main, interfaces._router) stubbed via
-    patch.dict(sys.modules, stubs) around each test.
   - require_hub_session dependency overridden for authenticated tests;
     CRON_DEV_BYPASS=false + no override for the 401 auth-gate test.
   - PushSubscriptionStore / HubSettingsStore patched via
@@ -75,16 +72,6 @@ def _install_firestore_mock() -> None:
     sys.modules["google.cloud.firestore"] = firestore_mock
     google_cloud_mod.firestore = firestore_mock
 
-    exc_mod = sys.modules.get("google.api_core.exceptions", MagicMock())
-    exc_mod.GoogleAPICallError = Exception
-    sys.modules["google.api_core.exceptions"] = exc_mod
-    if "google.api_core" in sys.modules:
-        sys.modules["google.api_core"].exceptions = exc_mod
-    else:
-        api_core = MagicMock()
-        api_core.exceptions = exc_mod
-        sys.modules["google.api_core"] = api_core
-
     bq = sys.modules.get("google.cloud.firestore_v1.base_query", MagicMock())
     sys.modules["google.cloud.firestore_v1.base_query"] = bq
     if "google.cloud.firestore_v1" in sys.modules:
@@ -93,9 +80,6 @@ def _install_firestore_mock() -> None:
         fv1 = MagicMock()
         fv1.base_query = bq
         sys.modules["google.cloud.firestore_v1"] = fv1
-
-    sys.modules.setdefault("google.oauth2", MagicMock())
-    sys.modules.setdefault("google.oauth2.service_account", MagicMock())
 
     dotenv_mod = MagicMock()
     dotenv_mod.load_dotenv = MagicMock()
@@ -123,8 +107,6 @@ _ENV: dict[str, str] = {
     "CRON_DEV_BYPASS": "false",
     "GCP_PROJECT_ID": "test-project",
     "FIRESTORE_DATABASE": "(default)",
-    "TELEGRAM_BOT_TOKEN": "1234:fake",
-    "TELEGRAM_ALLOWED_USER_IDS": "123456",
     "VAPID_PUBLIC_KEY": "fake-vapid-public-key-b64url",
 }
 
@@ -135,23 +117,11 @@ _VALID_SUBSCRIPTION = {
 
 
 def _stub_web_server_imports() -> dict:
-    """Return sys.modules stubs for heavy web_server dependencies.
-
-    Clears the cached web_server module so the next import picks up the stubs,
-    mirroring test_hub_chat.py / test_habits_api.py.
-    """
-    stubs = {
-        "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
-        "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
-        "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
-        "core.main": MagicMock(name="core.main"),
-        "interfaces._router": MagicMock(name="interfaces._router"),
-    }
+    """Clear the cached HTTP boundary so each test gets fresh routes."""
     for key in list(sys.modules.keys()):
         if key == "interfaces.web_server" or key.startswith("interfaces.web_server."):
             del sys.modules[key]
-    return stubs
+    return {}
 
 
 # ---------------------------------------------------------------------------
@@ -159,7 +129,7 @@ def _stub_web_server_imports() -> dict:
 # ---------------------------------------------------------------------------
 
 def test_push_and_settings_routes_require_session():
-    """POST /api/push/subscribe, GET /api/push/vapid-public-key, GET+PATCH
+    """POST /api/push/subscribe, GET /api/push/vapid-public-key, and GET
     /api/settings without a session cookie must return 401 (T-29-10).
 
     No dependency override is set so the real require_hub_session runs.
@@ -191,12 +161,6 @@ def test_push_and_settings_routes_require_session():
                 f"GET /api/settings must return 401 without session, got {resp.status_code}"
             )
 
-            resp = client.patch("/api/settings", json={"telegram_mirror_enabled": False})
-            assert resp.status_code == 401, (
-                f"PATCH /api/settings must return 401 without session, got {resp.status_code}"
-            )
-
-
 # ---------------------------------------------------------------------------
 # TestSubscribeEndpoint — validation + upsert (T-29-11)
 # ---------------------------------------------------------------------------
@@ -218,7 +182,6 @@ class TestSubscribeEndpoint:
             if mock_settings_store is None:
                 mock_settings_store = MagicMock()
                 mock_settings_store.get.return_value = {
-                    "telegram_mirror_enabled": True,
                     "push_enabled_at": None,
                 }
                 mock_settings_store.set.return_value = None
@@ -300,7 +263,6 @@ class TestPushEnabledAtStamp:
     def test_first_subscribe_stamps_push_enabled_at(self):
         mock_settings_store = MagicMock()
         mock_settings_store.get.return_value = {
-            "telegram_mirror_enabled": True,
             "push_enabled_at": None,
         }
         resp = self._call_subscribe(mock_settings_store)
@@ -312,7 +274,6 @@ class TestPushEnabledAtStamp:
     def test_second_subscribe_does_not_restamp(self):
         mock_settings_store = MagicMock()
         mock_settings_store.get.return_value = {
-            "telegram_mirror_enabled": True,
             "push_enabled_at": "2026-07-01T00:00:00+00:00",
         }
         resp = self._call_subscribe(mock_settings_store)
@@ -345,11 +306,11 @@ def test_vapid_public_key_returns_env_key():
 
 
 # ---------------------------------------------------------------------------
-# TestSettingsEndpoint — GET/PATCH /api/settings (PUSH-03, T-29-12)
+# TestSettingsEndpoint — retained Web Push settings
 # ---------------------------------------------------------------------------
 
 class TestSettingsEndpoint:
-    """GET/PATCH /api/settings behavior (mirror flag, D-09)."""
+    """GET /api/settings exposes only retained Web Push state."""
 
     def _call(self, method: str, mock_settings_store: MagicMock, **kwargs):
         stubs = _stub_web_server_imports()
@@ -369,35 +330,18 @@ class TestSettingsEndpoint:
                 finally:
                     ws.app.dependency_overrides.clear()
 
-    def test_get_settings_returns_store_get(self):
+    def test_get_settings_filters_retired_fields(self):
         mock_settings_store = MagicMock()
         mock_settings_store.get.return_value = {
             "telegram_mirror_enabled": True,
-            "push_enabled_at": None,
+            "push_enabled_at": "2026-07-01T00:00:00+00:00",
         }
         resp = self._call("get", mock_settings_store)
         assert resp.status_code == 200, resp.text
-        assert resp.json()["telegram_mirror_enabled"] is True
+        assert resp.json() == {"push_enabled_at": "2026-07-01T00:00:00+00:00"}
 
-    def test_patch_settings_toggles_mirror(self):
+    def test_patch_settings_is_not_registered(self):
         mock_settings_store = MagicMock()
-        mock_settings_store.get.return_value = {
-            "telegram_mirror_enabled": False,
-            "push_enabled_at": None,
-        }
-        mock_settings_store.set.return_value = None
-        resp = self._call(
-            "patch", mock_settings_store, json={"telegram_mirror_enabled": False},
-        )
-        assert resp.status_code == 200, resp.text
-        mock_settings_store.set.assert_called_once_with({"telegram_mirror_enabled": False})
-        assert resp.json()["telegram_mirror_enabled"] is False
-
-    def test_patch_settings_rejects_non_bool(self):
-        mock_settings_store = MagicMock()
-        mock_settings_store.get.return_value = {"telegram_mirror_enabled": True}
-        resp = self._call(
-            "patch", mock_settings_store, json={"telegram_mirror_enabled": "not-a-bool"},
-        )
-        assert resp.status_code == 400, f"non-bool must 400, got {resp.status_code}: {resp.text}"
+        resp = self._call("patch", mock_settings_store, json={"push_enabled_at": None})
+        assert resp.status_code == 405
         mock_settings_store.set.assert_not_called()

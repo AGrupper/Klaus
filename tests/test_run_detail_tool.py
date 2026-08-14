@@ -1,4 +1,4 @@
-"""Tests for core/tools.py::_handle_get_run_detail (brain-direct tool handler).
+"""Tests for core/tools.py::_handle_get_run_detail (MCP-registered tool handler).
 
 Covers single-run lookup, recent-window 'summary' projection (drops per-lap
 arrays), and fail-open error envelope. The RunDetailStore is patched at the

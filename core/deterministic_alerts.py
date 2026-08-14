@@ -172,9 +172,9 @@ async def run_rule_evaluator(
 
         due_followups_loader = FollowupStore(project, database).list_due
     if infrastructure_loader is None:
-        from core.heartbeat import check_cron_health
+        from core.heartbeat import collect_deterministic_signals
 
-        infrastructure_loader = check_cron_health
+        infrastructure_loader = collect_deterministic_signals
     if prior_topics_loader is None or outreach_logger is None:
         from memory.firestore_db import OutreachLogStore
 

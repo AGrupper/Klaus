@@ -3,11 +3,11 @@
 RED tests — written before implementation. All should FAIL until
 get_goal_projection is registered at all four sites in core/tools.py.
 
-New brain-direct tool: get_goal_projection
+New MCP-registered tool: get_goal_projection
 
 Tests cover:
-  - get_goal_projection is in SMART_AGENT_DIRECT_TOOLS (brain-direct)
-  - get_goal_projection is NOT in WORKER_TOOL_SCHEMAS (T-25-08)
+  - get_goal_projection is in retired direct-tool registry (MCP-registered)
+  - get_goal_projection is NOT in retired worker registry (T-25-08)
   - get_goal_projection is a key in _HANDLERS
   - get_goal_projection has a TOOL_SCHEMAS entry with the required shape
   - _handle_get_goal_projection is callable
@@ -131,18 +131,11 @@ def _tools(isolated_modules):
 class TestPhase25ToolRegistration:
     """PROG-02 — verify get_goal_projection registered at all four sites.
 
-    Brain-direct: in SMART_AGENT_DIRECT_TOOLS, excluded from WORKER_TOOL_SCHEMAS,
+    MCP-registered: in retired direct-tool registry, excluded from retired worker registry,
     present in _HANDLERS and TOOL_SCHEMAS, handler callable.
     """
 
-    def test_tool_in_direct(self):
-        """get_goal_projection is in SMART_AGENT_DIRECT_TOOLS (brain-direct)."""
-        assert "get_goal_projection" in tools.SMART_AGENT_DIRECT_TOOLS
 
-    def test_tool_excluded_from_worker(self):
-        """get_goal_projection is NOT in WORKER_TOOL_SCHEMAS (T-25-08)."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        assert "get_goal_projection" not in worker_names
 
     def test_tool_in_handlers(self):
         """get_goal_projection is a key in _HANDLERS."""

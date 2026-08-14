@@ -1,51 +1,29 @@
-"""Klaus self-monitoring heartbeat.
+"""Lightweight infrastructure health checks for the Claude-first runtime.
 
-Runs one health-check tick: inspects Klaus's own crons, integration tokens,
-runtime degradation, and deployment state, then sends tiered Telegram alerts.
-
-Called by Cloud Scheduler via Cloud Run:
-  POST /cron/heartbeat  (hourly, 0 * * * *, Asia/Jerusalem)
-
-Local smoke test:
-  python -m core.heartbeat --dry-run
+The heartbeat is intentionally observational: it reads retained scheduler
+ledgers, MCP/Routine configuration, Web Push health, and deployment identity.
+It never constructs a model client, sends Telegram, or performs autonomous
+outreach.  ``core.deterministic_alerts`` is the sole scheduler-owned notifier.
 """
 from __future__ import annotations
 
-import argparse
-import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-from pathlib import Path
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
-
-_TZ = ZoneInfo("Asia/Jerusalem")
-
-# Lazy import so tests can monkeypatch before the actual call
-try:
-    from core.scheduled_message import send_and_inject
-except ImportError:
-    send_and_inject = None  # type: ignore[assignment]
 
 SEVERITY_CRITICAL = "critical"
 SEVERITY_WARNING = "warning"
 SEVERITY_FYI = "fyi"
 
 
-@dataclass
+@dataclass(frozen=True)
 class Signal:
-    """A single detected health problem.
+    """A concrete infrastructure condition suitable for deterministic alerts."""
 
-    fingerprint: stable dedup key, e.g. "cron:morning-briefing:stale".
-    severity:    SEVERITY_CRITICAL | SEVERITY_WARNING | SEVERITY_FYI.
-    area:        "cron" | "token" | "degradation" | "deployment" | "code".
-    title:       one-line human summary.
-    detail:      specific evidence (numbers, timestamps).
-    remediation: static fix hint.
-    """
     fingerprint: str
     severity: str
     area: str
@@ -54,1558 +32,216 @@ class Signal:
     remediation: str
 
 
-def _parse_hm(hm_str: str) -> int:
-    """Convert 'HH:MM' to minutes since midnight."""
-    try:
-        h, m = hm_str.split(":")
-        return int(h) * 60 + int(m)
-    except Exception:
-        logger.warning("heartbeat: could not parse time %r", hm_str)
-        return 0
-
-
-def _in_quiet_hours(config: dict, now: datetime) -> bool:
-    """Return True if `now` falls within the configured quiet window."""
-    tz_name = config.get("timezone", "Asia/Jerusalem")
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        logger.warning("heartbeat: unknown timezone %r — defaulting to UTC", tz_name)
-        tz = ZoneInfo("UTC")
-
-    local_now = now.astimezone(tz)
-    now_hm = local_now.hour * 60 + local_now.minute
-
-    quiet_start = _parse_hm(config.get("quiet_start", "22:00"))
-    quiet_end = _parse_hm(config.get("quiet_end", "07:00"))
-
-    if quiet_start <= quiet_end:
-        return quiet_start <= now_hm < quiet_end
-    else:
-        return now_hm >= quiet_start or now_hm < quiet_end
-
-
-def _tiers_for_now(config: dict, now: datetime) -> set[str]:
-    """Return the severity tiers to check this tick.
-
-    Critical always; Warning at the configured digest_hour; FYI additionally
-    on the configured weekly_digest_day at digest_hour.
-    """
-    tz_name = config.get("timezone", "Asia/Jerusalem")
-    try:
-        tz = ZoneInfo(tz_name)
-    except Exception:
-        tz = ZoneInfo("UTC")
-    local_now = now.astimezone(tz)
-    tiers = {SEVERITY_CRITICAL}
-    if local_now.hour == int(config.get("digest_hour", 9)):
-        tiers.add(SEVERITY_WARNING)
-        if local_now.isoweekday() == int(config.get("weekly_digest_day", 1)):
-            tiers.add(SEVERITY_FYI)
-    return tiers
-
-
+# Only retained, scheduler-driven surfaces are monitored.  Triggered routines
+# are represented by their routine-run state rather than old occasion crons.
 _CRON_MAX_STALENESS_HOURS = {
-    "ingest-chats": 26,
-    "ingest-chat-exports": 26,
-    "nightly-backstop": 26,       # WS2 — 01:00 daily journal+nightly guarantee, 26h tolerance
-    "autonomous-tick": 1,         # Phase 18 — */20 cron; 1h = 3 missed ticks
-    "healthkit-sync": 48,         # Phase 19.1 — D-18; 48h tolerance for iPhone Shortcut push bridge
-    "weekly-training-review": 170,  # Phase 20 — Sunday 10:00; 170h = 7d + 2h slack
-    "run-sync": 26,               # Garmin per-run detail pull, 05:15; 26h tolerance
-    "biometric-sync": 26,         # Garmin daily HRV/RHR pull, 05:30; 26h tolerance
+    "deterministic-alerts": 1,
+    "heartbeat": 2,
+    "nightly-backstop": 26,
+    "morning-backstop": 26,
+    "weekly-training-review": 170,
+    "things-sync": 26,
+    "healthkit-sync": 48,
+    "strength-sync": 26,
+    "run-sync": 26,
+    "biometric-sync": 26,
 }
-# NOTE: nightly-trigger (iOS Sleep-Focus) and morning-trigger (iOS wake-up
-# automation) are intentionally NOT monitored — both are user-driven and may
-# legitimately not fire on a given day; nightly-backstop is the nightly's
-# daily guarantee, and the morning has no backstop by design (D-09) —
-# check_occasion_health's anomaly #1 already covers a morning that ran and
-# went wrong.
-# proactive-alerts + reflect retired in WS2 (folded into the nightly review).
-# morning-briefing-tick retired in plan 33-13 (D-09/D-10/D-31) — the morning
-# is push-triggered only now, with no cron backstop.
 _CRON_FAILURE_STREAK_THRESHOLD = 3
-
-# Batch-processing crons that should NOT alert when their backlog is fully
-# drained (backlog_done=True in the heartbeat_runs ledger).  When the backlog
-# is empty the cron has nothing to do, so not running is expected — not a fault.
-_CRON_BACKLOG_AWARE: set[str] = {"ingest-chats", "ingest-chat-exports"}
-
-
-def _read_cron_ledger() -> dict:
-    """Return {job_id: doc_dict} from the Firestore heartbeat_runs collection."""
-    from memory.firestore_db import _make_firestore_client
-    project_id = os.environ["GCP_PROJECT_ID"]
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    client = _make_firestore_client(project_id, database)
-    out: dict = {}
-    for snap in client.collection("heartbeat_runs").stream():
-        out[snap.id] = snap.to_dict() or {}
-    return out
-
-
-def check_cron_health() -> list[Signal]:
-    """Critical-tier: each cron ran recently and is not in a failure streak."""
-    signals: list[Signal] = []
-    try:
-        ledger = _read_cron_ledger()
-    except Exception:
-        logger.warning("heartbeat: cron ledger read failed", exc_info=True)
-        return signals
-
-    now = datetime.now(timezone.utc)
-    for job_id, max_hours in _CRON_MAX_STALENESS_HOURS.items():
-        if job_id == "healthkit-sync":
-            try:
-                from memory.firestore_db import UserProfileStore
-                proj = os.getenv("GCP_PROJECT_ID", "")
-                db = os.getenv("FIRESTORE_DATABASE", "(default)")
-                if proj:
-                    profile = UserProfileStore(project_id=proj, database=db).load()
-                    if profile.get("tracking_status", {}).get("calories") is False:
-                        continue
-            except Exception:
-                pass
-
-        doc = ledger.get(job_id)
-        if doc is None:
-            signals.append(Signal(
-                fingerprint=f"cron:{job_id}:missing",
-                severity=SEVERITY_CRITICAL, area="cron",
-                title=f"{job_id} has never recorded a run",
-                detail="No heartbeat_runs ledger entry exists.",
-                remediation=f"Confirm the Cloud Scheduler job for {job_id} exists and is enabled.",
-            ))
-            continue
-
-        # Backlog-aware jobs: skip staleness check when the backlog is drained.
-        # The pipeline finished all available work; it will resume and clear
-        # the flag automatically when new files appear.
-        if job_id in _CRON_BACKLOG_AWARE and doc.get("backlog_done") is True:
-            continue
-
-        # Dynamic/Schedule-aware checks for specific crons:
-        # autonomous-tick runs on a */20 7-21 * * * schedule (07:00 to 21:00 Jerusalem time).
-        # Between 23:00 and 07:59 local time, it is overnight, so we do not expect runs.
-        if job_id == "autonomous-tick":
-            local_now = now.astimezone(_TZ)
-            if local_now.hour >= 23 or local_now.hour < 8:
-                continue
-
-        last = doc.get("last_run_at")
-        if last is not None:
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
-            age_h = (now - last).total_seconds() / 3600
-            if age_h > max_hours:
-                signals.append(Signal(
-                    fingerprint=f"cron:{job_id}:stale",
-                    severity=SEVERITY_CRITICAL, area="cron",
-                    title=f"{job_id} has not run in {age_h:.0f}h",
-                    detail=f"Last run {last.isoformat()}; expected within {max_hours}h.",
-                    remediation=f"Check the Cloud Scheduler job for {job_id} and Cloud Run logs.",
-                ))
-
-    for job_id, doc in ledger.items():
-        if doc.get("consecutive_failures", 0) >= _CRON_FAILURE_STREAK_THRESHOLD:
-            signals.append(Signal(
-                fingerprint=f"cron:{job_id}:failing",
-                severity=SEVERITY_CRITICAL, area="cron",
-                title=f"{job_id} failed {doc['consecutive_failures']}x in a row",
-                detail=f"last_ok={doc.get('last_ok')}.",
-                remediation=f"Inspect Cloud Run logs for the {job_id} endpoint.",
-            ))
-    return signals
-
-
-def check_tokens() -> list[Signal]:
-    """Token/integration health: Google OAuth refresh probe.
-
-    (The TickTick OAuth probe was removed with the D-09 TickTick retirement —
-    Phase 27 replaced TickTick with the native TaskStore.)
-    """
-    signals: list[Signal] = []
-
-    try:
-        from core.auth_google import build_auth_manager_from_env
-        build_auth_manager_from_env().get_credentials()
-    except Exception as exc:
-        signals.append(Signal(
-            fingerprint="token:google:refresh-failed",
-            severity=SEVERITY_CRITICAL, area="token",
-            title="Google OAuth refresh failed",
-            detail=str(exc)[:200],
-            remediation="Re-run the Google OAuth bootstrap; refresh klaus-google-oauth-token.",
-        ))
-
-    return signals
-
-
 _PUSH_FAILURE_STREAK_THRESHOLD = 3
 _PUSH_STALE_HOURS = 48
 
 
-def _parse_push_timestamp(value) -> datetime | None:
-    """Parse a push-store timestamp field into an aware UTC datetime.
+def _read_cron_ledger() -> dict[str, dict[str, Any]]:
+    """Return the retained scheduler ledger without mutating it."""
+    from memory.firestore_db import _make_firestore_client
 
-    Values read back from PushSubscriptionStore.list_all() are already
-    ISO-8601 strings (via _jsonsafe_doc), but be defensive against a raw
-    datetime slipping through (e.g. in tests).
-    """
-    if value is None:
-        return None
+    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    database = os.getenv("FIRESTORE_DATABASE", "(default)")
+    client = _make_firestore_client(project_id, database)
+    return {
+        snapshot.id: snapshot.to_dict() or {}
+        for snapshot in client.collection("heartbeat_runs").stream()
+    }
+
+
+def _as_utc(value: Any) -> datetime | None:
+    """Normalize a stored timestamp into an aware UTC datetime."""
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if not value:
+        return None
     try:
-        parsed = datetime.fromisoformat(str(value))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def check_cron_health(now: datetime | None = None) -> list[Signal]:
+    """Report missing, stale, or repeatedly failing retained schedulers."""
+    try:
+        ledger = _read_cron_ledger()
+    except Exception:
+        logger.warning("heartbeat: scheduler ledger read failed", exc_info=True)
+        return [Signal(
+            "cron:ledger:unavailable", SEVERITY_CRITICAL, "scheduler",
+            "Scheduler health ledger is unavailable",
+            "Klaus could not read heartbeat_runs.",
+            "Check Firestore availability and service credentials.",
+        )]
+
+    observed_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    signals: list[Signal] = []
+    for job_id, max_hours in _CRON_MAX_STALENESS_HOURS.items():
+        record = ledger.get(job_id)
+        if record is None:
+            signals.append(Signal(
+                f"cron:{job_id}:missing", SEVERITY_CRITICAL, "scheduler",
+                f"{job_id} has never recorded a run",
+                "No heartbeat_runs ledger entry exists.",
+                f"Confirm the Cloud Scheduler job for {job_id} is enabled.",
+            ))
+            continue
+        last_run = _as_utc(record.get("last_run_at"))
+        if last_run is None:
+            signals.append(Signal(
+                f"cron:{job_id}:invalid-timestamp", SEVERITY_CRITICAL, "scheduler",
+                f"{job_id} has no valid last-run timestamp",
+                f"Stored value: {record.get('last_run_at')!r}.",
+                "Inspect the scheduler ledger writer.",
+            ))
+            continue
+        age = observed_at - last_run
+        if age > timedelta(hours=max_hours):
+            signals.append(Signal(
+                f"cron:{job_id}:stale", SEVERITY_CRITICAL, "scheduler",
+                f"{job_id} has not run in {age.total_seconds() / 3600:.0f}h",
+                f"Last run {last_run.isoformat()}; expected within {max_hours}h.",
+                f"Check the Cloud Scheduler job and Cloud Run logs for {job_id}.",
+            ))
+        if int(record.get("consecutive_failures") or 0) >= _CRON_FAILURE_STREAK_THRESHOLD:
+            signals.append(Signal(
+                f"cron:{job_id}:failing", SEVERITY_CRITICAL, "scheduler",
+                f"{job_id} failed {record['consecutive_failures']} times in a row",
+                f"last_ok={record.get('last_ok')!r}.",
+                f"Inspect Cloud Run logs for {job_id}.",
+            ))
+    return signals
+
+
+def check_mcp_routine_health() -> list[Signal]:
+    """Report missing Claude connector and Routine capability prerequisites."""
+    enabled = lambda name: os.environ.get(name, "false").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    signals: list[Signal] = []
+    if not enabled("KLAUS_MCP_ENABLED"):
+        signals.append(Signal(
+            "mcp:interactive:disabled", SEVERITY_CRITICAL, "mcp",
+            "Claude MCP connector is disabled",
+            "KLAUS_MCP_ENABLED is not enabled.",
+            "Enable the scoped Claude MCP connector.",
+        ))
+    if not enabled("KLAUS_CLAUDE_ROUTINES_ENABLED"):
+        signals.append(Signal(
+            "routine:disabled", SEVERITY_CRITICAL, "routine",
+            "Claude Routines are disabled",
+            "KLAUS_CLAUDE_ROUTINES_ENABLED is not enabled.",
+            "Enable the configured Claude Remote Routine connector.",
+        ))
+    for routine in ("MORNING", "NIGHTLY", "WEEKLY"):
+        if not os.environ.get(f"CLAUDE_ROUTINE_TRIGGER_URL_{routine}"):
+            signals.append(Signal(
+                f"routine:{routine.lower()}:trigger-missing", SEVERITY_CRITICAL, "routine",
+                f"{routine.title()} Claude Routine trigger is missing",
+                f"CLAUDE_ROUTINE_TRIGGER_URL_{routine} is unset.",
+                "Configure the supported Claude Routine trigger URL.",
+            ))
+    return signals
 
 
 def _check_push_health() -> list[Signal]:
-    """Web Push delivery self-validation during the mirror week (D-13/D-14).
+    """Report Web Push failures without sending a notification itself."""
+    from memory.firestore_db import HubSettingsStore, PushSubscriptionStore
 
-    Three conditions (RESEARCH Pattern 9):
-      1. Any subscription with failure_count >= 3 -> critical failure-streak signal.
-      2. push_enabled_at set but zero subscriptions registered -> critical when
-         the Telegram mirror is OFF (no safety net left), warning when it's ON
-         (Telegram still covers delivery).
-      3. push_enabled_at set + subscriptions exist, but none delivered
-         successfully in the last 48h -> warning delivery-stale signal.
-    """
-    signals: list[Signal] = []
-
-    from memory.firestore_db import PushSubscriptionStore, HubSettingsStore
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
+    project = os.environ.get("GCP_PROJECT_ID", "")
     database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    sub_store = PushSubscriptionStore(project_id=project_id, database=database)
-    settings_store = HubSettingsStore(project_id=project_id, database=database)
+    try:
+        subscriptions = PushSubscriptionStore(project, database).list_all()
+        settings = HubSettingsStore(project, database).get()
+    except Exception:
+        logger.warning("heartbeat: Web Push health read failed", exc_info=True)
+        return [Signal(
+            "push:health:unavailable", SEVERITY_WARNING, "push",
+            "Web Push health could not be checked",
+            "The push subscription store was unavailable.",
+            "Check Firestore and Web Push configuration.",
+        )]
 
-    subscriptions = sub_store.list_all()
-    settings = settings_store.get()
-    mirror_enabled = settings.get("telegram_mirror_enabled", True)
-    push_enabled_at = settings.get("push_enabled_at")
-
-    # Condition 1: per-subscription failure streak.
-    for sub in subscriptions:
-        failure_count = sub.get("failure_count", 0) or 0
-        if failure_count >= _PUSH_FAILURE_STREAK_THRESHOLD:
-            import hashlib
-            endpoint = sub.get("endpoint", "")
-            endpoint_hash = hashlib.sha256(endpoint.encode()).hexdigest()[:12]
-            signals.append(Signal(
-                fingerprint=f"push:failure-streak:{endpoint_hash}",
-                severity=SEVERITY_CRITICAL, area="push",
-                title=f"Push delivery failing for {sub.get('user_agent') or 'a device'}",
-                detail=f"failure_count={failure_count}.",
-                remediation="Check pywebpush errors in Cloud Run logs; a 404/410 means "
-                            "the subscription is dead and the device must re-subscribe.",
-            ))
-
-    # Condition 2: push enabled but nothing registered.
-    if push_enabled_at and not subscriptions:
-        severity = SEVERITY_WARNING if mirror_enabled else SEVERITY_CRITICAL
+    enabled_at = _as_utc(settings.get("push_enabled_at"))
+    if enabled_at is None:
+        return []
+    signals: list[Signal] = []
+    if not subscriptions:
         signals.append(Signal(
-            fingerprint="push:no-subscription",
-            severity=severity, area="push",
-            title="Push enabled but no subscriptions registered",
-            detail=f"push_enabled_at={push_enabled_at}, subscriptions=0.",
-            remediation="Open the hub on a device and enable notifications from Settings.",
+            "push:subscriptions:missing", SEVERITY_CRITICAL, "push",
+            "Web Push is enabled but has no subscriptions",
+            "No browser has an active Web Push subscription.",
+            "Open the Hub and enable notifications again.",
         ))
-
-    # Condition 3: subscriptions exist but delivery has gone stale.
-    if push_enabled_at and subscriptions:
-        now = datetime.now(timezone.utc)
-        stale_cutoff = now - timedelta(hours=_PUSH_STALE_HOURS)
-        any_recent_success = any(
-            (ts := _parse_push_timestamp(sub.get("last_success_at"))) is not None and ts >= stale_cutoff
-            for sub in subscriptions
-        )
-        if not any_recent_success:
+        return signals
+    latest_success: datetime | None = None
+    for subscription in subscriptions:
+        failures = int(subscription.get("failure_count") or 0)
+        if failures >= _PUSH_FAILURE_STREAK_THRESHOLD:
             signals.append(Signal(
-                fingerprint="push:delivery-stale",
-                severity=SEVERITY_WARNING, area="push",
-                title="No successful push delivery in over 48h",
-                detail=f"{len(subscriptions)} subscription(s) registered; none delivered "
-                       f"successfully since {stale_cutoff.isoformat()}.",
-                remediation="Verify the push send path (core/push_sender.py) is being "
-                            "invoked; check pywebpush errors in Cloud Run logs.",
+                f"push:delivery:failing:{failures}", SEVERITY_CRITICAL, "push",
+                "A Web Push subscription is repeatedly failing",
+                f"failure_count={failures}.",
+                "Re-register the affected browser subscription.",
             ))
-
+        success_at = _as_utc(subscription.get("last_success_at"))
+        if success_at and (latest_success is None or success_at > latest_success):
+            latest_success = success_at
+    if latest_success and datetime.now(timezone.utc) - latest_success > timedelta(hours=_PUSH_STALE_HOURS):
+        signals.append(Signal(
+            "push:delivery:stale", SEVERITY_WARNING, "push",
+            "Web Push has no recent successful delivery",
+            f"Last success was {latest_success.isoformat()}.",
+            "Confirm notifications are permitted in the Hub browser.",
+        ))
     return signals
 
 
-# ------------------------------------------------------------------ #
-# D-28 — occasion health (Phase 33 Plan 11)                          #
-# ------------------------------------------------------------------ #
-
-_OCCASION_STATE_COLLECTIONS = {
-    "nightly": "nightly_reviews",
-    "morning": "morning_briefings",
-    "weekly_review": "weekly_reviews",
-}
-_OCCASION_SKIP_STREAK_THRESHOLD = 3     # Claude's Discretion (D-28 #2, N chosen = 3)
-_OCCASION_SKIP_STREAK_WINDOW_DAYS = 10
-_OCCASION_ERRORED_LOOKBACK_DAYS = 2
-_OCCASION_UNDISCLOSED_STALE_HOURS = 24
-# T-33-35 / SC-1 — composed_via values that mean "a message shipped, but only
-# because a fallback tier fired" — read from the occasion's own state doc,
-# never from _log_cron_run's ok boolean (33-RESEARCH § Pitfall 8: a
-# plain-text-fallback send is logged ok=True and would otherwise pass silently).
-_OCCASION_ERRORED_COMPOSED_VIA = {"plain_text_fallback", "draft_fallback"}
-
-# CR-05 — the Sunday weekly-review check must not read the state doc while the
-# weekly is still composing. The cron fires at 10:00 Asia/Jerusalem and the
-# heartbeat cron fires hourly on the hour, so the two land in the same minute;
-# the original guard `(now.hour, now.minute) < (10, 0)` expired the instant the
-# weekly started. Observed live 2026-08-02: CRITICAL "Weekly review did not fire"
-# emitted at 07:00:39Z for a review that sent at 07:01:29Z — the alert fired ~50s
-# BEFORE the send it was checking for.
-#
-# The grace window is sized off the real deadline chain, not off observed
-# latency: Cloud Tasks' dispatch_deadline is 540s (9 min), so a weekly that is
-# going to complete at all has completed by 10:09. 10:20 leaves 11 minutes of
-# margin. The heartbeat runs hourly on the hour, so the first check of a given
-# Sunday now happens at 11:00 rather than 10:00 — one hour later for a genuinely
-# dead weekly, in exchange for never paging Amit about a review that is mid-send.
-_OCCASION_WEEKLY_CHECK_AFTER = (10, 20)
-
-
-def _occasion_in_flight() -> str | None:
-    """Return the occasion currently mid-cascade, or None (never raises).
-
-    CR-05 — defense in depth for the weekly check below. ``OccasionInFlightStore``
-    is fail-open by design (a missing/expired doc or ANY error reads as None), so
-    this can only ever suppress an alert while a marker is genuinely live; it can
-    never mute the check because Firestore is unreachable. It is not sufficient on
-    its own — the weekly marks itself in flight only after ``_gather_week_data``
-    (~28s) plus ``gather_situation()``, so the first ~40s of a weekly run carry no
-    marker at all. That is what ``_OCCASION_WEEKLY_CHECK_AFTER`` covers.
-    """
-    try:
-        from memory.firestore_db import OccasionInFlightStore
-        return OccasionInFlightStore(
-            project_id=os.environ.get("GCP_PROJECT_ID", ""),
-            database=os.getenv("FIRESTORE_DATABASE", "(default)"),
-        ).active()
-    except Exception:
-        logger.warning("heartbeat: OccasionInFlightStore read failed", exc_info=True)
-        return None
-
-
-def _read_occasion_state(collection: str, date_str: str) -> dict:
-    """Read a date-keyed occasion state doc directly.
-
-    Mirrors nightly_review.py/morning_briefing.py/weekly_training_review.py's
-    own `_get_state` pattern — 33-PATTERNS.md is explicit that these date-keyed
-    docs use direct collection access, not a store class. Never raises;
-    returns {} on any error or missing doc.
-    """
-    try:
-        from memory.firestore_db import _make_firestore_client
-        project_id = os.environ["GCP_PROJECT_ID"]
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        client = _make_firestore_client(project_id, database)
-        snap = client.collection(collection).document(date_str).get()
-        return (snap.to_dict() or {}) if snap.exists else {}
-    except Exception:
-        logger.warning(
-            "heartbeat: occasion state read failed (%s/%s)", collection, date_str,
-            exc_info=True,
-        )
-        return {}
-
-
-def _occasion_skip_streak(
-    collection: str, *, today: date, window_days: int,
-) -> tuple[int, list[str]]:
-    """Count the consecutive `skipped_by_judgment` run ending at the most
-    recent date (within `window_days`) that has a state doc at all (D-28 #2).
-
-    A missing doc is "unknown" — skipped without breaking or counting the
-    streak, since a missed morning trigger (D-09: no backstop) legitimately
-    leaves a gap. The streak stops at the first date whose doc carries a
-    non-skip terminal status (e.g. "sent").
-
-    Returns (streak_length, skip_causes_seen) — the causes list lets the
-    caller distinguish "three quiet nothing_happened nights" from "three
-    reaction_history back-offs" in the alert detail.
-    """
-    streak = 0
-    causes: list[str] = []
-    for offset in range(window_days):
-        d_iso = (today - timedelta(days=offset)).isoformat()
-        state = _read_occasion_state(collection, d_iso)
-        if not state:
-            continue  # no doc that day — unknown, keep walking, don't reset
-        if state.get("status") == "skipped_by_judgment":
-            streak += 1
-            causes.append(state.get("skip_cause") or "unknown")
-            continue
-        break  # a non-skip terminal status ends the streak
-    return streak, causes
-
-
-def _most_recent_sunday(today: date) -> date:
-    """Return the most recent Sunday, inclusive of `today` itself.
-
-    isoweekday(): Monday=1 ... Sunday=7, so `today.isoweekday() % 7` gives
-    the day-count back to the last Sunday (0 when today IS Sunday).
-    """
-    days_since_sunday = today.isoweekday() % 7
-    return today - timedelta(days=days_since_sunday)
-
-
-def _parse_occasion_timestamp(value) -> datetime | None:
-    """Parse an ActionLogStore entry's `at` ISO string into an aware UTC
-    datetime. Mirrors `_parse_push_timestamp`'s defensive shape — never
-    raises, returns None on anything unparseable."""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    try:
-        parsed = datetime.fromisoformat(str(value))
-        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def check_occasion_health(now: datetime | None = None) -> list[Signal]:
-    """D-28 — the occasion anomaly classes, read from each occasion's own
-    state doc (nightly_reviews/morning_briefings/weekly_reviews) or the D-25
-    action-audit store, never from the generic heartbeat_runs cron ledger
-    (33-RESEARCH § Pitfall 8: `_log_cron_run`'s `ok` boolean was designed for
-    crash detection, not judgment-quality detection — a plain-text-fallback
-    send still logs ok=True and would pass the existing check_cron_health
-    silently).
-
-    1. Errored occasion (D-28 #1, SC-1, T-33-35) — composed_via names a
-       degraded fallback tier.
-    2. Skip streak (D-28 #2, T-33-36) — N consecutive judgment-skips on one
-       occasion (nightly/morning only; weekly never self-skips, D-03).
-    3. Weekly not firing (D-28 #3, T-33-27) — a missing or directive-vetoed
-       Sunday. Complementary to (not a replacement for) the existing
-       `_CRON_MAX_STALENESS_HOURS["weekly-training-review"]` staleness check:
-       that one catches "the cron never fired at all", this one catches "the
-       cron fired and nothing happened."
-    4. Undisclosed actions pending (D-28 #4, T-33-37) — an orphaned D-25
-       write older than 24h.
-
-    A legitimate `skipped_by_judgment` with no `composed_via` key never trips
-    a signal here — that is the feature working as designed, not a fault.
-    """
-    signals: list[Signal] = []
-    # WR-12 — normalise to Asia/Jerusalem on entry. Every date and clock
-    # comparison below (today, _most_recent_sunday, the 10:20 weekly grace
-    # window) is defined in local time, but UTC is this module's convention for
-    # a caller-supplied `now` (check_cron_health uses datetime.now(timezone.utc)).
-    # Without this, a UTC `now` evaluated the Jerusalem-local guard against the
-    # wrong clock — spuriously alerting "Weekly review did not fire" for up to
-    # three hours every Sunday morning — and `now.date()` could select the wrong
-    # Sunday entirely across the UTC/local midnight boundary.
-    # A naive `now` is assumed to already be Jerusalem-local (astimezone would
-    # otherwise silently reinterpret it as the host's system zone).
-    now = now or datetime.now(_TZ)
-    now = now.replace(tzinfo=_TZ) if now.tzinfo is None else now.astimezone(_TZ)
-    today = now.date()
-
-    # --- Anomaly #1: errored occasion (D-28 #1, SC-1) ---
-    for name, collection in _OCCASION_STATE_COLLECTIONS.items():
-        state: dict = {}
-        state_date: str | None = None
-        for offset in range(_OCCASION_ERRORED_LOOKBACK_DAYS):
-            d_iso = (today - timedelta(days=offset)).isoformat()
-            candidate = _read_occasion_state(collection, d_iso)
-            if candidate:
-                state = candidate
-                state_date = d_iso
-                break
-        if not state:
-            continue
-        composed_via = state.get("composed_via")
-        if composed_via in _OCCASION_ERRORED_COMPOSED_VIA:
-            signals.append(Signal(
-                fingerprint=f"occasion:{name}:errored:{state_date}",
-                severity=SEVERITY_CRITICAL, area="occasion",
-                title=f"{name} occasion degraded on {state_date}",
-                detail=(
-                    f"composed_via={composed_via!r}, trigger={state.get('trigger', '?')!r} "
-                    "— a message still shipped, but only via a fallback tier."
-                ),
-                remediation=(
-                    f"Check Cloud Run logs for {state_date} and call get_recent_decisions "
-                    "to see what Klaus's Layer 1/2 saw."
-                ),
-            ))
-
-    # --- Anomaly #2: skip streak (D-28 #2) ---
-    for name in ("nightly", "morning"):  # weekly_review never self-skips (D-03)
-        collection = _OCCASION_STATE_COLLECTIONS[name]
-        streak, causes = _occasion_skip_streak(
-            collection, today=today, window_days=_OCCASION_SKIP_STREAK_WINDOW_DAYS,
-        )
-        if streak >= _OCCASION_SKIP_STREAK_THRESHOLD:
-            signals.append(Signal(
-                fingerprint=f"occasion:{name}:skip_streak",
-                severity=SEVERITY_WARNING, area="occasion",
-                title=f"{name} has skipped {streak} times in a row",
-                detail=f"skip_cause values seen: {', '.join(causes)}.",
-                remediation=(
-                    "Check get_recent_decisions for the reasoning; verify the triage "
-                    "prompt hasn't regressed toward silence."
-                ),
-            ))
-
-    # --- Anomaly #3: weekly not firing (D-28 #3) ---
-    sunday = _most_recent_sunday(today)
-    sunday_iso = sunday.isoformat()
-    is_today_sunday = sunday == today
-    # CR-05 — the old guard was `< (10, 0)`, i.e. it expired at the exact minute
-    # the weekly cron fires, so the check raced the compose it was checking for.
-    # Wait out the full Cloud Tasks dispatch deadline plus margin instead.
-    before_cron_fires = (
-        is_today_sunday and (now.hour, now.minute) < _OCCASION_WEEKLY_CHECK_AFTER
-    )
-    if not before_cron_fires:
-        weekly_state = _read_occasion_state(
-            _OCCASION_STATE_COLLECTIONS["weekly_review"], sunday_iso,
-        )
-        status = weekly_state.get("status")
-        if not weekly_state and is_today_sunday and _occasion_in_flight() == "weekly_review":
-            # CR-05 — the doc is absent because the weekly is provably still
-            # composing right now, not because it failed. Never page for this.
-            logger.info(
-                "heartbeat: weekly review for %s is still in flight — "
-                "suppressing the not-fired check", sunday_iso,
-            )
-        elif not weekly_state:
-            signals.append(Signal(
-                fingerprint=f"occasion:weekly_review:not_fired:{sunday_iso}",
-                severity=SEVERITY_CRITICAL, area="occasion",
-                title=f"Weekly review did not fire for {sunday_iso}",
-                detail=(
-                    f"No weekly_reviews state doc for {sunday_iso}, the most recent "
-                    "Sunday. By D-03 the weekly never self-skips, so this is either a "
-                    "directive veto that failed to record or a genuine fault."
-                ),
-                remediation=(
-                    "Check Cloud Run logs for the Sunday 10:00 weekly-training-review "
-                    "cron; also see the existing weekly-training-review staleness check."
-                ),
-            ))
-        elif status == "skipped_by_directive":
-            signals.append(Signal(
-                fingerprint=f"occasion:weekly_review:not_fired:{sunday_iso}",
-                severity=SEVERITY_WARNING, area="occasion",
-                title=f"Weekly review vetoed by standing directive on {sunday_iso}",
-                detail=f"skip_reason={weekly_state.get('skip_reason', '?')!r}.",
-                remediation=(
-                    "Confirm this veto was intentional via get_recent_decisions or "
-                    "list_directives."
-                ),
-            ))
-        # status == "sent" -> healthy, no signal.
-
-    # --- Anomaly #4: undisclosed actions pending (D-28 #4) ---
-    try:
-        from memory.firestore_db import ActionLogStore
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        undisclosed = ActionLogStore(
-            project_id=project_id, database=database,
-        ).undisclosed(days=7)
-    except Exception:
-        logger.warning("heartbeat: ActionLogStore.undisclosed read failed", exc_info=True)
-        undisclosed = []
-
-    if undisclosed:
-        timestamps = [
-            ts for e in undisclosed
-            if (ts := _parse_occasion_timestamp(e.get("at"))) is not None
-        ]
-        if timestamps:
-            oldest = min(timestamps)
-            age_h = (datetime.now(timezone.utc) - oldest).total_seconds() / 3600
-            if age_h > _OCCASION_UNDISCLOSED_STALE_HOURS:
-                examples = undisclosed[:5]
-                detail = "; ".join(
-                    f"{e.get('action', '?')} {e.get('detail', '')} ({e.get('at', '?')})"
-                    for e in examples
-                )
-                signals.append(Signal(
-                    fingerprint="occasion:actions_undisclosed",
-                    severity=SEVERITY_WARNING, area="occasion",
-                    title=f"{len(undisclosed)} action(s) pending disclosure",
-                    detail=detail,
-                    remediation=(
-                        "Ask Klaus (get_recent_decisions) or inspect ActionLogStore "
-                        "directly — the next occasion should surface this itself."
-                    ),
-                ))
-
-    return signals
-
-
-_FALLBACK_WARN_THRESHOLD = 10
-_CLOUD_RUN_5XX_WARN_THRESHOLD = 5
-
-
-def _read_fallback_count_today() -> int:
-    """Read today's Gemini->Haiku fallback count from Firestore heartbeat_metrics."""
-    from memory.firestore_db import _make_firestore_client
-    from datetime import date
-    project_id = os.environ["GCP_PROJECT_ID"]
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    client = _make_firestore_client(project_id, database)
-    today = date.today().isoformat()
-    snap = client.collection("heartbeat_metrics").document(today).get()
-    if not snap.exists:
-        return 0
-    return (snap.to_dict() or {}).get("fallback_count", 0)
-
-
-def _read_cloud_run_5xx() -> int:
-    """Query Cloud Monitoring for Cloud Run 5xx count in the last hour."""
-    from google.cloud import monitoring_v3
-    from google.protobuf.timestamp_pb2 import Timestamp
-    import time
-
-    project_id = os.environ["GCP_PROJECT_ID"]
-    client = monitoring_v3.MetricServiceClient()
-    project_name = f"projects/{project_id}"
-
-    now_sec = int(time.time())
-    interval = monitoring_v3.TimeInterval(
-        start_time=Timestamp(seconds=now_sec - 3600),
-        end_time=Timestamp(seconds=now_sec),
-    )
-    aggregation = monitoring_v3.Aggregation(
-        alignment_period={"seconds": 3600},
-        per_series_aligner=monitoring_v3.Aggregation.Aligner.ALIGN_SUM,
-    )
-    results = client.list_time_series(
-        request={
-            "name": project_name,
-            "filter": (
-                'metric.type="run.googleapis.com/request_count" '
-                'AND resource.labels.service_name="klaus-agent" '
-                'AND metric.labels.response_code_class="5xx"'
-            ),
-            "interval": interval,
-            "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
-            "aggregation": aggregation,
-        }
-    )
-    total = 0
-    for series in results:
-        for point in series.points:
-            total += int(point.value.int64_value)
-    return total
-
-
-def check_degradation() -> list[Signal]:
-    """Warning-tier: fallback-rate climbing, Cloud Run 5xx spikes."""
-    signals: list[Signal] = []
-    try:
-        fallbacks = _read_fallback_count_today()
-        if fallbacks >= _FALLBACK_WARN_THRESHOLD:
-            signals.append(Signal(
-                fingerprint="degradation:fallback-rate",
-                severity=SEVERITY_WARNING, area="degradation",
-                title=f"Gemini->Haiku fallback fired {fallbacks}x today",
-                detail="Primary Smart Agent (Gemini 3) is erroring or rate-limited.",
-                remediation="Check Gemini quota / API key; review Cloud Run logs for LLMError.",
-            ))
-    except Exception:
-        logger.warning("heartbeat: fallback metric read failed", exc_info=True)
-    try:
-        errs = _read_cloud_run_5xx()
-        if errs >= _CLOUD_RUN_5XX_WARN_THRESHOLD:
-            signals.append(Signal(
-                fingerprint="degradation:cloud-run-5xx",
-                severity=SEVERITY_WARNING, area="degradation",
-                title=f"{errs} Cloud Run 5xx responses in the last hour",
-                detail="klaus-agent is returning server errors.",
-                remediation="Inspect Cloud Run logs for unhandled exceptions / OOM.",
-            ))
-    except Exception:
-        logger.warning("heartbeat: Cloud Monitoring read failed", exc_info=True)
-    return signals
-
-
-def _latest_deploy_status() -> dict | None:
-    """Return the latest GitHub Actions deploy.yml run status, or None on error."""
-    import requests as _requests
-    repo = os.getenv("KLAUS_GITHUB_REPO", "")
-    token = os.getenv("KLAUS_GITHUB_TOKEN", "")
-    if not repo or not token:
-        logger.debug("heartbeat: KLAUS_GITHUB_REPO or KLAUS_GITHUB_TOKEN not set — skipping deploy check")
-        return None
-    url = f"https://api.github.com/repos/{repo}/actions/workflows/deploy.yml/runs?per_page=1"
-    try:
-        resp = _requests.get(
-            url,
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-        runs = resp.json().get("workflow_runs", [])
-        if not runs:
-            return None
-        run = runs[0]
-        return {
-            "conclusion": run.get("conclusion"),
-            "status": run.get("status"),
-            "head_sha": run.get("head_sha", ""),
-        }
-    except Exception:
-        logger.warning("heartbeat: GitHub deploy status fetch failed", exc_info=True)
-        return None
-
-
-def _live_revision_sha() -> str | None:
-    """Return the commit SHA of the currently-serving Cloud Run revision, or None on error."""
-    try:
-        from google.cloud import run_v2
-        project_id = os.environ["GCP_PROJECT_ID"]
-        client = run_v2.ServicesClient()
-        service_name = f"projects/{project_id}/locations/me-west1/services/klaus-agent"
-        service = client.get_service(name=service_name)
-        traffic = service.traffic
-        if not traffic:
-            return None
-        serving_revision = traffic[0].revision
-        if not serving_revision:
-            return None
-        rev_client = run_v2.RevisionsClient()
-        revision = rev_client.get_revision(name=serving_revision)
-        image = revision.containers[0].image if revision.containers else ""
-        # Image tag format: region-docker.pkg.dev/project/repo/agent:{sha}
-        if ":" in image:
-            return image.rsplit(":", 1)[-1]
-        return None
-    except Exception:
-        logger.warning("heartbeat: Cloud Run revision check failed", exc_info=True)
-        return None
-
-
-def check_deployment() -> list[Signal]:
-    """Deployment health: last deploy succeeded; live revision matches main."""
-    signals: list[Signal] = []
-    try:
-        deploy = _latest_deploy_status()
-        if deploy and deploy.get("conclusion") == "failure":
-            signals.append(Signal(
-                fingerprint="deployment:last-deploy-failed",
-                severity=SEVERITY_CRITICAL, area="deployment",
-                title="Last GitHub Actions deploy failed",
-                detail=f"Workflow run for {deploy.get('head_sha', '?')[:8]} concluded 'failure'.",
-                remediation="Open the Actions tab for the deploy.yml run and fix the failure.",
-            ))
-        live = _live_revision_sha()
-        head = (deploy or {}).get("head_sha")
-        if live and head and not head.startswith(live) and not live.startswith(head):
-            signals.append(Signal(
-                fingerprint="deployment:revision-behind",
-                severity=SEVERITY_WARNING, area="deployment",
-                title="Live Cloud Run revision is behind main",
-                detail=f"Live={live[:8]}, latest main={head[:8]}.",
-                remediation="Re-run the deploy workflow or push to main to trigger a deploy.",
-            ))
-    except Exception:
-        logger.warning("heartbeat: deployment check failed", exc_info=True)
-    return signals
-
-
-def check_code(repo_root: Path | None = None) -> list[Signal]:
-    """Weekly FYI: docs drift, stale TODOs, repeated-fix clusters."""
-    import subprocess
-    import re
-
-    signals: list[Signal] = []
-    root = repo_root or Path(__file__).parent.parent
-
-    # --- Docs drift: paths mentioned in CLAUDE.md text block vs disk ---
-    try:
-        claude_md = root / "CLAUDE.md"
-        if claude_md.exists():
-            content = claude_md.read_text(encoding="utf-8")
-            # Extract lines inside fenced ```text blocks
-            in_block = False
-            missing_paths: list[str] = []
-            dir_stack = [(0, root)]
-            for line in content.splitlines():
-                if line.strip().startswith("```text"):
-                    in_block = True
-                    dir_stack = [(0, root)]
-                    continue
-                if in_block and line.strip().startswith("```"):
-                    in_block = False
-                    continue
-                if in_block:
-                    no_comment = line.split("#")[0]
-                    name = no_comment.lstrip("│├└─ \t").strip()
-                    if not name or name == "Klaus/":
-                        continue
-                    prefix_len = len(no_comment) - len(no_comment.lstrip("│├└─ \t"))
-                    depth = prefix_len // 4
-                    
-                    while len(dir_stack) > 1 and dir_stack[-1][0] >= depth:
-                        dir_stack.pop()
-                    
-                    parent_path = dir_stack[-1][1] if dir_stack else root
-                    
-                    if "{" in name or "*" in name:
-                        continue
-                        
-                    candidate = parent_path / name
-                    if name.endswith("/"):
-                        dir_name = name.rstrip("/")
-                        candidate_dir = parent_path / dir_name
-                        if not candidate_dir.exists():
-                            missing_paths.append(str(candidate_dir.relative_to(root)))
-                        dir_stack.append((depth, candidate_dir))
-                    else:
-                        if not candidate.exists():
-                            missing_paths.append(str(candidate.relative_to(root)))
-            if missing_paths:
-                signals.append(Signal(
-                    fingerprint="code:docs-drift",
-                    severity=SEVERITY_FYI, area="code",
-                    title="CLAUDE.md references paths that don't exist",
-                    detail=f"{len(missing_paths)} missing: {', '.join(missing_paths[:3])}{'…' if len(missing_paths) > 3 else ''}",
-                    remediation="Update the directory tree in CLAUDE.md to match the current codebase.",
-                ))
-    except Exception:
-        logger.warning("heartbeat: docs-drift check failed", exc_info=True)
-
-    # --- Stale TODOs: grep core/mcp_tools/interfaces/memory ---
-    try:
-        result = subprocess.run(
-            ["grep", "-rn", "TODO\\|FIXME",
-             str(root / "core"), str(root / "mcp_tools"),
-             str(root / "interfaces"), str(root / "memory")],
-            capture_output=True, text=True, timeout=15,
-        )
-        count = len([l for l in result.stdout.splitlines() if l.strip()])
-        if count > 15:
-            examples = result.stdout.splitlines()[:3]
-            signals.append(Signal(
-                fingerprint="code:stale-todos",
-                severity=SEVERITY_FYI, area="code",
-                title=f"{count} TODO/FIXME comments in source",
-                detail="; ".join(e.split(":", 2)[-1].strip() for e in examples),
-                remediation="Review and resolve or file tickets for stale TODOs.",
-            ))
-    except Exception:
-        logger.warning("heartbeat: stale-todo check failed", exc_info=True)
-
-    # --- Repeated-fix clusters: git log ---
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "log", "--since=60 days ago", "--pretty=%s"],
-            capture_output=True, text=True, timeout=15,
-        )
-        scope_counts: dict[str, int] = {}
-        for line in result.stdout.splitlines():
-            m = re.match(r"fix\(([^)]+)\)", line.strip())
-            if m:
-                scope = m.group(1)
-                scope_counts[scope] = scope_counts.get(scope, 0) + 1
-        for scope, count in scope_counts.items():
-            if count >= 4:
-                signals.append(Signal(
-                    fingerprint=f"code:fix-cluster:{scope}",
-                    severity=SEVERITY_FYI, area="code",
-                    title=f"fix({scope}) appears {count}x in last 60 days",
-                    detail=f"Scope '{scope}' is a churn hotspot.",
-                    remediation=f"Investigate root cause of repeated fixes in '{scope}'.",
-                ))
-    except Exception:
-        logger.warning("heartbeat: fix-cluster check failed", exc_info=True)
-
-    # --- SELF.md SHA staleness: embedded hash vs fresh tool-schema hash ---
-    try:
-        import hashlib as _hashlib
-        import re as _re_sha
-
-        self_md = root / "docs" / "SELF.md"
-        if self_md.exists():
-            content = self_md.read_text(encoding="utf-8")
-
-            # Extract the embedded SHA from the <!-- sha: <hex> --> comment line.
-            sha_match = _re_sha.search(r"<!--\s*sha:\s*([0-9a-f]{40})\s*-->", content)
-            stored_sha = sha_match.group(1) if sha_match else None
-
-            # Recompute SHA using the same algorithm as core/self_manifest._compute_schema_hash.
-            # Must stay in sync with self_manifest.py — if one changes, update the other.
-            fragments: list[str] = []
-            tools_file = root / "core" / "tools.py"
-            if tools_file.exists():
-                tools_text = tools_file.read_text(encoding="utf-8")
-                names = sorted(_re_sha.findall(r'"name":\s*"([^"]+)"', tools_text))
-                fragments.extend(names)
-            web_file = root / "interfaces" / "web_server.py"
-            if web_file.exists():
-                web_text = web_file.read_text(encoding="utf-8")
-                routes = sorted(_re_sha.findall(r'"/cron/[^"]*"', web_text))
-                fragments.extend(routes)
-            fresh_sha = _hashlib.sha1("\n".join(fragments).encode(), usedforsecurity=False).hexdigest()
-
-            if stored_sha and stored_sha != fresh_sha:
-                signals.append(Signal(
-                    fingerprint="code:self-md-stale",
-                    severity=SEVERITY_FYI,
-                    area="code",
-                    title="SELF.md SHA is stale — tool schemas or cron routes may have changed",
-                    detail=f"stored={stored_sha[:8]} fresh={fresh_sha[:8]}",
-                    remediation=(
-                        "Run 'python core/self_manifest.py' or redeploy "
-                        "(deploy.yml regenerates SELF.md before docker build)."
-                    ),
-                ))
-    except Exception:
-        logger.warning("heartbeat: self-md-sha check failed", exc_info=True)
-
-    return signals
-
-
-_SEVERITY_ORDER = [SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI]
-_SEVERITY_HEADER = {
-    SEVERITY_CRITICAL: "CRITICAL",
-    SEVERITY_WARNING: "Warnings",
-    SEVERITY_FYI: "FYI",
-}
-
-
-def _plain_text_fallback(signals: list[Signal]) -> str:
-    """Deterministic grouped message used when the LLM composer is unavailable."""
-    lines: list[str] = []
-    for severity in _SEVERITY_ORDER:
-        group = [s for s in signals if s.severity == severity]
-        if not group:
-            continue
-        lines.append(f"[{_SEVERITY_HEADER[severity]}]")
-        for s in group:
-            lines.append(f"• {s.title} — {s.detail}")
-            lines.append(f"  → {s.remediation}")
-        lines.append("")
-    return "\n".join(lines).strip() or "Heartbeat: all systems nominal."
-
-
-def _compose_message(signals: list[Signal]) -> str:
-    """Compose the Telegram message via the worker LLM, with plain-text fallback."""
-    prompt_path = Path(__file__).parent.parent / "prompts" / "heartbeat.md"
-    try:
-        system_prompt = prompt_path.read_text(encoding="utf-8")
-    except OSError:
-        return _plain_text_fallback(signals)
-
-    payload = json.dumps([{
-        "severity": s.severity, "area": s.area, "title": s.title,
-        "detail": s.detail, "remediation": s.remediation,
-    } for s in signals], ensure_ascii=False, indent=2)
-
-    try:
-        from core.llm_client import LLMClient
-        client = LLMClient(
-            backend=os.environ["WORKER_AGENT_BACKEND"],
-            model=os.environ["WORKER_AGENT_MODEL"],
-            api_key=os.environ["WORKER_AGENT_API_KEY"],
-            base_url=os.environ.get("WORKER_AGENT_BASE_URL"),
-        )
-        response = client.chat(
-            messages=[{"role": "user", "content": payload}],
-            system=system_prompt,
-        )
-        text = (response.get("text") or "").strip()
-        if text:
-            return text
-    except Exception:
-        logger.warning("heartbeat: LLM composition failed", exc_info=True)
-
-    return _plain_text_fallback(signals)
-
-
-_DEFAULT_DAILY_COST_ALERT = 5.0
-_COST_DRIVER_TOP_N = 3
-
-
-def _parse_daily_cost_alert_threshold() -> float:
-    """Defensively parse KLAUS_DAILY_COST_ALERT (T-30.5-13).
-
-    Mirrors core/tick_brain.py's try/except float-parse pattern (lines
-    95-106) — a malformed or unset value falls back to the $5 default
-    without raising.
-    """
-    raw = os.getenv("KLAUS_DAILY_COST_ALERT", str(_DEFAULT_DAILY_COST_ALERT))
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        logger.warning(
-            "heartbeat: malformed KLAUS_DAILY_COST_ALERT=%r — using default $%.2f",
-            raw, _DEFAULT_DAILY_COST_ALERT,
-        )
-        return _DEFAULT_DAILY_COST_ALERT
-
-
-def _cost_drivers(summary: dict, top_n: int = _COST_DRIVER_TOP_N) -> list[tuple[str, float]]:
-    """Return the top-N {purpose}_cost_usd drivers from a usage summary doc,
-    sorted descending by cost, as (purpose, cost_usd) pairs."""
-    drivers: list[tuple[str, float]] = []
-    for key, value in summary.items():
-        if key == "total_cost_usd" or not key.endswith("_cost_usd"):
-            continue
-        purpose = key[: -len("_cost_usd")]
-        try:
-            drivers.append((purpose, float(value)))
-        except (TypeError, ValueError):
-            continue
-    drivers.sort(key=lambda pair: pair[1], reverse=True)
-    return drivers[:top_n]
-
-
-def _cache_hit_rate(summary: dict) -> float:
-    """Return cache_read_tokens / (in_tokens + cache_read_tokens) as a 0..1
-    fraction. Returns 0.0 if there's no token data (never raises)."""
-    try:
-        cache_read = float(summary.get("total_cache_read_tokens", 0) or 0)
-        in_tokens = float(summary.get("total_in_tokens", 0) or 0)
-        denom = in_tokens + cache_read
-        if denom <= 0:
-            return 0.0
-        return cache_read / denom
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _spend_plain_text_fallback(payload: dict) -> str:
-    """Deterministic plain-text spend alert, used when the Sonnet compose
-    call fails (D-04)."""
-    lines = [
-        f"Daily spend alert: yesterday ({payload['date']}) cost "
-        f"${payload['total_cost_usd']:.2f}, over the ${payload['threshold']:.2f} threshold.",
-    ]
-    top_drivers = payload.get("top_drivers") or []
-    if top_drivers:
-        drivers_str = ", ".join(f"{purpose} (${cost:.2f})" for purpose, cost in top_drivers)
-        lines.append(f"Top cost drivers: {drivers_str}.")
-    lines.append(f"Cache-hit rate: {payload.get('cache_hit_rate', 0.0):.0%}.")
-    return "\n".join(lines)
-
-
-def _compose_spend_alert(payload: dict) -> str:
-    """Compose the Klaus-voiced daily-spend alert via Sonnet (SMART_AGENT_*),
-    with a deterministic plain-text fallback on any failure (D-04).
-
-    Mirrors _compose_message/_plain_text_fallback's shape but points at the
-    smart agent with prompts/cost_tripwire.md, and tags the call
-    purpose="cost_tripwire" so its own cost is auditable (T-30.5-15).
-    """
-    prompt_path = Path(__file__).parent.parent / "prompts" / "cost_tripwire.md"
-    try:
-        system_prompt = prompt_path.read_text(encoding="utf-8")
-    except OSError:
-        return _spend_plain_text_fallback(payload)
-
-    body = json.dumps(payload, ensure_ascii=False, indent=2)
-    try:
-        from core.llm_client import LLMClient
-        client = LLMClient(
-            backend=os.environ["SMART_AGENT_BACKEND"],
-            model=os.environ["SMART_AGENT_MODEL"],
-            api_key=os.environ["SMART_AGENT_API_KEY"],
-            base_url=os.environ.get("SMART_AGENT_BASE_URL"),
-        )
-        response = client.chat(
-            messages=[{"role": "user", "content": body}],
-            system=system_prompt,
-            purpose="cost_tripwire",
-        )
-        text = (response.get("text") or "").strip()
-        if text:
-            return text
-    except Exception:
-        logger.warning("heartbeat: spend-tripwire LLM composition failed", exc_info=True)
-
-    return _spend_plain_text_fallback(payload)
-
-
-def check_daily_spend() -> dict | None:
-    """Once-daily, per-date-suppressed spend tripwire (BRAIN-04, D-01..D-04).
-
-    Reads yesterday's LLMUsageStore summary; if total_cost_usd exceeds the
-    defensively-parsed KLAUS_DAILY_COST_ALERT threshold (default $5) and the
-    tripwire has not already fired for that date, composes a Klaus-voiced
-    alert (Sonnet, with deterministic template fallback) and returns it for
-    the caller to send and mark fired.
-
-    Returns {"date": yesterday_iso, "text": alert_text, "summary": summary}
-    when an alert should be sent, or None if under threshold, already fired,
-    or on any internal error. Never raises into the cron — the caller
-    (run_tick) is responsible for sending the text and gating
-    CostTripwireLogStore.mark_fired on a successful send (D-10 pattern).
-    """
-    try:
-        from memory.firestore_db import LLMUsageStore, CostTripwireLogStore
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-
-        threshold = _parse_daily_cost_alert_threshold()
-        yesterday = (datetime.now(_TZ) - timedelta(days=1)).date().isoformat()
-
-        usage_store = LLMUsageStore(project_id=project_id, database=database)
-        summary = usage_store.summary_for_date(yesterday)
-        total_cost = float(summary.get("total_cost_usd", 0) or 0)
-
-        if total_cost <= threshold:
-            return None
-
-        tripwire_store = CostTripwireLogStore(project_id=project_id, database=database)
-        if tripwire_store.already_fired(yesterday):
-            return None
-
-        payload = {
-            "date": yesterday,
-            "total_cost_usd": total_cost,
-            "threshold": threshold,
-            "top_drivers": _cost_drivers(summary),
-            "cache_hit_rate": _cache_hit_rate(summary),
-        }
-        text = _compose_spend_alert(payload)
-        return {"date": yesterday, "text": text, "summary": summary}
-    except Exception:
-        logger.warning("heartbeat: check_daily_spend failed", exc_info=True)
-        return None
-
-
-_GROQ_DAILY_TOKEN_CAP = 200_000
-_GROQ_BUDGET_WARN_FRACTION = 0.8  # D-07 — warn at 80% (160K of 200K TPD)
-# Fallback-purpose call-count spike threshold (D-07 second half). Mirrors the
-# magnitude of _FALLBACK_WARN_THRESHOLD (smart-brain Gemini->Haiku fallback,
-# line 334) — an occasional 1-2 fallback calls/day is expected background
-# noise (transient Groq errors), 10+ suggests the Groq primary is
-# systemically failing (rate limit, decommissioned model id, outage).
-_GROQ_FALLBACK_SPIKE_THRESHOLD = 10
-
-
-def _groq_budget_plain_text_fallback(payload: dict) -> str:
-    """Deterministic plain-text Groq-budget alert, used when the Sonnet
-    compose call fails. Mirrors _spend_plain_text_fallback's shape."""
-    lines = []
-    if payload.get("over_budget"):
-        lines.append(
-            f"Groq daily token budget alert: {payload['total_tokens']:,} of "
-            f"{payload['cap']:,} tokens used today ({payload['fraction']:.0%})."
-        )
-    if payload.get("spiking"):
-        lines.append(
-            f"Groq tick-brain fallback calls today: {payload['fallback_calls']} "
-            f"(threshold {payload['fallback_threshold']}) — routing to the "
-            "metered Gemini fallback more than usual."
-        )
-    return "\n".join(lines) or "Groq daily token budget alert."
-
-
-def _compose_groq_budget_alert(payload: dict) -> str:
-    """Compose the Klaus-voiced Groq-budget alert via Sonnet (SMART_AGENT_*),
-    with a deterministic plain-text fallback on any failure.
-
-    Mirrors _compose_spend_alert's shape but points at
-    prompts/groq_budget.md, and tags the call purpose="groq_budget_tripwire"
-    so its own cost is auditable (mirrors T-30.5-15).
-    """
-    prompt_path = Path(__file__).parent.parent / "prompts" / "groq_budget.md"
-    try:
-        system_prompt = prompt_path.read_text(encoding="utf-8")
-    except OSError:
-        return _groq_budget_plain_text_fallback(payload)
-
-    body = json.dumps(payload, ensure_ascii=False, indent=2)
-    try:
-        from core.llm_client import LLMClient
-        client = LLMClient(
-            backend=os.environ["SMART_AGENT_BACKEND"],
-            model=os.environ["SMART_AGENT_MODEL"],
-            api_key=os.environ["SMART_AGENT_API_KEY"],
-            base_url=os.environ.get("SMART_AGENT_BASE_URL"),
-        )
-        response = client.chat(
-            messages=[{"role": "user", "content": body}],
-            system=system_prompt,
-            purpose="groq_budget_tripwire",
-        )
-        text = (response.get("text") or "").strip()
-        if text:
-            return text
-    except Exception:
-        logger.warning("heartbeat: groq-budget LLM composition failed", exc_info=True)
-
-    return _groq_budget_plain_text_fallback(payload)
-
-
-def check_groq_budget() -> dict | None:
-    """Once-daily, per-date-suppressed Groq token-budget tripwire (MEM-06, D-07).
-
-    Reads today's GroqTokenLedgerStore total_tokens; if it has crossed 80% of
-    the 200K TPD Groq free-tier cap, OR today's tick_fallback +
-    tick_autonomous_fallback call counts (existing LLMUsageStore per-purpose
-    counters) have spiked past _GROQ_FALLBACK_SPIKE_THRESHOLD, composes a
-    Klaus-voiced alert (Sonnet, with deterministic template fallback) and
-    returns it for the caller to send and mark alerted.
-
-    Returns {"date": today_iso, "text": alert_text, "summary": payload} when
-    an alert should be sent, or None if under threshold, no spike, already
-    alerted today, or on any internal error. Never raises into the cron —
-    the caller (run_tick) is responsible for sending the text and gating
-    GroqTokenLedgerStore.mark_alerted on a successful send (D-10 pattern,
-    mirrors check_daily_spend/CostTripwireLogStore).
-    """
-    try:
-        from datetime import date
-        from memory.firestore_db import GroqTokenLedgerStore, LLMUsageStore
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        today_iso = date.today().isoformat()
-
-        ledger_store = GroqTokenLedgerStore(project_id=project_id, database=database)
-        ledger_today = ledger_store.today()
-        total_tokens = int(ledger_today.get("total_tokens", 0) or 0)
-        fraction = total_tokens / _GROQ_DAILY_TOKEN_CAP
-
-        usage_store = LLMUsageStore(project_id=project_id, database=database)
-        usage_today = usage_store.summary(period="today")
-        fallback_calls = (
-            int(usage_today.get("tick_fallback_calls", 0) or 0)
-            + int(usage_today.get("tick_autonomous_fallback_calls", 0) or 0)
-        )
-
-        over_budget = fraction >= _GROQ_BUDGET_WARN_FRACTION
-        spiking = fallback_calls >= _GROQ_FALLBACK_SPIKE_THRESHOLD
-
-        if not over_budget and not spiking:
-            return None
-
-        if ledger_store.already_alerted(today_iso):
-            return None
-
-        payload = {
-            "date": today_iso,
-            "total_tokens": total_tokens,
-            "cap": _GROQ_DAILY_TOKEN_CAP,
-            "fraction": fraction,
-            "over_budget": over_budget,
-            "fallback_calls": fallback_calls,
-            "fallback_threshold": _GROQ_FALLBACK_SPIKE_THRESHOLD,
-            "spiking": spiking,
-        }
-        text = _compose_groq_budget_alert(payload)
-        return {"date": today_iso, "text": text, "summary": payload}
-    except Exception:
-        logger.warning("heartbeat: check_groq_budget failed", exc_info=True)
-        return None
-
-
-def _load_config() -> dict:
-    """Load heartbeat config from Firestore. Returns defaults on error."""
-    try:
-        from memory.firestore_db import HeartbeatConfigStore
-        project_id = os.environ["GCP_PROJECT_ID"]
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        store = HeartbeatConfigStore(project_id=project_id, database=database)
-        return store.get()
-    except Exception:
-        logger.warning("heartbeat: config load failed — using defaults", exc_info=True)
-        from memory.firestore_db import _HEARTBEAT_CONFIG_DEFAULTS
-        return dict(_HEARTBEAT_CONFIG_DEFAULTS)
-
-
-def _collect_signals(*, tiers: set[str], weekly: bool = False) -> list[Signal]:
-    """Run all checkers, then keep only signals whose severity is in `tiers`."""
-    raw: list[Signal] = []
-    for checker in (check_cron_health, check_tokens, check_degradation, check_deployment,
-                    _check_push_health, check_occasion_health):
-        try:
-            raw.extend(checker())
-        except Exception:
-            logger.warning("heartbeat: checker %s crashed", checker.__name__, exc_info=True)
-    if weekly:
-        try:
-            raw.extend(check_code())
-        except Exception:
-            logger.warning("heartbeat: check_code crashed", exc_info=True)
-    return [s for s in raw if s.severity in tiers]
+def deployment_identity() -> dict[str, str | None]:
+    """Return the deployment identity exposed by Cloud Run without API polling."""
+    return {
+        "service": os.environ.get("K_SERVICE"),
+        "revision": os.environ.get("K_REVISION"),
+        "configuration": os.environ.get("K_CONFIGURATION"),
+        "version": os.environ.get("KLAUS_DEPLOY_VERSION"),
+    }
+
+
+def check_deployment_identity() -> list[Signal]:
+    """Surface a missing Cloud Run revision identity as an operator warning."""
+    identity = deployment_identity()
+    if identity["revision"]:
+        return []
+    return [Signal(
+        "deployment:revision:missing", SEVERITY_WARNING, "deployment",
+        "Cloud Run revision identity is not available",
+        "K_REVISION is unset in this runtime.",
+        "Verify the service is running under Cloud Run with standard metadata.",
+    )]
 
 
 def collect_deterministic_signals(now: datetime | None = None) -> list[Signal]:
-    """Run the configured infrastructure checks without any model call.
-
-    This v7 entry point preserves cron, credential, degradation, deployment,
-    push, occasion, and weekly code-manifest checks while leaving alert
-    selection and wording fully deterministic.
-    """
-    current = now or datetime.now(_TZ)
-    config = _load_config()
-    if not config.get("enabled", True):
-        return []
-    tiers = _tiers_for_now(config, current)
-    return _collect_signals(
-        tiers=tiers,
-        weekly=SEVERITY_FYI in tiers,
-    )
-
-
-def _register_incidents(critical_signals: list[Signal], config: dict) -> list[Signal]:
-    """Record open incidents; return those that should trigger a ping."""
-    from memory.firestore_db import IncidentStore
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    reping = int(config.get("reping_interval_hours", 24))
-    to_ping: list[Signal] = []
-    try:
-        store = IncidentStore(project_id=project_id, database=database)
-        for signal in critical_signals:
-            should_ping = store.record_open(signal, reping_interval_hours=reping)
-            if should_ping:
-                to_ping.append(signal)
-    except Exception:
-        logger.warning("heartbeat: incident registration failed", exc_info=True)
-        to_ping = critical_signals
-    return to_ping
-
-
-def _resolve_absent(active_fingerprints: set) -> None:
-    """Resolve Firestore incidents that are no longer signalling."""
-    from memory.firestore_db import IncidentStore
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    try:
-        store = IncidentStore(project_id=project_id, database=database)
-        store.resolve_absent(active_fingerprints)
-    except Exception:
-        logger.warning("heartbeat: resolve_absent failed", exc_info=True)
-
-
-def _queue_signals(signals: list[Signal]) -> None:
-    """Append signals to the quiet-hours queue in Firestore."""
-    from memory.firestore_db import _make_firestore_client
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    try:
-        client = _make_firestore_client(project_id, database)
-        payload = [{"fingerprint": s.fingerprint, "severity": s.severity, "area": s.area,
-                    "title": s.title, "detail": s.detail, "remediation": s.remediation}
-                   for s in signals]
-        client.collection("heartbeat_queue").document("pending").set(
-            {"signals": payload}, merge=True)
-    except Exception:
-        logger.warning("heartbeat: _queue_signals failed", exc_info=True)
-
-
-async def _drain_quiet_queue(bot, now: datetime, config: dict) -> None:
-    """If not in quiet hours, drain any queued signals from previous quiet period."""
-    if _in_quiet_hours(config, now):
-        return
-    from memory.firestore_db import _make_firestore_client
-    project_id = os.environ.get("GCP_PROJECT_ID", "")
-    database = os.getenv("FIRESTORE_DATABASE", "(default)")
-    try:
-        client = _make_firestore_client(project_id, database)
-        doc_ref = client.collection("heartbeat_queue").document("pending")
-        snap = doc_ref.get()
-        if not snap.exists:
-            return
-        data = snap.to_dict() or {}
-        queued = data.get("signals", [])
-        if not queued:
-            doc_ref.delete()
-            return
-        signals = [Signal(**s) for s in queued]
-        # WR-02 / D-07: heartbeat/system messages carry the "alert" push class.
-        await send_and_inject(
-            bot, _compose_message(signals), inject_into_conversation=True, message_class="alert",
-        )
-        doc_ref.delete()
-    except Exception:
-        logger.warning("heartbeat: drain_quiet_queue failed", exc_info=True)
-
-
-def _run_tick_brain_pass(signals: list[Signal], *, weekly: bool) -> str | None:
-    """Run the tick-brain over collected signals. Returns an insight string or None.
-
-    Gate: only runs when signals exist or it is a weekly digest tick.
-    On any error (import, LLMError, parse failure), returns None without raising.
-    """
-    if not signals and not weekly:
-        return None  # quiet tick — skip, 0 cost
-
-    try:
-        from core.tick_brain import TickBrain
-        brain = TickBrain()
-    except Exception as exc:
-        # TICK_BRAIN_API_KEY not set in this env, or import error — skip gracefully
-        logger.debug("tick-brain: skipped (init failed: %s)", exc)
-        return None
-
-    signal_summary = "\n".join(
-        f"- [{s.severity.upper()}] {s.area}: {s.title} — {s.detail}"
-        for s in signals
-    ) or "(no active signals)"
-
-    prompt = (
-        f"Heartbeat tick — {'weekly digest' if weekly else 'regular tick'}.\n"
-        f"Active signals:\n{signal_summary}\n\n"
-        "Is there a pattern here, something the checklist can't see, or an action worth taking?"
-    )
-    try:
-        result = brain.think(prompt)
-    except Exception as exc:
-        logger.debug("tick-brain: think() failed: %s", exc)
-        return None
-
-    if result.get("should_act") and result.get("draft"):
-        return result["draft"]
-    if result.get("reason") and result["reason"] not in ("parse_failure", "llm_error"):
-        return result["reason"]
-    return None
-
-
-async def _send_daily_spend_alert(bot) -> None:
-    """Send the daily-spend tripwire alert (BRAIN-04), if one is due.
-
-    Separate guarded action, NOT part of _collect_signals — this is a
-    once-daily paid-compose-and-send action, not a Signal-emitting ops
-    checker. Per-date suppression in check_daily_spend() makes the exact
-    trigger hour irrelevant: safe to check on every hourly tick. Marks the
-    tripwire fired ONLY after a successful send (mirrors the OutreachLog
-    D-10 gating) so a delivery failure retries on the next tick rather than
-    being silently suppressed. Never raises into the cron.
-    """
-    try:
-        alert = check_daily_spend()
-        if not alert:
-            return
-        await send_and_inject(
-            bot, alert["text"], inject_into_conversation=True, message_class="alert",
-        )
-        from memory.firestore_db import CostTripwireLogStore
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        CostTripwireLogStore(project_id=project_id, database=database).mark_fired(
-            alert["date"], alert["summary"])
-    except Exception:
-        logger.warning("heartbeat: daily-spend tripwire send/mark_fired failed", exc_info=True)
-
-
-async def _send_groq_budget_alert(bot) -> None:
-    """Send the Groq daily-token-budget tripwire alert (MEM-06/D-07), if due.
-
-    Separate guarded action, mirroring _send_daily_spend_alert's shape and
-    D-10 gating: GroqTokenLedgerStore.mark_alerted is called ONLY after a
-    successful send, so a delivery failure retries on the next hourly tick
-    rather than being silently suppressed. Never raises into the cron.
-    """
-    try:
-        alert = check_groq_budget()
-        if not alert:
-            return
-        await send_and_inject(
-            bot, alert["text"], inject_into_conversation=True, message_class="alert",
-        )
-        from memory.firestore_db import GroqTokenLedgerStore
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.getenv("FIRESTORE_DATABASE", "(default)")
-        GroqTokenLedgerStore(project_id=project_id, database=database).mark_alerted(
-            alert["date"], alert["summary"])
-    except Exception:
-        logger.warning("heartbeat: groq-budget tripwire send/mark_alerted failed", exc_info=True)
-
-
-async def run_tick(bot, now: datetime | None = None) -> list[Signal]:
-    """Run one heartbeat tick. Returns the signals collected."""
-    now = now or datetime.now(_TZ)
-    config = _load_config()
-    if not config.get("enabled", True):
-        logger.info("heartbeat: disabled in config")
-        return []
-
-    await _drain_quiet_queue(bot, now, config)
-    await _send_daily_spend_alert(bot)
-    await _send_groq_budget_alert(bot)
-
-    tiers = _tiers_for_now(config, now)
-    signals = _collect_signals(tiers=tiers, weekly=SEVERITY_FYI in tiers)
-    logger.info("heartbeat: %d signal(s) in tiers %s", len(signals), sorted(tiers))
-
-    # Tick-brain reasoning pass — interprets signals, spots patterns.
-    # Gate: only when signals exist or weekly digest. Non-blocking.
-    is_weekly = SEVERITY_FYI in tiers
-    tick_insight = _run_tick_brain_pass(signals, weekly=is_weekly)
-    if tick_insight:
-        logger.info("tick-brain insight: %s", tick_insight)
-
-    active_fps = {s.fingerprint for s in signals}
-    critical = [s for s in signals if s.severity == SEVERITY_CRITICAL]
-    warnings = [s for s in signals if s.severity == SEVERITY_WARNING]
-    fiys = [s for s in signals if s.severity == SEVERITY_FYI]
-
-    to_ping = _register_incidents(critical, config)
-    if to_ping:
-        msg = _compose_message(to_ping)
-        if tick_insight:
-            msg = f"{msg}\n\n_Insight: {tick_insight}_"
-        if not _in_quiet_hours(config, now):
-            # WR-02 / D-07: heartbeat/system messages carry the "alert" push class.
-            await send_and_inject(bot, msg, inject_into_conversation=True, message_class="alert")
-        else:
-            _queue_signals(to_ping)
-
-    if SEVERITY_WARNING in tiers and warnings:
-        await send_and_inject(
-            bot, _compose_message(warnings), inject_into_conversation=True, message_class="alert",
-        )
-
-    if SEVERITY_FYI in tiers and fiys:
-        fyi_msg = _compose_message(fiys)
-        if tick_insight and not to_ping and not warnings:
-            fyi_msg = f"{fyi_msg}\n\n_Insight: {tick_insight}_"
-        await send_and_inject(bot, fyi_msg, inject_into_conversation=True, message_class="alert")
-
-    _resolve_absent(active_fps)
-
-    deadman_url = os.getenv("HEARTBEAT_DEADMAN_URL", "")
-    if deadman_url:
+    """Collect retained infrastructure health without delivery or model usage."""
+    signals: list[Signal] = []
+    for checker in (lambda: check_cron_health(now), check_mcp_routine_health, _check_push_health, check_deployment_identity):
         try:
-            import requests as _requests
-            _requests.get(deadman_url, timeout=10)
+            signals.extend(checker())
         except Exception:
-            logger.warning("heartbeat: dead-man ping failed", exc_info=True)
-
+            logger.warning("heartbeat: checker failed", exc_info=True)
     return signals
-
-
-def _cli() -> None:
-    from dotenv import load_dotenv
-    load_dotenv(override=True)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    parser = argparse.ArgumentParser(description="Klaus heartbeat smoke test")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Run all checkers, print signals; no send/write.")
-    args = parser.parse_args()
-    if args.dry_run:
-        signals = _collect_signals(
-            tiers={SEVERITY_CRITICAL, SEVERITY_WARNING, SEVERITY_FYI}, weekly=True)
-        print(f"[dry-run] {len(signals)} signal(s):")
-        for s in signals:
-            print(f"  [{s.severity}] {s.title} — {s.detail} -> {s.remediation}")
-        if signals:
-            print("\n[dry-run] Composed message:")
-            print(_compose_message(signals))
-        return
-    print("Use --dry-run for local testing.")
-
-
-if __name__ == "__main__":
-    _cli()

@@ -1,14 +1,4 @@
-"""Tool registry — schemas, real handlers, and dispatch.
-
-Defines the full set of tools available to the agent in Anthropic's tool_use
-JSON format.  Phase 3 replaced the Gmail/Calendar mock handlers with real
-Google API calls.  Phase 4 added the add_task tool (originally Firestore/Things 3
-queue; later TickTick; replaced in Phase 27 by the native TaskStore task_* tools).
-Phase 6 adds remember and recall tools for long-term Pinecone-backed memory.
-
-Switching tool backends requires only editing this file — the orchestrator,
-LLM client, and callers do not need to change.
-"""
+"""Canonical deterministic tool registry used by Claude MCP endpoints."""
 from __future__ import annotations
 
 import json
@@ -17,17 +7,14 @@ import threading
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from googleapiclient.errors import HttpError
-
 logger = logging.getLogger(__name__)
 
-# Thread-local storage for the current user_id, set by AgentOrchestrator
-# before each handle_message call so memory handlers can scope queries correctly.
+# Thread-local canonical user id so every memory handler is namespace-scoped.
 _thread_local = threading.local()
 
 
 def set_current_user_id(user_id: int) -> None:
-    """Called by AgentOrchestrator at the start of each handle_message."""
+    """Bind the canonical MCP user id for the current dispatch thread."""
     _thread_local.user_id = user_id
 
 
@@ -35,62 +22,8 @@ def _get_current_user_id() -> int:
     return getattr(_thread_local, "user_id", 0)
 
 
-# Tools that Claude calls directly (not via delegate_to_worker).
-# The orchestrator uses this set to suppress spurious "unexpected direct call" warnings.
-SMART_AGENT_DIRECT_TOOLS: frozenset[str] = frozenset({
-    "remember",
-    "recall",
-    "run_morning_briefing",
-    "search_chat_history",
-    "list_own_files",
-    "read_own_source",
-    "search_own_source",
-    "get_self_status",
-    # Phase 18 — self-scheduled follow-ups (D-15 / AUTO-05)
-    "schedule_followup",
-    "list_followups",
-    "cancel_followup",
-    # Phase 19 Plan 02 — brain-direct training-profile tools (PROFILE-04)
-    "get_training_profile",
-    "update_training_profile",
-    # Phase 21 Plan 02 — update_plan alias (PLAN-03 / SC-3)
-    "update_plan",
-    # Phase 20 — brain-direct training log (LOG-03)
-    "log_training",
-    # Phase 22 — brain-direct coaching guide on-demand lookup (COACH-01)
-    "read_coaching_guide",
-    # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03); update_plan NOT re-added
-    "get_plan",
-    "get_block_status",
-    "log_benchmark",
-    "get_benchmark_history",
-    "start_block",
-    "end_block",
-    # Phase 25 — progress projection toward dated goals (PROG-02)
-    "get_goal_projection",
-    # Hevy strength — full per-set progression + cross-domain coaching context
-    "get_strength_progress",
-    "get_training_context",
-    # Garmin per-run detail — full splits + dynamics for specific running coaching
-    "get_run_detail",
-    # Nutrition — brain-direct so totals are server-computed (no worker arithmetic hop)
-    "fetch_recent_meals",
-    "fetch_nutrition_trend",
-    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
-    "toggle_telegram_mirror",
-    "get_push_health",
-    # Phase 31 — standing directives (DIR-01/DIR-04/DIR-05): brain-direct only
-    "set_standing_directive",
-    "list_standing_directives",
-    "cancel_standing_directive",
-    # Phase 32 Plan 03 — deliberate memory hygiene (MEM-03/D-04): brain-direct only
-    "forget_memory",
-    # Phase 33 — self-accountability (OCC-07/D-26): brain-direct only
-    "get_recent_decisions",
-})
-
 # ------------------------------------------------------------------ #
-# Tool schemas in Anthropic tool_use format.                         #
+# Tool schemas consumed by the MCP server.                           #
 # ------------------------------------------------------------------ #
 
 TOOL_SCHEMAS: list[dict] = [
@@ -258,34 +191,6 @@ TOOL_SCHEMAS: list[dict] = [
                 },
             },
             "required": ["event_id"],
-        },
-    },
-    {
-        "name": "list_unread_emails",
-        "description": "List recent unread emails from the inbox with sender, subject, and snippet.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum number of emails to return. Defaults to 10.",
-                },
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "get_email",
-        "description": "Fetch the full body and headers of a specific email by its ID.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "message_id": {
-                    "type": "string",
-                    "description": "The unique email message ID.",
-                },
-            },
-            "required": ["message_id"],
         },
     },
     # --- Task tools — backed by Amit's real Things 3 list (TASK_BACKEND=things) ---
@@ -516,7 +421,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "remember",
         "description": (
             "Save a durable piece of information about the user to long-term memory. "
-            "Call this directly — do NOT delegate to the worker. "
+            "Available through Claude MCP. "
             "Use kind='fact' for short atomic statements (preferred). "
             "Use kind='chunk' for longer contextual passages where the narrative "
             "or emotional thread matters more than a single statement. "
@@ -546,7 +451,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "recall",
         "description": (
             "Search long-term memory for information relevant to a query. "
-            "Call this directly — do NOT delegate to the worker. "
+            "Available through Claude MCP. "
             "Returns top-k matches across facts and chunks, ranked by semantic "
             "similarity. Call proactively before asking the user clarifying questions "
             "about their preferences or history."
@@ -579,8 +484,8 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "forget_memory",
         "description": (
             "Deliberately and permanently delete one stored memory by its vector id — "
-            "Amit's explicit 'forget that' trigger (MEM-03). Call this directly — do NOT "
-            "delegate to the worker. This is a hard delete with no undo. Only call when "
+            "Amit's explicit 'forget that' trigger (MEM-03). "
+            "This is a hard delete with no undo. Only call when "
             "Amit has clearly asked to forget or correct a specific stored fact — e.g. "
             "after a `recall` surfaced it and Amit disputes it, or the nightly review "
             "flagged a `memory_contradiction` and Amit confirmed the drop. Never call "
@@ -602,54 +507,6 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
-        "name": "get_recent_decisions",
-        "description": (
-            "Look back at recent tick/occasion judgment calls — what Klaus decided "
-            "and why, what was actually sent (or not), and any calendar/task actions "
-            "he took. Call this directly — do NOT delegate to the worker. Use when "
-            "Amit asks why Klaus did or didn't say something recently, or what he "
-            "changed on the calendar."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "days": {
-                    "type": "integer",
-                    "description": "How many days back to look. Default 2, maximum 30.",
-                },
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "search_chat_history",
-        "description": (
-            "Search ingested Claude Code chat history for relevant sessions. "
-            "Call this directly — do NOT delegate to the worker. "
-            "Returns semantically similar chat chunks from past Claude Code sessions. "
-            "Use when the user asks what they worked on, asks about a past decision, "
-            "or wants to find a specific past conversation."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural language search query (e.g. 'OAuth flow implementation').",
-                },
-                "k": {
-                    "type": "integer",
-                    "description": "Number of results to return (default 5, max 10).",
-                },
-                "project": {
-                    "type": "string",
-                    "description": "Optional project path to narrow results (e.g. '/Users/amit/Desktop/Klaus').",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-    {
         "name": "fetch_weather",
         "description": (
             "Fetch current weather conditions and today/tomorrow forecast for a location. "
@@ -662,24 +519,6 @@ TOOL_SCHEMAS: list[dict] = [
                 "location": {
                     "type": "string",
                     "description": "City name or coordinates (default: 'Tel Aviv').",
-                },
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "fetch_readwise_today",
-        "description": (
-            "Fetch today's reading highlights from Readwise. "
-            "Returns the most recent highlights updated today. "
-            "Use when the user asks about their reading, highlights, or daily brief."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of highlights to return (default 5).",
                 },
             },
             "required": [],
@@ -699,21 +538,6 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
 
-    {
-        "name": "run_morning_briefing",
-        "description": (
-            "Compose and send the morning briefing to Telegram immediately. "
-            "Fetches weather, calendar, email, Garmin health, and today's tasks "
-            "for today, then sends a single briefing message. "
-            "Use when the user asks for the morning briefing, daily briefing, "
-            "or any variant of 'morning briefing' / 'give me my briefing'."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {},
-            "required": [],
-        },
-    },
     {
         "name": "notion_search",
         "description": (
@@ -836,81 +660,13 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
-        "name": "list_own_files",
-        "description": (
-            "List Klaus's deployed source files. "
-            "Call this directly — do NOT delegate to the worker. "
-            "Returns a sorted list of relative file paths from the project root. "
-            "Use when asked about project structure, what files exist, or to discover "
-            "what modules are available. Pass subdir to narrow to a specific directory "
-            "(e.g. 'mcp_tools', 'core', 'memory')."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "subdir": {
-                    "type": "string",
-                    "description": "Optional relative subdirectory path (e.g. 'mcp_tools'). "
-                                   "When omitted, all project files are listed.",
-                },
-            },
-            "required": [],
-        },
-    },
-    {
-        "name": "read_own_source",
-        "description": (
-            "Read the contents of one of Klaus's own source files by relative path. "
-            "Call this directly — do NOT delegate to the worker. "
-            "Use when asked how something works, to answer questions about implementation, "
-            "or to inspect a specific file. "
-            "Paths are relative to the project root (e.g. 'core/tools.py'). "
-            "Secrets and credentials are blocked and will return an error."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Relative path from the project root (e.g. 'core/tools.py').",
-                },
-            },
-            "required": ["path"],
-        },
-    },
-    {
-        "name": "search_own_source",
-        "description": (
-            "Full-text search across Klaus's source files. "
-            "Call this directly — do NOT delegate to the worker. "
-            "Returns line-level matches: file path, line number, and the matching line. "
-            "Use when asked where a specific class, function, variable, or string appears "
-            "in the codebase. Case-insensitive substring match."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Substring to search for (case-insensitive).",
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Maximum matches to return (default 20).",
-                },
-            },
-            "required": ["query"],
-        },
-    },
-    {
         "name": "get_self_status",
         "description": (
-            "Return Klaus's current operational status: container uptime, today's "
-            "conversation message count (proxied via LLM call count), today's and "
-            "month's LLM cost in USD, and latest heartbeat status. "
-            "Call this directly — do NOT delegate to the worker. "
-            "Use when asked about current status, costs, uptime, or health. "
-            "Journal field will be blank until Phase 17 (reflection) is deployed."
+            "Return Klaus's retained operational state: container uptime, current "
+            "status timestamp, and the latest reflection journal summary. "
+            "Available through Claude MCP. "
+            "Use when asked about current status, uptime, or health. "
+            "It deliberately excludes model usage, costs, and fallback telemetry."
         ),
         "input_schema": {
             "type": "object",
@@ -919,35 +675,12 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
-        "name": "toggle_telegram_mirror",
-        "description": (
-            "Flip the Telegram-mirror flag on or off. When ON (the default), every "
-            "hub message is also mirrored to Telegram; turning it OFF hands delivery "
-            "fully to Web Push — this is the conversational D-11 Telegram-retirement "
-            "path, executed by you when Amit asks to 'kill the mirror' after at least "
-            "a week of stable push delivery. "
-            "Call this directly — do NOT delegate to the worker."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "enabled": {
-                    "type": "boolean",
-                    "description": "True to keep/turn the Telegram mirror ON, False to turn it OFF.",
-                },
-            },
-            "required": ["enabled"],
-        },
-    },
-    {
         "name": "get_push_health",
         "description": (
             "Return Web Push self-awareness data: how many devices are subscribed, "
             "each device's user agent / last successful delivery timestamp / failure "
-            "count, whether the Telegram mirror is currently on, and when push was "
-            "first enabled. Use this before deciding whether it is safe to retire the "
-            "Telegram mirror. "
-            "Call this directly — do NOT delegate to the worker."
+            "count, and when push was first enabled. "
+            "Available through Claude MCP."
         ),
         "input_schema": {
             "type": "object",
@@ -961,7 +694,7 @@ TOOL_SCHEMAS: list[dict] = [
             "Schedule a self-managed check-back. You will be reminded at the chosen "
             "time and may polish, send, or defer at that point. `when` accepts ISO 8601 "
             "('2026-05-21T15:00:00+00:00') or natural language ('tomorrow 3pm', 'next monday 10am'). "
-            "Call this directly — do NOT delegate to the worker."
+            "Available through Claude MCP."
         ),
         "input_schema": {
             "type": "object",
@@ -976,7 +709,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "list_followups",
         "description": (
             "List your pending self-scheduled check-backs. Returns id, due_at, note, defer_count "
-            "for each. Cancelled and done follow-ups are excluded. Call directly — no worker delegation."
+            "for each. Cancelled and done follow-ups are excluded. Available through Claude MCP."
         ),
         "input_schema": {"type": "object", "properties": {}, "required": []},
     },
@@ -1002,7 +735,7 @@ TOOL_SCHEMAS: list[dict] = [
             "gating question first; your one-line ack is the correction surface. `expires_at` "
             "(ISO 8601 or natural language) and `condition_text` (event-based, e.g. 'while I'm in "
             "France') are both optional — a directive with neither persists indefinitely until "
-            "cancelled. Call this directly — do NOT delegate to the worker."
+            "cancelled. Available through Claude MCP."
         ),
         "input_schema": {
             "type": "object",
@@ -1035,7 +768,7 @@ TOOL_SCHEMAS: list[dict] = [
             "List Amit's standing directives — active by default; pass include_history=true when "
             "he asks about cancelled/expired/superseded ones too. Returns id, text, origin, "
             "expires_at, condition_text, status for each; self-proposed directives (origin="
-            "'klaus_self') are marked accordingly. Call this directly — do NOT delegate to the worker."
+            "'klaus_self') are marked accordingly. Available through Claude MCP."
         ),
         "input_schema": {
             "type": "object",
@@ -1058,7 +791,7 @@ TOOL_SCHEMAS: list[dict] = [
             "'klaus_self') durably vetoes it (status='vetoed', never deleted) so reflection will "
             "not propose the same or near-same directive again — the veto is itself training "
             "signal (D-13). Amit cancelling his own directive still writes 'cancelled'. Returns "
-            "{ok: bool}. Call this directly — do NOT delegate to the worker."
+            "{ok: bool}. Available through Claude MCP."
         ),
         "input_schema": {
             "type": "object",
@@ -1068,42 +801,12 @@ TOOL_SCHEMAS: list[dict] = [
             "required": ["id"],
         },
     },
-    {
-        "name": "delegate_to_worker",
-        "description": (
-            "Delegate a task to your worker agent (Gemini Flash) for tool execution "
-            "or data gathering. The worker has access to all other tools listed above. "
-            "Use this for any operation requiring calendar, email, or task tools. "
-            "Do NOT use for remember or recall — call those directly."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "task": {
-                    "type": "string",
-                    "description": (
-                        "Clear, detailed instruction for the worker. Include all "
-                        "necessary context (dates, names, parameters)."
-                    ),
-                },
-                "respond_directly": {
-                    "type": "boolean",
-                    "description": (
-                        "If true, the worker's response is sent directly to the user "
-                        "without your review. Use ONLY for simple CRUD with no "
-                        "scheduling judgment needed."
-                    ),
-                },
-            },
-            "required": ["task"],
-        },
-    },
     # ============ PHASE 19 Plan 02 — TRAINING PROFILE + GARMIN LIVE ============
     {
         "name": "get_training_profile",
         "description": (
             "Read Amit's stored training profile (athletic_goals, training_constraints, "
-            "recovery_preferences). Brain-direct — call this when you need to know "
+            "recovery_preferences). call this when you need to know "
             "Amit's coaching context before answering or planning."
         ),
         "input_schema": {
@@ -1116,7 +819,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "read_coaching_guide",
         "description": (
-            "Read a deep section of the coaching knowledge guide. Brain-direct. "
+            "Read a deep section of the coaching knowledge guide. "
             "Call when Amit asks 'why?' about a training concept, or when the slim "
             "core digest (already in your system prompt) is not detailed enough. "
             "Returns the full section text for the requested topic. "
@@ -1143,7 +846,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "update_training_profile",
         "description": (
-            "Merge new fields into Amit's stored training profile. Brain-direct. "
+            "Merge new fields into Amit's stored training profile. "
             "Record the change and tell him you did; only ask first if the new value is "
             "genuinely ambiguous. Recognized top-level keys: "
             "athletic_goals (list), training_constraints (list), recovery_preferences (object), "
@@ -1170,7 +873,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "update_plan",
         "description": (
             "Update Amit's living training plan (goals, weekly split, nutrition targets, "
-            "dates). Brain-direct. Record the change and tell him; only ask first if the "
+            "dates). Record the change and tell him; only ask first if the "
             "value is genuinely ambiguous. "
             "Same structured keys as update_training_profile: "
             "dated_goals (list), weekly_split (object), nutrition_targets (object), "
@@ -1197,7 +900,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "fetch_training_status",
         "description": (
             "Fetch today's Garmin training status (PRODUCTIVE / MAINTAINING / RECOVERY / "
-            "DETRAINING / OVERREACHING), VO2 max, and load focus. Worker-delegated."
+            "DETRAINING / OVERREACHING), VO2 max, and load focus. "
         ),
         "input_schema": {
             "type": "object",
@@ -1210,7 +913,7 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Fetch Amit's last N days of Garmin activities as a normalized list "
             "(activity_id, date, type, duration_sec, distance_m, perceived_exertion, "
-            "feel, training_load). Default days=7. Worker-delegated."
+            "feel, training_load). Default days=7. "
         ),
         "input_schema": {
             "type": "object",
@@ -1232,7 +935,7 @@ TOOL_SCHEMAS: list[dict] = [
             "acute/chronic. ratio is null when fewer than 14 of the last 28 days "
             "have training_load data (\"chronic baseline insufficient\"). "
             "Single-call wrapper — do NOT fetch raw activities and compute manually. "
-            "Worker-delegated."
+            ""
         ),
         "input_schema": {
             "type": "object",
@@ -1257,7 +960,7 @@ TOOL_SCHEMAS: list[dict] = [
             "dinner=20:00), NOT the actual eating time — never infer when the "
             "user actually ate from them. Meals also only sync when the user "
             "closes Lifesum, so a just-eaten meal may not be here yet. "
-            "Default hours=24. Brain-direct."
+            "Default hours=24. "
         ),
         "input_schema": {
             "type": "object",
@@ -1284,7 +987,7 @@ TOOL_SCHEMAS: list[dict] = [
             "days with NO logged meals — treat them as unlogged, never as "
             "zero-calorie days. When the profile has targets, `targets` and "
             "`avg_protein_g_per_kg` are included for comparison. "
-            "Default days=14 (max 60). Brain-direct."
+            "Default days=14 (max 60). "
         ),
         "input_schema": {
             "type": "object",
@@ -1301,7 +1004,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "log_training",
         "description": (
-            "Log a completed or skipped training session. Brain-direct. "
+            "Log a completed or skipped training session. "
             "Call when Amit reports a workout done, skipped, or RPE. "
             "Parameters: date (YYYY-MM-DD, required), session_type (gym/run/etc), "
             "completed (bool), rpe (1–10 optional), notes (optional), "
@@ -1357,7 +1060,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "get_training_history",
         "description": (
             "Return recent training log entries from Firestore. "
-            "Worker-delegated. Use days param (default 7) for recent history."
+            "Use days param (default 7) for recent history."
         ),
         "input_schema": {
             "type": "object",
@@ -1376,7 +1079,7 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Read Amit's strength-training history synced from Hevy (full per-set "
             "detail: every exercise, set, rep, weight_kg, RPE — plus derived "
-            "top_set, est_1rm, and volume_kg). Brain-direct. "
+            "top_set, est_1rm, and volume_kg). "
             "Pass `exercise` (e.g. 'Bench Press') to get that lift's progression "
             "over time for trend/stall analysis, or omit it for all recent "
             "sessions. `days` defaults to 30. `detail` defaults to 'full'; pass "
@@ -1408,7 +1111,7 @@ TOOL_SCHEMAS: list[dict] = [
             "Get Amit's FULL cross-domain training picture in one call — strength "
             "(Hevy per-set), session log, running/cardio + training load, ACWR, "
             "Garmin training status/VO2, nutrition totals per day, and recovery "
-            "(HRV/RHR/sleep). Brain-direct. Use this when Amit asks open-ended "
+            "(HRV/RHR/sleep). Use this when Amit asks open-ended "
             "questions about how training is going or what to change, so you can "
             "correlate ACROSS domains and surface non-obvious, individualized "
             "insight rather than siloed per-metric readouts. `days` defaults to 14. "
@@ -1435,7 +1138,7 @@ TOOL_SCHEMAS: list[dict] = [
             "summary of cadence, stride, vertical oscillation, ground contact, "
             "power and HR; plus derived split_shape (negative/positive/even), "
             "hr_drift, cadence_drift and pace_cv (interval consistency). "
-            "Brain-direct. Pass `activity_id` for one run, or omit for recent runs "
+            "Pass `activity_id` for one run, or omit for recent runs "
             "within `days` (default 14). `detail`='full' (every lap + summary) or "
             "'summary' (derived signals + per-run pace only). Reason over the data "
             "yourself — no pre-computed verdicts. Some runs (treadmill, no HRM "
@@ -1462,12 +1165,12 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     # ============ PHASE 23 — BLOCK + BENCHMARK TRACKING (BLOCK-01/BLOCK-03) ============
-    # All 6 are brain-direct (worker-excluded below). update_plan is NOT re-added.
+    # All 6 are available through Claude MCP (registered below). update_plan is NOT re-added.
     {
         "name": "get_plan",
         "description": (
             "Read Amit's living training plan merged with the currently-active "
-            "mesocycle block. Brain-direct. Returns the stored profile/plan fields "
+            "mesocycle block. Returns the stored profile/plan fields "
             "plus the active block (resolved automatically by today's date — no "
             "start_block needed) and the current 1-based week number. Call when Amit "
             "asks 'what's my plan?' or 'what block/week am I in?'."
@@ -1483,7 +1186,7 @@ TOOL_SCHEMAS: list[dict] = [
         "description": (
             "Read the currently-active mesocycle block (resolved by today's date), "
             "its recorded benchmarks, and the raw per-facet delta versus the prior "
-            "block. Brain-direct. Call when Amit asks how the current block is going "
+            "block. Call when Amit asks how the current block is going "
             "or how his benchmarks compare to last block."
         ),
         "input_schema": {
@@ -1495,7 +1198,7 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "log_benchmark",
         "description": (
-            "Record one benchmark result for the current block. Brain-direct. "
+            "Record one benchmark result for the current block. "
             "Record it and tell him; only confirm first if the value is genuinely ambiguous. Valid facets "
             "(closed set): bench_press_1rm, squat_1rm, push_ups, pull_ups, "
             "threshold_pace. For a bench/squat top-set (weight x reps), compute the "
@@ -1530,7 +1233,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "get_benchmark_history",
         "description": (
             "Read the cross-block history for one benchmark facet, newest first. "
-            "Brain-direct. Call when Amit asks how a lift/run has trended over time."
+            "Call when Amit asks how a lift/run has trended over time."
         ),
         "input_schema": {
             "type": "object",
@@ -1554,7 +1257,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "get_goal_projection",
         "description": (
             "Compute a deterministic linear-trend projection for one benchmark facet "
-            "toward its dated goal. Brain-direct. Call when Amit asks 'am I on track "
+            "toward its dated goal. Call when Amit asks 'am I on track "
             "for my October bench target?' or similar. Returns a ProjectionResult dict "
             "with projected_value, behind_by (positive = behind target for EVERY facet, "
             "including pace), on_track, confidence, and confidence_label computed "
@@ -1579,7 +1282,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "start_block",
         "description": (
             "Bookkeeping: mark a block active and set the current_block_id FK. "
-            "Brain-direct. NOTE: get_plan/get_block_status already resolve the active "
+            "NOTE: get_plan/get_block_status already resolve the active "
             "block by date automatically — only call this for explicit bookkeeping."
         ),
         "input_schema": {
@@ -1594,7 +1297,7 @@ TOOL_SCHEMAS: list[dict] = [
         "name": "end_block",
         "description": (
             "Bookkeeping: mark a block complete and clear the current_block_id FK. "
-            "Brain-direct. The next block is surfaced automatically by date."
+            "The next block is surfaced automatically by date."
         ),
         "input_schema": {
             "type": "object",
@@ -1606,59 +1309,6 @@ TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
-# Schemas passed to the worker agent — excludes meta tool and memory tools
-# (memory tools require Claude's judgment; the worker must not call them).
-WORKER_TOOL_SCHEMAS: list[dict] = [
-    s for s in TOOL_SCHEMAS
-    if s["name"] not in {
-        "delegate_to_worker",
-        "remember",
-        "recall",
-        "forget_memory",
-        "search_chat_history",
-        "list_own_files",
-        "read_own_source",
-        "search_own_source",
-        "get_self_status",
-        # Phase 18 — self-scheduled follow-ups (brain-direct only)
-        "schedule_followup",
-        "list_followups",
-        "cancel_followup",
-        # Phase 19 Plan 02 — brain-direct profile tools (fetch_* tools STAY in worker)
-        "get_training_profile",
-        "update_training_profile",
-        # Phase 21 — update_plan alias is brain-direct (WRN-02): exclude from worker
-        "update_plan",
-        # Phase 20 Plan 01 — brain-direct training log (get_training_history STAYS in worker)
-        "log_training",
-        # Phase 22 — brain-direct coaching guide (COACH-01, T-22-05)
-        "read_coaching_guide",
-        # Phase 23 — block + benchmark tools are brain-direct only (T-23-05)
-        "get_plan",
-        "get_block_status",
-        "log_benchmark",
-        "get_benchmark_history",
-        "start_block",
-        "end_block",
-        # Phase 25 — projection is brain-direct only (PROG-02, T-25-08)
-        "get_goal_projection",
-        # Hevy strength — read aggregators are brain-direct (Klaus reasons over them)
-        "get_strength_progress",
-        "get_training_context",
-        # Garmin per-run detail — brain-direct (Klaus reasons over splits/dynamics)
-        "get_run_detail",
-        # Nutrition — brain-direct so the brain reads server-computed totals itself
-        # (was worker-delegated; the worker summarization hop made totals drift)
-        "fetch_recent_meals",
-        "fetch_nutrition_trend",
-        # Phase 31 — standing directives are brain-direct only (DIR-01/DIR-04)
-        "set_standing_directive",
-        "list_standing_directives",
-        "cancel_standing_directive",
-    }
-]
-
-
 # ------------------------------------------------------------------ #
 # Lazy singletons for real tool instances.                           #
 # ------------------------------------------------------------------ #
@@ -1667,10 +1317,8 @@ WORKER_TOOL_SCHEMAS: list[dict] = [
 # built on the first actual tool call, not at module load time.
 
 from core.auth_google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402 (post-constant import)
-from mcp_tools.gmail_tool import GmailTool              # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 from mcp_tools.weather_tool import fetch_weather        # noqa: E402
-from mcp_tools.readwise_tool import fetch_readwise_today  # noqa: E402
 from mcp_tools.garmin_tool import fetch_garmin_today    # noqa: E402
 from mcp_tools.notion_tool import (                     # noqa: E402
     search as _notion_search,
@@ -1684,7 +1332,6 @@ from mcp_tools.memory import MemoryTool                 # noqa: E402
 import os                                               # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None
-_gmail_tool: GmailTool | None = None
 _calendar_tool: GoogleCalendarManager | None = None
 _memory_store: MemoryStore | None = None
 _memory_tool: MemoryTool | None = None
@@ -1703,13 +1350,6 @@ def _get_auth_manager() -> GoogleAuthManager:
         _auth_manager = build_auth_manager_from_env()
     return _auth_manager
 
-
-def _get_gmail_tool() -> GmailTool:
-    """Return the shared GmailTool instance, building it on first call."""
-    global _gmail_tool
-    if _gmail_tool is None:
-        _gmail_tool = GmailTool(auth_manager=_get_auth_manager())
-    return _gmail_tool
 
 
 def _get_calendar_tool() -> GoogleCalendarManager:
@@ -2103,28 +1743,14 @@ def _handle_update_calendar_event(
     return json.dumps(result)
 
 
-def _handle_list_unread_emails(max_results: int = 10) -> str:
-    """Delegate to GmailTool.list_unread and serialise the result."""
-    emails = _get_gmail_tool().list_unread(max_results=max_results)
-    return json.dumps({"emails": emails, "count": len(emails)})
-
-
-def _handle_get_email(message_id: str) -> str:
-    """Delegate to GmailTool.get_message and serialise the result."""
-    result = _get_gmail_tool().get_message(message_id)
-    return json.dumps(result)
-
-
 # --- Native TaskStore handlers (Phase 27 Plan 03 — replaces _handle_add_task) ---
 
 def _get_task_store():
-    """Return the active task store, selected by the ``TASK_BACKEND`` env var.
+    """Return the sole authoritative Things task store.
 
-    ``things`` (default) reads and writes Amit's real Things 3 list via Things
-    Cloud; ``firestore`` falls back to the Phase 27 native store.  Both satisfy the
-    same interface, so the six ``_handle_task_*`` handlers below are backend-blind.
-
-    Set ``TASK_BACKEND=firestore`` to roll back without a deploy.
+    Firestore retains only the Things mirror and Klaus-specific sidecar/outbox
+    fields during the soak.  ``TASK_BACKEND`` is intentionally ignored so a
+    configuration typo or outage cannot turn Firestore into a silent authority.
     """
     from memory.firestore_db import get_task_store
     return get_task_store()
@@ -2290,9 +1916,6 @@ def _handle_fetch_weather(location: str = "Tel Aviv") -> str:
     return json.dumps(result)
 
 
-def _handle_fetch_readwise_today(limit: int = 5) -> str:
-    result = fetch_readwise_today(limit=limit)
-    return json.dumps(result)
 
 
 def _handle_fetch_garmin_today() -> str:
@@ -2313,186 +1936,12 @@ def _handle_recall(query: str, k: int = 5, kind: str | None = None) -> str:
     return json.dumps(result)
 
 
-def _handle_search_chat_history(query: str, k: int = 5, project: str | None = None) -> str:
-    """Delegate to MemoryTool.search_chat_history and serialise the result."""
-    result = _get_memory_tool().search_chat_history(_get_current_user_id(), query, k, project)
-    return json.dumps(result)
 
 
 def _handle_forget_memory(vector_id: str) -> str:
     """Delegate to MemoryTool.forget_memory and serialise the result."""
     result = _get_memory_tool().forget_memory(vector_id)
     return json.dumps(result)
-
-
-
-
-    return json.dumps({"date": date, "logged": logged, "warnings": warnings})
-
-
-def _handle_run_morning_briefing() -> str:
-    """Trigger the push-triggered cascade morning briefing (D-14) via Cloud Tasks.
-
-    Phase 33 Plan 07: repointed from the legacy ``run_morning_briefing`` at
-    ``run_morning_briefing_triggered(..., trigger="manual", dedup=False)`` —
-    a manual "brief me" in chat runs the occasion cascade and ignores dedup.
-
-    CR-04 — dispatch goes through ``core.task_dispatch.enqueue_occasion``, NOT
-    ``loop.create_task``. Two independent reasons:
-
-    1. Tool handlers run inside ``AgentOrchestrator._run_smart_loop``, which is
-       synchronous and is invoked via ``asyncio.to_thread`` from the router.
-       ``asyncio.get_event_loop()`` only auto-creates a loop on the MAIN thread;
-       from a ThreadPoolExecutor worker with no loop set it raises
-       ``RuntimeError("There is no current event loop in thread 'asyncio_N'")``,
-       which the ``except`` below swallowed into ``{"error": ...}``. A manual
-       "brief me" produced an apology, never a briefing.
-    2. Even with a valid loop, ``create_task`` would run the full 3-layer
-       cascade as fire-and-forget work outliving the /internal/process-update
-       response — the exact CPU-throttling failure mode CLAUDE.md forbids.
-       ``enqueue_occasion`` is the tracked-request path plan 33-10 built for it.
-
-    No ``status`` is written up front: "manual" is a member of
-    ``morning_briefing._TERMINAL_STATUSES``, so writing it here would dedup away
-    the very run just requested if the enqueued task later retried. The trigger
-    is recorded without a status instead. ``/internal/process-occasion`` derives
-    ``dedup=False`` from ``trigger == "manual"``.
-    """
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    try:
-        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
-        today_iso = now.date().isoformat()
-
-        from core.task_dispatch import enqueue_occasion
-        if not enqueue_occasion("morning", trigger="manual", target_date=today_iso):
-            return json.dumps({
-                "error": "Dispatch unavailable — could not enqueue the briefing.",
-            })
-
-        # Non-terminal breadcrumb only (no "status" key) — records that Amit
-        # asked, without blocking the run it just requested.
-        from core.morning_briefing import _set_state
-        _set_state(today_iso, {"trigger": "manual", "requested_at": now.isoformat()})
-
-        return json.dumps({
-            "status": "queued",
-            "date": today_iso,
-            "message": "Composing your morning briefing now, sir — it will arrive shortly.",
-        })
-    except Exception as exc:
-        logger.warning("run_morning_briefing tool error: %s", exc)
-        return json.dumps({"error": str(exc)})
-
-
-# ------------------------------------------------------------------ #
-# Phase 33 Plan 09 — get_recent_decisions (OCC-07 / D-26)            #
-# ------------------------------------------------------------------ #
-
-def _handle_get_recent_decisions(days: int = 2) -> str:
-    """OCC-07 / D-26: brain-direct self-accountability read.
-
-    Answers "why didn't you message me yesterday?" and "what did you change
-    on my calendar?" from the three stores that already carry the truth:
-    ``TickLogStore`` (verdict + triage reasoning per tick AND occasion run,
-    keyed by the ``decision_trail`` plan 33-04's ``_run_cascade`` writes),
-    ``OutreachLogStore`` (what was actually sent, full text), and
-    ``ActionLogStore`` (D-25 — every calendar/task write, independent of
-    send success).
-
-    D-27 constraint on the *use*, not this contract: this handler returns
-    skip records faithfully, with no filtering or redaction. The "never
-    surface a skip unasked" rule is enforced upstream — ``prompts/
-    autonomous.md`` instructs Klaus never to volunteer one, and the compose
-    prompt structurally excludes skip records from ever reaching a draft.
-    Do not add redaction logic here; this is the one place that data is
-    allowed to surface, on an explicit tool call only.
-
-    Never raises: any failure below degrades to ``{"error": ...}``, matching
-    the surrounding handlers' posture. Every store read is itself
-    never-raising by contract; this try/except is a second line of defence,
-    also covering the ``json.dumps`` call and the field-extraction loop.
-    """
-    from zoneinfo import ZoneInfo
-    from memory.firestore_db import (
-        TickLogStore, OutreachLogStore, ActionLogStore, _jsonsafe_doc,
-    )
-
-    # ASVS V5 — clamp BEFORE anything drives a Firestore read. Coerce rather
-    # than reject: an LLM-supplied 1000 or -5 (or "3" as a string) must not
-    # fan a read out beyond a month, but should still return something.
-    try:
-        days = max(1, min(int(days), 30))
-    except (TypeError, ValueError):
-        days = 2
-
-    try:
-        tz = ZoneInfo("Asia/Jerusalem")
-        today = datetime.now(tz).date()
-        dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
-
-        project_id = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
-        database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
-        tls = TickLogStore(project_id=project_id, database=database)
-        ols = OutreachLogStore(project_id=project_id, database=database)
-        als = ActionLogStore(project_id=project_id, database=database)
-
-        decisions: list[dict] = []
-        sent: list[dict] = []
-        for d in dates:
-            for tick in tls.ticks_for_date(d):
-                tick = _jsonsafe_doc(tick)
-                time_id = tick.get("time", "")
-                is_occasion = time_id.startswith("occasion:")
-                trail = tick.get("decision_trail") or {}
-                # The layer-1 verdict lives inside decision_trail["trail"] as
-                # a {"layer1": verdict} element (plan 33-04's shape). Legacy
-                # tick logs written before this phase have neither the
-                # element nor the surrounding keys — layer1 stays {} and
-                # every field below degrades to its None/""/False default
-                # rather than raising KeyError.
-                layer1: dict = {}
-                for item in trail.get("trail") or []:
-                    if isinstance(item, dict) and "layer1" in item:
-                        layer1 = item.get("layer1") or {}
-                        break
-                decisions.append({
-                    "date": d,
-                    "time": time_id,
-                    "kind": "occasion" if is_occasion else "tick",
-                    "occasion": time_id.split("occasion:", 1)[1] if is_occasion else "",
-                    "should_act": layer1.get("should_act"),
-                    "reason": layer1.get("reason", ""),
-                    "skip_cause": trail.get("skip_cause", ""),
-                    "sent": bool(trail.get("sent", False)),
-                    "composed_via": trail.get("composed_via", ""),
-                    "topic_key": trail.get("topic_key", ""),
-                })
-            for entry in ols.get_today(d):
-                entry = _jsonsafe_doc(entry)
-                sent.append({
-                    "date": d,
-                    "time": entry.get("time", ""),
-                    "topic_key": entry.get("topic_key", ""),
-                    "occasion": entry.get("occasion") or "",
-                    "final": entry.get("final", ""),
-                })
-
-        actions = als.get_recent(days)  # already routed through _jsonsafe_doc
-
-        payload = {
-            "days": days,
-            "dates": dates,
-            "decisions": decisions,
-            "sent": sent,
-            "actions": actions,
-        }
-        return json.dumps(payload, default=str)
-    except Exception as exc:  # noqa: BLE001 — structured tool-result, never raise
-        logger.warning("get_recent_decisions failed", exc_info=True)
-        return json.dumps({"error": str(exc)})
-
-
 def _handle_notion_search(query: str, filter_type: str | None = None) -> str:
     result = _notion_search(query=query, filter_type=filter_type)
     return json.dumps(result)
@@ -2537,26 +1986,14 @@ def _handle_notion_append_blocks(page_id: str, content: str) -> str:
     return json.dumps(result)
 
 
-def _handle_list_own_files(subdir: str | None = None) -> str:
-    """List Klaus's source files, optionally filtered to a subdirectory."""
-    result = _list_own_files(subdir=subdir)
-    return json.dumps(result)
 
 
-def _handle_read_own_source(path: str) -> str:
-    """Return the contents of a source file, with denylist and traversal protection."""
-    result = _read_own_source(path=path)
-    return json.dumps(result)
 
 
-def _handle_search_own_source(query: str, max_results: int = 20) -> str:
-    """Full-text search across source files; returns line-level matches."""
-    result = _search_own_source(query=query, max_results=max_results)
-    return json.dumps(result)
 
 
 def _handle_get_self_status() -> str:
-    """Return Klaus's operational status: uptime, message count, costs, heartbeat."""
+    """Return retained operational state without model, cost, or fallback telemetry."""
     import os as _os
     from datetime import datetime, timezone
 
@@ -2573,27 +2010,6 @@ def _handle_get_self_status() -> str:
     except (OSError, ValueError):
         # macOS / local dev — /proc/uptime not available
         result["uptime"] = "unavailable (local dev or non-Linux)"
-
-    # --- LLM usage: today's cost and message count proxy ---
-    try:
-        project_id = _os.environ.get("GCP_PROJECT_ID")
-        database = _os.environ.get("FIRESTORE_DATABASE", "(default)")
-        if project_id:
-            from memory.firestore_db import LLMUsageStore
-            store = LLMUsageStore(project_id=project_id, database=database)
-            today_data = store.summary("today")
-            month_data = store.summary("month")
-            # smart_calls proxy for "messages from user" — one smart call ≈ one user message
-            result["today_messages"] = today_data.get("smart_calls", 0)
-            result["today_cost_usd"] = round(today_data.get("total_cost_usd", 0.0), 6)
-            result["month_cost_usd"] = round(month_data.get("total_cost_usd", 0.0), 4)
-            result["today_llm_calls"] = today_data.get("call_count", 0)
-        else:
-            result["today_messages"] = "unavailable (GCP_PROJECT_ID not set)"
-            result["today_cost_usd"] = "unavailable"
-            result["month_cost_usd"] = "unavailable"
-    except Exception as exc:
-        result["cost_error"] = str(exc)
 
     # --- Timestamp ---
     result["status_at"] = datetime.now(timezone.utc).isoformat()
@@ -2645,24 +2061,8 @@ def _get_push_subscription_store():
     )
 
 
-def _handle_toggle_telegram_mirror(enabled: bool) -> str:
-    """Flip the runtime Telegram-mirror flag (D-11 conversational retirement path).
-
-    Executes Klaus's side of "kill the mirror": a single HubSettingsStore.set
-    call, no code deployment required. Reversible — Amit can ask to turn it
-    back on at any time.
-    """
-    store = _get_hub_settings_store()
-    store.set({"telegram_mirror_enabled": enabled})
-    return json.dumps({"telegram_mirror_enabled": enabled})
-
-
 def _handle_get_push_health() -> str:
-    """Report Web Push subscription health + mirror state (D-13 self-awareness).
-
-    Deliberately omits chat_visible_until — that D-02 visibility gate lives as
-    an in-process variable in core/scheduled_message.py (Plan 08) and would
-    always read back null/stale from Firestore here, misleading Klaus.
+    """Report Web Push subscription health (D-13 self-awareness).
 
     T-29-09 mitigation: only user_agent/last_success_at/failure_count are
     surfaced per subscription — the p256dh/auth encryption keys and the VAPID
@@ -2687,7 +2087,6 @@ def _handle_get_push_health() -> str:
     return json.dumps({
         "subscription_count": len(devices),
         "devices": devices,
-        "telegram_mirror_enabled": settings.get("telegram_mirror_enabled"),
         "push_enabled_at": settings.get("push_enabled_at"),
     })
 
@@ -2973,7 +2372,7 @@ def render_standing_directives_block(directives: list[dict], *, style: str = "pr
 # ------------------------------------------------------------------ #
 
 def _handle_get_training_profile() -> str:
-    """PROFILE-04 brain-direct: return the user training profile dict as JSON.
+    """PROFILE-04 return the user training profile dict as JSON.
 
     Uses _jsonsafe_doc to ISO-convert any DatetimeWithNanoseconds values
     (e.g. updated_at, bootstrapped_at) before json.dumps so this handler
@@ -2988,7 +2387,7 @@ def _handle_get_training_profile() -> str:
 
 
 def _handle_read_coaching_guide(topic: str) -> str:
-    """COACH-01 brain-direct: return the coaching guide section for the requested topic.
+    """COACH-01 return the coaching guide section for the requested topic.
 
     Reads docs/COACHING_GUIDE.md, finds the <!-- SECTION: {slug} --> anchor,
     and returns the section text as JSON. Fuzzy fallback on partial word match.
@@ -3045,7 +2444,7 @@ def _handle_read_coaching_guide(topic: str) -> str:
 
 
 def _handle_update_training_profile(patch: dict) -> str:
-    """PROFILE-04 brain-direct: merge a patch into users/amit profile."""
+    """PROFILE-04 merge a patch into users/amit profile."""
     from memory.firestore_db import UserProfileStore
     store = UserProfileStore(
         project_id=os.environ["GCP_PROJECT_ID"],
@@ -3059,7 +2458,7 @@ def _handle_update_training_profile(patch: dict) -> str:
 
 
 def _handle_fetch_training_status() -> str:
-    """GARMIN-04 worker-delegated: live Garmin training status / VO2 / load focus."""
+    """GARMIN-04 live Garmin training status / VO2 / load focus."""
     from mcp_tools.garmin_tool import (
         fetch_garmin_training_status,
         GarminUnavailableError,
@@ -3072,7 +2471,7 @@ def _handle_fetch_training_status() -> str:
 
 
 def _handle_fetch_recent_activities(days: int = 7) -> str:
-    """GARMIN-04 worker-delegated: live Garmin activities for the last N days."""
+    """GARMIN-04 live Garmin activities for the last N days."""
     from mcp_tools.garmin_tool import (
         fetch_garmin_activities,
         GarminUnavailableError,
@@ -3296,7 +2695,7 @@ def _handle_fetch_nutrition_trend(days: int = 14) -> str:
 # ------------------------------------------------------------------ #
 
 def _handle_log_training(**kwargs) -> str:
-    """LOG-03 brain-direct: write one training session to TrainingLogStore."""
+    """LOG-03 write one training session to TrainingLogStore."""
     from memory.firestore_db import TrainingLogStore
     store = TrainingLogStore(
         project_id=os.environ["GCP_PROJECT_ID"],
@@ -3315,7 +2714,7 @@ def _handle_log_training(**kwargs) -> str:
 
 
 def _handle_get_training_history(days: int = 7) -> str:
-    """LOG-04 worker-delegated: return recent training log entries as JSON."""
+    """LOG-04 return recent training log entries as JSON."""
     from memory.firestore_db import TrainingLogStore
     store = TrainingLogStore(
         project_id=os.environ["GCP_PROJECT_ID"],
@@ -3531,7 +2930,7 @@ def _block_stores():
 
 
 def _handle_get_plan() -> str:
-    """BLOCK-01 brain-direct: profile/plan merged with the date-resolved active block.
+    """BLOCK-01 profile/plan merged with the date-resolved active block.
 
     The block is resolved by date range (get_current) — never depends on a manual
     start_block call (D-01). week_num is computed against the profile plan_start_date
@@ -3554,7 +2953,7 @@ def _handle_get_plan() -> str:
 
 
 def _handle_get_block_status() -> str:
-    """BLOCK-01/BLOCK-03 brain-direct: active block + its benchmarks + raw cross-block deltas.
+    """BLOCK-01/BLOCK-03 active block + its benchmarks + raw cross-block deltas.
 
     facet_deltas is raw (current_value - prior_block_value) per facet — NO trend
     projection (Phase 25 scope). The prior value is the most recent benchmark for
@@ -3589,7 +2988,7 @@ def _handle_get_block_status() -> str:
 def _handle_log_benchmark(
     date: str, facet: str, value: float, unit: str, block_id: str, notes: str = ""
 ) -> str:
-    """BLOCK-03 brain-direct: record a benchmark. Store raises ValueError on bad facet."""
+    """BLOCK-03 record a benchmark. Store raises ValueError on bad facet."""
     _blocks, benchmarks, _profiles = _block_stores()
     try:
         benchmarks.log_benchmark(
@@ -3601,13 +3000,13 @@ def _handle_log_benchmark(
 
 
 def _handle_get_benchmark_history(facet: str, n: int = 10) -> str:
-    """BLOCK-03 brain-direct: cross-block history for one facet, newest first."""
+    """BLOCK-03 cross-block history for one facet, newest first."""
     _blocks, benchmarks, _profiles = _block_stores()
     return json.dumps({"facet": facet, "history": benchmarks.get_facet_history(facet, n=n)})
 
 
 def _handle_get_goal_projection(facet: str) -> str:
-    """PROG-02 brain-direct: project one facet toward its dated goal.
+    """PROG-02 project one facet toward its dated goal.
 
     Validates facet against _BENCHMARK_FACETS (V5 / T-25-05 pattern, mirrors
     _handle_log_benchmark). Returns a JSON ProjectionResult dict. Never raises —
@@ -3651,7 +3050,7 @@ def _handle_get_goal_projection(facet: str) -> str:
 
 
 def _handle_start_block(block_id: str) -> str:
-    """BLOCK-01 brain-direct bookkeeping: mark block active + set current_block_id FK."""
+    """BLOCK-01 available through Claude MCP bookkeeping: mark block active + set current_block_id FK."""
     blocks, _benchmarks, profiles = _block_stores()
     try:
         blocks.start_block(block_id)
@@ -3662,7 +3061,7 @@ def _handle_start_block(block_id: str) -> str:
 
 
 def _handle_end_block(block_id: str) -> str:
-    """BLOCK-01 brain-direct bookkeeping: mark block complete + clear current_block_id FK."""
+    """BLOCK-01 available through Claude MCP bookkeeping: mark block complete + clear current_block_id FK."""
     blocks, _benchmarks, profiles = _block_stores()
     try:
         blocks.end_block(block_id)
@@ -3715,15 +3114,12 @@ def _handle_get_habit_adherence(
 
 _HANDLERS: dict[str, object] = {
     "fetch_weather":          lambda args: _handle_fetch_weather(**args),
-    "fetch_readwise_today":   lambda args: _handle_fetch_readwise_today(**args),
     "fetch_garmin_today":     lambda args: _handle_fetch_garmin_today(**args),
     "list_calendar_events":   lambda args: _handle_list_calendar_events(**args),
     "create_calendar_event":  lambda args: _handle_create_calendar_event(**args),
     "check_calendar_free":    lambda args: _handle_check_calendar_free(**args),
     "delete_calendar_event":  lambda args: _handle_delete_calendar_event(**args),
     "update_calendar_event":  lambda args: _handle_update_calendar_event(**args),
-    "list_unread_emails":    lambda args: _handle_list_unread_emails(**args),
-    "get_email":             lambda args: _handle_get_email(**args),
     # Phase 27 Plan 03 — native TaskStore tools (replaces add_task)
     "task_create":           lambda args: _handle_task_create(**args),
     "task_list":             lambda args: _handle_task_list(**args),
@@ -3734,10 +3130,6 @@ _HANDLERS: dict[str, object] = {
     "remember":              lambda args: _handle_remember(**args),
     "recall":                lambda args: _handle_recall(**args),
     "forget_memory":         lambda args: _handle_forget_memory(**args),
-    "search_chat_history":   lambda args: _handle_search_chat_history(**args),
-    "list_own_files":          lambda args: _handle_list_own_files(**args),
-    "read_own_source":         lambda args: _handle_read_own_source(**args),
-    "search_own_source":       lambda args: _handle_search_own_source(**args),
     "get_self_status":         lambda args: _handle_get_self_status(),
     "schedule_followup":       lambda args: _handle_schedule_followup(**args),
     "list_followups":          lambda args: _handle_list_followups(),
@@ -3752,10 +3144,9 @@ _HANDLERS: dict[str, object] = {
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     "get_acwr":                lambda args: _handle_get_acwr(),
-    # Phase 19 Plan 03 — Google Fit nutrition (worker-delegated)
+    # Phase 19 Plan 03 — Google Fit nutrition (available through Claude MCP)
     "fetch_recent_meals":      lambda args: _handle_fetch_recent_meals(**args),
     "fetch_nutrition_trend":   lambda args: _handle_fetch_nutrition_trend(**args),
-    "run_morning_briefing":         lambda args: _handle_run_morning_briefing(),
     "notion_search":          lambda args: _handle_notion_search(**args),
     "notion_get_page":        lambda args: _handle_notion_get_page(**args),
     "notion_query_database":  lambda args: _handle_notion_query_database(**args),
@@ -3764,81 +3155,43 @@ _HANDLERS: dict[str, object] = {
     # Phase 20 Plan 01 — training log tools (LOG-03/LOG-04)
     "log_training":            lambda args: _handle_log_training(**args),
     "get_training_history":    lambda args: _handle_get_training_history(**args),
-    # Hevy strength — full per-set progression + cross-domain context (brain-direct)
+    # Hevy strength — full per-set progression + cross-domain context (available through Claude MCP)
     "get_strength_progress":   lambda args: _handle_get_strength_progress(**args),
     "get_training_context":    lambda args: _handle_get_training_context(**args),
     "get_run_detail":          lambda args: _handle_get_run_detail(**args),
-    # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03), brain-direct
+    # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03), available through Claude MCP
     "get_plan":                lambda args: _handle_get_plan(),
     "get_block_status":        lambda args: _handle_get_block_status(),
     "log_benchmark":           lambda args: _handle_log_benchmark(**args),
     "get_benchmark_history":   lambda args: _handle_get_benchmark_history(**args),
     "start_block":             lambda args: _handle_start_block(**args),
     "end_block":               lambda args: _handle_end_block(**args),
-    # Phase 25 — progress projection (PROG-02), brain-direct
+    # Phase 25 — progress projection (PROG-02), available through Claude MCP
     "get_goal_projection":     lambda args: _handle_get_goal_projection(**args),
     # Phase 28 Plan 03 — native HabitStore tools (HABIT-05)
     "get_habit_adherence":     lambda args: _handle_get_habit_adherence(**args),
-    # Phase 29 Plan 05 — push self-awareness tools (PUSH-03/D-13)
-    "toggle_telegram_mirror":  lambda args: _handle_toggle_telegram_mirror(**args),
+    # Web Push self-awareness.
     "get_push_health":         lambda args: _handle_get_push_health(),
     # Phase 31 — standing directives (DIR-01/DIR-04)
     "set_standing_directive":       lambda args: _handle_set_standing_directive(**args),
     "list_standing_directives":     lambda args: _handle_list_standing_directives(**args),
     "cancel_standing_directive":    lambda args: _handle_cancel_standing_directive(**args),
-    # Phase 33 Plan 09 — self-accountability (OCC-07/D-26), brain-direct only
-    "get_recent_decisions":         lambda args: _handle_get_recent_decisions(**args),
+    # Phase 33 Plan 09 — self-accountability (OCC-07/D-26), available through Claude MCP only
 }
 
 
 def get_all_schemas() -> list[dict]:
-    """Return all tool schemas, including the delegate_to_worker meta-tool."""
+    """Return all deterministic tool schemas used by the MCP catalog."""
     return TOOL_SCHEMAS
 
 
-def get_smart_schemas(user_message: str | None = None) -> list[dict]:
-    """Return tool schemas for the smart agent (delegate_to_worker + SMART_AGENT_DIRECT_TOOLS)."""
-    exclude_self_inspect = True
-    if user_message:
-        msg_lower = user_message.lower()
-        keywords = {
-            "source", "code", "file", "grep", "search source", "implementation",
-            "class", "function", "module", "github", "repo", "git", ".py", ".md",
-            "denylist", "status", "uptime", "cost", "heartbeat", "health", "usage",
-            "קוד", "קובץ", "סטטוס", "הסבר", "מערכת", "שגיאה"
-        }
-        if any(kw in msg_lower for kw in keywords):
-            exclude_self_inspect = False
-    else:
-        # Default to including them if no message is passed (e.g. general setup / tests)
-        exclude_self_inspect = False
-
-    return [
-        s for s in TOOL_SCHEMAS
-        if (
-            (s["name"] in SMART_AGENT_DIRECT_TOOLS or s["name"] == "delegate_to_worker")
-            and not (exclude_self_inspect and s["name"] in {
-                "list_own_files",
-                "read_own_source",
-                "search_own_source",
-                "get_self_status"
-            })
-        )
-    ]
-
-
-
-def get_worker_schemas() -> list[dict]:
-    """Return tool schemas for the worker agent (excludes delegate_to_worker)."""
-    return WORKER_TOOL_SCHEMAS
 
 
 def dispatch(tool_name: str, args: dict) -> str:
     """Execute a tool by name and return a JSON string result.
 
     Args:
-        tool_name: Registered tool name. Must not be 'delegate_to_worker'
-            (that meta-tool is intercepted by the orchestrator before dispatch).
+        tool_name: Registered deterministic tool name.
         args: Arguments matching the tool's input_schema.
 
     Returns:

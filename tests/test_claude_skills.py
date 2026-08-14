@@ -136,6 +136,3 @@ def test_skill_version_is_7_1_0_everywhere():
     assert '"skill_version": "7.1.0"' in (
         ROOT / "core" / "subscription_routines.py"
     ).read_text()
-    assert "Expected Claude skill version: `7.1.0`" in (
-        ROOT / "core" / "self_manifest.py"
-    ).read_text()

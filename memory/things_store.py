@@ -11,14 +11,14 @@ Three layers of state:
   * **Things Cloud** — the source of truth.  A journaled delta protocol; see
     ``docs/things_protocol.md``.
   * **Firestore mirror** (``things_items/{uuid}`` + ``things_sync/state``) — durable
-    materialized state.  Survives Cloud Run cold starts and, crucially, lets reads
-    keep working when Things Cloud is unreachable.
+    materialized state and write/sync aid.  It survives Cloud Run cold starts, but
+    is never returned as an authoritative task read.
   * **Process cache** — a module-level singleton.  ``core.tools._get_task_store()``
     constructs a fresh store per call, so an instance-level cache would never hit.
 
-Read discipline mirrors ``TaskStore``: reads **never raise**.  When Things is down
-they serve the stale mirror and populate ``staleness_warning`` rather than letting
-the morning briefing 500.  Writes **re-raise** so the caller knows they failed.
+Read discipline is deliberately stricter than the retired ``TaskStore``: reads and
+writes **raise** when Things is unavailable.  That preserves a visible provider
+outage instead of silently turning the Firestore mirror into task authority.
 
 Klaus-only planning fields (``priority``, ``estimated_minutes``, ``auto_schedule``,
 ``manual_lock``, ``calendar_event_id``) have no home in Things.  They live in a
@@ -95,7 +95,7 @@ class ThingsTaskStore:
         self._client = None
 
     # -------------------------------------------------------------- #
-    # Firestore plumbing (lazy — reads must work even if it's down)   #
+    # Firestore mirror/outbox plumbing (never a task-read authority) #
     # -------------------------------------------------------------- #
 
     def _fs(self):
@@ -105,7 +105,7 @@ class ThingsTaskStore:
         return self._client
 
     def _load_mirror(self) -> tuple[dict[str, dict] | None, int]:
-        """Load materialized state + cursor from Firestore.  Never raises."""
+        """Load a warm mirror for sync diagnostics, never task reads."""
         try:
             client = self._fs()
             snap = client.collection(_STATE_COLLECTION).document(_STATE_DOC).get()
@@ -162,24 +162,15 @@ class ThingsTaskStore:
     # -------------------------------------------------------------- #
 
     def _refresh(self, force: bool = False) -> dict[str, dict]:
-        """Return materialized Things state, pulling a delta when stale.
+        """Return a fresh Things Cloud state; never promote Firestore to authority.
 
-        Never raises.  On a Things failure the last known state is served and
-        ``stale_reason`` is set, which surfaces to callers as
-        ``staleness_warning``.  Freshness is a single cheap head-index call,
-        throttled to ``THINGS_FRESHNESS_TTL_SECONDS``.
+        The Firestore mirror is maintained as a recovery/outbox aid, but a
+        runtime task read always validates Things first.  An outage is raised to
+        the boundary so it can report an unavailable authoritative provider
+        rather than quietly serving stale mirror data.
         """
         with _cache_lock:
             now = time.monotonic()
-            state = _cache["state"]
-
-            if state is None:
-                state, cursor = self._load_mirror()
-                if state is not None:
-                    _cache["state"], _cache["cursor"] = state, cursor
-                    logger.info("ThingsTaskStore: mirror loaded (%d entities, cursor %d)",
-                                len(state), cursor)
-
             fresh_enough = (now - _cache["checked_at"]) < _freshness_ttl()
             if _cache["state"] is not None and fresh_enough and not force:
                 return _cache["state"]
@@ -213,10 +204,12 @@ class ThingsTaskStore:
                 _cache["stale_reason"] = None
             except (ThingsAuthError, ThingsUnavailableError) as exc:
                 _cache["stale_reason"] = str(exc)
-                logger.warning("ThingsTaskStore: refresh failed, serving mirror: %s", exc)
-            except Exception as exc:                     # noqa: BLE001 — reads never raise
+                logger.warning("ThingsTaskStore: authoritative refresh failed: %s", exc)
+                raise
+            except Exception as exc:                     # noqa: BLE001 — preserve provider outage
                 _cache["stale_reason"] = str(exc)
-                logger.warning("ThingsTaskStore: unexpected refresh error", exc_info=True)
+                logger.warning("ThingsTaskStore: unexpected authoritative refresh error", exc_info=True)
+                raise ThingsUnavailableError(str(exc)) from exc
 
             return _cache["state"] or {}
 
@@ -260,7 +253,7 @@ class ThingsTaskStore:
         return merged
 
     # -------------------------------------------------------------- #
-    # Reads — never raise                                             #
+    # Authoritative reads — Things failures remain visible             #
     # -------------------------------------------------------------- #
 
     def list(self, list_id: str | None = None) -> list[dict]:
@@ -270,36 +263,28 @@ class ThingsTaskStore:
         containment rules (project resolves via headings; a trashed project hides
         its children without flagging them).
         """
-        try:
-            state = self._refresh()
-            sidecar = self._load_sidecar()
-            tasks = [self._merge(t, sidecar) for t in things.live_todos(state)]
-            if list_id and list_id != "inbox":
-                tasks = [t for t in tasks
-                         if list_id in (t.get("project_id"), t.get("area_id"))]
-            elif list_id == "inbox":
-                tasks = [t for t in tasks if t.get("bucket") == "inbox"]
-            return tasks
-        except Exception:
-            logger.warning("ThingsTaskStore.list(%r) failed", list_id, exc_info=True)
-            return []
+        state = self._refresh()
+        sidecar = self._load_sidecar()
+        tasks = [self._merge(t, sidecar) for t in things.live_todos(state)]
+        if list_id and list_id != "inbox":
+            tasks = [t for t in tasks
+                     if list_id in (t.get("project_id"), t.get("area_id"))]
+        elif list_id == "inbox":
+            tasks = [t for t in tasks if t.get("bucket") == "inbox"]
+        return tasks
 
     def get(self, task_id: str) -> dict | None:
         """Fetch one to-do by uuid.  Returns None if unknown.  Never raises."""
-        try:
-            state = self._refresh()
-            payload = state.get(task_id)
-            if not payload:
-                return None
-            task = things.normalize_task(
-                task_id, payload,
-                things.build_name_index(state),
-                things.resolve_containers(state),
-            )
-            return self._merge(task, self._load_sidecar())
-        except Exception:
-            logger.warning("ThingsTaskStore.get(%r) failed", task_id, exc_info=True)
+        state = self._refresh()
+        payload = state.get(task_id)
+        if not payload:
             return None
+        task = things.normalize_task(
+            task_id, payload,
+            things.build_name_index(state),
+            things.resolve_containers(state),
+        )
+        return self._merge(task, self._load_sidecar())
 
     def get_overdue(self, today_iso: str) -> list[dict]:
         """Open to-dos whose scheduled date is before today.  Never raises."""
@@ -307,21 +292,17 @@ class ThingsTaskStore:
                 if t.get("due_date") and t["due_date"] < today_iso]
 
     def get_summary(self, today_iso: str) -> dict:
-        """``{due_today, overdue}`` counts.  Never raises."""
-        try:
-            due_today = overdue = 0
-            for task in self.list():
-                due = task.get("due_date")
-                if not due:
-                    continue
-                if due == today_iso:
-                    due_today += 1
-                elif due < today_iso:
-                    overdue += 1
-            return {"due_today": due_today, "overdue": overdue}
-        except Exception:
-            logger.warning("ThingsTaskStore.get_summary failed", exc_info=True)
-            return {"due_today": 0, "overdue": 0}
+        """Return due-today and overdue counts from Things Cloud."""
+        due_today = overdue = 0
+        for task in self.list():
+            due = task.get("due_date")
+            if not due:
+                continue
+            if due == today_iso:
+                due_today += 1
+            elif due < today_iso:
+                overdue += 1
+        return {"due_today": due_today, "overdue": overdue}
 
     def get_upcoming(self, today_iso: str, days: int = _DEFAULT_UPCOMING_DAYS) -> list[dict]:
         """To-dos landing within the next ``days`` days, soonest first.
@@ -351,34 +332,30 @@ class ThingsTaskStore:
         horizon = (start + timedelta(days=max(0, days))).isoformat()
 
         upcoming: list[dict] = []
-        try:
-            for task in self.list():
-                candidates = [
-                    (task.get("due_date"), "scheduled"),
-                    (task.get("hard_deadline_at"), "deadline"),
-                ]
-                in_window = sorted(
-                    (d, kind) for d, kind in candidates
-                    if d and today_iso <= d <= horizon
-                )
-                if not in_window:
-                    continue
-                when, kind = in_window[0]
-                upcoming.append({
-                    "id": task["id"],
-                    "title": task.get("title", ""),
-                    "date": when,
-                    "kind": kind,
-                    "days_away": (_date.fromisoformat(when) - start).days,
-                    "due_date": task.get("due_date"),
-                    "hard_deadline_at": task.get("hard_deadline_at"),
-                    "project": task.get("project_name"),
-                    "area": task.get("area_name"),
-                    "tags": task.get("tags") or [],
-                })
-        except Exception:
-            logger.warning("ThingsTaskStore.get_upcoming failed", exc_info=True)
-            return []
+        for task in self.list():
+            candidates = [
+                (task.get("due_date"), "scheduled"),
+                (task.get("hard_deadline_at"), "deadline"),
+            ]
+            in_window = sorted(
+                (d, kind) for d, kind in candidates
+                if d and today_iso <= d <= horizon
+            )
+            if not in_window:
+                continue
+            when, kind = in_window[0]
+            upcoming.append({
+                "id": task["id"],
+                "title": task.get("title", ""),
+                "date": when,
+                "kind": kind,
+                "days_away": (_date.fromisoformat(when) - start).days,
+                "due_date": task.get("due_date"),
+                "hard_deadline_at": task.get("hard_deadline_at"),
+                "project": task.get("project_name"),
+                "area": task.get("area_name"),
+                "tags": task.get("tags") or [],
+            })
 
         return sorted(upcoming, key=lambda t: (t["date"], t["title"]))
 
@@ -390,8 +367,9 @@ class ThingsTaskStore:
         fixture keep working untouched.
 
         Unlike the Firestore-native store, ``tags`` is now populated — Things has
-        real tags — and ``staleness_warning`` is meaningful: it is set when Things
-        Cloud could not be reached and these lists came from the mirror.
+        real tags. ``staleness_warning`` remains a compatibility key and is always
+        ``None`` for returned data: a Things outage raises instead of returning a
+        stale mirror.
 
         Two **additive** keys extend the legacy shape without breaking it:
         ``upcoming`` (the coming week, via :meth:`get_upcoming`) and ``open_count``.
@@ -401,23 +379,19 @@ class ThingsTaskStore:
         """
         today: list[dict] = []
         overdue: list[dict] = []
-        open_count = 0
-        try:
-            tasks = self.list()
-            open_count = len(tasks)
-            for task in tasks:
-                due = task.get("due_date")
-                if not due:
-                    continue
-                tags = task.get("tags") or []
-                if due == today_iso:
-                    today.append({"title": task.get("title", ""), "tags": tags})
-                elif due < today_iso:
-                    overdue.append({
-                        "title": task.get("title", ""), "due": due, "tags": tags,
-                    })
-        except Exception:
-            logger.warning("ThingsTaskStore.get_today_and_overdue failed", exc_info=True)
+        tasks = self.list()
+        open_count = len(tasks)
+        for task in tasks:
+            due = task.get("due_date")
+            if not due:
+                continue
+            tags = task.get("tags") or []
+            if due == today_iso:
+                today.append({"title": task.get("title", ""), "tags": tags})
+            elif due < today_iso:
+                overdue.append({
+                    "title": task.get("title", ""), "due": due, "tags": tags,
+                })
         return {
             "today": today,
             "overdue": overdue,
@@ -508,6 +482,22 @@ class ThingsTaskStore:
                 fields.get("due_date"), fields.get("due_time"),
             )
             encoded.update(reschedule["p"])
+        if "list_id" in fields:
+            list_id = fields["list_id"] or "inbox"
+            if list_id == "inbox":
+                # A direct project link and heading ancestor would otherwise keep
+                # the task filed even after a Hub move back to Inbox.
+                encoded.update({"pr": [], "ar": [], "agr": [], "st": things.ST_INBOX})
+            else:
+                state = self._refresh()
+                project = state.get(str(list_id))
+                if not project or (
+                    project.get("_class") != things.CLASS_TASK
+                    or project.get("tp") != things.TP_PROJECT
+                    or project.get("tr")
+                ):
+                    raise ValueError(f"unknown Things project list {list_id!r}")
+                encoded.update({"pr": [str(list_id)], "ar": [], "agr": []})
 
         if encoded:
             self._refresh()
@@ -526,6 +516,78 @@ class ThingsTaskStore:
         self._refresh()
         self._commit(task_id, things.build_complete())
         return {"next_id": None}
+
+    def undo_complete(self, task_id: str) -> None:
+        """Undo a Hub completion or trash operation in Things Cloud.
+
+        The retained Hub deliberately uses one Undo control for both actions.
+        A completed Things to-do is reopened by clearing ``sp`` and restoring
+        ``ss=open``; a trashed item is restored by clearing ``tr``.  Both are
+        journal edits, not Firestore mutations.
+        """
+        state = self._refresh()
+        task = state.get(task_id)
+        if (
+            not task
+            or task.get("_class") != things.CLASS_TASK
+            or task.get("tp") != things.TP_TODO
+        ):
+            raise ValueError(f"unknown Things task {task_id!r}")
+        if task.get("tr"):
+            self._commit(task_id, things.build_edit({"tr": False}))
+            return
+        if task.get("ss") == things.SS_COMPLETED:
+            self._commit(
+                task_id,
+                things.build_edit({"ss": things.SS_OPEN, "sp": None}),
+            )
+            return
+        raise ValueError(f"Things task {task_id!r} is not undoable")
+
+    def list_lists(self) -> list[dict]:
+        """Return open, untrashed Things projects in the Hub list contract."""
+        state = self._refresh()
+        return [
+            {"id": uuid, "name": payload.get("tt") or ""}
+            for uuid, payload in state.items()
+            if payload.get("_class") == things.CLASS_TASK
+            and payload.get("tp") == things.TP_PROJECT
+            and not payload.get("tr")
+        ]
+
+    def create_list(self, name: str) -> dict:
+        """Create a Hub task list as a Things project."""
+        self._refresh()
+        uuid, record = things.build_project_create(name)
+        self._commit(uuid, record)
+        return {"id": uuid, "name": name}
+
+    def rename_list(self, list_id: str, name: str) -> dict:
+        """Rename an existing Things project and preserve the Hub response."""
+        state = self._refresh()
+        project = state.get(list_id)
+        if (
+            not project
+            or project.get("_class") != things.CLASS_TASK
+            or project.get("tp") != things.TP_PROJECT
+            or project.get("tr")
+        ):
+            raise ValueError(f"unknown Things project list {list_id!r}")
+        self._commit(list_id, things.build_edit({"tt": name}))
+        return {"id": list_id, "name": name}
+
+    def delete_list(self, list_id: str) -> None:
+        """Trash a Things project; its children remain recoverable in Things."""
+        state = self._refresh()
+        project = state.get(list_id)
+        if (
+            not project
+            or project.get("_class") != things.CLASS_TASK
+            or project.get("tp") != things.TP_PROJECT
+            or project.get("tr")
+        ):
+            raise ValueError(f"unknown Things project list {list_id!r}")
+        self._commit(list_id, things.build_trash())
 
     def delete(self, task_id: str) -> None:
         """Move a to-do to the Things trash.  Re-raises on failure.

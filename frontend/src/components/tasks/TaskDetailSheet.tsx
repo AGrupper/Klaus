@@ -2,8 +2,8 @@
  * TaskDetailSheet.tsx — Bottom sheet (phone) / centered modal (desktop) for
  * creating and editing tasks.
  *
- * Phone: slides up from bottom (CSS transform translateY, 250ms ease-out),
- *        matching the Phase 26 DockChat collapse pattern. Drag handle at top.
+ * Phone: slides up from bottom (CSS transform translateY, 250ms ease-out).
+ *        Drag handle at top.
  *        Dismisses by tapping the scrim.
  *
  * Desktop: centered modal, max-width 480px, #0A0A0A scrim opacity 0.7.

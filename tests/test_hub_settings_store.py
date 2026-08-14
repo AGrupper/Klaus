@@ -1,7 +1,7 @@
 """Tests for memory/firestore_db.py::HubSettingsStore (Phase 29 — PUSH-03).
 
 Covers:
-  - get() returns defaults (telegram_mirror_enabled=True, push_enabled_at=None)
+  - get() returns the retained push_enabled_at default
     when the doc is absent
   - get() never raises — returns defaults on Firestore read failure
   - set(patch) merge-writes patch + updated_at SERVER_TIMESTAMP
@@ -101,7 +101,6 @@ def test_get_returns_defaults_when_doc_absent():
     s = _store()
     s._doc_ref.get.return_value = _missing_snap()
     out = s.get()
-    assert out["telegram_mirror_enabled"] is True
     assert out["push_enabled_at"] is None
 
 
@@ -109,16 +108,14 @@ def test_get_returns_defaults_on_read_failure():
     s = _store()
     s._doc_ref.get.side_effect = RuntimeError("firestore down")
     out = s.get()
-    assert out["telegram_mirror_enabled"] is True
     assert out["push_enabled_at"] is None
 
 
 def test_get_merges_stored_over_defaults():
     s = _store()
-    s._doc_ref.get.return_value = _existing_snap({"telegram_mirror_enabled": False})
+    s._doc_ref.get.return_value = _existing_snap({"push_enabled_at": "2026-08-12T08:00:00Z"})
     out = s.get()
-    assert out["telegram_mirror_enabled"] is False
-    assert out["push_enabled_at"] is None  # default still present
+    assert out["push_enabled_at"] == "2026-08-12T08:00:00Z"
 
 
 # ------------------------------------------------------------------ #
@@ -127,10 +124,10 @@ def test_get_merges_stored_over_defaults():
 
 def test_set_merge_writes_patch_and_updated_at():
     s = _store()
-    s.set({"telegram_mirror_enabled": False})
+    s.set({"push_enabled_at": "2026-08-12T08:00:00Z"})
     args, kwargs = s._doc_ref.set.call_args
     assert kwargs.get("merge") is True
-    assert args[0]["telegram_mirror_enabled"] is False
+    assert args[0]["push_enabled_at"] == "2026-08-12T08:00:00Z"
     assert args[0]["updated_at"] is _FS.SERVER_TIMESTAMP
 
 
@@ -138,7 +135,7 @@ def test_set_reraises_on_write_failure():
     s = _store()
     s._doc_ref.set.side_effect = RuntimeError("firestore down")
     with pytest.raises(RuntimeError):
-        s.set({"telegram_mirror_enabled": False})
+        s.set({"push_enabled_at": "2026-08-12T08:00:00Z"})
 
 
 def test_set_then_get_round_trip():
@@ -159,6 +156,6 @@ def test_set_then_get_round_trip():
 
     s._doc_ref.get.side_effect = _fake_get
 
-    s.set({"telegram_mirror_enabled": False})
+    s.set({"push_enabled_at": "2026-08-12T08:00:00Z"})
     out = s.get()
-    assert out["telegram_mirror_enabled"] is False
+    assert out["push_enabled_at"] == "2026-08-12T08:00:00Z"

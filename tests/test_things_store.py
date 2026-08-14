@@ -295,35 +295,36 @@ def test_today_and_overdue_now_carries_real_tags():
     ThingsAuthError("bad password"),
     ThingsUnavailableError("network down"),
 ])
-def test_reads_serve_stale_mirror_when_things_is_down(failure):
-    """A broken protocol must not 500 the morning briefing."""
+def test_reads_raise_when_things_is_down_instead_of_serving_the_mirror(failure):
+    """Firestore is a mirror/outbox and must not become task-read authority."""
     store = _store()
     with _patch_things({"t1": _payload(tt="cached")}):
         store.list()                                   # warm the cache
 
     store_mod._cache["checked_at"] = 0.0               # force a refresh attempt
     with patch.object(store_mod.things, "fetch_history_key", side_effect=failure):
-        tasks = store.list()
-        result = store.get_today_and_overdue("2026-08-11")
-
-    assert [t["title"] for t in tasks] == ["cached"], "stale mirror should still serve"
-    assert result["staleness_warning"] is not None
+        with pytest.raises(type(failure)):
+            store.list()
 
 
-def test_reads_return_empty_when_cold_and_things_is_down():
+def test_reads_raise_when_cold_and_things_is_down():
     store = _store()
     with patch.object(store_mod.things, "fetch_history_key",
                       side_effect=ThingsUnavailableError("down")):
-        assert store.list() == []
-        assert store.get("t1") is None
-        assert store.get_summary("2026-08-11") == {"due_today": 0, "overdue": 0}
+        with pytest.raises(ThingsUnavailableError):
+            store.list()
+        with pytest.raises(ThingsUnavailableError):
+            store.get("t1")
+        with pytest.raises(ThingsUnavailableError):
+            store.get_summary("2026-08-11")
 
 
 def test_staleness_clears_after_a_successful_refresh():
     store = _store()
     with patch.object(store_mod.things, "fetch_history_key",
                       side_effect=ThingsUnavailableError("down")):
-        store.list()
+        with pytest.raises(ThingsUnavailableError):
+            store.list()
     assert store_mod._cache["stale_reason"] is not None
 
     store_mod._cache["checked_at"] = 0.0
@@ -450,6 +451,59 @@ def test_create_appends_checklist_after_the_parent():
     assert entities[0] == "Task6"
     assert entities.count("ChecklistItem3") == 2
     assert entities.index("Task6") < entities.index("ChecklistItem3")
+
+
+def test_undo_complete_reopens_completed_things_task():
+    """Hub undo must reopen the Things item, not call the retired Firestore API."""
+    store = _store()
+    state = {"t1": _payload(ss=3, sp=1776062349.2)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.undo_complete("t1")
+
+    record = commit.call_args.args[1]
+    assert record["p"]["ss"] == 0
+    assert record["p"]["sp"] is None
+
+
+def test_undo_complete_restores_a_trashed_things_task():
+    """The shared Undo control also reverses the retained delete-to-trash flow."""
+    store = _store()
+    state = {"t1": _payload(tr=True)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.undo_complete("t1")
+
+    assert commit.call_args.args[1]["p"]["tr"] is False
+
+
+def test_projects_are_authoritative_task_lists_and_task_moves_use_them():
+    """Lists and task moves are Things projects, never Firestore list documents."""
+    store = _store()
+    state = {
+        "p1": _payload(tt="Work", tp=1),
+        "t1": _payload(tt="Loose task"),
+    }
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        assert store.list_lists() == [{"id": "p1", "name": "Work"}]
+        store.update("t1", {"list_id": "p1"})
+
+    record = commit.call_args.args[1]
+    assert record["p"]["pr"] == ["p1"]
+    assert record["p"]["agr"] == []
+
+
+def test_project_list_writes_use_things_records():
+    store = _store()
+    state = {"p1": _payload(tt="Work", tp=1)}
+    with _patch_things(state), patch.object(store, "_commit") as commit:
+        store.create_list("New Work")
+        store.rename_list("p1", "Deep Work")
+        store.delete_list("p1")
+
+    records = [call.args[1] for call in commit.call_args_list]
+    assert records[0]["p"]["tp"] == 1
+    assert records[0]["p"]["tt"] == "New Work"
+    assert records[1]["p"]["tt"] == "Deep Work"
+    assert records[2]["p"]["tr"] is True
 
 
 def test_complete_never_spawns_a_recurrence():

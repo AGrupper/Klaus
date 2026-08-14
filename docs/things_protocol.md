@@ -176,6 +176,50 @@ Two distinct encodings, do not mix them:
 - **Timestamp fields** — `cd`, `md`, `sp`, `lai` — float epoch seconds, sub-second
   precision.
 
+### ⚠️ The "when" date: `sr` holds it, `st` decides where it shows
+
+`sr` **always** carries the scheduled date. What a future date changes is the
+*bucket*, and `st` does double duty:
+
+| when | `st` | `sr` | appears in |
+|---|---|---|---|
+| no date | 0 | `null` | Inbox |
+| today or overdue | 1 | the date | Today |
+| scheduled ahead | 2 | the date | Upcoming |
+| deferred, no date | 2 | `null` | Someday |
+
+Writing `st=1` with a future date files the to-do under **Today** regardless of
+the date stored — a to-do scheduled for Christmas showed up as Today. Writing
+`sr=null` and parking the date in `tir` instead dumps it in **Someday with the
+date discarded**.
+
+`tir` tracks `sr` but is **not** authoritative: Things leaves a stale value
+behind when a to-do is descheduled, so reading it reports dates the user
+deliberately removed. Read `sr`, and only `sr`.
+
+> Both wrong encodings above were *inferred* from the account, and the account
+> had no upcoming to-dos to infer from — the two examples that looked like
+> future-scheduling were really Someday items. The correct answer took twenty
+> seconds once Amit scheduled two to-dos by hand and the records he generated
+> were read back. **Where the account has no examples, ask for one; do not
+> generalise from the nearest-looking rows.**
+
+### ⚠️ A filed to-do must leave the Inbox bucket
+
+A to-do with a `pr`, `ar` or `agr` must not also have `st=0`. None of the 73
+filed to-dos in the live account does. The combination shows the to-do in the
+Inbox *and* its area at once, and **crashes the area view outright** — a
+different crash from the sync ones, in the UI's grouping pass.
+
+### ⚠️ Checklist `ix` sorts ascending, and the values are negative
+
+The **first** row therefore needs the **most negative** index: `-300, -200, -100`
+for a three-step list, not `-100, -200, -300`. The latter renders every
+checklist backwards.
+
+*(A unit test covered this ordering and passed — it sorted the wrong way too, so
+it confirmed the bug instead of catching it. A screenshot found it.)*
+
 ### Field reference
 
 | Key | Type | Meaning | Klaus mapping |
@@ -207,21 +251,45 @@ Two distinct encodings, do not mix them:
 **Constant across all 423 rows** — echo back unchanged on write, never synthesize:
 `do=0`, `sb=0`, `dl=[]`, `dds=null`, `rmd=null`, `acrd=null`, `rp=null`, `icp=false`.
 
-### ☠️ Item ids are Base58 — a Base62 id crashes the app
+### ☠️ Item ids are 128-bit UUIDs *rendered* in Base58
 
-Things ids are 22 characters of **Base58**: the alphabet omits the look-alikes
-`0` (zero), `O`, `I` and `l`.
+An id is not a string of random Base58 characters. It is a **128-bit UUID
+encoded in Base58**, and the client decodes it back into a 128-bit integer.
+Both properties are load-bearing, and violating either is accepted by the server
+and then **crashes every client on launch**, with `decodeBase58String.mapBase58`
+in the crash trace — the same unrecoverable, append-only failure as a bad note
+checksum.
 
-All 212 Things-authored ids in the live account are Base58-clean. Committing an
-id containing a forbidden character is accepted by the server and then **crashes
-every client on launch**, with `decodeBase58String.mapBase58` visible in the
-crash trace — the same unrecoverable, append-only failure as a bad note checksum.
+**1. The alphabet** omits the look-alikes `0` (zero), `O`, `I` and `l`.
+*(2026-08-13: Base62 ids caused three outages. The Base58 symbol was in the very
+first crash report and went unread for hours.)*
 
-Mint ids only with `things_tool.new_uuid()`. `commit()` validates every id and
-note checksum before sending and refuses rather than poisoning the journal.
+**2. The magnitude.** Twenty-two Base58 digits express up to 58^22, which is
+**1.835× larger than 2^128** — so roughly **45% of random 22-character strings
+decode to a value the client cannot hold**, and it traps on the overflow.
 
-*(2026-08-13: Base62 ids caused three separate outages. The Base58 symbol was
-present in the very first crash report and went unread for hours.)*
+All 279 Things-authored ids in the live account fit in 128 bits. On 2026-08-14
+every Klaus write batch that crashed the app carried an id that did not, and
+every batch that survived carried only ids that did — eight batches, no
+exceptions.
+
+> **Why this one was so expensive:** it fires on a coin flip, so it always
+> correlated with whatever had just changed. It was diagnosed in turn as note
+> checksums, note dialects, amending freshly-created items, and hard deletes.
+> Each "fix" was then confirmed by a write that happened to draw a good id.
+> When a failure is intermittent, a passing test proves nothing — check the
+> hypothesis against the account's own history instead.
+
+**Things does not zero-pad.** A UUID below 58^21 renders in **21** digits and
+stays that way; the live account holds several. Validate an id by its decoded
+*value*, never by requiring 22 characters — that mistake deleted two of Amit's
+real to-dos (recovered from the append-only journal).
+
+Mint ids only with `things_tool.new_uuid()`, which generates the integer and
+encodes it, making overflow impossible by construction. `commit()` re-checks
+magnitude, alphabet and note checksums before sending, and refuses rather than
+poisoning the journal — **except for deletes**, since appending one is the only
+way to retract a record that is already in it.
 
 ### ☠️ Notes: `ch` must be the CRC32 of the text — a wrong value crashes the app
 
@@ -248,6 +316,24 @@ genuinely correct for an empty note, so reads round-trip and nothing complains.
 It only detonates the first time real text is attached.
 
 *(2026-08-13: this took down Amit's Mac and iPhone simultaneously.)*
+
+### Notes are transmitted in two dialects, chosen by the opcode
+
+| record | shape | count in account |
+|---|---|---|
+| create (`t=0`) | `{"_t":"tx", "t":1, "ch":<crc32>, "v":<text>}` | 445 |
+| edit (`t=1`) | `{"_t":"tx", "t":2, "ps":[<splice>, …]}` | 5 |
+
+A splice is `{"r": <replacement text>, "p": <offset>, "l": <chars replaced>,
+"ch": crc32(r)}`. To overwrite a note entirely, size `l` to the text currently
+on the item.
+
+Use `build_note()` on creates and `build_note_patch()` on edits; `commit()`
+rejects the wrong dialect for the opcode.
+
+**Editing a note on an existing to-do works.** It was believed impossible for
+several hours — two attempts crashed the app — but both of those writes happened
+to carry an oversized id, and the note format was never the cause.
 
 ### Recurrence
 

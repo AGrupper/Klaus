@@ -1178,6 +1178,7 @@ class TestPendingApprovalStore:
 
             assert prepared["status"] == "pending"
             assert len(prepared["payload_hash"]) == 64
+            assert prepared["expire_at"].tzinfo is not None
             with pytest.raises(ValueError, match="payload hash"):
                 store.confirm("approval-1", "0" * 64)
 
@@ -1502,194 +1503,6 @@ class TestRoutineRunStore:
         )
 
 
-# =============================================================================
-# OccasionInFlightStore — D-19 race marker (Phase 33)
-# =============================================================================
-
-class TestOccasionInFlightStore:
-    """Unit tests for OccasionInFlightStore — the D-19 same-minute-race marker."""
-
-    def test_mark_then_active_returns_occasion_name(self):
-        client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.OccasionInFlightStore("test-project")
-            store.mark("nightly")
-            assert store.active() == "nightly"
-
-    def test_active_returns_none_when_expired(self):
-        client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.OccasionInFlightStore("test-project")
-            # Directly seed an already-expired marker (one second in the past).
-            from datetime import datetime, timedelta, timezone
-            past = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-            store._col.document("current").set(
-                {"occasion": "nightly", "started_at": past, "expires_at": past},
-                merge=False,
-            )
-            assert store.active() is None
-
-    def test_active_returns_none_on_firestore_error(self):
-        class _RaisingDoc:
-            def get(self):
-                raise RuntimeError("simulated outage")
-
-        class _RaisingCol:
-            def document(self, _key):
-                return _RaisingDoc()
-
-        class _RaisingClient:
-            def collection(self, _name):
-                return _RaisingCol()
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
-            store = firestore_db.OccasionInFlightStore("test-project")
-            assert store.active() is None
-
-    def test_clear_removes_marker(self):
-        client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.OccasionInFlightStore("test-project")
-            store.mark("morning")
-            assert store.active() == "morning"
-            store.clear()
-            assert store.active() is None
-
-    def test_mark_does_not_raise_when_set_fails(self):
-        class _RaisingDoc:
-            def set(self, *_a, **_k):
-                raise RuntimeError("simulated write failure")
-
-        class _RaisingCol:
-            def document(self, _key):
-                return _RaisingDoc()
-
-        class _RaisingClient:
-            def collection(self, _name):
-                return _RaisingCol()
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
-            store = firestore_db.OccasionInFlightStore("test-project")
-            store.mark("weekly_review")  # must not raise
-
-    def test_collection_and_doc_id(self):
-        assert firestore_db.OccasionInFlightStore._COLLECTION == "occasion_inflight"
-        assert firestore_db.OccasionInFlightStore._DOC_ID == "current"
-
-
-# =============================================================================
-# TickLogStore — NOTE 1, D-21
-# =============================================================================
-
-class TestTickLogStore:
-    """Unit tests for TickLogStore — per-tick eval-fixture snapshots."""
-
-    _DATE = "2026-05-21"
-    _TICK = "14:20"
-    _SITUATION = {
-        "calendar": [],
-        "ticktick_overdue": ["reply-to-maya"],
-        "hours_since_contact": 4.5,
-        "empty": False,
-    }
-    _DECISION = {
-        "sent": True,
-        "trail": ["gather", "tick_brain", "compose", "send"],
-        "topic_key": "overdue:reply-to-maya",
-    }
-
-    def test_write_persists_tick_snapshot(self):
-        """write(date, tick, situation, decision) must write to tick_logs/{date}/ticks/{HH:MM}."""
-        client, col = _make_mock_client_with_collection()
-
-        # Capture the sub-collection chain: col.document(date).collection("ticks").document(tick).set(...)
-        date_doc = MagicMock()
-        ticks_col = MagicMock()
-        tick_doc = MagicMock()
-        col.document.return_value = date_doc
-        date_doc.collection.return_value = ticks_col
-        ticks_col.document.return_value = tick_doc
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.TickLogStore("test-project")
-            result = store.write(self._DATE, self._TICK, self._SITUATION, self._DECISION)
-
-        # Best-effort writes return None implicitly.
-        assert result is None
-        col.document.assert_called_with(self._DATE)
-        date_doc.collection.assert_called_with("ticks")
-        ticks_col.document.assert_called_with(self._TICK)
-
-        tick_doc.set.assert_called_once()
-        payload = tick_doc.set.call_args.args[0]
-
-        # Three required top-level fields.
-        assert "captured_at" in payload and payload["captured_at"]  # ISO string
-        assert "situation_snapshot" in payload
-        assert "decision_trail" in payload
-        # Decision trail passes through verbatim.
-        assert payload["decision_trail"] == self._DECISION
-        # situation_snapshot strips the 'empty' field but keeps the others.
-        assert "empty" not in payload["situation_snapshot"]
-        assert payload["situation_snapshot"]["calendar"] == []
-        assert payload["situation_snapshot"]["ticktick_overdue"] == ["reply-to-maya"]
-        assert payload["situation_snapshot"]["hours_since_contact"] == 4.5
-
-    def test_write_swallows_firestore_error(self):
-        """TickLogStore.write must NEVER raise — best-effort contract (Plan 06 _write_tick_log)."""
-        client, col = _make_mock_client_with_collection()
-        # Make the inner .set() raise.
-        date_doc = MagicMock()
-        ticks_col = MagicMock()
-        tick_doc = MagicMock()
-        tick_doc.set.side_effect = RuntimeError("simulated tick-log outage")
-        col.document.return_value = date_doc
-        date_doc.collection.return_value = ticks_col
-        ticks_col.document.return_value = tick_doc
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.TickLogStore("test-project")
-            # Must not raise.
-            result = store.write(self._DATE, self._TICK, self._SITUATION, self._DECISION)
-
-        assert result is None
-
-    def _store_with_ticks(self, subcollections):
-        from tests.fakes import FakeCollection
-        client = MagicMock()
-        client.collection.return_value = FakeCollection([], subcollections)
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            return firestore_db.TickLogStore("test-project")
-
-    def test_ticks_for_date_sorted_with_time_ids(self):
-        """ticks_for_date returns docs sorted by HH:MM with 'time' attached."""
-        from tests.fakes import FakeCollection, make_snap
-        snaps = [
-            make_snap("14:20", {"captured_at": "b", "situation_snapshot": {}, "decision_trail": {}}),
-            make_snap("07:00", {"captured_at": "a", "situation_snapshot": {}, "decision_trail": {}}),
-        ]
-        store = self._store_with_ticks({self._DATE: {"ticks": FakeCollection(snaps)}})
-
-        ticks = store.ticks_for_date(self._DATE)
-
-        assert [t["time"] for t in ticks] == ["07:00", "14:20"]
-        assert ticks[0]["captured_at"] == "a"
-
-    def test_ticks_for_date_missing_date_returns_empty(self):
-        """A date with no ticks subcollection yields [] — not an error."""
-        store = self._store_with_ticks({})
-        assert store.ticks_for_date("2099-01-01") == []
-
-    def test_ticks_for_date_never_raises(self):
-        """Firestore errors are swallowed and reported as [] (export must not
-        crash on one bad day)."""
-        client, col = _make_mock_client_with_collection()
-        col.document.side_effect = RuntimeError("simulated outage")
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.TickLogStore("test-project")
-        assert store.ticks_for_date(self._DATE) == []
-
-
 # ---------------------------------------------------------------------------
 # TTL read cache — SelfStateStore.get / JournalStore.get / get_recent
 # ---------------------------------------------------------------------------
@@ -1796,98 +1609,23 @@ class TestReadCache:
         assert second["summary"] == "day"
 
 
-# =============================================================================
-# LLMUsageStore — cache-token fields, per-purpose cost, per-date summary
-# (Phase 30.5 Plan 02 — BRAIN-02/BRAIN-04)
-# =============================================================================
-
-class TestLLMUsageStoreCacheAndPerPurposeCost:
-    """record() must accumulate cache-read/cache-write tokens and per-purpose
-    cost; summary_for_date() must be a never-raises per-date reader."""
-
-    def test_record_payload_includes_cache_token_and_purpose_cost_fields(self):
-        client, col = _make_mock_client_with_collection()
-        doc_ref = MagicMock()
-        col.document.return_value = doc_ref
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.LLMUsageStore("test-project")
-            store.record(
-                "claude-sonnet-5", "smart", 1000, 500, 0.03,
-                cache_read_tokens=200, cache_write_tokens=50,
-            )
-
-        doc_ref.set.assert_called_once()
-        args, kwargs = doc_ref.set.call_args
-        payload = args[0]
-        assert kwargs.get("merge") is True
-
-        for key in ("total_cache_read_tokens", "total_cache_write_tokens", "smart_cost_usd"):
-            assert key in payload, f"Missing key: {key}"
-            assert "Increment" in type(payload[key]).__name__
-
-        assert payload["total_cache_read_tokens"].value == 200
-        assert payload["total_cache_write_tokens"].value == 50
-        assert payload["smart_cost_usd"].value == 0.03
-
-    def test_record_without_cache_kwargs_defaults_to_zero(self):
-        """Existing 5-positional-arg callers must keep working unchanged."""
-        client, col = _make_mock_client_with_collection()
-        doc_ref = MagicMock()
-        col.document.return_value = doc_ref
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.LLMUsageStore("test-project")
-            store.record("claude-sonnet-5", "worker", 100, 50, 0.001)
-
-        args, _ = doc_ref.set.call_args
-        payload = args[0]
-        assert payload["total_cache_read_tokens"].value == 0
-        assert payload["total_cache_write_tokens"].value == 0
-        assert payload["worker_cost_usd"].value == 0.001
-
-    def test_summary_for_date_returns_doc_dict(self):
-        client, col = _make_mock_client_with_collection()
-        _stub_existing_doc(col, "2026-07-16", {"total_cost_usd": 1.23, "smart_cost_usd": 1.0})
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.LLMUsageStore("test-project")
-            result = store.summary_for_date("2026-07-16")
-
-        assert result == {"total_cost_usd": 1.23, "smart_cost_usd": 1.0}
-
-    def test_summary_for_date_missing_doc_returns_empty_dict(self):
-        client, col = _make_mock_client_with_collection()
-        _stub_missing_doc(col, "2026-07-16")
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.LLMUsageStore("test-project")
-            result = store.summary_for_date("2026-07-16")
-
-        assert result == {}
-
-    def test_summary_for_date_never_raises(self):
-        client = MagicMock()
-        client.collection.side_effect = RuntimeError("simulated Firestore failure")
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.LLMUsageStore("test-project")
-            result = store.summary_for_date("2026-07-16")
-
-        assert result == {}
-
-
 class TestEmbeddingUsageStore:
-    def test_record_tracks_billable_tokens_requests_items_and_configured_cost(self):
+    def test_reserve_then_record_tracks_request_tokens_items_and_cost(self):
         client = _ActionLogFakeClient()
         with patch.object(firestore_db, "_make_firestore_client", return_value=client):
             store = firestore_db.EmbeddingUsageStore("test-project")
-            store.record(input_tokens=250, item_count=2, cost_usd=0.00005)
+            assert store.reserve("amit") is True
+            store.record(
+                user_id="amit",
+                input_tokens=250,
+                item_count=2,
+                cost_usd=0.00005,
+            )
 
         stored = client._data["embedding_usage"]
         assert len(stored) == 1
         document = next(iter(stored.values()))
-        assert document["embedding_calls"].value == 1
+        assert document["embedding_calls"] == 1
         assert document["embedding_input_tokens"].value == 250
         assert document["embedding_items"].value == 2
         assert document["embedding_cost_usd"].value == 0.00005
@@ -1936,140 +1674,6 @@ class TestUserProfileStoreCache:
         assert store.load() == {}
         assert store.load() == {}
         assert doc_ref.get.call_count == 2, "error path must never be cached"
-
-
-# =============================================================================
-# CostTripwireLogStore — per-date once-only suppression (Phase 30.5 Plan 02 —
-# BRAIN-04 gate)
-# =============================================================================
-
-class TestCostTripwireLogStore:
-    """already_fired()/mark_fired() provide a per-date once-only gate for the
-    daily cost tripwire alert. Reads never raise; writes log-and-re-raise."""
-
-    def test_already_fired_false_before_mark_fired(self):
-        client, col = _make_mock_client_with_collection()
-        _stub_missing_doc(col, "2026-07-16")
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.CostTripwireLogStore("test-project")
-            assert store.already_fired("2026-07-16") is False
-
-    def test_already_fired_true_after_mark_fired(self):
-        client, col = _make_mock_client_with_collection()
-        doc_ref = MagicMock()
-        col.document.return_value = doc_ref
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.CostTripwireLogStore("test-project")
-            store.mark_fired("2026-07-16", {"total_cost_usd": 12.5})
-
-        doc_ref.set.assert_called_once()
-        args, _ = doc_ref.set.call_args
-        payload = args[0]
-        assert payload["date"] == "2026-07-16"
-        assert payload["total_cost_usd"] == 12.5
-        assert "fired_at" in payload
-
-        # Now simulate the doc existing for a subsequent already_fired() check.
-        snap = MagicMock()
-        snap.exists = True
-        doc_ref.get.return_value = snap
-        assert store.already_fired("2026-07-16") is True
-
-    def test_already_fired_returns_false_on_read_error(self):
-        client, col = _make_mock_client_with_collection()
-        doc_ref = MagicMock()
-        doc_ref.get.side_effect = RuntimeError("simulated failure")
-        col.document.return_value = doc_ref
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.CostTripwireLogStore("test-project")
-            assert store.already_fired("2026-07-16") is False
-
-    def test_mark_fired_reraises_on_write_failure(self):
-        client, col = _make_mock_client_with_collection()
-        doc_ref = MagicMock()
-        doc_ref.set.side_effect = RuntimeError("simulated write failure")
-        col.document.return_value = doc_ref
-
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-            store = firestore_db.CostTripwireLogStore("test-project")
-            try:
-                store.mark_fired("2026-07-16", {"total_cost_usd": 1.0})
-                assert False, "expected mark_fired to re-raise"
-            except RuntimeError:
-                pass
-
-    def test_collection_name_is_lowercase(self):
-        assert firestore_db.CostTripwireLogStore._COLLECTION == "cost_tripwire_log"
-
-
-# --- Groq tick-efficiency (Task 5): TickSignatureStore ---
-
-class _TickSigFakeSnap:
-    def __init__(self, data): self._data = data
-    @property
-    def exists(self): return self._data is not None
-    def to_dict(self): return dict(self._data) if self._data else {}
-
-
-class _TickSigFakeDoc:
-    def __init__(self, store, key): self._store = store; self._key = key
-    def get(self): return _TickSigFakeSnap(self._store.get(self._key))
-    def set(self, data, merge=False):
-        cur = dict(self._store.get(self._key) or {})
-        if merge:
-            cur.update(data); self._store[self._key] = cur
-        else:
-            self._store[self._key] = dict(data)
-
-
-class _TickSigFakeCol:
-    def __init__(self, store): self._store = store
-    def document(self, key): return _TickSigFakeDoc(self._store, key)
-
-
-class _TickSigFakeClient:
-    def __init__(self): self._data = {}
-    def collection(self, name): return _TickSigFakeCol(self._data.setdefault(name, {}))
-
-
-def test_tick_signature_store_roundtrip():
-    from memory import firestore_db
-    from memory.firestore_db import TickSignatureStore
-    client = _TickSigFakeClient()
-    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-        store = TickSignatureStore("klaus-agent", "klaus-firestore")
-        assert store.get() is None            # absent -> None
-        store.set("abc123")
-        assert store.get() == "abc123"         # persisted + read back
-
-
-def test_tick_signature_store_get_fails_open():
-    from memory import firestore_db
-    from memory.firestore_db import TickSignatureStore
-    client = _TickSigFakeClient()
-    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-        store = TickSignatureStore("klaus-agent", "klaus-firestore")
-        # Force the doc read to raise; get() must swallow and return None.
-        store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
-        assert store.get() is None
-
-
-def test_tick_signature_store_set_fails_open():
-    """Finding 4 — a write error in set() must be swallowed, never raised
-    (fail-open by construction, mirroring test_tick_signature_store_get_fails_open).
-    The next tick simply re-evaluates rather than the whole tick crashing on a
-    transient Firestore write failure."""
-    from memory import firestore_db
-    from memory.firestore_db import TickSignatureStore
-    client = _TickSigFakeClient()
-    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
-        store = TickSignatureStore("klaus-agent", "klaus-firestore")
-        # Force the doc write to raise; set() must swallow and return None.
-        store._col.document = lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom"))
-        assert store.set("some-signature") is None
 
 
 class _IdemSnap:
@@ -2140,6 +1744,7 @@ def test_action_idempotency_store_binds_key_to_payload_and_replays_result():
         assert replay["is_new"] is False
         assert replay["status"] == "succeeded"
         assert replay["result"] == {"id": "task-1"}
+        assert replay["expire_at"].endswith("+00:00")
 
         with pytest.raises(ValueError, match="different payload"):
             store.begin(

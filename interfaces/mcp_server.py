@@ -29,7 +29,6 @@ READ_TOOLS = frozenset(
         "task_list",
         "get_habit_adherence",
         "recall",
-        "get_recent_decisions",
         "fetch_weather",
         "fetch_garmin_today",
         "notion_search",
@@ -331,7 +330,7 @@ class KlausMCPGateway:
 
     @staticmethod
     def _outward_result(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
-        """Sanitize legacy cached results only where the routine-run contract applies."""
+        """Sanitize stored results only where the routine-run contract applies."""
         if tool_name != "publish_review" or "run" not in result:
             return result
         from core.review_delivery import public_routine_run
@@ -366,16 +365,24 @@ class MCPServerBundle:
     gateway: KlausMCPGateway
 
 
+@lru_cache(maxsize=1)
 def _schema_metadata() -> dict[str, dict[str, Any]]:
-    # Parse the registry rather than importing it just to obtain prose.  This
-    # keeps capability discovery free of Google/Telegram SDK initialization
-    # and mirrors SELF.md's dependency-neutral manifest generation.
-    from core.self_manifest import _get_source_root, _load_tool_data
+    """Return canonical retained schemas without the removed self manifest."""
+    from core.tools import get_all_schemas
+    from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
 
-    return {
-        str(item["name"]): item
-        for item in _load_tool_data(_get_source_root())
+    metadata = {
+        schema["name"]: {
+            "purpose": schema.get("description", schema["name"]),
+            "input_schema": schema.get("input_schema", {}),
+        }
+        for schema in get_all_schemas()
     }
+    metadata.update({
+        name: {"purpose": name.replace("_", " ").capitalize(), "input_schema": schema}
+        for name, schema in CUSTOM_TOOL_SCHEMAS.items()
+    })
+    return metadata
 
 
 def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, name: str) -> None:
@@ -417,7 +424,7 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
 
     # MCPServer derives the published JSON schema from the callable signature.
     # Keep the stable outer ``arguments`` envelope used by the gateway, but
-    # annotate it with the canonical legacy tool schema so clients can see the
+    # annotate it with the canonical retained tool schema so clients can see the
     # exact field names, types, and required set.  Without this, every tool is
     # advertised as an unrestricted object and models must guess parameter
     # names (for example start_date instead of time_min_iso).

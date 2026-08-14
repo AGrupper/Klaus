@@ -4,7 +4,7 @@
  * Covers TASK-07: useTaskSummary fetches /api/tasks/summary and returns
  * {due_today: number, overdue: number} for the GlanceRail and DueTasksBand.
  *
- * Mirrors the renderHook pattern from useChat.test.tsx but kept as .ts
+ * Uses the shared renderHook test pattern but stays a .ts module
  * using createElement instead of JSX to avoid .tsx rename.
  * Network-free: fetchTaskSummary is mocked.
  */

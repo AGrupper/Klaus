@@ -3,15 +3,15 @@
 RED tests — written before implementation. All should FAIL until the 6 new
 block/benchmark tools are registered at all sites in core/tools.py.
 
-The 6 new brain-direct tools (update_plan EXCLUDED — already exists since Phase 21):
+The 6 new MCP-registered tools (update_plan EXCLUDED — already exists since Phase 21):
   get_plan, get_block_status, log_benchmark, get_benchmark_history,
   start_block, end_block
 
 Tests cover (mirroring TestPhase20ToolRegistration pattern):
-  - each new tool is in SMART_AGENT_DIRECT_TOOLS (brain-direct)
-  - none of the new tools appear in WORKER_TOOL_SCHEMAS (V4 access control, T-23-05)
+  - each new tool is in retired direct-tool registry (MCP-registered)
+  - none of the new tools appear in retired worker registry (V4 access control, T-23-05)
   - each new tool is a key in _HANDLERS
-  - update_plan appears exactly once in SMART_AGENT_DIRECT_TOOLS and once in
+  - update_plan appears exactly once in retired direct-tool registry and once in
     _HANDLERS (Pitfall 2 — must not be re-added)
   - each new tool has a TOOL_SCHEMAS entry with name + description + input_schema
 """
@@ -135,20 +135,11 @@ def _tools(isolated_modules):
 class TestPhase23ToolRegistration:
     """BLOCK-01 + BLOCK-03 — verify the 6 new block/benchmark tools at all sites.
 
-    All 6 are brain-direct (in SMART_AGENT_DIRECT_TOOLS, excluded from
-    WORKER_TOOL_SCHEMAS). update_plan is NOT re-added (Pitfall 2).
+    All 6 are MCP-registered (in retired direct-tool registry, excluded from
+    retired worker registry). update_plan is NOT re-added (Pitfall 2).
     """
 
-    def test_six_new_tools_in_direct(self):
-        """Each of the 6 new tools is in SMART_AGENT_DIRECT_TOOLS (brain-direct)."""
-        for name in NEW_TOOLS:
-            assert name in tools.SMART_AGENT_DIRECT_TOOLS, name
 
-    def test_six_new_tools_excluded_from_worker(self):
-        """None of the 6 new tools appear in WORKER_TOOL_SCHEMAS (T-23-05)."""
-        worker_names = {s["name"] for s in tools.WORKER_TOOL_SCHEMAS}
-        for name in NEW_TOOLS:
-            assert name not in worker_names, name
 
     def test_six_new_tools_in_handlers(self):
         """Each of the 6 new tools is a key in _HANDLERS."""
@@ -164,15 +155,6 @@ class TestPhase23ToolRegistration:
             assert set(schema.keys()) >= {"name", "description", "input_schema"}, name
             assert schema["input_schema"]["type"] == "object", name
 
-    def test_update_plan_not_duplicated(self):
-        """update_plan must appear exactly once in SMART_AGENT_DIRECT_TOOLS and _HANDLERS
-        (Pitfall 2 — it already exists from Phase 21 and must not be re-added)."""
-        # frozenset / dict keys are inherently unique; assert it exists exactly once
-        # in the schema list too (the real duplicate-key risk is the schema list).
-        schema_names = [s["name"] for s in tools.TOOL_SCHEMAS]
-        assert schema_names.count("update_plan") == 1
-        assert "update_plan" in tools.SMART_AGENT_DIRECT_TOOLS
-        assert "update_plan" in tools._HANDLERS
 
     def test_log_benchmark_schema_required_fields(self):
         """log_benchmark requires date, facet, value, unit, block_id (notes optional)."""

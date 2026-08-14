@@ -7,7 +7,6 @@
  *   - 5 tabs: Today · Tasks · Claude · Habits · Health (Claude center)
  *   - Each tab touch target >= 44px (iOS HIG)
  *   - Active icon in accent #6366F1; inactive in textSecondary #9CA3AF
- *   - UnreadBadge on Klaus tab (26-08): accent bg, shows count or "9+", hidden at 0
  */
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
