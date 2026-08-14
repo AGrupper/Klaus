@@ -151,6 +151,7 @@ def test_live_agent_captures_and_files_tasks_in_the_moment():
     text = _skill_text("klaus-live-agent")
     assert "## Tasks" in text
     assert "list_id" in text, "must tell Klaus to file, not just create"
+    assert "in that turn" in text
     lowered = text.lower()
     assert "do not ask" in lowered or "never ask" in lowered
     assert "invent" in lowered, "must forbid inventing dates"
@@ -170,7 +171,7 @@ def test_nightly_review_still_honours_shadow_mode():
     """Shadow mode forbids every mutating call; planning must not bypass it."""
     text = _skill_text("klaus-nightly-review")
     assert "## Shadow mode" in text
-    plan_section = text.split("## Plan tomorrow", 1)[1]
+    plan_section = text.split("## Plan tomorrow", 1)[1].split("\n## ", 1)[0]
     assert "shadow" in plan_section.lower(), "the planning section must defer to it"
 
 
@@ -181,3 +182,15 @@ def test_evals_cover_the_task_partnership_behaviours():
     assert "inbox" in blob, "filing rather than defaulting to the Inbox"
     assert "invent" in blob or "fabricat" in blob, "not inventing dates"
     assert "overdue" in blob, "not nagging about overdue items"
+
+    by_query = {case["query"]: case for case in cases}
+
+    shadow_query = (
+        "Run tonight's review in shadow mode. Amit has eleven stale to-dos "
+        "that need refiling."
+    )
+    assert shadow_query in by_query, "must exercise shadow mode with a query that actually sets it"
+    shadow_case = by_query[shadow_query]
+    assert shadow_case["skill"] == "klaus-nightly-review"
+    assert any("partial_actions" in b for b in shadow_case["expected_behavior"])
+    assert any("no mutating tool" in b.lower() for b in shadow_case["expected_behavior"])

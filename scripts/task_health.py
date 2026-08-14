@@ -15,6 +15,12 @@ from __future__ import annotations
 import statistics
 from datetime import date
 
+# Things' own bundled tutorial content, not anything Amit added. The
+# 2026-08-14 baseline (17 real to-dos) was measured after excluding these two
+# projects' 35 to-dos — counting them back in makes the printed total
+# incomparable to the number the design was judged on (spec §1).
+EXCLUDED_TUTORIAL_PROJECTS = {"Meet Things for Mac", "Meet Things for iPhone"}
+
 
 def summarize(tasks: list[dict], today: str) -> dict:
     """Count the success-criteria figures over normalized Things to-dos.
@@ -42,7 +48,8 @@ def summarize(tasks: list[dict], today: str) -> dict:
         "total": len(tasks),
         "dated": sum(1 for t in tasks if t.get("due_date")),
         "with_deadline": sum(1 for t in tasks if t.get("hard_deadline_at")),
-        "filed": sum(1 for t in tasks if t.get("project_name") or t.get("area_name")),
+        "filed": sum(1 for t in tasks if t.get("project_id") or t.get("area_id")),
+        "inbox": sum(1 for t in tasks if t.get("bucket") == "inbox"),
         "median_age_days": int(statistics.median(ages)) if ages else None,
         "oldest_age_days": max(ages) if ages else None,
     }
@@ -55,7 +62,14 @@ def main() -> int:
     import mcp_tools.things_tool as things
 
     state, _head = things.replay_journal(things.fetch_history_key()["history-key"])
-    report = summarize(things.live_todos(state), things.today_iso())
+    all_tasks = things.live_todos(state)
+    tasks = [
+        t for t in all_tasks
+        if t.get("project_name") not in EXCLUDED_TUTORIAL_PROJECTS
+    ]
+    excluded = len(all_tasks) - len(tasks)
+    print(f"excluding {excluded} tutorial to-dos (Meet Things for Mac / iPhone)")
+    report = summarize(tasks, things.today_iso())
     baseline = {"total": 17, "dated": 1, "with_deadline": 0, "filed": 2,
                 "median_age_days": 116}
     for key, value in report.items():

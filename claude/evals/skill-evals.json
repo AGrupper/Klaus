@@ -144,8 +144,17 @@
     "expected_behavior": [
       "Surfaces stale items using created_at, with no artificial limit on how many",
       "Files or re-buckets on its own initiative, as those are reversible",
-      "Presents a bulk cull in full and waits for approval before deleting",
-      "Writes nothing at all when delivery_mode is shadow"
+      "Presents a bulk cull in full and waits for approval before deleting"
+    ]
+  },
+  {
+    "skill": "klaus-nightly-review",
+    "query": "Run tonight's review in shadow mode. Amit has eleven stale to-dos that need refiling.",
+    "expected_behavior": [
+      "Records the plan in partial_actions only",
+      "Calls no mutating tool",
+      "Still publishes exactly one review",
+      "Makes clear in the review that nothing was performed"
     ]
   }
 ]

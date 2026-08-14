@@ -16,8 +16,8 @@ def test_summarize_counts_the_success_criteria():
     tasks = [
         _task(due_date="2026-08-20"),
         _task(hard_deadline_at="2026-08-30"),
-        _task(project_name="Klaus"),
-        _task(area_name="Shopping"),
+        _task(project_id="proj-1", project_name="Klaus"),
+        _task(area_id="area-1", area_name="Shopping"),
         _task(),
     ]
     out = summarize(tasks, today="2026-08-14")
@@ -25,6 +25,23 @@ def test_summarize_counts_the_success_criteria():
     assert out["dated"] == 1
     assert out["with_deadline"] == 1
     assert out["filed"] == 2
+
+
+def test_summarize_counts_filed_by_id_even_when_the_name_is_missing():
+    """normalize_task leaves project_name None when the container uuid is
+
+    missing from the name index even though project_id is set — filed must
+    not silently undercount those to-dos.
+    """
+    tasks = [_task(project_id="proj-1", project_name=None)]
+    out = summarize(tasks, today="2026-08-14")
+    assert out["filed"] == 1
+
+
+def test_summarize_counts_inbox_items_by_bucket():
+    tasks = [_task(bucket="inbox"), _task(bucket="anytime"), _task(bucket="someday")]
+    out = summarize(tasks, today="2026-08-14")
+    assert out["inbox"] == 1
 
 
 def test_summarize_reports_age_from_created_at():
