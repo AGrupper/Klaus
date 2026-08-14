@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import mcp_tools.things_tool as things_mod
 from mcp_tools.things_tool import ThingsAuthError, ThingsUnavailableError
 import memory.things_store as store_mod
 from memory.things_store import ThingsTaskStore
@@ -401,12 +402,54 @@ def test_create_writes_only_sidecar_fields_to_the_sidecar():
 # Write discipline                                                    #
 # ------------------------------------------------------------------ #
 
-def test_create_commits_a_create_record():
+def test_create_is_a_single_self_contained_record():
+    """Amending a just-created to-do crashes Things; the create carries it all."""
     store = _store()
     with _patch_things({}), patch.object(store, "_commit") as commit:
-        store.create({"title": "new task", "due_date": "2026-08-11"})
-    _uuid, record = commit.call_args.args
-    assert record["t"] == 0 and record["p"]["tt"] == "new task"
+        store.create({"title": "new task", "due_date": "2026-08-11",
+                      "notes": "body text"})
+
+    sent = [call.args[1] for call in commit.call_args_list]
+    assert len(sent) == 1, "a create must not be followed by an edit"
+
+    create = sent[0]
+    assert create["t"] == 0
+    assert create["p"]["tt"] == "new task"
+    assert create["p"]["sr"] == things_mod.iso_to_day("2026-08-11")
+    assert create["p"]["nt"]["v"] == "body text"
+
+
+def test_create_never_emits_an_edit_record():
+    """The exact 2026-08-14 failure: create@N followed by an nt edit@N+1."""
+    store = _store()
+    with _patch_things({}), patch.object(store, "_commit") as commit:
+        store.create({"title": "t", "notes": "n", "due_time": "09:00",
+                      "hard_deadline_at": "2026-09-01", "tag_ids": ["tg1"]})
+
+    assert not [c for c in commit.call_args_list if c.args[1]["t"] == 1]
+
+
+def test_update_sends_the_note_as_a_patch_sized_to_the_current_text():
+    store = _store()
+    existing = _payload(nt={"_t": "tx", "t": 1, "ch": 0, "v": "old note"})
+    with _patch_things({"t1": existing}), patch.object(store, "_commit") as commit:
+        store.update("t1", {"notes": "replacement"})
+
+    note = commit.call_args.args[1]["p"]["nt"]
+    assert "v" not in note
+    assert note["ps"][0]["r"] == "replacement"
+    assert note["ps"][0]["l"] == len("old note"), "splice must cover the old text"
+
+
+def test_create_appends_checklist_after_the_parent():
+    store = _store()
+    with _patch_things({}), patch.object(store, "_commit") as commit:
+        store.create({"title": "shopping", "checklist": ["milk", "eggs"]})
+
+    entities = [call.args[1]["e"] for call in commit.call_args_list]
+    assert entities[0] == "Task6"
+    assert entities.count("ChecklistItem3") == 2
+    assert entities.index("Task6") < entities.index("ChecklistItem3")
 
 
 def test_complete_never_spawns_a_recurrence():

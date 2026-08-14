@@ -390,13 +390,46 @@ def apply_records(
 # Normalization — Things payload -> Klaus canonical task              #
 # ------------------------------------------------------------------ #
 
+def encode_when(day: int | None, today: int | None = None) -> dict:
+    """Encode a "when" date into the ``st``/``sr``/``tir`` triple Things expects.
+
+    ``sr`` always carries the date.  What a future date changes is the **bucket**:
+    ``st`` must be 2, or Things files the to-do under Today no matter what date it
+    is holding.  ``st`` is doing double duty — with ``sr`` set it means Upcoming,
+    with ``sr`` null it means Someday:
+
+    ==================  ====  ==========  ==============
+    when                st    sr          shows up in
+    ==================  ====  ==========  ==============
+    no date             0     ``None``    Inbox
+    today or overdue    1     the date    Today
+    scheduled ahead     2     the date    Upcoming
+    no date, deferred   2     ``None``    Someday
+    ==================  ====  ==========  ==============
+
+    This was established by asking Things to schedule two to-dos and reading back
+    the records it wrote, after two attempts at inferring it from the account
+    produced a to-do filed under Today for Christmas and then one dumped in
+    Someday with its date discarded.  The account had no upcoming to-dos to learn
+    from, so inference had nothing to stand on.
+    """
+    if day is None:
+        return {"st": ST_INBOX, "sr": None, "tir": None}
+    if today is None:
+        today = iso_to_day(today_iso())
+    bucket = ST_SOMEDAY if day > today else ST_ANYTIME
+    return {"st": bucket, "sr": day, "tir": day}
+
+
 def _notes_text(payload: dict) -> str | None:
     """Extract plain text from the ``nt`` note envelope.
 
-    Things uses **two** note shapes, both live in the same account:
+    Things uses **two** note shapes, chosen by the opcode of the record carrying
+    them (see :func:`build_note_patch`), so both turn up in a replayed mirror:
 
-      * ``t = 1`` — flat: ``{"_t": "tx", "t": 1, "ch": <crc32>, "v": <text>}``
-      * ``t = 2`` — paragraphs: ``{"_t": "tx", "t": 2, "ps": [{"r": <text>,
+      * ``t = 1`` — whole note, on creates: ``{"_t": "tx", "t": 1,
+        "ch": <crc32>, "v": <text>}``
+      * ``t = 2`` — splices, on edits: ``{"_t": "tx", "t": 2, "ps": [{"r": <text>,
         "ch": <crc32>, "l": 0, "p": 0}, ...]}``
 
     Reading only ``v`` silently returns an empty note for every ``t = 2`` record,
@@ -525,9 +558,26 @@ def normalize_task(
                     :func:`resolve_containers`.  Without it, tasks filed under a
                     heading look like loose Inbox items.
 
-    The two-field date split matters: Things ``sr`` (scheduled / "when") maps to
+    The two-field date split matters: Things' scheduled "when" maps to
     ``due_date``, while ``dd`` (deadline) maps to ``hard_deadline_at``.  Klaus's
     single ``due_date`` would otherwise flatten two distinct concepts.
+
+    **"When" lives in two fields, not one.**  Things moves a to-do's date between
+    ``sr`` and ``tir`` depending on whether it has come due:
+
+    ====================  ====  ==========  ===========  ==========
+    when                  st    sr          tir          count
+    ====================  ====  ==========  ===========  ==========
+    today or overdue      1     the date    the date     35
+    scheduled ahead       2     ``None``    the date      2
+    no date               0/1   ``None``    ``None``     165
+    ====================  ====  ==========  ===========  ==========
+
+    Reading ``sr`` alone therefore reports every *future* to-do as undated and
+    filed under Someday — which is silently, precisely wrong for "what's coming up
+    this week", the one question this integration exists to answer.  The account
+    had only two future-dated to-dos when this was written, which is why the
+    single-field reading looked correct for so long.
 
     ``priority`` is absent — Things has no priority field.  It lives in the
     Klaus-side sidecar, merged in by ``ThingsTaskStore``.
@@ -553,7 +603,11 @@ def normalize_task(
         "area_name": names.get(area) if area else None,
         "tags": [names.get(t, t) for t in tag_ids],
         "tag_ids": list(tag_ids),
-        "bucket": {ST_INBOX: "inbox", ST_ANYTIME: "anytime", ST_SOMEDAY: "someday"}.get(
+        # st=2 is Upcoming when it carries a date and Someday when it does not —
+        # `tir` can hold a stale date from an earlier scheduling, so only `sr`
+        # settles it.
+        "bucket": "upcoming" if (payload.get("st") == ST_SOMEDAY and payload.get("sr"))
+        else {ST_INBOX: "inbox", ST_ANYTIME: "anytime", ST_SOMEDAY: "someday"}.get(
             payload.get("st")
         ),
         # A row carrying `rr` is the recurrence *template*; one carrying `rt` is a
@@ -588,35 +642,81 @@ def build_name_index(state: dict[str, dict]) -> dict[str, str]:
 _BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 _BASE58_FORBIDDEN = frozenset("0OIl")
 
+# A Things id is a **128-bit UUID** rendered in Base58, and the decoder parses it
+# back into a 128-bit integer.  Twenty-two Base58 digits can express 58^22, which
+# is 1.835x larger than 2^128 — so 45% of random 22-character strings decode to a
+# value too big to fit, and `decodeBase58String.mapBase58` traps on the overflow.
+_UUID_BITS = 128
+_UUID_MAX = 1 << _UUID_BITS
+_UUID_MAX_LENGTH = 22          # 58^22 is the first power to exceed 2^128
+# Things does not zero-pad: a UUID below 58^21 renders in 21 digits and stays
+# that way.  The live account holds several.  Requiring exactly 22 characters
+# treats those perfectly good ids as corrupt — which cost two of Amit's real
+# to-dos before it was caught, so validate the *value*, not the width.
+_UUID_MIN_LENGTH = 20
+
+
+def _base58_value(value: str) -> int:
+    """Decode a Base58 string the way Things does, to check it fits 128 bits."""
+    number = 0
+    for char in value:
+        number = number * 58 + _BASE58.index(char)
+    return number
+
 
 def new_uuid() -> str:
     """Generate a Things-style 22-character **Base58** identifier.
 
-    The alphabet is not decorative.  Things decodes item ids with a Base58
-    decoder (``decodeBase58String.mapBase58`` in the crash trace), and a single
-    ``0``, ``O``, ``I`` or ``l`` makes it assert — which **crashes the app on
-    launch, on every device**, exactly like a bad note checksum does.
+    Two independent traps live in this one function, and each crashes Things on
+    launch on **every device** — unrecoverably, since the journal is append-only.
 
-    Using Base62 here caused three separate outages on 2026-08-13 before the
-    cause was spotted.  All 212 Things-authored ids in the live account are
-    Base58-clean; none has ever contained a forbidden character.
+    1. **The alphabet.**  Base58 omits the look-alikes ``0``, ``O``, ``I`` and
+       ``l``; one of those makes the decoder assert.  Base62 here caused three
+       outages on 2026-08-13.
+
+    2. **The magnitude.**  An id is a 128-bit UUID *rendered* in Base58, not 22
+       random Base58 characters.  Twenty-two digits can hold 1.835x more than
+       2^128, so a random string overflows the decoder 45% of the time.  Every
+       one of the 279 Things-authored ids in the live account fits in 128 bits;
+       every Klaus write that crashed on 2026-08-14 carried an id that did not,
+       and every one that survived carried an id that did — eight batches, no
+       exceptions.  This was mistaken for four different bugs in turn (note
+       checksums, note dialects, amending fresh items, hard deletes) because it
+       fires on a coin flip and so correlated with whatever had just changed.
+
+    Generating the integer first and encoding it makes the second failure
+    impossible by construction rather than by validation.
     """
     import secrets
-    return "".join(secrets.choice(_BASE58) for _ in range(22))
+
+    number = secrets.randbits(_UUID_BITS)
+    digits = []
+    while number:
+        number, remainder = divmod(number, 58)
+        digits.append(_BASE58[remainder])
+    return "".join(reversed(digits))
 
 
 def is_valid_uuid(value: str) -> bool:
-    """True when ``value`` is a Things-shaped Base58 id, safe to commit."""
+    """True when ``value`` is a Things-shaped Base58 id, safe to commit.
+
+    Checks magnitude as well as alphabet — see :func:`new_uuid` for why both
+    matter and what each one costs when it is wrong.
+    """
     return (
         isinstance(value, str)
-        and len(value) == 22
+        and _UUID_MIN_LENGTH <= len(value) <= _UUID_MAX_LENGTH
         and not (set(value) & _BASE58_FORBIDDEN)
         and all(c in _BASE58 for c in value)
+        and _base58_value(value) < _UUID_MAX
     )
 
 
 def build_note(text: str | None) -> dict:
-    """Build the ``nt`` note envelope.
+    """Build the ``nt`` note envelope **for a create record**.
+
+    Only legal on ``t=0``.  On an edit, use :func:`build_note_patch` — see the
+    warning there.
 
     ``ch`` is the **CRC32 of the note text encoded as UTF-8** — verified against
     all 64 non-empty notes in the live account, and consistent with the 142 empty
@@ -635,6 +735,46 @@ def build_note(text: str | None) -> dict:
     return {"_t": "tx", "ch": zlib.crc32(body.encode("utf-8")), "v": body, "t": 1}
 
 
+def build_note_patch(text: str | None, *, replacing: str | None = None) -> dict:
+    """Build the ``nt`` note envelope **for an edit record**.
+
+    A note is transmitted in one of two mutually exclusive dialects, chosen by the
+    opcode of the record carrying it.  The live account splits cleanly, with no
+    exceptions in 1,084 records:
+
+    ==========  ======================  =====
+    opcode      shape                   count
+    ==========  ======================  =====
+    ``t=0``     ``{_t, t: 1, ch, v}``     445
+    ``t=1``     ``{_t, t: 2, ps: [...]}``   5
+    ==========  ======================  =====
+
+    An edit sends a **patch**, not the whole note: ``ps`` is a list of splices,
+    each ``{"r": replacement, "p": offset, "l": chars_replaced, "ch": crc32(r)}``.
+    Sending the create dialect on an edit is accepted by the server and then
+    **crashes Things on launch on every device** — the same unrecoverable failure
+    as a bad checksum or a Base62 id, since the journal is append-only
+    (2026-08-14 incident: the sole record in the account's history to break this
+    rule was Klaus's, and it took the app down).
+
+    ``replacing`` is the note text currently on the item; the splice is sized to
+    overwrite it entirely.  All five observed patches replaced an empty note.
+    """
+    body = text or ""
+    return {
+        "_t": "tx",
+        "t": 2,
+        "ps": [
+            {
+                "r": body,
+                "p": 0,
+                "l": len(replacing or ""),
+                "ch": zlib.crc32(body.encode("utf-8")),
+            }
+        ],
+    }
+
+
 def build_create(
     title: str,
     *,
@@ -648,13 +788,20 @@ def build_create(
 ) -> tuple[str, dict]:
     """Build a create record for a new to-do.  Returns ``(uuid, record)``.
 
-    ``due_date`` becomes ``sr`` (scheduled) and ``hard_deadline_at`` becomes ``dd``
-    (deadline) — two separate Things fields.  A dated to-do goes to the Anytime
-    bucket; an undated one to Inbox, matching how the app files things.
+    ``due_date`` is the scheduled "when" and ``hard_deadline_at`` becomes ``dd``
+    (deadline) — two separate Things concepts.  The "when" is encoded by
+    :func:`encode_when`, which picks the ``st``/``sr``/``tir`` triple; writing the
+    date straight into ``sr`` files everything under Today.
     """
     uuid = new_uuid()
     now = datetime.now(timezone.utc).timestamp()
-    scheduled = iso_to_day(due_date)
+
+    when = encode_when(iso_to_day(due_date))
+    # The Inbox is for *loose* to-dos only: of the 73 to-dos filed in a project
+    # or area in the live account, none sits in st=0.  Leaving a filed to-do in
+    # the Inbox bucket makes it show up in both places at once.
+    if when["st"] == ST_INBOX and (project_id or area_id):
+        when["st"] = ST_ANYTIME
 
     payload = {
         **_TASK_DEFAULTS,
@@ -662,9 +809,7 @@ def build_create(
         "nt": build_note(notes),
         "tp": TP_TODO,
         "ss": SS_OPEN,
-        "st": ST_ANYTIME if scheduled else ST_INBOX,
-        "sr": scheduled,
-        "tir": scheduled,          # tracks `sr` (63/65 agreement in the live account)
+        **when,
         "dd": iso_to_day(hard_deadline_at),
         "ato": hhmm_to_seconds(due_time),
         "pr": [project_id] if project_id else [],
@@ -684,8 +829,12 @@ def build_checklist_items(task_uuid: str, titles: list[str]) -> dict[str, dict]:
     """Build ``ChecklistItem3`` create records for a to-do's checklist.
 
     Checklist rows are **separate entities**, not a field on the to-do: each one
-    points back at its parent through ``ts``.  ``ix`` orders them; Things uses
-    descending negatives, so the sequence here keeps the given order.
+    points back at its parent through ``ts``.
+
+    ``ix`` orders them and Things sorts it **ascending**, while its own values are
+    negative — so the *first* row needs the *most negative* index.  Numbering them
+    -100, -200, -300 in reading order displays the list backwards, which is what
+    Klaus's first checklist did.
 
     Returns ``{uuid: record}``, ready to merge into a commit alongside the to-do.
     """
@@ -696,7 +845,7 @@ def build_checklist_items(task_uuid: str, titles: list[str]) -> dict[str, dict]:
             "t": OP_CREATE,
             "e": CLASS_CHECKLIST,
             "p": {**_CHECKLIST_DEFAULTS, "tt": title, "ts": [task_uuid],
-                  "ix": -(position + 1) * 100, "cd": now, "md": now},
+                  "ix": -(len(titles) - position) * 100, "cd": now, "md": now},
         }
     return records
 
@@ -762,6 +911,67 @@ def build_repeating_create(
     return uuid, record
 
 
+def build_create_sequence(
+    title: str,
+    *,
+    notes: str | None = None,
+    due_date: str | None = None,
+    due_time: str | None = None,
+    hard_deadline_at: str | None = None,
+    project_id: str | None = None,
+    area_id: str | None = None,
+    tag_ids: list[str] | None = None,
+    checklist: list[str] | None = None,
+) -> tuple[str, list[dict[str, dict]]]:
+    """Build a new to-do as a **single self-contained create**.
+
+    Returns ``(uuid, [commit])`` — the list shape is kept so callers stay uniform,
+    but a create is one commit.  **Never amend a to-do Klaus has just created.**
+
+    Klaus must not follow a create with an edit, because amending a
+    Klaus-authored item is what has taken the app down.  The journal makes the
+    comparison exact:
+
+    ==========================  ===============================  ========
+    records                     edit fields                      outcome
+    ==========================  ===============================  ========
+    ``create@364 → edit@365``   ``md, tr``  (trash)              survived
+    ``create@370 → edit@371``   ``md, nt``  (note, full form)    **crash**
+    ``create@374 → edit@375``   ``md, nt``  (note, patch form)   **crash**
+    ==========================  ===============================  ========
+
+    Both note dialects crash, so the dialect is not the variable; amending ``nt``
+    on a freshly created item is.  Things itself never does this — its five note
+    edits all land on items whose notes it wrote at create time.  The trap is an
+    assertion inside ``BSSyncValueEncoder.decode(_:baseState:source:encoded
+    Amendments:)``, reached from ``LegacySCHistoryPerformSync`` on pull
+    completion: the decoder is amending a note against a base state it rejects.
+
+    A populated create is safe, and is what Things does — 446 creates in the live
+    account carry this exact 34-field shape and 73 of them carry non-empty notes.
+    So everything goes in the create, where no amendment is decoded at all.
+
+    Checklist rows are separate *entities*, not amendments, so they ride in the
+    same commit (Things batches up to 90 entities per journal element).
+    """
+    uuid, create = build_create(
+        title,
+        notes=notes,
+        due_date=due_date,
+        due_time=due_time,
+        hard_deadline_at=hard_deadline_at,
+        project_id=project_id,
+        area_id=area_id,
+        tag_ids=tag_ids,
+    )
+    batch = {uuid: create}
+    if checklist:
+        batch.update(build_checklist_items(uuid, checklist))
+    commits: list[dict[str, dict]] = [batch]
+
+    return uuid, commits
+
+
 def build_edit(fields: dict) -> dict:
     """Build an edit record carrying only ``fields`` as a sparse delta.
 
@@ -788,9 +998,7 @@ def build_reschedule(due_date: str | None, due_time: str | None = None) -> dict:
     Deliberately never touches ``dd`` — rescheduling when you'll work on something
     must not silently move its hard deadline.
     """
-    scheduled = iso_to_day(due_date)
-    fields: dict = {"sr": scheduled, "tir": scheduled}
-    fields["st"] = ST_ANYTIME if scheduled else ST_INBOX
+    fields: dict = dict(encode_when(iso_to_day(due_date)))
     if due_time is not None:
         fields["ato"] = hhmm_to_seconds(due_time)
     return build_edit(fields)
@@ -803,6 +1011,51 @@ def build_trash() -> dict:
     hand from the app; a journal delete is not.
     """
     return build_edit({"tr": True})
+
+
+def _validate_note(note: dict, opcode: int | None, uuid: str) -> None:
+    """Raise unless ``note`` uses the dialect legal for ``opcode``.
+
+    Every failure mode here is silent server-side and fatal client-side: the
+    commit succeeds, then Things crashes on launch on every device, and the
+    append-only journal means it cannot be withdrawn.  Refuse to send instead.
+    """
+    is_patch = "ps" in note
+    is_full = "v" in note
+
+    if opcode == OP_CREATE and is_patch:
+        raise ValueError(
+            f"refusing to commit note for {uuid}: a create record must carry the "
+            'full note {"ch", "v"}, not a "ps" patch — build it with build_note()'
+        )
+    if opcode == OP_EDIT and is_full:
+        raise ValueError(
+            f"refusing to commit note for {uuid}: an edit record must carry a "
+            '"ps" patch, not the full note — build it with build_note_patch(). '
+            "Sending the create dialect on an edit crashes Things on launch "
+            "(2026-08-14 incident)"
+        )
+
+    if is_full and note.get("v"):
+        expected = zlib.crc32(note["v"].encode("utf-8"))
+        if note.get("ch") != expected:
+            raise ValueError(
+                f"refusing to commit note for {uuid} with checksum "
+                f"{note.get('ch')!r}; expected crc32 {expected} — a mismatch "
+                "crashes the app"
+            )
+
+    for part in note.get("ps") or []:
+        if not isinstance(part, dict):
+            continue
+        text = part.get("r") or ""
+        expected = zlib.crc32(text.encode("utf-8"))
+        if part.get("ch") != expected:
+            raise ValueError(
+                f"refusing to commit note patch for {uuid} with checksum "
+                f"{part.get('ch')!r}; expected crc32 {expected} of the "
+                "replacement text — a mismatch crashes the app"
+            )
 
 
 def commit(history_key: str, records: dict[str, dict], ancestor_index: int) -> dict:
@@ -824,19 +1077,18 @@ def commit(history_key: str, records: dict[str, dict], ancestor_index: int) -> d
     # server and then crashes every Things client on launch, and the journal is
     # append-only so it cannot be taken back. Refuse to send instead.
     for uuid, record in records.items():
-        if not is_valid_uuid(uuid):
+        # A delete is exempt: appending one is the *only* way to retract an id
+        # that is already poisoning the journal, so the guard must not block the
+        # cure along with the disease.
+        if not is_valid_uuid(uuid) and record.get("t") != OP_DELETE:
             raise ValueError(
-                f"refusing to commit malformed Things id {uuid!r} — ids must be "
-                "22 Base58 characters (no 0, O, I or l); sending one crashes the app"
+                f"refusing to commit malformed Things id {uuid!r} — ids must be 22 "
+                "Base58 characters (no 0, O, I or l) decoding to under 2^128; "
+                "sending one crashes Things on launch on every device"
             )
         note = (record.get("p") or {}).get("nt")
-        if isinstance(note, dict) and note.get("v"):
-            expected = zlib.crc32(note["v"].encode("utf-8"))
-            if note.get("ch") != expected:
-                raise ValueError(
-                    f"refusing to commit note with checksum {note.get('ch')!r}; "
-                    f"expected crc32 {expected} — a mismatch crashes the app"
-                )
+        if isinstance(note, dict):
+            _validate_note(note, record.get("t"), uuid)
 
     logger.info("things: committing %d record(s) at ancestor-index=%d",
                 len(records), ancestor_index)

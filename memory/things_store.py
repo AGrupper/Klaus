@@ -329,7 +329,8 @@ class ThingsTaskStore:
         Checks **both** Things date fields, because they mean different things and
         either one makes a to-do part of the coming week:
 
-          * ``due_date``  — the scheduled date (Things ``sr``, "when I'll do it")
+          * ``due_date``  — the scheduled date ("when I'll do it"; Things holds it
+            in ``sr`` once due and ``tir`` while still ahead)
           * ``hard_deadline_at`` — the deadline (Things ``dd``, "when it's due")
 
         A to-do due Friday but never scheduled is invisible if you only read the
@@ -430,6 +431,11 @@ class ThingsTaskStore:
     # Writes — re-raise                                               #
     # -------------------------------------------------------------- #
 
+    def _commit_batch(self, batch: dict[str, dict]) -> None:
+        """Push a ``{uuid: record}`` batch and refresh.  Re-raises on failure."""
+        for uuid, record in batch.items():
+            self._commit(uuid, record)
+
     def _commit(self, uuid: str, record: dict) -> None:
         """Push one record and fold it into the cache.  Re-raises on failure."""
         with _cache_lock:
@@ -454,10 +460,14 @@ class ThingsTaskStore:
         """Create a to-do in Things.  Returns the stored task.  Re-raises on failure.
 
         Accepts the same dict shape as ``TaskStore.create``.  Klaus-only fields are
-        split off into the sidecar; the rest becomes a Things create record.
+        split off into the sidecar; the rest becomes a Things write sequence.
+
+        The write is a **single self-contained create**.  Following a create with
+        an edit is what has repeatedly crashed the app, so nothing here amends the
+        to-do it just made.  See :func:`things_tool.build_create_sequence`.
         """
         self._refresh()
-        uuid, record = things.build_create(
+        uuid, commits = things.build_create_sequence(
             task.get("title", ""),
             notes=task.get("notes"),
             due_date=task.get("due_date"),
@@ -468,8 +478,10 @@ class ThingsTaskStore:
             ),
             area_id=task.get("area_id"),
             tag_ids=task.get("tag_ids"),
+            checklist=task.get("checklist"),
         )
-        self._commit(uuid, record)
+        for batch in commits:
+            self._commit_batch(batch)
         if any(k in task for k in _SIDECAR_FIELDS):
             self._write_sidecar(uuid, task)
         return self.get(uuid) or {"id": uuid, "title": task.get("title", "")}
@@ -484,7 +496,11 @@ class ThingsTaskStore:
         if "title" in fields:
             encoded["tt"] = fields["title"]
         if "notes" in fields:
-            encoded["nt"] = things.build_note(fields["notes"])
+            # An edit must carry a splice, never the whole note — the create
+            # dialect on an edit crashes Things on launch.  The splice is sized
+            # to overwrite whatever text the item currently holds.
+            current = (self.get(task_id) or {}).get("notes") or ""
+            encoded["nt"] = things.build_note_patch(fields["notes"], replacing=current)
         if "hard_deadline_at" in fields:
             encoded["dd"] = things.iso_to_day(fields["hard_deadline_at"])
         if "due_date" in fields or "due_time" in fields:

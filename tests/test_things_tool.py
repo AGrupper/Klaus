@@ -310,6 +310,98 @@ def test_scheduled_and_deadline_map_to_separate_fields():
     assert out["hard_deadline_at"] == "2026-08-20"
 
 
+def test_upcoming_todo_is_a_dated_someday_bucket():
+    """Verified by having Things schedule a to-do for Aug 20 and reading it back:
+    it wrote `st=2, sr=<date>`.  `st` alone does not distinguish Upcoming from
+    Someday — the date does.
+    """
+    payload = _task(sr=things.iso_to_day("2026-12-25"),
+                    tir=things.iso_to_day("2026-12-25"), st=things.ST_SOMEDAY)
+    out = things.normalize_task("t1", payload)
+    assert out["due_date"] == "2026-12-25"
+    assert out["bucket"] == "upcoming"
+
+
+def test_undated_someday_todo_is_still_someday():
+    """st=2 with no date is genuine Someday — the bucket must not over-claim."""
+    out = things.normalize_task("t1", _task(sr=None, tir=None, st=things.ST_SOMEDAY))
+    assert out["bucket"] == "someday"
+    assert out["due_date"] is None
+
+
+def test_stale_tir_does_not_invent_a_date():
+    """Things leaves `tir` behind when a to-do is sent back to Someday.
+
+    A to-do the user had descheduled still carried tir=2026-08-16; trusting it
+    reported a date the user had deliberately removed.
+    """
+    out = things.normalize_task(
+        "t1", _task(sr=None, tir=things.iso_to_day("2026-08-16"), st=things.ST_SOMEDAY))
+    assert out["due_date"] is None
+    assert out["bucket"] == "someday"
+
+
+def test_due_today_todo_sits_in_the_anytime_bucket():
+    payload = _task(sr=things.iso_to_day("2026-08-14"),
+                    tir=things.iso_to_day("2026-08-14"), st=things.ST_ANYTIME)
+    out = things.normalize_task("t1", payload)
+    assert out["due_date"] == "2026-08-14"
+    assert out["bucket"] == "anytime"
+
+
+def test_future_date_keeps_the_date_in_sr_but_changes_the_bucket():
+    """Writing st=1 with a future date files the to-do under Today regardless —
+    a to-do scheduled for Christmas showed up as Today.  Writing sr=None instead
+    dumped it in Someday with the date discarded.  Both were wrong: `sr` keeps
+    the date, `st` moves to 2.
+    """
+    today = things.iso_to_day("2026-08-14")
+    when = things.encode_when(things.iso_to_day("2026-12-25"), today=today)
+    assert when == {"st": things.ST_SOMEDAY,
+                    "sr": things.iso_to_day("2026-12-25"),
+                    "tir": things.iso_to_day("2026-12-25")}
+
+
+def test_today_and_overdue_dates_use_the_anytime_bucket():
+    today = things.iso_to_day("2026-08-14")
+    assert things.encode_when(today, today=today) == {
+        "st": things.ST_ANYTIME, "sr": today, "tir": today}
+    past = things.iso_to_day("2026-08-01")
+    assert things.encode_when(past, today=today) == {
+        "st": things.ST_ANYTIME, "sr": past, "tir": past}
+
+
+def test_undated_todo_goes_to_inbox_with_both_date_fields_null():
+    """Amit's default: a to-do Klaus creates with no date belongs in the Inbox."""
+    assert things.encode_when(None) == {"st": things.ST_INBOX, "sr": None, "tir": None}
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"project_id": "EzzQi1ZYQkVzw4rUxk8zht"},
+    {"area_id": "7j2DooFWatFCRvSMfoK3Jd"},
+])
+def test_a_filed_todo_never_stays_in_the_inbox_bucket(kwargs):
+    """None of the 73 filed to-dos in the live account sits in st=0.
+
+    Leaving one there shows it in the Inbox *and* its area at the same time.
+    """
+    _, rec = things.build_create("x", **kwargs)
+    assert rec["p"]["st"] == things.ST_ANYTIME
+
+
+def test_a_loose_undated_todo_still_lands_in_the_inbox():
+    _, rec = things.build_create("x")
+    assert rec["p"]["st"] == things.ST_INBOX
+
+
+def test_when_encoding_round_trips_through_the_reader():
+    """Anything Klaus writes must read back as the same date."""
+    today = things.iso_to_day("2026-08-14")
+    for iso in ("2026-08-01", "2026-08-14", "2026-08-16", "2027-03-09"):
+        payload = _task(**things.encode_when(things.iso_to_day(iso), today=today))
+        assert things.normalize_task("t1", payload)["due_date"] == iso
+
+
 def test_reminder_offset_decodes_to_clock_time():
     assert things.normalize_task("t1", _task(ato=36000))["due_time"] == "10:00"
 
@@ -430,7 +522,7 @@ def test_create_sets_tir_alongside_scheduled_date():
 def test_create_ids_are_unique_and_things_shaped():
     ids = {things.build_create("x")[0] for _ in range(50)}
     assert len(ids) == 50
-    assert all(len(i) == 22 and i.isalnum() for i in ids)
+    assert all(things.is_valid_uuid(i) for i in ids)
 
 
 # ------------------------------------------------------------------ #
@@ -447,15 +539,40 @@ def test_generated_ids_never_contain_base58_lookalikes():
     assert not offenders, f"illegal characters in generated ids: {offenders[:5]}"
 
 
-def test_generated_ids_are_22_chars_and_unique():
+def test_generated_ids_are_unique_and_well_formed():
     ids = {things.new_uuid() for _ in range(500)}
     assert len(ids) == 500
-    assert all(len(i) == 22 for i in ids)
+    assert all(things.is_valid_uuid(i) for i in ids)
+
+
+def test_generated_ids_always_fit_in_128_bits():
+    """The 2026-08-14 root cause, and the reason it took five outages to find.
+
+    An id is a 128-bit UUID *rendered* in Base58.  Twenty-two Base58 digits hold
+    1.835x more than 2^128, so 45% of random 22-character strings overflow the
+    decoder and trap the app.  Because it fires on a coin flip, it kept
+    presenting as a bug in whatever had just been written.
+    """
+    limit = 1 << 128
+    values = [things._base58_value(things.new_uuid()) for _ in range(3000)]
+    over = [v for v in values if v >= limit]
+    assert not over, f"{len(over)}/3000 generated ids overflow 128 bits"
+
+
+def test_a_random_22_char_base58_string_is_not_a_valid_id():
+    """Guards the tempting-but-fatal implementation this replaced."""
+    # 'z' is the largest Base58 digit, so 22 of them is the maximum 22-digit
+    # value — comfortably past 2^128.
+    assert not things.is_valid_uuid("z" * 22)
 
 
 @pytest.mark.parametrize("uuid,valid", [
     ("EBWLFi2RmKetSzECJK6uJn", True),    # real Things id
     ("3k8SpmuxT9pDcQ2mEaGcyy", True),    # real Things id
+    ("LuqfUaUf7FYJQDH2AHryW", True),     # real Things id — 21 chars, NOT padded
+    ("v6RRGBK2akPFRiVCf4p12", True),     # real Things id — 21 chars
+    ("ztVsdWaJsWe5zecyuggskd", False),   # crashed the app — overflows 2^128
+    ("d3wxaPJ2Yba5iVM7KCkMBA", False),   # crashed the app — overflows 2^128
     ("iz5LraR8qT7LNIwEbc8uph", False),   # crashed the app — contains I
     ("D8Zal9pYHxffHfAscO1sfe", False),   # crashed the app — contains O and l
     ("FWqYjhZIE0Hs8XYhd0sUS4", False),   # crashed the app — contains 0 and I
@@ -464,6 +581,18 @@ def test_generated_ids_are_22_chars_and_unique():
 ])
 def test_uuid_validation_matches_reality(uuid, valid):
     assert things.is_valid_uuid(uuid) is valid
+
+
+def test_commit_still_allows_deleting_a_poisoned_id(monkeypatch):
+    """Appending a delete is the only way to retract a record already in the
+    append-only journal, so the guard must not block the cure with the disease.
+    """
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    poisoned = "ztVsdWaJsWe5zecyuggskd"          # overflows; really did crash it
+    with patch.object(things, "_get_session") as sess:
+        sess.return_value.request.return_value = _response(200, {"server-head-index": 2})
+        things.commit("hk", {poisoned: {"t": things.OP_DELETE, "e": "Task6", "p": {}}}, 1)
+        sess.return_value.request.assert_called_once()
 
 
 def test_commit_refuses_a_malformed_id(monkeypatch):
@@ -542,6 +671,104 @@ def test_create_embeds_a_correct_note_checksum():
     assert rec["p"]["nt"]["ch"] == zlib.crc32(b"hello")
 
 
+# -------------------------------------------------------------------- #
+# Note dialect — the create shape on an edit crashes the app (08-14)    #
+# -------------------------------------------------------------------- #
+
+def test_edit_notes_use_the_patch_dialect():
+    """445/445 creates carry {ch, v}; 5/5 edits carry a `ps` splice list.
+
+    Klaus's write was the only record in 1,084 to break the split, and it took
+    Things down on every device.
+    """
+    note = things.build_note_patch("A note added by edit.")
+    assert note["t"] == 2
+    assert "v" not in note
+    assert [p["r"] for p in note["ps"]] == ["A note added by edit."]
+
+
+def test_note_patch_splice_is_positioned_and_checksummed():
+    import zlib
+    part = things.build_note_patch("new body", replacing="old")["ps"][0]
+    assert part["p"] == 0
+    assert part["l"] == len("old")          # sized to overwrite the current text
+    assert part["ch"] == zlib.crc32(b"new body")
+
+
+def test_note_patch_over_an_empty_note_matches_the_observed_shape():
+    """All five patches Things wrote replaced an empty note: p=0, l=0."""
+    part = things.build_note_patch("x")["ps"][0]
+    assert (part["p"], part["l"]) == (0, 0)
+
+
+def test_commit_refuses_the_create_note_dialect_on_an_edit(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()
+    record = {"t": things.OP_EDIT, "e": "Task6", "p": {"nt": things.build_note("text")}}
+    with patch.object(things, "_get_session") as sess:
+        with pytest.raises(ValueError, match="ps"):
+            things.commit("hk", {uuid: record}, 1)
+        sess.return_value.request.assert_not_called()
+
+
+def test_commit_refuses_the_patch_note_dialect_on_a_create(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()
+    record = {"t": things.OP_CREATE, "e": "Task6",
+              "p": {"nt": things.build_note_patch("text")}}
+    with patch.object(things, "_get_session") as sess:
+        with pytest.raises(ValueError, match="full note"):
+            things.commit("hk", {uuid: record}, 1)
+        sess.return_value.request.assert_not_called()
+
+
+def test_commit_refuses_a_bad_patch_checksum(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()
+    note = things.build_note_patch("real text")
+    note["ps"][0]["ch"] = 0                  # the empty-note placeholder again
+    with patch.object(things, "_get_session") as sess:
+        with pytest.raises(ValueError, match="crc32"):
+            things.commit("hk", {uuid: {"t": things.OP_EDIT, "e": "Task6",
+                                        "p": {"nt": note}}}, 1)
+        sess.return_value.request.assert_not_called()
+
+
+def test_commit_accepts_a_well_formed_note_edit(monkeypatch):
+    monkeypatch.setenv("THINGS_WRITE_ENABLED", "true")
+    uuid = things.new_uuid()
+    record = things.build_edit({"nt": things.build_note_patch("hello")})
+    with patch.object(things, "_get_session") as sess:
+        sess.return_value.request.return_value = _response(200, {"server-head-index": 2})
+        things.commit("hk", {uuid: record}, 1)
+        sess.return_value.request.assert_called_once()
+
+
+def test_create_sequence_is_one_commit_with_no_amendment():
+    """create@N + nt-edit@N+1 crashed the app twice; a create must stand alone."""
+    _, commits = things.build_create_sequence(
+        "t", notes="multi\nline note", due_date="2026-08-20",
+        tag_ids=["tg1"], checklist=["a", "b"],
+    )
+    assert len(commits) == 1, "a create must not be split across commits"
+    records = list(commits[0].values())
+    assert all(r["t"] == things.OP_CREATE for r in records), "no edits"
+
+
+def test_create_sequence_notes_round_trip_through_the_reader():
+    _, commits = things.build_create_sequence("t", notes="multi\nline note")
+    task = next(r for r in commits[0].values() if r["e"] == things.CLASS_TASK)
+    assert things._notes_text(task["p"]) == "multi\nline note"
+
+
+def test_create_sequence_keeps_checklist_rows_in_the_same_commit():
+    """Checklist rows are separate entities, not amendments — batching is safe."""
+    uuid, commits = things.build_create_sequence("t", checklist=["a", "b"])
+    entities = [r["e"] for r in commits[0].values()]
+    assert entities.count(things.CLASS_CHECKLIST) == 2
+    assert uuid in commits[0]
+
+
 # ------------------------------------------------------------------ #
 # Checklists and recurrence                                           #
 # ------------------------------------------------------------------ #
@@ -557,9 +784,15 @@ def test_checklist_items_are_separate_entities_linked_by_ts():
 
 
 def test_checklist_items_preserve_given_order():
+    """Things sorts `ix` ascending, so row one needs the most negative index.
+
+    The previous version of this test sorted descending and so happily passed
+    while the app displayed the steps backwards.
+    """
     records = things.build_checklist_items("t", ["one", "two", "three"])
-    ordered = sorted(records.values(), key=lambda r: -r["p"]["ix"])
+    ordered = sorted(records.values(), key=lambda r: r["p"]["ix"])
     assert [r["p"]["tt"] for r in ordered] == ["one", "two", "three"]
+    assert all(r["p"]["ix"] < 0 for r in records.values())
 
 
 def test_empty_checklist_builds_nothing():
@@ -616,8 +849,17 @@ def test_edit_is_sparse_so_unknown_fields_survive():
 def test_reschedule_never_touches_the_deadline():
     """Moving when you'll do something must not move when it's due."""
     rec = things.build_reschedule("2026-08-20")
-    assert rec["p"]["sr"] == things.iso_to_day("2026-08-20")
+    # Asserted through the reader, not a raw field: which of sr/tir holds the
+    # date depends on whether it has come due yet.
+    assert things.normalize_task("t1", rec["p"])["due_date"] == "2026-08-20"
     assert "dd" not in rec["p"]
+
+
+def test_reschedule_into_the_future_does_not_land_in_today():
+    """The Christmas bug: a future reschedule must move the bucket, not drop sr."""
+    rec = things.build_reschedule("2027-01-05")
+    assert rec["p"]["sr"] == things.iso_to_day("2027-01-05")
+    assert rec["p"]["st"] == things.ST_SOMEDAY
 
 
 def test_reschedule_to_none_returns_task_to_inbox():
