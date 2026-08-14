@@ -172,3 +172,12 @@ def test_nightly_review_still_honours_shadow_mode():
     assert "## Shadow mode" in text
     plan_section = text.split("## Plan tomorrow", 1)[1]
     assert "shadow" in plan_section.lower(), "the planning section must defer to it"
+
+
+def test_evals_cover_the_task_partnership_behaviours():
+    """The three failure modes most likely to reappear as 'helpful' defaults."""
+    cases = json.loads((ROOT / "claude" / "evals" / "skill-evals.json").read_text())
+    blob = json.dumps(cases).lower()
+    assert "inbox" in blob, "filing rather than defaulting to the Inbox"
+    assert "invent" in blob or "fabricat" in blob, "not inventing dates"
+    assert "overdue" in blob, "not nagging about overdue items"
