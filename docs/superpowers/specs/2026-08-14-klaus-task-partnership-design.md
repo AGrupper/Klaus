@@ -83,8 +83,8 @@ one is trivial.
 **Out, deliberately:**
 
 - **Klaus executing tasks.** Ruled out for now. His toolset reaches Calendar,
-  Things, Notion, Garmin, Hevy, HealthKit, weather, drive times, memory and the
-  health database. It does **not** reach email (the Gmail tool was removed in the
+  Things, Notion, Garmin, Hevy, HealthKit, weather, memory and the health
+  database. It does **not** reach email (the Gmail tool was removed in the
   Claude-first cutover, and the OAuth invariant is Calendar-scope-only) or the
   web. So "organize my email inbox", "move newsletters to Reader", "search
   marathons" and "go through Apple Notes" are all out of reach regardless of
@@ -146,9 +146,8 @@ The nightly review changes from a broadcast into a short back-and-forth:
    Amit edits by replying. Editing is far cheaper than authoring, and starting
    from a blank page is the same friction as §3.1.
 3. **Check it fits.** Real footprints, not optimistic ones: a gym session is
-   3h15m door to door (see `docs/USER.md`), plus live traffic drive times and
-   the time to leave. Most bad plans are not bad priorities — they are plans
-   that never fit.
+   3h15m door to door, not 75 minutes (see `docs/USER.md`). Most bad plans are
+   not bad priorities — they are plans that never fit.
 4. **Place training for weather and recovery.** Garmin sleep / HRV / body
    battery plus tomorrow's forecast. Tel Aviv in August is reason enough to move
    a session to 06:30, and the night before is when that is still actionable.
@@ -185,21 +184,17 @@ architecture and no new pattern is needed.
 
 ### Known gaps to close
 
-1. **Travel time is unreachable.** `mcp_tools/routes_tool.py` exists but is
-   fully orphaned — no handler in `core/tools.py` and no entry in
-   `interfaces/mcp_server.py`. Klaus therefore cannot answer "what time do I
-   need to leave", which §3.2.3 depends on. Needs a handler and a read-only MCP
-   entry, not just an allow-list addition. (`create_calendar_event` already
-   embeds a travel buffer, so the *duration* side of the fit check works; the
-   departure time does not.)
-2. **`task_list` already returns what the tidying pass needs.**
+1. **`task_list` already returns what the tidying pass needs.**
    `things_tool.normalize_task()` emits `created_at` (staleness),
    `hard_deadline_at` (lookahead) and `bucket` (placement) — verified. What
    remains is making sure the **tool schema describes them**, since Klaus can
    only reason over fields he is told exist.
-3. **Nothing measures whether the plan was followed.** Needed for §5. The
+2. **Nothing measures whether the plan was followed.** Needed for §5. The
    cheapest version is comparing the dates Klaus set against completions, from
    data already in the Things mirror — no new store.
+
+Both are small. Nothing in this design needs a new integration or a new
+persistence layer.
 
 ---
 
@@ -233,6 +228,11 @@ Recorded so they are not re-litigated:
 - **Nutrition in the nightly routine** — reviewing today's eating is a
   today-review concern, not tomorrow-planning.
 - **Prep and packing reminders** — Amit would stop reading them.
+- **Travel and departure times.** Offered and declined outright: *"I would
+  never use that."* `mcp_tools/routes_tool.py` is orphaned (no handler, no MCP
+  entry) and should stay that way unless Amit asks. Note that
+  `create_calendar_event` already embeds a fixed travel buffer, which is all
+  the travel handling this design needs.
 - **Priority fields.** Things has no priority. Klaus's sidecar (`task_meta`)
   can hold one, but it is invisible inside Things, so it would be a field only
   Klaus can see and only Klaus maintains.
