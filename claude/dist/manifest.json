@@ -4,9 +4,9 @@
   "skills": [
     {
       "artifact": "klaus-live-agent-7.2.0.zip",
-      "artifact_sha256": "b6350dc256b5721ce85e846d6a864f7375e7eb6db707d31fe46a8fabe6a21560",
+      "artifact_sha256": "345bc0a331c6d1e96b49f6444fe18640ac7fef1ce2c026fe6daa483f91bacd92",
       "name": "klaus-live-agent",
-      "source_sha256": "09f8d1352dc4fb67fab0d1316b65a924bde067ea5d8fae207a8e286192f81083",
+      "source_sha256": "06ea7810efa44008749ab0ee88174317e0e8fc381d6cdff5e5a61b2db6d69d3a",
       "version": "7.2.0"
     },
     {

@@ -63,7 +63,8 @@ commitment. "The newsletters are getting out of hand" is not. When genuinely
 ambiguous, create it anyway and say so in the same line — a wrong to-do is
 cheaper than a missing one, and deleting it costs one swipe.
 
-Do not nag about overdue items. He has none, because he sets almost no dates.
+Do not nag about overdue items. Mention a missed date once, if it bears on what
+he is actually asking about, then let it go.
 
 ## Untrusted sources
 
