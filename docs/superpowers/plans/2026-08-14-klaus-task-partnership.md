@@ -538,8 +538,18 @@ evaporates overnight."
 The drift guards have been failing since Task 3. Both edited skills changed
 behaviour, so the suite versions up together and Amit re-uploads.
 
+> **Correction (preflight, 2026-08-14).** The file list below was incomplete.
+> It also needs `core/subscription_routines.py:120`, which hardcodes
+> `"skill_version": "7.1.0"` in the payload fired at the Remote Routine, and
+> `tests/test_claude_skills.py:132 test_skill_version_is_7_1_0_everywhere`,
+> which pins the version in both its name and its assertions. Without both, the
+> suite cannot go green and the routine would advertise a stale version.
+
 **Files:**
 - Modify: `interfaces/mcp_server.py:23` (`EXPECTED_SKILL_VERSION`)
+- Modify: `core/subscription_routines.py:120` (`"skill_version"` in the payload)
+- Modify: `tests/test_claude_skills.py:132` (rename to `..._is_7_2_0_...`, update
+  both assertions)
 - Modify: `claude/skills/klaus-live-agent/VERSION`
 - Modify: `claude/skills/klaus-morning-review/VERSION`
 - Modify: `claude/skills/klaus-nightly-review/VERSION`
@@ -563,12 +573,19 @@ not.
 
 ```bash
 sed -i '' 's/EXPECTED_SKILL_VERSION = "7.1.0"/EXPECTED_SKILL_VERSION = "7.2.0"/' interfaces/mcp_server.py
+sed -i '' 's/"skill_version": "7\.1\.0"/"skill_version": "7.2.0"/' core/subscription_routines.py
 for s in klaus-live-agent klaus-morning-review klaus-nightly-review klaus-weekly-review; do
   printf '7.2.0\n' > "claude/skills/$s/VERSION"
   sed -i '' 's/^Skill version: 7\.1\.0$/Skill version: 7.2.0/' "claude/skills/$s/SKILL.md"
 done
-grep -rn "7\.1\.0" interfaces/mcp_server.py claude/skills/ || echo "no 7.1.0 left in sources"
+# The pinning test names the version in its function name and both assertions.
+sed -i '' 's/test_skill_version_is_7_1_0_everywhere/test_skill_version_is_7_2_0_everywhere/; s/EXPECTED_SKILL_VERSION == "7\.1\.0"/EXPECTED_SKILL_VERSION == "7.2.0"/; s/"skill_version": "7\.1\.0"/"skill_version": "7.2.0"/' tests/test_claude_skills.py
+git grep -n "7\.1\.0" -- . ':!claude/dist' || echo "no 7.1.0 left in tracked sources"
 ```
+
+The final `git grep` must come back empty apart from the prose sentence noted
+below. If it still lists `claude/skills/klaus-live-agent/SKILL.md:18`, that is
+the expected hand-fix in the next paragraph.
 
 Note `klaus-live-agent/SKILL.md` also names the version in prose ("If it differs
 from 7.1.0"). The `sed` above only matches the standalone `Skill version:` line,
