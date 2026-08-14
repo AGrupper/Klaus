@@ -136,3 +136,39 @@ def test_skill_version_is_7_1_0_everywhere():
     assert '"skill_version": "7.1.0"' in (
         ROOT / "core" / "subscription_routines.py"
     ).read_text()
+
+
+def _skill_text(name: str) -> str:
+    return (ROOT / "claude" / "skills" / name / "SKILL.md").read_text()
+
+
+def test_live_agent_captures_and_files_tasks_in_the_moment():
+    """Spec 3.1. Deferring capture to the nightly review was explicitly rejected.
+
+    Amit's blocker is deciding where a to-do goes, not writing it down, so Klaus
+    must file it himself rather than asking.
+    """
+    text = _skill_text("klaus-live-agent")
+    assert "## Tasks" in text
+    assert "list_id" in text, "must tell Klaus to file, not just create"
+    lowered = text.lower()
+    assert "do not ask" in lowered or "never ask" in lowered
+    assert "invent" in lowered, "must forbid inventing dates"
+
+
+def test_nightly_review_plans_tomorrow_and_writes_the_plan():
+    """Spec 3.2. The plan is written when sent — no pending-plan state."""
+    text = _skill_text("klaus-nightly-review")
+    assert "## Plan tomorrow" in text
+    lowered = text.lower()
+    assert "3h15" in text or "3 h 15" in text, "must use the real gym footprint"
+    assert "created_at" in text, "tidying needs the staleness field"
+    assert "do not wait" in lowered or "without waiting" in lowered
+
+
+def test_nightly_review_still_honours_shadow_mode():
+    """Shadow mode forbids every mutating call; planning must not bypass it."""
+    text = _skill_text("klaus-nightly-review")
+    assert "## Shadow mode" in text
+    plan_section = text.split("## Plan tomorrow", 1)[1]
+    assert "shadow" in plan_section.lower(), "the planning section must defer to it"
