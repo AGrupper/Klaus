@@ -27,6 +27,10 @@ def summarize(tasks: list[dict], today: str) -> dict:
         Counts plus median and oldest age in days.  Both ages are ``None`` when
         no to-do carries a usable ``created_at`` — a report must never divide by
         zero on an empty list.
+
+        The median is **truncated** to whole days, not rounded: these are whole
+        elapsed days, and rounding an even-length median of 39.5 up to 40 would
+        report an age no to-do actually has.
     """
     reference = date.fromisoformat(today)
     ages = [

@@ -50,3 +50,19 @@ def test_summarize_tolerates_a_missing_created_at():
     out = summarize([_task(created_at=None)], today="2026-08-14")
     assert out["total"] == 1
     assert out["median_age_days"] is None
+
+
+def test_summarize_truncates_a_fractional_median_rather_than_rounding():
+    """An even-length list gives a fractional median; report whole elapsed days.
+
+    Two to-dos aged 39 and 40 days have a median of 39.5. Truncating reports 39;
+    rounding would report 40, an age neither to-do has. These are whole days
+    elapsed, so truncation is deliberate — this test exists to stop a later
+    reader "fixing" it to round().
+    """
+    tasks = [
+        _task(created_at="2026-07-06T00:00:00+00:00"),   # 39 days
+        _task(created_at="2026-07-05T00:00:00+00:00"),   # 40 days
+    ]
+    out = summarize(tasks, today="2026-08-14")
+    assert out["median_age_days"] == 39
