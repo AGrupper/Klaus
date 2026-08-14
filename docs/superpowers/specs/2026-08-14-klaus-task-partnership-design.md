@@ -126,9 +126,12 @@ costs one drag in Things.
   "I should sort the newsletters" is a commitment; "newsletters are annoying" is
   not.
 - Infer `project_id` / `area_id` from the account's existing structure.
-- Set a date only when the timing is genuinely implied ("tomorrow", "before the
-  race"). Do not invent dates to look useful — an undated to-do in the Inbox is
-  honest; a fabricated Tuesday is noise.
+- Set a date **only when the timing is genuinely implied** ("tomorrow", "before
+  the race"). Do not invent dates to look useful — an undated to-do in the Inbox
+  is honest; a fabricated Tuesday is noise. Confirmed explicitly by Amit against
+  the alternative of guessing aggressively, even though the list's whole problem
+  is that nothing has a date: a guessed date would make the *metric* in §5 move
+  without the behaviour changing.
 - Confirm in one short line. Not a paragraph, not a checklist.
 
 ### 3.2 At night — close today, draft tomorrow
@@ -158,9 +161,11 @@ The nightly review changes from a broadcast into a short back-and-forth:
    and reorganise on his own initiative. A bulk irreversible cull is the one
    thing he presents in full and waits for a yes on.
 
-**The plan is written when it is sent.** Everything in it is reversible, so
-there is no "did he reply" branch and no state machine for pending plans. Amit
-adjusts by replying.
+**The plan is written when it is sent** — confirmed explicitly by Amit, knowing
+it means tomorrow is already blocked out if he falls asleep without replying.
+Everything in it is reversible, so there is no "did he reply" branch, no pending
+state to persist, and no plan that silently evaporates. Amit adjusts by
+replying.
 
 ---
 
