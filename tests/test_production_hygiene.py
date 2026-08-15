@@ -567,3 +567,33 @@ def test_every_interpolated_deploy_value_is_guarded_against_being_empty():
     ]
 
     assert unguarded == [], f"deploy values with no empty-value guard: {unguarded}"
+
+
+def _deploy_workflow() -> dict:
+    """Parse the deploy workflow into its job graph."""
+    import yaml
+
+    return yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text())
+
+
+def test_deploy_runs_the_test_suites_before_shipping():
+    """Nothing stopped a red suite from reaching production.
+
+    The workflow built, deployed and smoke-tested /health without running a
+    single test — 1375 Python tests and 196 frontend tests existed and CI ran
+    none of them. Every deploy was safe only because someone remembered to run
+    them locally first.
+    """
+    workflow = _deploy_workflow()
+    jobs = workflow["jobs"]
+
+    assert "test" in jobs, "no test job in the deploy workflow"
+    commands = " ".join(
+        str(step.get("run", "")) for step in jobs["test"]["steps"]
+    )
+    assert "pytest" in commands, "test job does not run the Python suite"
+    assert "npm" in commands and "test" in commands, "test job does not run frontend tests"
+
+    needs = jobs["deploy"].get("needs")
+    needs = [needs] if isinstance(needs, str) else (needs or [])
+    assert "test" in needs, "deploy does not depend on the test job"
