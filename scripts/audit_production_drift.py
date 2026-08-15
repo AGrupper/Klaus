@@ -79,6 +79,16 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
         if key in environment or key in bindings:
             findings.append(f"forbidden environment variable present: {key}")
 
+    # Fail closed on anything the contract never described. Checking only the
+    # required and forbidden lists leaves the audit blind to newly introduced
+    # runtime configuration, including a generative flag under a name nobody
+    # thought to forbid.
+    declared = set(desired_service["required_environment"]) | set(
+        desired_service["forbidden_environment"]
+    )
+    for key in sorted(set(environment) - declared):
+        findings.append(f"undeclared environment variable present: {key}")
+
     for variable, secret_name in desired_service["secret_bindings"].items():
         if bindings.get(variable) != secret_name:
             findings.append(

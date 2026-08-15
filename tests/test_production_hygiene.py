@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -454,6 +455,61 @@ def test_deploy_still_uses_workload_identity_federation():
         "PG_CONNECTION_STRING=klaus-postgres-connection-string:latest",
     ):
         assert binding in workflow
+
+
+def _deploy_environment_keys() -> set[str]:
+    """Return every env key the deploy workflow sets via --set-env-vars.
+
+    The workflow passes one long comma-separated string. Values are never
+    comma-bearing today, so splitting on commas and keeping the well-formed
+    ``KEY=`` prefixes recovers exactly the deployed key set.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    marker = '--set-env-vars "'
+    start = workflow.index(marker) + len(marker)
+    end = workflow.index('"', start)
+    keys = set()
+    for segment in workflow[start:end].split(","):
+        if "=" not in segment:
+            continue
+        candidate = segment.split("=", 1)[0].strip()
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", candidate):
+            keys.add(candidate)
+    return keys
+
+
+def test_undeclared_environment_variable_is_reported_as_drift():
+    """An env var in neither list is drift the audit must not stay silent about.
+
+    Without this the audit can only see variables it was explicitly told to
+    expect or forbid, so a newly introduced runtime flag — including a
+    generative one under an unlisted name — passes unnoticed.
+    """
+    manifest = load_manifest(MANIFEST_PATH)
+    snapshot = _clean_snapshot(manifest)
+    snapshot["service"]["environment"]["KLAUS_SOME_NEW_FLAG"] = "true"
+
+    findings = audit_snapshot(manifest, snapshot)
+
+    assert any(
+        "undeclared environment variable present: KLAUS_SOME_NEW_FLAG" in finding
+        for finding in findings
+    ), findings
+
+
+def test_manifest_declares_every_environment_variable_the_deploy_sets():
+    """The contract must describe the whole deployed environment, not part of it.
+
+    CLAUDE_PROJECT_URL went missing from production on 2026-08-15 and was caught
+    only because it happened to be one of the declared keys. Every key the
+    workflow sets needs a declaration or the drift audit cannot see it vanish.
+    """
+    manifest = load_manifest(MANIFEST_PATH)
+    declared = set(manifest["service"]["required_environment"])
+
+    undeclared = sorted(_deploy_environment_keys() - declared)
+
+    assert undeclared == [], f"deploy sets undeclared environment keys: {undeclared}"
 
 
 def test_operator_scripts_are_directly_executable_from_repository_root():
