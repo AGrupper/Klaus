@@ -54,18 +54,20 @@ def test_live_and_routine_mcp_mount_independently():
     with patch.dict(os.environ, env, clear=False), patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws
 
-        # Newer FastAPI puts router wrappers without a ``path`` in
-        # ``app.routes`` alongside real routes, so enumerate defensively
-        # rather than assuming every entry is a path-bearing route.
-        paths = {
-            path
-            for path in (getattr(route, "path", None) for route in ws.app.routes)
-            if path
-        }
+        # Assert what the connector actually experiences rather than how the
+        # routes happen to be registered. Enumerating ``app.routes`` broke
+        # twice on FastAPI internals: newer versions wrap ``include_router``
+        # results in a router object, so the OAuth metadata route is nested
+        # rather than top-level and a structural check either crashes or
+        # silently misses it. A request cannot be fooled either way.
+        with TestClient(ws.app) as client:
+            interactive = client.post("/mcp/interactive")
+            routine = client.post("/mcp/routine")
+            metadata = client.get("/.well-known/oauth-authorization-server")
 
-    assert "/mcp/interactive" in paths
-    assert "/mcp/routine" not in paths
-    assert "/.well-known/oauth-authorization-server" in paths
+    assert interactive.status_code == 202
+    assert routine.status_code == 404
+    assert metadata.status_code == 200
     bundle.interactive.streamable_http_app.assert_called_once()
     bundle.routine.streamable_http_app.assert_not_called()
 

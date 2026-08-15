@@ -20,7 +20,13 @@ pinecone>=5.0
 google-genai>=1.0                  # embedding client only
 
 # --- Interface ---
-fastapi>=0.115                     # Cloud Run webhook server
+# Upper-bounded deliberately. `fastapi>=0.115` alone resolved to 0.136 in one
+# venv and 0.141 in CI on the same commit, and 0.141 changed what app.routes
+# contains — a test passed locally and failed in CI for a week's worth of
+# confusion. Starlette is declared explicitly rather than left transitive so
+# the pair moves together and on purpose.
+fastapi>=0.141,<0.142              # Cloud Run webhook server
+starlette>=1.6,<2                  # ASGI toolkit under FastAPI
 uvicorn[standard]>=0.30            # ASGI server for FastAPI
 mcp>=2.0,<3                        # Official stateless Streamable HTTP MCP SDK
 
