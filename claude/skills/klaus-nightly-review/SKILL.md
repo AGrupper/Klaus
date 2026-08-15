@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's nightly Remote Routine, incl
 
 # Klaus Nightly Review
 
-Skill version: 7.2.0
+Skill version: 7.3.0
 
 Run only for a Klaus nightly routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
@@ -48,6 +48,8 @@ Rendering the already-published text is not another write: do not call `publish_
 ## Close the day
 
 Account for completed, unfinished, and newly urgent work. Anything unfinished gets a real date or is dropped, and say which — an unfinished task that silently rolls forward is how his list reached a median age of four months. Repair only suitable unfinished tasks. Respect explicit times, recurrence, hard deadlines, and manual locks.
+
+For training, read `Klaus Routines:get_training_reality` rather than inferring from the raw log. It already resolves what was completed, moved, skipped, or genuinely missed, so a session he did is never raised as a gap.
 
 ## Plan tomorrow
 

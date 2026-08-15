@@ -20,7 +20,7 @@ from interfaces.mcp_custom_schemas import custom_tool_schema
 from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
 
 
-EXPECTED_SKILL_VERSION = "7.2.0"
+EXPECTED_SKILL_VERSION = "7.3.0"
 
 READ_TOOLS = frozenset(
     {
@@ -514,7 +514,7 @@ def create_mcp_bundle(
     )
     interactive = MCPServer(
         "Klaus Interactive",
-        version="7.2.0",
+        version=EXPECTED_SKILL_VERSION,
         instructions="Use get_life_snapshot first. Klaus backend data is authoritative.",
         token_verifier=KlausTokenVerifier(oauth_service, oauth_service.interactive_resource),
         auth=AuthSettings(
@@ -525,7 +525,7 @@ def create_mcp_bundle(
     )
     routine = MCPServer(
         "Klaus Routines",
-        version="7.2.0",
+        version=EXPECTED_SKILL_VERSION,
         instructions="Use get_life_snapshot first. Routines cannot approve actions.",
         token_verifier=KlausTokenVerifier(oauth_service, oauth_service.routine_resource),
         auth=AuthSettings(

@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's morning Remote Routine, incl
 
 # Klaus Morning Review
 
-Skill version: 7.2.0
+Skill version: 7.3.0
 
 Run only for a Klaus morning routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 

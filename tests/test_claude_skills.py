@@ -129,11 +129,11 @@ def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
         assert "record proposed actions only in `partial_actions`" in normalized
 
 
-def test_skill_version_is_7_2_0_everywhere():
+def test_skill_version_is_7_3_0_everywhere():
     from interfaces.mcp_server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.2.0"
-    assert '"skill_version": "7.2.0"' in (
+    assert EXPECTED_SKILL_VERSION == "7.3.0"
+    assert '"skill_version": "7.3.0"' in (
         ROOT / "core" / "subscription_routines.py"
     ).read_text()
 
@@ -194,3 +194,14 @@ def test_evals_cover_the_task_partnership_behaviours():
     assert shadow_case["skill"] == "klaus-nightly-review"
     assert any("partial_actions" in b for b in shadow_case["expected_behavior"])
     assert any("no mutating tool" in b.lower() for b in shadow_case["expected_behavior"])
+
+
+def test_skills_consult_reconciled_training_reality_before_asking():
+    """WB-04 — the reasoning surfaces must read the reconciled window.
+
+    Without this each skill re-derives planned-vs-actual from raw sources, which
+    is how Klaus ended up asking about a session Amit had already done.
+    """
+    for name in ("klaus-live-agent", "klaus-nightly-review", "klaus-weekly-review"):
+        normalized = " ".join(_skill_text(name).split())
+        assert "get_training_reality" in normalized, name

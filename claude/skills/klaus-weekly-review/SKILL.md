@@ -5,7 +5,7 @@ description: Use when running Klaus’s Sunday full-life Remote Routine or prepa
 
 # Klaus Weekly Review
 
-Skill version: 7.2.0
+Skill version: 7.3.0
 
 Use Opus for this routine. The Klaus backend is authoritative.
 
@@ -44,6 +44,8 @@ summary, or “published successfully” message.
 Rendering the already-published text is not another write: do not call `publish_review` again and do not request or send another push. If `publish_review` fails, report the failure honestly and do not describe the unpublished review as canonical.
 
 ## Evaluation
+
+Base training conclusions on `Klaus Routines:get_training_reality`, not on comparing the weekly split against the raw log. It already resolves completed, moved, skipped, and unplanned sessions, so adherence is measured against what actually happened.
 
 Compare intent with outcomes, identify at most a few high-leverage patterns, and prepare the next week without overfilling it. Protect approximately 20% schedule slack. Training-plan changes are recommendation-only.
 
