@@ -18,9 +18,9 @@
     },
     {
       "artifact": "klaus-nightly-review-7.3.1.zip",
-      "artifact_sha256": "df245eb43b929188a476e85cf7fc6be1f96275130cdcbdf2a7e1d5b623924fc6",
+      "artifact_sha256": "0c2710f0001adc32d3b621a3b331bbd256234351aed70b297b7b389d4608fae1",
       "name": "klaus-nightly-review",
-      "source_sha256": "afc31e9f46411eb12756422b6057fdf173bd5e31af39a77015c60a1cf53ddd43",
+      "source_sha256": "fce1e4d39b6a34443e3f914b38217fcf902ee3b944612540919ea134d62dc8c0",
       "version": "7.3.1"
     },
     {
