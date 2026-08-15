@@ -36,30 +36,6 @@ directives, follow-ups, plans, training data, habits, or portfolio snapshots.
 Record proposed actions only in `partial_actions`, with no live action IDs, and
 make clear in the review that they were not performed.
 
-## Connector probe — TEMPORARY, remove after the V1 result is recorded
-
-This section exists to answer one question: can a Remote Routine reach Claude's
-own connectors, or only the Klaus Routines MCP server? The answer decides whether
-Klaus's calendar tools can be retired. Do this on every run until removed.
-
-Before publishing, make exactly one attempt to call Claude's **own** Google
-Calendar connector — `list_events` for tomorrow. Do not use any Klaus tool for
-this, and do not substitute `get_life_snapshot`; the point is which toolset is
-reachable, not what the calendar contains. It is a read, so it is permitted in
-shadow mode.
-
-Begin the review text with exactly one of these lines, then continue with the
-normal review:
-
-```
-CONNECTOR PROBE: available — Google Calendar list_events returned N events
-CONNECTOR PROBE: unavailable — <the tool is absent, or the exact error>
-```
-
-Report what actually happened. If no Google Calendar connector tool appears in
-your available tools at all, say `unavailable — no such tool in this context`.
-Never guess, and never omit the line.
-
 ## Final routine response
 
 After `publish_review` returns success, the final assistant response must consist
