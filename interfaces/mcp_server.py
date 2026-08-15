@@ -48,6 +48,7 @@ READ_TOOLS = frozenset(
         "get_training_history",
         "get_strength_progress",
         "get_training_context",
+        "get_training_reality",
         "get_run_detail",
         "get_plan",
         "get_block_status",

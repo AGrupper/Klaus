@@ -1139,6 +1139,33 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "get_training_reality",
+        "description": (
+            "Get the RECONCILED planned-vs-actual training picture for the last "
+            "few days through tomorrow. Each session comes back already resolved "
+            "to one status — completed, planned, missed, moved, cancelled, "
+            "skipped, or unplanned — with the evidence behind it. Use this "
+            "BEFORE asking Amit whether he did a session: a slot with evidence "
+            "against it is closed, and a session he moved is not a gap on the "
+            "date it left. Prefer this over reasoning across raw sources "
+            "yourself; get_training_context remains the wider analytical view."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days_back": {
+                    "type": "integer",
+                    "description": "Days before today to reconcile. Default 3.",
+                },
+                "days_forward": {
+                    "type": "integer",
+                    "description": "Days after today to include. Default 1.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "get_run_detail",
         "description": (
             "Read Amit's per-run Garmin detail synced from Garmin Connect — the "
@@ -2785,6 +2812,20 @@ def _handle_get_strength_progress(
         return json.dumps({"error": str(exc)})
 
 
+def _handle_get_training_reality(
+    days_back: int = 3, days_forward: int = 1,
+) -> str:
+    """WB-04 return the reconciled planned-vs-actual training window.
+
+    The reconciliation itself lives in ``core.training_reality`` so it stays
+    testable without any live store. This handler only adapts it to the tool
+    boundary.
+    """
+    from core.training_reality import build_training_reality
+
+    return json.dumps(build_training_reality(days_back, days_forward))
+
+
 def _handle_get_training_context(days: int = 14) -> str:
     """Brain-direct: assemble the FULL cross-domain training picture in one call.
 
@@ -3168,6 +3209,7 @@ _HANDLERS: dict[str, object] = {
     # Hevy strength — full per-set progression + cross-domain context (available through Claude MCP)
     "get_strength_progress":   lambda args: _handle_get_strength_progress(**args),
     "get_training_context":    lambda args: _handle_get_training_context(**args),
+    "get_training_reality":    lambda args: _handle_get_training_reality(**args),
     "get_run_detail":          lambda args: _handle_get_run_detail(**args),
     # Phase 23 — block + benchmark tracking (BLOCK-01/BLOCK-03), available through Claude MCP
     "get_plan":                lambda args: _handle_get_plan(),
