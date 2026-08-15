@@ -99,8 +99,28 @@ gcloud secrets remove-iam-policy-binding klaus-google-oauth-token \
   storage and removes runtime access while preserving objects.
 - `ops/policies/quarantine.json` requires seven complete days with zero access
   before any paused job, retired service account, secret, or storage binding is
-  permanently removed. Record the observation start, log-derived access and
-  provider-usage counts, disabled-state check, and three routine results in a
-  JSON evidence file, then run
-  `python scripts/audit_quarantine.py --evidence PATH`. Audit first; deletion is
-  a separate operator action.
+  permanently removed. Gather the evidence by measurement rather than by hand:
+
+  ```bash
+  python scripts/gather_quarantine_evidence.py \
+    --observation-start 2026-08-13T00:00:00Z \
+    --out ops/evidence/quarantine-$(date +%F).json
+  python scripts/audit_quarantine.py --evidence ops/evidence/quarantine-$(date +%F).json
+  ```
+
+  The gatherer is read-only (`describe`, `list`, `logging read`, Firestore
+  reads). It measures secret access, scheduler executions, and service-account
+  authentications separately, checks each quarantined resource is still inert,
+  and reads `routine_runs` for routines Claude itself published — a
+  `published_fallback` is the deterministic backstop, not a Claude success.
+
+  A measurement that fails writes `-1` and names itself in
+  `measurement_errors`, which closes the gate. Never hand-edit a count into an
+  evidence file: the audit cannot tell an observed zero from an asserted one,
+  and that distinction is the entire value of the seven-day gate.
+
+  Note that administrative `DisableSecretVersion` / `DestroySecretVersion`
+  calls are deliberately excluded from the access count — retiring a secret is
+  not accessing it.
+
+  Audit first; deletion is a separate operator action.
