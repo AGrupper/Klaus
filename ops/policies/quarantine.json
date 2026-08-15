@@ -22,7 +22,8 @@
       "klaus-telegram-webhook-secret",
       "klaus-readwise-token",
       "klaus-github-token",
-      "klaus-notion-api-token"
+      "klaus-notion-api-token",
+      "klaus-home-address"
     ]
   },
   "deletion_gate": [

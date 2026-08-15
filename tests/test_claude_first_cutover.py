@@ -145,7 +145,7 @@ def _deterministic_execution_nodes():
         ("interfaces.web_server", hub._today_training),
         ("interfaces.web_server", hub._today_coach_note),
         ("interfaces.web_server", hub._sanitize_coach_note),
-        ("interfaces.web_server", hub._today_routes),
+        ("interfaces.web_server", hub._today_departure_windows),
         ("interfaces.web_server", hub._today_nutrition_totals),
     )
 

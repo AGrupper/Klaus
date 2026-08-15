@@ -37,11 +37,13 @@ _FORBIDDEN_MARKERS = (
     "mcp_tools.gmail_tool",
     "mcp_tools.readwise_tool",
     "mcp_tools.notion_tool",
+    "mcp_tools.routes_tool",
     "mcp_tools.self_inspect",
     "CHAT_LOGS_BUCKET",
     "NOTION_CHAT_LOG_DB_ID",
     "NOTION_AI_CHAT_DB_ID",
     "NOTION_API_TOKEN",
+    "HOME_ADDRESS",
     "READWISE_TOKEN",
     "google-cloud-monitoring",
     "google-cloud-run",
@@ -55,6 +57,7 @@ _FORBIDDEN_MARKERS = (
     "OccasionInFlightStore",
     "CoachingTopicStore",
     "TickLogStore",
+    "RoutesUsageStore",
 )
 _FORBIDDEN_ENV_PREFIXES = (
     "SMART_AGENT_",
