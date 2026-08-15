@@ -20,9 +20,14 @@ the sole task authority. Gemini remains only as the restricted embedding
 credential.
 
 **Still open:** the seven-day observation (UAT-04), closing 2026-08-20, after
-which the quarantined infrastructure can be permanently deleted. One live
-defect is outstanding — `CLAUDE_PROJECT_URL` never reached the service, so the
-Hub cannot launch the Claude Project (CUT-02).
+which the quarantined infrastructure can be permanently deleted. This is now
+the milestone's only outstanding item.
+
+**Fixed 2026-08-15** (rev `klaus-agent-00215-qt2`): `CLAUDE_PROJECT_URL` had
+never reached the service, leaving the Hub unable to launch the Claude Project
+(CUT-02). The deploy now guards every interpolated value, and the production
+contract covers all 36 environment keys rather than 16, so the drift audit
+fails closed on anything undeclared.
 
 **Carried v6 obligations, resolved 2026-08-15:** training write-back (WB-01/02)
 is live; the reconciled planned-vs-actual window (WB-04) was rebuilt

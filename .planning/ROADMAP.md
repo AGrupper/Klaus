@@ -36,8 +36,10 @@ its credentials revoked; the retired infrastructure is quarantined.
 permanent deletion of the quarantined infrastructure. See
 `ops/policies/quarantine.json` and `docs/CLAUDE_FIRST_USE.md`.
 
-**Outstanding defect:** `CLAUDE_PROJECT_URL` is missing from the live service, so
-the Hub's Ask Claude page cannot launch the project (REQUIREMENTS.md CUT-02).
+**Defect fixed 2026-08-15** (rev `klaus-agent-00215-qt2`): `CLAUDE_PROJECT_URL`
+was missing from the live service, so the Hub's Ask Claude page could not launch
+the project (REQUIREMENTS.md CUT-02). The variable is set, the deploy now guards
+every interpolated value, and the drift audit reports a clean match.
 
 The carried v6 Phase-34 write-back and Phase-35 hardening obligations were
 resolved on 2026-08-15: the write-backs are live, the reconciled training window

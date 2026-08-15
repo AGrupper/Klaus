@@ -10,7 +10,9 @@ reconciled against that reality; the original gate wording is preserved in the
 notes where it no longer describes the world.
 
 Verified on 2026-08-15 by a read-only `scripts/audit_production_drift.py` run
-against the live service. One genuine drift remains, recorded under CUT-02.
+against the live service. The one drift it found (CUT-02) was fixed the same
+day; the audit now reports "Production matches ops/desired-production.json"
+across all 36 declared environment keys.
 
 ## v7 delivery requirements
 
@@ -29,7 +31,7 @@ against the live service. One genuine drift remains, recorded under CUT-02.
 - [x] **UAT-03:** API-triggered Remote Routine runs with the computer off, calls Klaus MCP, and publishes a validated result — `KLAUS_CAPABILITY_ROUTINE_VERIFIED=true` and `KLAUS_CAPABILITY_PUBLISH_VERIFIED=true`
 - [ ] **UAT-04:** Morning/nightly/weekly shadow and live flows, iOS triggers, Hub push, memory/actions, directives, portfolio, and seven-day observation pass — **the one genuinely open gate.** All three routines are live and cut over; the observation window closes 2026-08-20
 - [x] **CUT-01:** Telegram/Gmail/Readwise/chat-ingest/tick-brain/cascade/worker/generative SDKs and secrets removed without deleting historical data — executed 2026-08-12/13. **Ordering deviation:** the original text said "after UAT only"; the subtraction was taken before UAT-04 closed, on the reasoning that retired code left running was itself a risk. Retired infrastructure is quarantined rather than deleted, so the decision remains reversible until the 2026-08-20 audit. Historical Firestore documents, vectors, logs and reviews were preserved
-- [ ] **CUT-02:** `CLAUDE_PROJECT_URL` is absent from the live service, so `/api/agent/status` returns an empty `project_url` and the Hub's Ask Claude page shows its setup notice instead of a launch link. The GitHub Actions repository variable is unset, so the deploy expanded it to an empty string and dropped the key — the same silent failure as the `KLAUS_USER_ID` incident of 2026-08-14. Needs the variable set and a redeploy
+- [x] **CUT-02:** `CLAUDE_PROJECT_URL` was absent from the live service, so `/api/agent/status` returned an empty `project_url` and the Hub's Ask Claude page showed its setup notice instead of a launch link. The GitHub Actions repository variable was unset, so the deploy expanded it to an empty string and dropped the key — the same silent failure as the `KLAUS_USER_ID` incident of 2026-08-14. Fixed 2026-08-15 (rev `klaus-agent-00215-qt2`): the variable was set, and the deploy now guards all seven interpolated values so a missing one fails the deploy instead of shipping a half-configured service
 
 The unfinished v6 requirements `WB-01..04` and `HARD-01..05` were carried into
 v7. Their status is reconciled below: the write-back obligations are delivered,
