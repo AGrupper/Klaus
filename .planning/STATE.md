@@ -16,6 +16,21 @@ progress:
 
 # State — Klaus
 
+> **SUPERSEDED — this file describes v6.0 and is kept only as history.**
+>
+> The frontmatter above still says `milestone: v6.0`, `stopped_at: Phase 33
+> complete — ready to discuss Phase 34`. That has not been true since v7
+> rebaselined on 2026-08-08. Phases 34 and 35 were never planned as phases;
+> their durable requirements were carried into v7 and closed there on
+> 2026-08-15.
+>
+> Nothing below reflects the Claude-first runtime. Where this file conflicts
+> with `.planning/REQUIREMENTS.md`, `.planning/MILESTONES.md`,
+> `.planning/ROADMAP.md`, `AGENTS.md`, `docs/V7_ARCHITECTURE.md` or
+> `docs/DEPLOYMENT.md`, those documents win.
+>
+> Live v7 status lives in `.planning/REQUIREMENTS.md`.
+
 ## Current Position
 
 Phase: 34

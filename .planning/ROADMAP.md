@@ -18,22 +18,31 @@ This file is a compact milestone summary. Per-milestone phase detail lives in
 
 ---
 
-## v7.0 — Subscription-First Personal OS — In Progress
+## v7.0 — Subscription-First Personal OS — Live, one gate open
 
-Claude Project “Klaus” becomes the supported subscription-funded conversation
-surface while Cloud Run remains the authoritative MCP/action/data backend. The
-Hub becomes the unified life dashboard and launches Claude. Versioned skills,
-OAuth-scoped interactive/routine MCP resources, Remote Routine coordination,
-deterministic timeout reviews, portfolio state, approvals, and no-model daytime
-rules are implemented behind independent rollback flags.
+Claude Project “Klaus” is now the subscription-funded conversation surface;
+Cloud Run remains the authoritative MCP/action/data backend. The Hub is the
+unified life dashboard and launches Claude. Versioned skills, OAuth-scoped
+interactive/routine MCP resources, Remote Routine coordination, deterministic
+timeout reviews, portfolio state, approvals, and no-model daytime rules are all
+live.
 
-**Live gates still required:** real Claude Pro read-only connector, private skill,
-computer-off Remote Routine, publish callback, three shadow runs, independent
-cutovers, and seven days of observation. See `docs/CLAUDE_FIRST_USE.md`.
+**Gates passed (2026-08-09 → 2026-08-14):** Claude Pro connector, private skill,
+computer-off Remote Routine, publish callback, shadow runs, and all three
+independent routine cutovers. The legacy generative runtime was then removed and
+its credentials revoked; the retired infrastructure is quarantined.
 
-The useful v6 Phase-34 training write-back and Phase-35 audit/cleanup obligations
-are carried into the v7 policy/test and post-observation subtraction work. They
-are not discarded merely because the old generative cascade is superseded.
+**Gate still open:** the seven-day observation, closing 2026-08-20, which gates
+permanent deletion of the quarantined infrastructure. See
+`ops/policies/quarantine.json` and `docs/CLAUDE_FIRST_USE.md`.
+
+**Outstanding defect:** `CLAUDE_PROJECT_URL` is missing from the live service, so
+the Hub's Ask Claude page cannot launch the project (REQUIREMENTS.md CUT-02).
+
+The carried v6 Phase-34 write-back and Phase-35 hardening obligations were
+resolved on 2026-08-15: the write-backs are live, the reconciled training window
+was rebuilt as `core/training_reality.py`, and the tick-brain eval and
+worker-retirement items are void with the runtimes they targeted.
 
 ---
 

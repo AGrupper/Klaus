@@ -1,6 +1,16 @@
 # Requirements: Klaus v7.0 — Subscription-First Personal OS
 
 **Rebaselined:** 2026-08-08
+**Status reconciled:** 2026-08-15 against the live cutover
+
+The 2026-08-08 rebaseline was written before the cutover ran. Between 2026-08-09
+and 2026-08-14 the Claude-first runtime went live, the legacy generative runtime
+was removed, and the retired credentials were revoked. The statuses below are
+reconciled against that reality; the original gate wording is preserved in the
+notes where it no longer describes the world.
+
+Verified on 2026-08-15 by a read-only `scripts/audit_production_drift.py` run
+against the live service. One genuine drift remains, recorded under CUT-02.
 
 ## v7 delivery requirements
 
@@ -14,15 +24,17 @@
 - [x] **SUB-08:** No-model daytime evaluator limited to timed follow-ups, hard deadlines, calendar/travel conflicts, and critical automation failures
 - [x] **SUB-09:** Dedicated Gemini embedding credential and usage meter; no invented Claude subscription cost
 - [x] **SUB-10:** Capability/cutover/rollback flags, least-privilege Calendar-only post-legacy OAuth, architecture/security/deployment docs, and first-use checklist
-- [ ] **UAT-01:** Real Claude Pro connector reads Klaus while the MCP surface is read-only
-- [ ] **UAT-02:** Uploaded private skill loads and matches reported version 7.0.0
-- [ ] **UAT-03:** API-triggered Remote Routine runs with the computer off, calls Klaus MCP, and publishes a validated result
-- [ ] **UAT-04:** Morning/nightly/weekly shadow and live flows, iOS triggers, Hub push, memory/actions, directives, portfolio, and seven-day observation pass
-- [ ] **CUT-01:** After UAT only, remove Telegram/Gmail/Readwise/chat-ingest/tick-brain/cascade/worker/generative SDKs and secrets without deleting historical data
+- [x] **UAT-01:** Real Claude Pro connector reads Klaus — proved during the read-only probe phase; `KLAUS_CAPABILITY_MCP_VERIFIED=true`. The surface has since been opened to read/write (`KLAUS_MCP_READ_ONLY_MODE=false`), so the original "while the MCP surface is read-only" clause describes a phase that has passed, not an outstanding condition
+- [x] **UAT-02:** Uploaded private skill loads and reports its version — proved at 7.0.0; `KLAUS_CAPABILITY_SKILL_VERIFIED=true`. The suite has since shipped 7.1.0, 7.2.0 and 7.3.0, so the pinned "7.0.0" is historical
+- [x] **UAT-03:** API-triggered Remote Routine runs with the computer off, calls Klaus MCP, and publishes a validated result — `KLAUS_CAPABILITY_ROUTINE_VERIFIED=true` and `KLAUS_CAPABILITY_PUBLISH_VERIFIED=true`
+- [ ] **UAT-04:** Morning/nightly/weekly shadow and live flows, iOS triggers, Hub push, memory/actions, directives, portfolio, and seven-day observation pass — **the one genuinely open gate.** All three routines are live and cut over; the observation window closes 2026-08-20
+- [x] **CUT-01:** Telegram/Gmail/Readwise/chat-ingest/tick-brain/cascade/worker/generative SDKs and secrets removed without deleting historical data — executed 2026-08-12/13. **Ordering deviation:** the original text said "after UAT only"; the subtraction was taken before UAT-04 closed, on the reasoning that retired code left running was itself a risk. Retired infrastructure is quarantined rather than deleted, so the decision remains reversible until the 2026-08-20 audit. Historical Firestore documents, vectors, logs and reviews were preserved
+- [ ] **CUT-02:** `CLAUDE_PROJECT_URL` is absent from the live service, so `/api/agent/status` returns an empty `project_url` and the Hub's Ask Claude page shows its setup notice instead of a launch link. The GitHub Actions repository variable is unset, so the deploy expanded it to an empty string and dropped the key — the same silent failure as the `KLAUS_USER_ID` incident of 2026-08-14. Needs the variable set and a redeploy
 
-The unfinished v6 requirements `WB-01..04` and `HARD-01..05` remain preserved
-below as carried obligations for v7's training write-back and post-observation
-subtraction. Their old Phase-34/35 scheduling is superseded, not silently closed.
+The unfinished v6 requirements `WB-01..04` and `HARD-01..05` were carried into
+v7. Their status is reconciled below: the write-back obligations are delivered,
+and the hardening obligations are either delivered or made void by the removal
+of the runtime they were written to harden.
 
 ---
 
@@ -80,18 +92,18 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 
 ### Write-Backs (Phase 34)
 
-- [ ] **WB-01**: Creating a workout calendar event (`is_workout=True`) best-effort writes a planned `TrainingLogStore` row (`planned=True`, `source="calendar"`) — never fails the calendar create
-- [ ] **WB-02**: Moving or deleting a workout event updates reality symmetrically — move merges a new-date row and marks the old one `skipped_reason="moved"`; delete removes/marks the planned row
-- [ ] **WB-03**: When Amit says he did/moved/skipped a session in chat, Klaus logs it before replying ("X today instead of tomorrow" logs today AND notes the swap); chat-created planned rows merge idempotently with later Garmin/Hevy completion on the same `{date}_{slot}` doc
-- [ ] **WB-04**: The weekly review and cascade read the shared `training_reality` window instead of raw split-vs-log guesswork
+- [x] **WB-01**: Creating a workout calendar event (`is_workout=True`) best-effort writes a planned `TrainingLogStore` row (`planned=True`, `source="calendar"`) — never fails the calendar create. Live via `_training_calendar_writeback` behind `KLAUS_TRAINING_WRITEBACK_ENABLED=true`
+- [x] **WB-02**: Moving or deleting a workout event updates reality symmetrically — move marks the old row `plan_status="moved"` and merges a new-date planned row; delete marks the row `plan_status="deleted"`
+- [x] **WB-03**: When Amit says he did/moved/skipped a session in chat, Klaus logs it. Reframed by the v7 architecture: the reasoning now lives in the Claude live-agent skill calling the `log_training` MCP tool, not in a Cloud Run composer. Chat-created rows still merge idempotently with later Garmin/Hevy completion on the same `{date}_{slot}` doc
+- [x] **WB-04**: The reasoning surfaces read a reconciled planned-vs-actual window instead of raw split-vs-log guesswork — `core/training_reality.py`, exposed as the read-only `get_training_reality` tool on both MCP endpoints and consumed by the live-agent, nightly and weekly skills in suite 7.3.0 (2026-08-15). The original `training_reality` gather was deleted with the cascade; this is a deterministic rebuild, not a restoration
 
 ### Hardening & Subtraction (Phase 35)
 
-- [ ] **HARD-01**: ≥6 new eval fixtures pass via `scripts/eval_tick_brain.py`: vacation suppression, directive-expiry resumption, moved-session no-re-ask, nightly judgment-skip, nightly fold, follow-up cancelled by directive
-- [ ] **HARD-02**: Dead-code sweep — `core/proactive_alerts.py` + tests + route + prompt (~2,850 LOC), TickTick residue (script, env vars, token file, `ticktick_overdue`→`native_overdue` rename), `.venv.py314.bak/` (348MB), `.claude/worktrees/` residue (per runbook: mv out, never straight rm), stray root scripts, Google Fit scope constant, seed/backfill scripts archived
-- [ ] **HARD-03**: Chat-ingest (04:00) and chat-export-ingest (04:30) Cloud Scheduler jobs paused — code kept, resumable anytime (Amit stopped uploading)
-- [ ] **HARD-04**: Worker-layer verdict recorded — LLMUsage delegation volume measured post-Sonnet, retirement decision for v6.1 documented in PROJECT.md Key Decisions
-- [ ] **HARD-05**: Docs + invariants updated (CLAUDE.md §3/§5/§6: directives-in-every-path invariant, Groq per-request budget invariant; TECHNICAL_PLAN; DEPLOYMENT: no new jobs/indexes) and phase-pinned tool-registration tests consolidated into one current-invariant test
+- [~] **HARD-01**: VOID. The fixtures were to be run by `scripts/eval_tick_brain.py` against the tick-brain, which no longer exists; the `evals/tick_brain/` tree was removed with it. The one durable behaviour behind these fixtures — moved-session no-re-ask — is now covered deterministically by `tests/test_training_reality.py` rather than by model evaluation
+- [x] **HARD-02**: Dead-code sweep — `core/proactive_alerts.py` and the whole legacy generative runtime removed 2026-08-12/13; `evals/tick_brain/` removed; `.venv.py314.bak/` (266MB) deleted 2026-08-15; retired TickTick token file and revoked Google token backups deleted 2026-08-15. Remaining TickTick references are historical docstrings recording lineage, not live code. `scripts/check_claude_first_runtime.py` now enforces the sweep in CI
+- [x] **HARD-03**: Chat-ingest and chat-export-ingest Cloud Scheduler jobs are paused and listed in `ops/policies/quarantine.json`. Superseded in spirit: the routes are 410 tombstones and the code is gone, so they are pending deletion at the 2026-08-20 audit rather than being resumable
+- [~] **HARD-04**: VOID. The worker layer was retired outright in the Claude-first cutover, so there is no delegation volume left to measure and no v6.1 retirement decision to record
+- [x] **HARD-05**: Docs + invariants updated — `AGENTS.md`, `docs/V7_ARCHITECTURE.md`, `docs/CLAUDE_FIRST_USE.md`, `docs/SELF.md` and `docs/DEPLOYMENT.md` describe the current contract. The Groq and directives-in-every-path invariants are void with the runtime that carried them
 
 ## Future Requirements (v6.1+)
 
@@ -153,15 +165,15 @@ Source: approved implementation plan (`~/.claude/plans/klaus-is-extremely-stupid
 | OCC-05 | Phase 33 | Complete |
 | OCC-06 | Phase 33 | Complete |
 | OCC-07 | Phase 33 | Complete |
-| WB-01 | Phase 34 | Pending |
-| WB-02 | Phase 34 | Pending |
-| WB-03 | Phase 34 | Pending |
-| WB-04 | Phase 34 | Pending |
-| HARD-01 | Phase 35 | Pending |
-| HARD-02 | Phase 35 | Pending |
-| HARD-03 | Phase 35 | Pending |
-| HARD-04 | Phase 35 | Pending |
-| HARD-05 | Phase 35 | Pending |
+| WB-01 | Phase 34 → v7 | Complete (v7) |
+| WB-02 | Phase 34 → v7 | Complete (v7) |
+| WB-03 | Phase 34 → v7 | Complete (v7, reframed) |
+| WB-04 | Phase 34 → v7 | Complete (v7 rebuild) |
+| HARD-01 | Phase 35 → v7 | Void — tick-brain retired |
+| HARD-02 | Phase 35 → v7 | Complete (v7) |
+| HARD-03 | Phase 35 → v7 | Complete (quarantined) |
+| HARD-04 | Phase 35 → v7 | Void — worker retired |
+| HARD-05 | Phase 35 → v7 | Complete (v7) |
 
 **Coverage:**
 - v6.0 requirements: 37 total

@@ -1,19 +1,34 @@
 # Milestones — Klaus
 
-## v7.0 Subscription-First Personal OS (Implementation complete; live gates pending)
+## v7.0 Subscription-First Personal OS (Cut over and live; one observation gate open)
 
-**Rebaselined:** 2026-08-08
+**Rebaselined:** 2026-08-08 · **Status reconciled:** 2026-08-15
+
 **Delivered in code:** provider-neutral state extensions; OAuth 2.1/PKCE scoped
 MCP resources; versioned Claude skills; subscription Remote Routine trigger and
 ten-minute fallback state machine; deterministic waking-hours rules; review,
 activity, approval, portfolio, usage, and agent-status Hub contracts; Ask Claude
 frontend; rollback/capability flags and operator checklist.
 
-**Not yet a production cutover:** Amit's Claude Pro account must pass the four
-capability proofs, shadow routines, independent cutovers, real iPhone/Hub UAT,
-and a seven-day observation. Legacy code/secrets are intentionally retained
-until then. Unfinished v6 Phases 34–35 are superseded, with training write-back,
-audit, eval, cleanup, and documentation obligations carried into v7.
+**Cut over 2026-08-09 → 2026-08-14.** All four capability proofs passed
+(`KLAUS_CAPABILITY_*_VERIFIED=true`). Morning, nightly and weekly routines were
+cut over independently and all three run live through Claude. The legacy
+generative runtime, Telegram, Hub AI chat, chat ingestion and the worker and
+tick-brain layers were removed from the codebase; their credentials were
+revoked and their infrastructure quarantined rather than deleted. Things became
+the sole task authority. Gemini remains only as the restricted embedding
+credential.
+
+**Still open:** the seven-day observation (UAT-04), closing 2026-08-20, after
+which the quarantined infrastructure can be permanently deleted. One live
+defect is outstanding — `CLAUDE_PROJECT_URL` never reached the service, so the
+Hub cannot launch the Claude Project (CUT-02).
+
+**Carried v6 obligations, resolved 2026-08-15:** training write-back (WB-01/02)
+is live; the reconciled planned-vs-actual window (WB-04) was rebuilt
+deterministically as `core/training_reality.py` after the original died with
+the cascade; the tick-brain eval and worker-retirement obligations (HARD-01,
+HARD-04) are void along with the runtimes they targeted.
 
 ---
 
