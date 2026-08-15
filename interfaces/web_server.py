@@ -996,22 +996,24 @@ async def api_auth_logout() -> JSONResponse:
 
 @app.post("/api/auth/revoke-all")
 async def api_auth_revoke_all(
-    request: Request,
+    _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
     """Bump session_version to invalidate every previously-issued cookie (D-02).
 
     Also clears the cookie on the current device. After this call every existing
     session cookie (on every device) will fail the version check and return 401.
 
-    Requires an active session cookie (Depends(require_hub_session) — enforced
-    via the FastAPI dependency below). Intended for "lost phone" scenarios.
+    Requires an active session cookie via Depends(require_hub_session).
+    Declared as a dependency rather than called in the body so the gate is
+    visible to route introspection — an in-body call is equally secure but
+    invisible to the test that proves no /api route is left unguarded.
+    Intended for "lost phone" scenarios.
 
     Raises:
         HTTPException 401: No valid session cookie.
         HTTPException 500: HUB_SESSION_SECRET or Firestore unavailable.
     """
     import interfaces.hub_auth as _hub_auth  # lazy import — Shared Pattern 5
-    _email: str = await _hub_auth.require_hub_session(request)  # auth gate
     loop = asyncio.get_running_loop()
 
     def _bump_version() -> None:
