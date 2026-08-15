@@ -74,6 +74,43 @@ def _stub_web_server_imports() -> dict:
 # ------------------------------------------------------------------ #
 
 
+def test_today_calendar_uses_the_process_shared_calendar_client():
+    """Repeated snapshots use the shared Calendar client and its in-memory token."""
+    stubs = _stub_web_server_imports()
+    shared_calendar = MagicMock()
+    shared_calendar.list_events.return_value = [
+        {
+            "id": "event-1",
+            "summary": "Static OAuth design review",
+            "start": "2026-08-14T15:00:00+03:00",
+            "end": "2026-08-14T15:30:00+03:00",
+            "location": "",
+        }
+    ]
+    shared_tools = MagicMock(name="core.tools")
+    shared_tools._get_calendar_tool.return_value = shared_calendar
+    stubs["core.tools"] = shared_tools
+
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+        first = ws._today_calendar("2026-08-14")
+        second = ws._today_calendar("2026-08-14")
+
+    expected = {
+        "all_day": [],
+        "timed": [
+            {
+                "id": "event-1",
+                "title": "Static OAuth design review",
+                "start": "2026-08-14T15:00:00+03:00",
+                "end": "2026-08-14T15:30:00+03:00",
+            }
+        ],
+    }
+    assert first == expected
+    assert second == expected
+
+
 def test_today_returns_expected_keys():
     """GET /api/today returns the documented timeline shape.
 

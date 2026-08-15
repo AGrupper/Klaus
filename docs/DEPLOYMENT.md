@@ -35,15 +35,18 @@ The dedicated embedding project is `klaus-embeddings-838733`. It permits only
 Monthly` is 15 ILS with alerts at 50%, 90%, and 100%. Never bind the retired
 general `klaus-gemini-key` to Cloud Run.
 
-## OAuth token version retention
+## Static Calendar OAuth credential
 
-`SecretManagerTokenStorage.save()` writes the refreshed Calendar-only token,
-then best-effort keeps the newest working version plus one rollback. Old enabled
-versions are disabled; only versions already disabled before that refresh can
-be destroyed. Cleanup failures are logged but never turn a persisted refresh
-into a failed Calendar call. The runtime service account needs per-secret
-`secretVersionAdder` and `secretVersionManager` roles on
-`klaus-google-oauth-token`, in addition to per-secret `secretAccessor`.
+Secret Manager holds one long-lived, Calendar-only refresh credential. Google
+access tokens are renewed in process memory and are never written back to
+Secret Manager. The Cloud Run runtime service account therefore needs only the
+per-secret `secretAccessor` role on `klaus-google-oauth-token`; granting it
+`secretVersionAdder` or `secretVersionManager` is production drift.
+
+Only the operator reauthorization flow may add a version. After an explicit new
+grant, retention keeps the newest working version plus one rollback. Old enabled
+versions are disabled; only versions already disabled before that operator run
+can be destroyed.
 
 The operator can inspect the exact plan without changing anything:
 
@@ -62,6 +65,20 @@ python scripts/manage_secret_versions.py \
   --destroy-grace-days 7 \
   --apply \
   --confirm-secret klaus-google-oauth-token
+```
+
+After deploying the static-token code, remove the obsolete runtime write roles
+without changing the accessor grant:
+
+```bash
+gcloud secrets remove-iam-policy-binding klaus-google-oauth-token \
+  --project klaus-agent \
+  --member serviceAccount:klaus-runtime@klaus-agent.iam.gserviceaccount.com \
+  --role roles/secretmanager.secretVersionAdder
+gcloud secrets remove-iam-policy-binding klaus-google-oauth-token \
+  --project klaus-agent \
+  --member serviceAccount:klaus-runtime@klaus-agent.iam.gserviceaccount.com \
+  --role roles/secretmanager.secretVersionManager
 ```
 
 ## Infrastructure hygiene policies

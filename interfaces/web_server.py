@@ -1067,8 +1067,10 @@ def _today_calendar(today_iso: str) -> dict:
     Each event dict carries: id, title, start, end, location (if present).
     """
     try:
-        import core.auth_google as _auth  # lazy import — Shared Pattern 5
-        from mcp_tools.calendar_tool import GoogleCalendarManager
+        # WHY shared: the singleton retains Google's short-lived access token
+        # in process memory. Rebuilding authentication for every ten-minute
+        # snapshot would repeatedly exchange the same static refresh grant.
+        from core.tools import _get_calendar_tool  # lazy import — Shared Pattern 5
         from datetime import date as _date, datetime as _dt
         from zoneinfo import ZoneInfo as _ZI
 
@@ -1080,8 +1082,7 @@ def _today_calendar(today_iso: str) -> dict:
             hour=23, minute=59, second=59, tzinfo=tz
         )
 
-        auth_manager = _auth.build_auth_manager_from_env()
-        cal = GoogleCalendarManager(auth_manager)
+        cal = _get_calendar_tool()
         raw_events = cal.list_events(
             day_start.isoformat(),
             day_end.isoformat(),

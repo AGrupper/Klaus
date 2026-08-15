@@ -149,6 +149,9 @@ def audit_snapshot(manifest: dict[str, Any], snapshot: dict[str, Any]) -> list[s
     for role in manifest["iam"]["oauth_secret_additional_roles"]:
         if runtime_member not in _binding_members(oauth_policy, role):
             findings.append(f"OAuth secret is missing runtime role: {role}")
+    for role in manifest["iam"]["oauth_secret_forbidden_roles"]:
+        if runtime_member in _binding_members(oauth_policy, role):
+            findings.append(f"forbidden OAuth secret role remains on runtime: {role}")
 
     firestore = snapshot.get("firestore", {})
     if firestore.get("database") != manifest["firestore"]["database"]:

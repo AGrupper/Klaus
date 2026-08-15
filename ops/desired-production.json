@@ -206,7 +206,8 @@
     "required_per_secret_roles": [
       "roles/secretmanager.secretAccessor"
     ],
-    "oauth_secret_additional_roles": [
+    "oauth_secret_additional_roles": [],
+    "oauth_secret_forbidden_roles": [
       "roles/secretmanager.secretVersionAdder",
       "roles/secretmanager.secretVersionManager"
     ]

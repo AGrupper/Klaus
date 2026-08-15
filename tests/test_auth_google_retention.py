@@ -1,4 +1,4 @@
-"""Google OAuth Secret Manager retention regression tests."""
+"""Google OAuth operator-reauthorization retention regression tests."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -20,7 +20,7 @@ def _version(number: int, state: str) -> SimpleNamespace:
 
 
 def test_secret_manager_save_keeps_two_and_prunes_in_two_phases():
-    """A refresh keeps newest+rollback, disables old enabled, destroys old disabled."""
+    """A new grant keeps newest+rollback and prunes older stored grants."""
     client = MagicMock()
     client.list_secret_versions.return_value = [
         _version(5, "ENABLED"),
@@ -59,7 +59,7 @@ def test_secret_manager_save_keeps_two_and_prunes_in_two_phases():
 
 
 def test_secret_manager_save_does_not_fail_when_best_effort_pruning_fails(caplog):
-    """A persisted token remains a successful save when retention lacks IAM."""
+    """A persisted grant remains saved when operator retention fails."""
     client = MagicMock()
     client.list_secret_versions.side_effect = PermissionError("no version-manager role")
     storage = SecretManagerTokenStorage(
@@ -78,7 +78,7 @@ def test_secret_manager_save_does_not_fail_when_best_effort_pruning_fails(caplog
 
 
 def test_secret_manager_save_still_surfaces_write_failure():
-    """Retention must not hide failure to persist the refreshed token itself."""
+    """Retention must not hide failure to persist the newly consented grant."""
     client = MagicMock()
     client.add_secret_version.side_effect = RuntimeError("write failed")
     storage = SecretManagerTokenStorage(

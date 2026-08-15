@@ -125,19 +125,18 @@ class SecretManagerTokenStorage:
     this class only manages versions (add / read latest).
 
     IAM requirement:
-        The runtime service account needs the `secretmanager.secretVersionAdder`
-        and `secretmanager.secretVersionManager` roles on this secret. The
-        latter is used only for best-effort retention after a successful save.
+        The runtime service account needs only `secretmanager.secretAccessor`.
+        Version-adder and version-manager permissions belong to the operator
+        identity used for explicit reauthorization, never to Cloud Run.
 
     WHY immutable versions:
         Secret Manager versions are immutable — you can never overwrite a
-        version's payload. Each token refresh therefore creates a new version.
-        `load` always reads `latest`, which automatically resolves to the
-        most recently added version. After each successful write, Klaus keeps
-        the newest working version plus one rollback version. Older enabled
-        versions are disabled; versions already disabled by an earlier refresh
-        are destroyed. Retention failure never turns a successful save into a
-        failed Calendar operation.
+        version's payload. An explicit reauthorization therefore creates a new
+        version, and `load` resolves `latest` to that operator-approved grant.
+        Ordinary one-hour access-token renewals stay in process memory and do
+        not call `save`. After an explicit write, Klaus keeps the newest working
+        version plus one rollback version. Older enabled versions are disabled;
+        versions already disabled by an earlier write are destroyed.
     """
 
     def __init__(self, project_id: str, secret_name: str) -> None:
@@ -177,9 +176,9 @@ class SecretManagerTokenStorage:
         """Add a new secret version containing the token JSON.
 
         WHY a new version instead of overwrite:
-            Secret Manager versions are immutable by design. Each refresh
-            cycle adds a new version; `load` always resolves `latest` to
-            the newest one. Old versions are kept but never used.
+            Secret Manager versions are immutable by design. This method is
+            reserved for a new consent grant, not ordinary access-token
+            renewal. `load` resolves `latest` to the newest approved grant.
         """
         from google.cloud import secretmanager
 
@@ -210,10 +209,9 @@ class SecretManagerTokenStorage:
         """Keep latest+rollback using separate disable and destroy phases."""
         from core.secret_retention import apply_plan, plan_for_client
 
-        # No age gate is needed in the hourly runtime path because destruction
-        # is limited to versions observed as DISABLED before this invocation.
-        # A version disabled below therefore survives at least until a later
-        # refresh, while the two newest usable versions are always retained.
+        # Destruction is limited to versions observed as DISABLED before this
+        # explicit write. A version disabled below therefore survives until a
+        # later operator cleanup, while the two newest usable grants remain.
         plan = plan_for_client(
             client,
             parent,
@@ -236,9 +234,9 @@ class GoogleAuthManager:
     Lifecycle:
         1. First call to `get_credentials()` runs the browser consent flow
            and persists the token via the storage backend.
-        2. Subsequent calls load the token via the storage backend and
-           silently refresh the access token when needed — no browser,
-           no user interaction.
+        2. Subsequent calls load the static refresh credential and silently
+           renew short-lived access tokens in memory — no browser, no user
+           interaction, and no storage rotation.
     """
 
     SCOPES: list[str] = [CALENDAR_SCOPE]
@@ -284,11 +282,13 @@ class GoogleAuthManager:
         if creds is not None and not creds.valid:
             if creds.expired and creds.refresh_token:
                 try:
-                    # WHY: this is the hot path on every long-running invocation.
-                    # If refresh succeeds we save the new access_token back to
-                    # storage so the next process start is also seamless.
+                    # WHY in-memory only: the stored refresh credential is the
+                    # durable authorization. Google access tokens are temporary,
+                    # and persisting each renewal to immutable Secret Manager
+                    # creates a billable secret version every hour. A future
+                    # process can load the same refresh credential and obtain
+                    # its own access token without rotating storage.
                     creds.refresh(Request())
-                    self._persist_token(creds)
                 except RefreshError as exc:
                     # WHY: a RefreshError means the refresh token itself is no
                     # longer accepted (revoked, expired, scopes changed, or
@@ -388,7 +388,7 @@ class GoogleAuthManager:
         return flow.run_local_server(port=0)
 
     def _persist_token(self, creds: Credentials) -> None:
-        """Persist the credentials via the storage backend."""
+        """Persist a newly consented credential via the storage backend."""
         self._token_storage.save(creds.to_json())
 
 
