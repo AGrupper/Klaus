@@ -254,8 +254,14 @@ def analyze(flat: list[tuple[str, int, str, dict]], state: dict[str, dict]) -> N
     print(f"  Open to-dos : {len(live)}")
     for code, name in bucket.items():
         print(f"    {name:<8}: {sum(1 for t in live if t.get('st') == code)}")
-    print(f"  Projects    : {[t.get('tt') for t in tasks
-                              if t.get('tp') == 1 and t.get('ss') == 0 and not t.get('tr')]}")
+    # Computed outside the f-string: a multi-line expression inside one is
+    # PEP 701 syntax, valid on 3.12+ but a SyntaxError on the 3.11 that
+    # production and CI run.
+    projects = [
+        t.get("tt") for t in tasks
+        if t.get("tp") == 1 and t.get("ss") == 0 and not t.get("tr")
+    ]
+    print(f"  Projects    : {projects}")
     print(f"  Areas       : {[a.get('tt') for a in by_class.get('Area3', [])]}")
     print(f"  Tags        : {[t.get('tt') for t in by_class.get('Tag4', [])]}")
 

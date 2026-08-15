@@ -54,7 +54,14 @@ def test_live_and_routine_mcp_mount_independently():
     with patch.dict(os.environ, env, clear=False), patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws
 
-        paths = {route.path for route in ws.app.routes}
+        # Newer FastAPI puts router wrappers without a ``path`` in
+        # ``app.routes`` alongside real routes, so enumerate defensively
+        # rather than assuming every entry is a path-bearing route.
+        paths = {
+            path
+            for path in (getattr(route, "path", None) for route in ws.app.routes)
+            if path
+        }
 
     assert "/mcp/interactive" in paths
     assert "/mcp/routine" not in paths
