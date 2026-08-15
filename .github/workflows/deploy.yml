@@ -48,18 +48,63 @@ jobs:
       # emptied, and every write and detail call failed for two nights before
       # anyone noticed. Fail here instead — this check costs nothing and the
       # silent version cost days.
-      - name: Verify required identity secrets resolve
+      # Guarding only KLAUS_USER_ID moved the next outage to a different key
+      # rather than preventing it: CLAUDE_PROJECT_URL was never set as a
+      # repository variable, expanded to empty, was dropped from the service,
+      # and left the Hub unable to launch the Claude Project. Every value that
+      # arrives through a GitHub expression is checked here.
+      - name: Verify required secrets and variables resolve
         env:
           KLAUS_USER_ID: ${{ secrets.KLAUS_USER_ID }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          CLAUDE_PROJECT_URL: ${{ vars.CLAUDE_PROJECT_URL }}
+          CLAUDE_ROUTINE_TRIGGER_URL_MORNING: ${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_MORNING }}
+          CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY: ${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY }}
+          CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY: ${{ vars.CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
         run: |
+          missing=0
           if [ -z "$KLAUS_USER_ID" ]; then
-            echo "::error::KLAUS_USER_ID resolved to empty — the repository"
-            echo "::error::secret is missing. Without it every MCP write and"
-            echo "::error::detail call fails at runtime. Add it in Settings ->"
-            echo "::error::Secrets and variables -> Actions."
+            echo "::error::KLAUS_USER_ID resolved to empty (secret). Every MCP"
+            echo "::error::write and detail call fails at runtime without it."
+            missing=1
+          fi
+          if [ -z "$GCP_PROJECT_ID" ]; then
+            echo "::error::GCP_PROJECT_ID resolved to empty (secret). Firestore"
+            echo "::error::and every store read fall back to the wrong project."
+            missing=1
+          fi
+          if [ -z "$CLAUDE_PROJECT_URL" ]; then
+            echo "::error::CLAUDE_PROJECT_URL resolved to empty (variable). The"
+            echo "::error::Hub's Ask Claude page cannot launch the project."
+            missing=1
+          fi
+          if [ -z "$CLAUDE_ROUTINE_TRIGGER_URL_MORNING" ]; then
+            echo "::error::CLAUDE_ROUTINE_TRIGGER_URL_MORNING resolved to empty"
+            echo "::error::(variable). The morning routine cannot be triggered."
+            missing=1
+          fi
+          if [ -z "$CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY" ]; then
+            echo "::error::CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY resolved to empty"
+            echo "::error::(variable). The nightly routine cannot be triggered."
+            missing=1
+          fi
+          if [ -z "$CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY" ]; then
+            echo "::error::CLAUDE_ROUTINE_TRIGGER_URL_WEEKLY resolved to empty"
+            echo "::error::(variable). The weekly routine cannot be triggered."
+            missing=1
+          fi
+          if [ -z "$GOOGLE_OAUTH_CLIENT_ID" ]; then
+            echo "::error::GOOGLE_OAUTH_CLIENT_ID resolved to empty (variable"
+            echo "::error::VITE_GOOGLE_CLIENT_ID). Hub sign-in breaks."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Add the missing entries in Settings -> Secrets and"
+            echo "::error::variables -> Actions, then re-run this workflow."
             exit 1
           fi
-          echo "KLAUS_USER_ID resolves (${#KLAUS_USER_ID} chars)"
+          echo "All required secrets and variables resolve."
 
       # Configures Docker's credential helper so subsequent docker push calls
       # are automatically authenticated against Artifact Registry.

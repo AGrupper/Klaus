@@ -527,3 +527,43 @@ def test_operator_scripts_are_directly_executable_from_repository_root():
             timeout=10,
         )
         assert result.returncode == 0, result.stderr
+
+
+def _interpolated_deploy_keys() -> dict[str, str]:
+    """Return deploy env keys whose value comes from a GitHub expression.
+
+    These are exactly the keys that can silently become empty: GitHub expands an
+    unset secret or variable to the empty string, Cloud Run is simply never sent
+    the key, and the deploy still reports success.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    marker = '--set-env-vars "'
+    start = workflow.index(marker) + len(marker)
+    end = workflow.index('"', start)
+    interpolated = {}
+    for segment in workflow[start:end].split(","):
+        if "=" not in segment:
+            continue
+        key, _, value = segment.partition("=")
+        key = key.strip()
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", key) and "${{" in value:
+            interpolated[key] = value.strip()
+    return interpolated
+
+
+def test_every_interpolated_deploy_value_is_guarded_against_being_empty():
+    """A missing secret or variable must fail the deploy, not ship a broken service.
+
+    KLAUS_USER_ID emptied silently on 2026-08-13 and broke every MCP write for
+    two nights. CLAUDE_PROJECT_URL emptied the same way and left the Hub unable
+    to launch the Claude Project. Guarding one key and not the rest just moves
+    the next outage to a different key.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+
+    unguarded = [
+        key for key in sorted(_interpolated_deploy_keys())
+        if f'if [ -z "${key}" ]' not in workflow
+    ]
+
+    assert unguarded == [], f"deploy values with no empty-value guard: {unguarded}"
