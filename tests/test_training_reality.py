@@ -265,3 +265,91 @@ def test_build_marks_reality_degraded_when_a_source_fails(monkeypatch):
 
     assert reality["degraded"] == ["training_log"]
     assert reality["evidence_complete"] is False
+
+
+# --- Contiguous-activity grouping (75-minute rule, Amit's choice 2026-08-15) ---
+
+def test_a_warmup_track_session_and_cooldown_read_as_one_session():
+    """Amit's 2026-08-12 track morning arrived as four Garmin activities.
+
+    Reported separately, Klaus would tell him he trained four times that day.
+    Activities whose gap is under 75 minutes are one session.
+    """
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[],
+        strength_sessions=[],
+        garmin_activities=[
+            {"activity_id": 1, "date": "2026-08-14 07:00:00", "type": "running",
+             "duration_sec": 900},
+            {"activity_id": 2, "date": "2026-08-14 07:20:00", "type": "track_running",
+             "duration_sec": 1400},
+            {"activity_id": 3, "date": "2026-08-14 07:50:00", "type": "running",
+             "duration_sec": 600},
+        ],
+    )
+
+    sessions = _day(reality, "2026-08-14")["sessions"]
+
+    assert len(sessions) == 1
+    assert sorted(sessions[0]["evidence"]) == ["garmin:1", "garmin:2", "garmin:3"]
+
+
+def test_a_morning_run_and_an_evening_session_stay_separate():
+    """Genuinely separate training must not be merged into one."""
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[],
+        strength_sessions=[],
+        garmin_activities=[
+            {"activity_id": 10, "date": "2026-08-14 07:00:00", "type": "running",
+             "duration_sec": 1800},
+            {"activity_id": 11, "date": "2026-08-14 18:00:00", "type": "running",
+             "duration_sec": 1800},
+        ],
+    )
+
+    assert len(_day(reality, "2026-08-14")["sessions"]) == 2
+
+
+def test_hevy_utc_timestamps_are_compared_in_local_time():
+    """Hevy stores UTC, Garmin stores naive local — mixing them is a 3h error.
+
+    A Hevy workout at 12:00 UTC is 15:00 in Asia/Jerusalem. Compared naively it
+    would look adjacent to a 12:30 local run and be merged into it.
+    """
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[],
+        strength_sessions=[
+            {"date": "2026-08-14", "workout_id": "hvA", "title": "Lower Body",
+             "start_time": "2026-08-14T12:00:00+00:00", "duration_min": 50},
+        ],
+        garmin_activities=[
+            {"activity_id": 20, "date": "2026-08-14 12:30:00", "type": "running",
+             "duration_sec": 1800},
+        ],
+    )
+
+    assert len(_day(reality, "2026-08-14")["sessions"]) == 2
+
+
+def test_one_planned_row_is_satisfied_by_a_whole_multi_part_session():
+    """A planned track session is closed by the session, not by one lap of it."""
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[
+            {"date": "2026-08-14", "slot": "trk", "type": "Track", "planned": True},
+        ],
+        strength_sessions=[],
+        garmin_activities=[
+            {"activity_id": 31, "date": "2026-08-14 07:00:00", "type": "running",
+             "duration_sec": 900},
+            {"activity_id": 32, "date": "2026-08-14 07:20:00", "type": "track_running",
+             "duration_sec": 1200},
+        ],
+    )
+
+    sessions = _day(reality, "2026-08-14")["sessions"]
+
+    assert [s["status"] for s in sessions] == ["completed"]

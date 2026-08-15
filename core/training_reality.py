@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_DAYS_BACK = 7
 DEFAULT_DAYS_FORWARD = 1
 
+# Garmin saves a warmup, the main effort and a cooldown as separate activities,
+# so one track morning arrives as three or four records. Reported separately
+# Klaus would say Amit trained four times that day. Activities less than this
+# far apart are one session (Amit's choice, 2026-08-15).
+SESSION_GAP_MINUTES = 75
+LOCAL_TZ = "Asia/Jerusalem"
+
 
 def _as_date_key(value: Any) -> str:
     """Return the YYYY-MM-DD prefix of a date or timestamp field.
@@ -50,6 +57,29 @@ def _window_dates(today: str, days_back: int, days_forward: int) -> list[str]:
     return [(anchor + timedelta(days=offset)).isoformat() for offset in span]
 
 
+def _local_start(value: Any) -> datetime | None:
+    """Parse a start timestamp into naive local (Asia/Jerusalem) time.
+
+    The two sources disagree about timezones: Hevy stores UTC-aware ISO
+    timestamps, Garmin stores naive local ones. Comparing them raw is a
+    three-hour error in summer, which would merge unrelated sessions or split
+    contiguous ones. Everything is normalised to naive local before any gap is
+    measured.
+    """
+    from zoneinfo import ZoneInfo
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(ZoneInfo(LOCAL_TZ)).replace(tzinfo=None)
+    return parsed
+
+
 def _evidence_for_date(
     strength_sessions: list[dict],
     garmin_activities: list[dict],
@@ -58,23 +88,75 @@ def _evidence_for_date(
     """Return every piece of completion evidence recorded on one date.
 
     Evidence is anything that proves training happened: a Hevy workout or a
-    Garmin activity. Each item carries a stable ``ref`` so a caller can point
-    at the exact record a conclusion came from.
+    Garmin activity. Each item carries stable ``refs`` so a caller can point at
+    the exact records a conclusion came from, plus the timing needed to decide
+    whether neighbouring records are really one session.
     """
     evidence: list[dict] = []
     for session in strength_sessions:
         if _as_date_key(session.get("date")) == target_date:
+            duration_min = session.get("duration_min") or 0
             evidence.append({
-                "ref": f"hevy:{session.get('workout_id')}",
+                "refs": [f"hevy:{session.get('workout_id')}"],
                 "label": session.get("title") or "Strength session",
+                "start": _local_start(session.get("start_time")),
+                "duration_sec": int(float(duration_min) * 60),
             })
     for activity in garmin_activities:
         if _as_date_key(activity.get("date")) == target_date:
             evidence.append({
-                "ref": f"garmin:{activity.get('activity_id')}",
+                "refs": [f"garmin:{activity.get('activity_id')}"],
                 "label": activity.get("type") or "Activity",
+                "start": _local_start(activity.get("date")),
+                "duration_sec": int(activity.get("duration_sec") or 0),
             })
-    return evidence
+    return _group_contiguous(evidence)
+
+
+def _group_contiguous(evidence: list[dict]) -> list[dict]:
+    """Merge evidence records less than ``SESSION_GAP_MINUTES`` apart.
+
+    The gap measured is from the end of one record to the start of the next, so
+    a long run followed straight by a cooldown groups correctly rather than
+    being split because its start times are far apart.
+
+    Records with no usable start time cannot be placed on the timeline, so they
+    are left as their own sessions rather than guessed into a neighbour.
+    """
+    timed = sorted(
+        (item for item in evidence if item["start"] is not None),
+        key=lambda item: item["start"],
+    )
+    untimed = [item for item in evidence if item["start"] is None]
+
+    grouped: list[dict] = []
+    for item in timed:
+        if grouped:
+            previous = grouped[-1]
+            previous_end = previous["start"] + timedelta(
+                seconds=previous["duration_sec"]
+            )
+            gap = (item["start"] - previous_end).total_seconds() / 60
+            if gap < SESSION_GAP_MINUTES:
+                # Merge: keep the earliest start, extend the span to this
+                # record's end, and keep the longest part's label as the name
+                # of the session — a 20-minute track effort describes the
+                # morning better than the 5-minute cooldown that ended it.
+                previous_end_new = item["start"] + timedelta(
+                    seconds=item["duration_sec"]
+                )
+                previous["refs"].extend(item["refs"])
+                previous["duration_sec"] = int(
+                    (previous_end_new - previous["start"]).total_seconds()
+                )
+                if item["duration_sec"] > previous.get("longest_part", 0):
+                    previous["label"] = item["label"]
+                    previous["longest_part"] = item["duration_sec"]
+                continue
+        item.setdefault("longest_part", item["duration_sec"])
+        grouped.append(item)
+
+    return grouped + untimed
 
 
 def _reconcile_one_day(
@@ -123,10 +205,10 @@ def _reconcile_one_day(
             # an unplanned extra session.
             session["status"] = "completed"
             if unconsumed:
-                session["evidence"].append(unconsumed.pop(0)["ref"])
+                session["evidence"].extend(unconsumed.pop(0)["refs"])
         elif unconsumed:
             session["status"] = "completed"
-            session["evidence"].append(unconsumed.pop(0)["ref"])
+            session["evidence"].extend(unconsumed.pop(0)["refs"])
         elif target_date >= today:
             session["status"] = "planned"
         elif evidence_sources_degraded:
@@ -143,7 +225,7 @@ def _reconcile_one_day(
             "type": leftover["label"],
             "skipped_reason": None,
             "status": "unplanned",
-            "evidence": [leftover["ref"]],
+            "evidence": list(leftover["refs"]),
         })
 
     return sessions
