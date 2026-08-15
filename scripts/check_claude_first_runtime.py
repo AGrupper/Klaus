@@ -36,10 +36,12 @@ _FORBIDDEN_MARKERS = (
     "core.prompt_loader",
     "mcp_tools.gmail_tool",
     "mcp_tools.readwise_tool",
+    "mcp_tools.notion_tool",
     "mcp_tools.self_inspect",
     "CHAT_LOGS_BUCKET",
     "NOTION_CHAT_LOG_DB_ID",
     "NOTION_AI_CHAT_DB_ID",
+    "NOTION_API_TOKEN",
     "READWISE_TOKEN",
     "google-cloud-monitoring",
     "google-cloud-run",
@@ -61,6 +63,11 @@ _FORBIDDEN_ENV_PREFIXES = (
 )
 _SKIPPED_PREFIXES = (
     ".git/",
+    # Worktrees are gitignored scratch checkouts of other branches. CI clones
+    # fresh and never sees them, so scanning them only makes local runs fail on
+    # code that is not shipping from this tree.
+    ".worktrees/",
+    ".claude/worktrees/",
     ".venv/",
     "tests/",
     ".superpowers/",

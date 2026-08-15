@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,26 +59,43 @@ def test_checked_in_dependency_set_excludes_retired_connector_support() -> None:
     assert "embedding client only" in requirements
 
 
-def test_notion_module_exposes_no_retired_chat_import_helpers() -> None:
-    """Notion keeps its MCP operations without the removed chat-import pipeline."""
-    from mcp_tools import notion_tool
+def test_notion_connector_is_retired_in_favour_of_the_claude_connector() -> None:
+    """Notion moved to Claude's own connector; Klaus must not rebuild it.
 
-    for name in (
-        "build_chat_log_properties",
-        "build_ai_chat_properties",
-        "update_page_properties",
-        "upsert_database_row",
-    ):
-        assert not hasattr(notion_tool, name)
+    Claude's Notion connector reaches strictly more of the workspace than the
+    integration token ever did, and nothing in Klaus reads Notion data — it was
+    pure pass-through — so the module and its secret are gone rather than
+    duplicated.
+    """
+    import importlib
 
-    for name in (
-        "search",
-        "get_page",
-        "query_database",
-        "create_page",
-        "append_blocks",
-    ):
-        assert callable(getattr(notion_tool, name))
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("mcp_tools.notion_tool")
+
+    assert not (ROOT / "mcp_tools" / "notion_tool.py").exists()
+    assert not (ROOT / "scripts" / "smoke_test_notion.py").exists()
+
+    from core.tools import TOOL_SCHEMAS, _HANDLERS
+
+    assert not [name for name in _HANDLERS if name.startswith("notion_")]
+    assert not [t for t in TOOL_SCHEMAS if t["name"].startswith("notion_")]
+
+
+def test_retired_connector_secrets_are_not_bound_in_production() -> None:
+    """The Notion token is quarantined, not still wired into the service."""
+    import json
+
+    desired = json.loads(
+        (ROOT / "ops" / "desired-production.json").read_text(encoding="utf-8")
+    )
+    assert "NOTION_API_TOKEN" not in desired["service"]["secret_bindings"]
+    assert "klaus-notion-api-token" not in desired["secrets"]["runtime_access"]
+    assert "notion" not in desired["connectors"]
+
+    quarantine = json.loads(
+        (ROOT / "ops" / "policies" / "quarantine.json").read_text(encoding="utf-8")
+    )
+    assert "klaus-notion-api-token" in quarantine["resources"]["secrets"]
 
 
 def test_retired_connector_support_artifacts_are_absent() -> None:

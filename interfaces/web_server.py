@@ -124,7 +124,6 @@ _CONNECTOR_EVIDENCE = {
     "calendar": {"tools": {"list_calendar_events", "create_calendar_event"}},
     "google_routes": {"routes": {"GET /api/today"}},
     "things": {"tools": {"task_list", "task_create"}},
-    "notion": {"tools": {"notion_search", "notion_create_page"}},
     "garmin": {"tools": {"fetch_garmin_today"}},
     "hevy": {"tools": {"get_strength_progress"}},
     "healthkit_lifesum": {"routes": {"POST /cron/healthkit-sync"}},

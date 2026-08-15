@@ -96,7 +96,6 @@ def _install_tools_mocks() -> None:
         "mcp_tools.weather_tool",
         "mcp_tools.readwise_tool",
         "mcp_tools.garmin_tool",
-        "mcp_tools.notion_tool",
         "mcp_tools.memory",
         "mcp_tools.self_inspect",
         "mcp_tools.healthkit_tool",

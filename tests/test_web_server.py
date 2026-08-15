@@ -526,8 +526,6 @@ class TestSPAMountRegression:
                 "create_calendar_event",
                 "task_list",
                 "task_create",
-                "notion_search",
-                "notion_create_page",
                 "fetch_garmin_today",
                 "get_strength_progress",
                 "fetch_weather",

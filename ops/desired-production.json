@@ -70,12 +70,12 @@
       "OCCASION_CASCADE",
       "CHAT_LOGS_BUCKET",
       "NOTION_CHAT_LOG_DB_ID",
-      "NOTION_AI_CHAT_DB_ID"
+      "NOTION_AI_CHAT_DB_ID",
+      "NOTION_API_TOKEN"
     ],
     "secret_bindings": {
       "GEMINI_EMBEDDING_API_KEY": "klaus-gemini-embedding-key",
       "PINECONE_API_KEY": "klaus-pinecone-key",
-      "NOTION_API_TOKEN": "klaus-notion-api-token",
       "GARMIN_EMAIL": "klaus-garmin-email",
       "GARMIN_PASSWORD": "klaus-garmin-password",
       "HOME_ADDRESS": "klaus-home-address",
@@ -173,7 +173,6 @@
       "klaus-google-oauth-token",
       "klaus-gemini-embedding-key",
       "klaus-pinecone-key",
-      "klaus-notion-api-token",
       "klaus-garmin-email",
       "klaus-garmin-password",
       "klaus-home-address",
@@ -263,7 +262,6 @@
     "calendar",
     "google_routes",
     "things",
-    "notion",
     "garmin",
     "hevy",
     "healthkit_lifesum",

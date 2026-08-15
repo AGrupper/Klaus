@@ -72,7 +72,17 @@ WhatsApp sending is always user-initiated (tap a link or copy-paste a group mess
 
 **Interactive:** Briefing written into Firestore conversation history so replies are natural follow-up turns. Structured event/task IDs stored in `morning_briefings/{date}` for tool use.
 
-## 8. Notion Integration (Phase 11) ✓ Live
+## 8. Notion Integration (Phase 11) ✗ Retired — replaced by Claude's connector
+
+> **Retired (connector subtraction, 2026-08)**: Klaus no longer serves Notion
+> tools. Claude's own Notion connector reaches more of the workspace than the
+> integration token did — it sees everything Amit can see, rather than only pages
+> explicitly shared with the integration — and supports comments, file uploads,
+> teams and page duplication that Klaus never implemented. Nothing in Klaus read
+> Notion data, so there is no store to migrate. `NOTION_API_TOKEN` and
+> `klaus-notion-api-token` are retired; the secret is quarantined, not deleted.
+
+**Historical record of what Klaus used to provide.**
 
 **Access level:** Read + create/append (never edits or deletes existing content).
 

@@ -31,9 +31,6 @@ READ_TOOLS = frozenset(
         "recall",
         "fetch_weather",
         "fetch_garmin_today",
-        "notion_search",
-        "notion_get_page",
-        "notion_query_database",
         "get_self_status",
         "get_push_health",
         "list_followups",
@@ -67,8 +64,6 @@ WRITE_TOOLS = frozenset(
         "task_reschedule",
         "task_edit",
         "task_delete",
-        "notion_create_page",
-        "notion_append_blocks",
         "schedule_followup",
         "cancel_followup",
         "set_standing_directive",
@@ -314,8 +309,6 @@ class KlausMCPGateway:
                     self._idempotency_store.fail, idempotency_key, str(exc)
                 )
             raise
-        if tool_name.startswith("notion_"):
-            return {"untrusted_data": True, "source": "notion", "data": result}
         return result
 
     @staticmethod
@@ -470,7 +463,7 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
             readOnlyHint=not is_write,
             destructiveHint=name in {"delete_calendar_event", "task_delete"},
             idempotentHint=bool(is_write),
-            openWorldHint=name.startswith("notion_") or name == "fetch_weather",
+            openWorldHint=name == "fetch_weather",
         ),
         meta={
             "klaus/skillVersion": EXPECTED_SKILL_VERSION,
