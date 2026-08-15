@@ -1141,21 +1141,27 @@ TOOL_SCHEMAS: list[dict] = [
     {
         "name": "get_training_reality",
         "description": (
-            "Get the RECONCILED planned-vs-actual training picture for the last "
-            "few days through tomorrow. Each session comes back already resolved "
-            "to one status — completed, planned, missed, moved, cancelled, "
-            "skipped, or unplanned — with the evidence behind it. Use this "
-            "BEFORE asking Amit whether he did a session: a slot with evidence "
-            "against it is closed, and a session he moved is not a gap on the "
-            "date it left. Prefer this over reasoning across raw sources "
-            "yourself; get_training_context remains the wider analytical view."
+            "THE tool for any question about what training has or has not "
+            "happened — 'what did I do this week', 'did I miss anything', "
+            "'how has training gone', or before you assert that a session was "
+            "missed. Returns a week back through tomorrow with every session "
+            "already reconciled across the calendar, the training log, Hevy and "
+            "Garmin, so you never have to infer it from raw sources. Each "
+            "session carries one status: completed, planned, missed, "
+            "unverified, moved, cancelled, skipped, or unplanned — plus the "
+            "evidence refs behind it. `unverified` means a source was "
+            "unreadable, NOT that the session was skipped; check "
+            "`evidence_complete` and say so rather than calling it missed. A "
+            "slot with evidence against it is closed — never ask Amit to "
+            "confirm it. Use get_training_context instead only for wider "
+            "analysis (load, pace trends, nutrition correlation)."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "days_back": {
                     "type": "integer",
-                    "description": "Days before today to reconcile. Default 3.",
+                    "description": "Days before today to reconcile. Default 7.",
                 },
                 "days_forward": {
                     "type": "integer",

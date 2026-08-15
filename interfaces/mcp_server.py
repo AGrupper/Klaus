@@ -20,7 +20,7 @@ from interfaces.mcp_custom_schemas import custom_tool_schema
 from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
 
 
-EXPECTED_SKILL_VERSION = "7.3.0"
+EXPECTED_SKILL_VERSION = "7.3.1"
 
 READ_TOOLS = frozenset(
     {

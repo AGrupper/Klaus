@@ -129,11 +129,11 @@ def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
         assert "record proposed actions only in `partial_actions`" in normalized
 
 
-def test_skill_version_is_7_3_0_everywhere():
+def test_skill_version_is_7_3_1_everywhere():
     from interfaces.mcp_server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.3.0"
-    assert '"skill_version": "7.3.0"' in (
+    assert EXPECTED_SKILL_VERSION == "7.3.1"
+    assert '"skill_version": "7.3.1"' in (
         ROOT / "core" / "subscription_routines.py"
     ).read_text()
 

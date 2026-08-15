@@ -23,10 +23,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# The window the reconciler answers about: three days back through tomorrow.
-# Far enough back to catch a session logged late, far enough forward to show
-# what is still coming, short enough that it stays cheap to assemble.
-DEFAULT_DAYS_BACK = 3
+# The window the reconciler answers about: a week back through tomorrow.
+# Three days was the original span, but on real data it surfaced a single
+# session — too thin to answer "what training have I done lately". Training
+# runs on a weekly cycle and the weekly review needs the full week, so a week
+# is the useful default. Callers narrow or widen it per question.
+DEFAULT_DAYS_BACK = 7
 DEFAULT_DAYS_FORWARD = 1
 
 
@@ -80,12 +82,18 @@ def _reconcile_one_day(
     logged_rows: list[dict],
     evidence: list[dict],
     today: str,
+    evidence_sources_degraded: bool,
 ) -> list[dict]:
     """Reconcile one date's planned rows against that date's evidence.
 
     Rows are resolved in order, and each open planned row consumes one piece of
     evidence. Evidence left over after every row is satisfied is training that
     was never planned — which is worth seeing, not worth hiding.
+
+    When an evidence source could not be read, a past planned session with no
+    evidence resolves to ``unverified`` rather than ``missed``. Garmin returning
+    502 is routine, and reporting a session as missed on the strength of a
+    failed read would tell Amit he skipped training he actually did.
     """
     unconsumed = list(evidence)
     sessions: list[dict] = []
@@ -119,10 +127,12 @@ def _reconcile_one_day(
         elif unconsumed:
             session["status"] = "completed"
             session["evidence"].append(unconsumed.pop(0)["ref"])
-        elif target_date < today:
-            session["status"] = "missed"
-        else:
+        elif target_date >= today:
             session["status"] = "planned"
+        elif evidence_sources_degraded:
+            session["status"] = "unverified"
+        else:
+            session["status"] = "missed"
 
         sessions.append(session)
 
@@ -147,6 +157,7 @@ def reconcile_training_reality(
     garmin_activities: list[dict],
     days_back: int = DEFAULT_DAYS_BACK,
     days_forward: int = DEFAULT_DAYS_FORWARD,
+    evidence_sources_degraded: bool = False,
 ) -> dict:
     """Return the reconciled planned-vs-actual picture for the window.
 
@@ -157,13 +168,16 @@ def reconcile_training_reality(
         garmin_activities: Normalised Garmin activity dicts.
         days_back: Days before today to include.
         days_forward: Days after today to include.
+        evidence_sources_degraded: True when any source could not be read, which
+            downgrades what would have been a ``missed`` verdict to
+            ``unverified``.
 
     Returns:
         A dict with ``window`` (start/end dates) and ``days`` — one entry per
         calendar date, oldest first, each holding its reconciled ``sessions``.
         Every session carries a ``status`` of completed, planned, missed,
-        moved, cancelled, skipped, or unplanned, plus the ``evidence`` refs
-        behind it.
+        unverified, moved, cancelled, skipped, or unplanned, plus the
+        ``evidence`` refs behind it.
     """
     dates = _window_dates(today, days_back, days_forward)
     in_window = set(dates)
@@ -182,12 +196,43 @@ def reconcile_training_reality(
                 rows_by_date.get(target_date, []),
                 _evidence_for_date(strength_sessions, garmin_activities, target_date),
                 today,
+                evidence_sources_degraded,
             ),
         }
         for target_date in dates
     ]
 
     return {"window": {"start": dates[0], "end": dates[-1]}, "days": days}
+
+
+def _read_training_log(project_id: str, database: str, lookback: int):
+    """Return (rows, degraded_name). ``rows`` is None when the read failed."""
+    try:
+        from memory.firestore_db import TrainingLogStore
+        return TrainingLogStore(project_id, database).get_recent(lookback), None
+    except Exception:
+        logger.warning("training reality: training_log read failed", exc_info=True)
+        return None, "training_log"
+
+
+def _read_strength_sessions(project_id: str, database: str, lookback: int):
+    """Return (rows, degraded_name). ``rows`` is None when the read failed."""
+    try:
+        from memory.firestore_db import StrengthSessionStore
+        return StrengthSessionStore(project_id, database).get_recent(lookback), None
+    except Exception:
+        logger.warning("training reality: strength read failed", exc_info=True)
+        return None, "strength_sessions"
+
+
+def _read_garmin_activities(lookback: int):
+    """Return (activities, degraded_name). ``activities`` is None on failure."""
+    try:
+        from mcp_tools.garmin_tool import fetch_garmin_activities
+        return fetch_garmin_activities(lookback), None
+    except Exception:
+        logger.warning("training reality: garmin read failed", exc_info=True)
+        return None, "garmin_activities"
 
 
 def build_training_reality(
@@ -197,9 +242,13 @@ def build_training_reality(
     """Gather the live sources and return the reconciled window.
 
     Every read is best-effort and fail-open, matching ``get_training_context``:
-    one outage degrades the picture rather than denying the whole answer. A
-    source that could not be read is named in ``degraded`` so a caller can tell
-    "nothing happened" apart from "we could not see what happened".
+    one outage degrades the picture rather than denying the whole answer.
+
+    Degradation changes the verdicts, not just the metadata. A source that
+    could not be read is named in ``degraded``, ``evidence_complete`` says
+    whether every source answered, and any past planned session without
+    evidence resolves to ``unverified`` instead of ``missed`` — because a
+    failed Garmin read is not proof that Amit skipped a session.
     """
     from zoneinfo import ZoneInfo
 
@@ -208,31 +257,15 @@ def build_training_reality(
     today = datetime.now(ZoneInfo("Asia/Jerusalem")).date()
     lookback = days_back + 1
 
-    degraded: list[str] = []
+    training_log, log_degraded = _read_training_log(project_id, database, lookback)
+    strength_sessions, strength_degraded = _read_strength_sessions(
+        project_id, database, lookback,
+    )
+    garmin_activities, garmin_degraded = _read_garmin_activities(lookback)
 
-    try:
-        from memory.firestore_db import TrainingLogStore
-        training_log = TrainingLogStore(project_id, database).get_recent(lookback)
-    except Exception:
-        logger.warning("training reality: training_log read failed", exc_info=True)
-        training_log = []
-        degraded.append("training_log")
-
-    try:
-        from memory.firestore_db import StrengthSessionStore
-        strength_sessions = StrengthSessionStore(project_id, database).get_recent(lookback)
-    except Exception:
-        logger.warning("training reality: strength read failed", exc_info=True)
-        strength_sessions = []
-        degraded.append("strength_sessions")
-
-    try:
-        from mcp_tools.garmin_tool import fetch_garmin_activities
-        garmin_activities = fetch_garmin_activities(lookback)
-    except Exception:
-        logger.warning("training reality: garmin read failed", exc_info=True)
-        garmin_activities = []
-        degraded.append("garmin_activities")
+    degraded = [
+        name for name in (log_degraded, strength_degraded, garmin_degraded) if name
+    ]
 
     reality = reconcile_training_reality(
         today=today.isoformat(),
@@ -241,6 +274,8 @@ def build_training_reality(
         garmin_activities=garmin_activities or [],
         days_back=days_back,
         days_forward=days_forward,
+        evidence_sources_degraded=bool(degraded),
     )
     reality["degraded"] = degraded
+    reality["evidence_complete"] = not degraded
     return reality

@@ -124,16 +124,20 @@ def test_explicitly_skipped_session_keeps_its_reason():
     assert session["skipped_reason"] == "sick_injured"
 
 
-def test_window_covers_three_days_back_through_tomorrow():
-    """The reconciled window is today-3d..tomorrow, oldest first."""
+def test_window_covers_a_week_back_through_tomorrow():
+    """The reconciled window is today-7d..tomorrow, oldest first.
+
+    Three days was too thin to answer "what training have I done lately": on
+    real data it surfaced a single session. Training is a weekly cycle, and the
+    weekly review needs a full week, so a week is the useful default.
+    """
     reality = reconcile_training_reality(
         today=TODAY, training_log=[], strength_sessions=[], garmin_activities=[],
     )
 
-    assert reality["window"] == {"start": "2026-08-12", "end": "2026-08-16"}
-    assert [day["date"] for day in reality["days"]] == [
-        "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-15", "2026-08-16",
-    ]
+    assert reality["window"] == {"start": "2026-08-08", "end": "2026-08-16"}
+    assert [day["date"] for day in reality["days"]][:2] == ["2026-08-08", "2026-08-09"]
+    assert len(reality["days"]) == 9
 
 
 def test_evidence_outside_the_window_is_ignored():
@@ -206,3 +210,58 @@ def test_extra_evidence_beyond_the_planned_count_reads_as_unplanned():
     statuses = sorted(s["status"] for s in _day(reality, "2026-08-14")["sessions"])
 
     assert statuses == ["completed", "unplanned"]
+
+
+def test_missing_evidence_source_never_produces_a_missed_verdict():
+    """A degraded source means we cannot see, not that nothing happened.
+
+    Garmin returning 502 is routine. If that turned every past planned session
+    into "missed", Klaus would confidently tell Amit he skipped a session he
+    actually did — the exact failure this module exists to prevent, inverted.
+    """
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[
+            {"date": "2026-08-13", "slot": "evt8", "type": "Easy Run",
+             "planned": True, "completed": False, "plan_status": "planned"},
+        ],
+        strength_sessions=[],
+        garmin_activities=[],
+        evidence_sources_degraded=True,
+    )
+
+    session = _day(reality, "2026-08-13")["sessions"][0]
+
+    assert session["status"] == "unverified"
+
+
+def test_degraded_sources_still_confirm_sessions_that_have_evidence():
+    """Positive evidence is still proof even when another source is down."""
+    reality = reconcile_training_reality(
+        today=TODAY,
+        training_log=[
+            {"date": "2026-08-13", "slot": "evt9", "type": "Gym",
+             "planned": True, "completed": False, "plan_status": "planned"},
+        ],
+        strength_sessions=[
+            {"date": "2026-08-13", "workout_id": "hv9", "title": "Gym"},
+        ],
+        garmin_activities=[],
+        evidence_sources_degraded=True,
+    )
+
+    assert [s["status"] for s in _day(reality, "2026-08-13")["sessions"]] == ["completed"]
+
+
+def test_build_marks_reality_degraded_when_a_source_fails(monkeypatch):
+    """The gather wrapper must pass its own degradation into the reconciler."""
+    import core.training_reality as module
+
+    monkeypatch.setattr(module, "_read_training_log", lambda *a, **k: (None, "training_log"))
+    monkeypatch.setattr(module, "_read_strength_sessions", lambda *a, **k: ([], None))
+    monkeypatch.setattr(module, "_read_garmin_activities", lambda *a, **k: ([], None))
+
+    reality = module.build_training_reality()
+
+    assert reality["degraded"] == ["training_log"]
+    assert reality["evidence_complete"] is False
