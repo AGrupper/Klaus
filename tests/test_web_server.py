@@ -100,7 +100,7 @@ def test_internal_routine_fallback_jsonresponse_serializes_atomic_run(
     client = VersionedFirestoreClient(
         server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
     )
-    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
     monkeypatch.setattr(
         memory.firestore_db.firestore,
         "transactional",

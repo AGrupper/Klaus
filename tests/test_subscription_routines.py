@@ -314,7 +314,7 @@ def test_stale_fallback_retries_without_overwriting_claude_publication(monkeypat
     client = VersionedFirestoreClient(
         server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
     )
-    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
     monkeypatch.setattr(
         memory.firestore_db.firestore,
         "transactional",

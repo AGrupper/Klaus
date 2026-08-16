@@ -125,9 +125,12 @@ def _install_firestore_mock() -> None:
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules.setdefault("dotenv", dotenv_mod)
 
-    # Force re-import of firestore_db so it picks up the mocks
+    # Force re-import of the data layer so it picks up the mocks. The store
+    # implementations live in memory.stores.* and are re-exported by
+    # memory.firestore_db, so dropping only the facade would leave the real
+    # Firestore client bound inside every store module.
     for key in list(sys.modules.keys()):
-        if "memory.firestore_db" in key or key == "memory.firestore_db":
+        if key == "memory.firestore_db" or key.startswith("memory.stores"):
             del sys.modules[key]
 
 
@@ -205,7 +208,7 @@ class TestFollowupStore:
         doc_ref.set.side_effect = _capture_set
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             result = store.add(due_at="2026-05-21T15:00:00+00:00", note="check on maya")
 
@@ -230,7 +233,7 @@ class TestFollowupStore:
         doc_ref.set.side_effect = lambda p: captured.update(p)
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             store.add(
                 due_at="2026-05-21T15:00:00+00:00",
@@ -268,7 +271,7 @@ class TestFollowupStore:
         col.where.side_effect = _where
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             results = store.list_due("2026-05-21T15:00:00+00:00")
 
@@ -305,7 +308,7 @@ class TestFollowupStore:
         col.where.side_effect = _where
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             results = store.list_pending()
 
@@ -323,7 +326,7 @@ class TestFollowupStore:
         doc_ref = MagicMock()
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             store.mark_done("abc")
 
@@ -335,7 +338,7 @@ class TestFollowupStore:
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "pending"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             assert store.cancel("abc") is True
             # Second call — still True (idempotent).
@@ -348,7 +351,7 @@ class TestFollowupStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "ghost")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             assert store.cancel("ghost") is False
 
@@ -358,7 +361,7 @@ class TestFollowupStore:
         doc_ref = MagicMock()
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             store.defer("abc", "2026-05-22T15:00:00+00:00")
 
@@ -377,7 +380,7 @@ class TestFollowupStore:
         client, col = _make_mock_client_with_collection()
         col.where.side_effect = RuntimeError("simulated Firestore outage")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             result = store.list_due("2026-05-21T15:00:00+00:00")
 
@@ -388,7 +391,7 @@ class TestFollowupStore:
         client, col = _make_mock_client_with_collection()
         col.where.side_effect = RuntimeError("boom")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             assert store.list_pending() == []
 
@@ -399,7 +402,7 @@ class TestFollowupStore:
         doc_ref.set.side_effect = RuntimeError("simulated set failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.FollowupStore("test-project")
             with pytest.raises(RuntimeError):
                 store.add(due_at="2026-05-21T15:00:00+00:00", note="boom")
@@ -420,7 +423,7 @@ class TestStandingDirectiveStore:
         doc_ref.set.side_effect = lambda p: captured.update(p)
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             result = store.add(
                 text="Never schedule morning runs before 7am",
@@ -445,7 +448,7 @@ class TestStandingDirectiveStore:
         doc_ref.set.side_effect = lambda p: captured.update(p)
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             store.add(text="Remind me daily until March 1st", expires_at="2026-03-01T00:00:00+00:00")
 
@@ -460,7 +463,7 @@ class TestStandingDirectiveStore:
         doc_ref.set.side_effect = lambda p: captured.update(p)
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             store.add(text="Go easy on nutrition while I'm in France", condition_text="while I'm in France")
 
@@ -476,7 +479,7 @@ class TestStandingDirectiveStore:
         doc_ref.set.side_effect = lambda p: captured.update(p)
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             store.add(text="Always ask before booking travel")
 
@@ -501,7 +504,7 @@ class TestStandingDirectiveStore:
         col.where.side_effect = _where
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             results = store.list_active()
 
@@ -526,7 +529,7 @@ class TestStandingDirectiveStore:
             snaps.append(s)
         col.stream.return_value = iter(snaps)
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             results = store.list_all()
 
@@ -541,7 +544,7 @@ class TestStandingDirectiveStore:
         col.where.return_value = col
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             first = store.list_active()
             second = store.list_active()
@@ -559,7 +562,7 @@ class TestStandingDirectiveStore:
         doc_ref = MagicMock()
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             first = store.list_active()
             store.add(text="a new directive")
@@ -574,7 +577,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.cancel("abc") is True
 
@@ -586,7 +589,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "ghost")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.cancel("ghost") is False
 
@@ -598,7 +601,7 @@ class TestStandingDirectiveStore:
         snap.to_dict.return_value = {"id": "abc", "status": "cancelled"}
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             results = store.list_all()
 
@@ -610,7 +613,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "old-id", {"id": "old-id", "status": "active"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             result = store.supersede("old-id", "new-id")
 
@@ -622,7 +625,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             result = store.expire("abc")
 
@@ -634,7 +637,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         col.where.side_effect = RuntimeError("simulated Firestore outage")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.list_active() == []
 
@@ -643,7 +646,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         col.stream.side_effect = RuntimeError("boom")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.list_all() == []
 
@@ -654,7 +657,7 @@ class TestStandingDirectiveStore:
         doc_ref.set.side_effect = RuntimeError("simulated set failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             with pytest.raises(RuntimeError):
                 store.add(text="boom")
@@ -666,7 +669,7 @@ class TestStandingDirectiveStore:
         doc_ref.get.side_effect = RuntimeError("simulated get failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             with pytest.raises(RuntimeError):
                 store.cancel("abc")
@@ -676,7 +679,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.veto("abc") is True
 
@@ -688,7 +691,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "ghost")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.veto("ghost") is False
 
@@ -699,7 +702,7 @@ class TestStandingDirectiveStore:
         _stub_existing_doc(col, "abc", {"id": "abc", "status": "active"})
         col.where.return_value.stream.return_value = iter([])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             store.list_active()  # warm the cache
             store.veto("abc")
@@ -714,7 +717,7 @@ class TestStandingDirectiveStore:
         doc_ref.get.side_effect = RuntimeError("simulated get failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             with pytest.raises(RuntimeError):
                 store.veto("abc")
@@ -727,7 +730,7 @@ class TestStandingDirectiveStore:
         snap.to_dict.return_value = {"id": "abc", "status": "vetoed"}
         col.stream.return_value = iter([snap])
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             results = store.list_all()
 
@@ -738,7 +741,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         _stub_existing_doc(col, "abc", {"id": "abc", "status": "active", "origin": "klaus_self"})
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             result = store.get("abc")
 
@@ -749,7 +752,7 @@ class TestStandingDirectiveStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "ghost")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.get("ghost") is None
 
@@ -760,7 +763,7 @@ class TestStandingDirectiveStore:
         doc_ref.get.side_effect = RuntimeError("simulated get failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.StandingDirectiveStore("test-project")
             assert store.get("abc") is None
 
@@ -787,7 +790,7 @@ class TestOutreachLogStore:
         doc_ref = MagicMock()
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             store.append(self._DATE, self._ENTRY)
 
@@ -819,7 +822,7 @@ class TestOutreachLogStore:
             "entries": [self._ENTRY, {"topic_key": "silence:afternoon", "time": "16:00"}],
         })
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             result = store.get_today(self._DATE)
 
@@ -832,7 +835,7 @@ class TestOutreachLogStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "1999-01-01")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             assert store.get_today("1999-01-01") == []
 
@@ -847,7 +850,7 @@ class TestOutreachLogStore:
             ],
         })
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             topics = store.topics_today(self._DATE)
 
@@ -858,7 +861,7 @@ class TestOutreachLogStore:
         client, col = _make_mock_client_with_collection()
         _stub_missing_doc(col, "1999-01-01")
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             assert store.topics_today("1999-01-01") == []
 
@@ -869,7 +872,7 @@ class TestOutreachLogStore:
         doc_ref.get.side_effect = RuntimeError("simulated outage")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             assert store.get_today(self._DATE) == []
             assert store.topics_today(self._DATE) == []
@@ -881,7 +884,7 @@ class TestOutreachLogStore:
         doc_ref.set.side_effect = RuntimeError("simulated set failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             with pytest.raises(RuntimeError):
                 store.append(self._DATE, self._ENTRY)
@@ -1019,7 +1022,7 @@ class TestActionLogStore:
         doc_ref = MagicMock()
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             store.append("2026-08-01", self._ENTRY)
 
@@ -1045,7 +1048,7 @@ class TestActionLogStore:
         doc_ref.set.side_effect = RuntimeError("simulated set failure")
         col.document.return_value = doc_ref
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             with pytest.raises(RuntimeError):
                 store.append("2026-08-01", self._ENTRY)
@@ -1082,7 +1085,7 @@ class TestActionLogStore:
             def collection(self, _name):
                 return _RaisingCol()
 
-        with patch.object(firestore_db, "_make_firestore_client", return_value=_RaisingClient()):
+        with patch("memory.stores.base._make_firestore_client", return_value=_RaisingClient()):
             store = firestore_db.ActionLogStore("test-project")
             assert store.get_recent(3, today="2026-08-01") == []
 
@@ -1090,7 +1093,7 @@ class TestActionLogStore:
         """get_recent(days) collects entries across the last `days` date-keyed
         docs, newest day first — this store is doc-per-date, not field-indexed."""
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             store.append("2026-08-01", {**self._ENTRY, "id": "day0"})
             store.append("2026-07-31", {**self._ENTRY, "id": "day1"})
@@ -1105,7 +1108,7 @@ class TestActionLogStore:
         """undisclosed() must exclude disclosed=True entries and include
         disclosed=False (or absent) ones — feeds the D-25 disclosure block."""
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             store.append("2026-08-01", {**self._ENTRY, "id": "told-already", "disclosed": True})
             store.append("2026-08-01", {**self._ENTRY, "id": "never-told", "disclosed": False})
@@ -1120,7 +1123,7 @@ class TestActionLogStore:
         """mark_disclosed(date, [id]) must flip only the matching entry's
         disclosed flag, leaving sibling entries in the same doc untouched."""
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             store.append("2026-08-01", {**self._ENTRY, "id": "flip-me", "disclosed": False})
             store.append("2026-08-01", {**self._ENTRY, "id": "leave-me", "disclosed": False})
@@ -1142,7 +1145,7 @@ class TestActionLogStore:
                 return "2026-08-01T22:14:05+00:00"
 
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.ActionLogStore("test-project")
             store.append(
                 "2026-08-01",
@@ -1166,7 +1169,7 @@ class TestPendingApprovalStore:
 
     def test_prepare_and_confirm_requires_matching_payload_hash(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.PendingApprovalStore("test-project")
             prepared = store.prepare(
                 action_type="payment",
@@ -1190,7 +1193,7 @@ class TestPendingApprovalStore:
 
     def test_confirmed_action_cannot_be_reused(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.PendingApprovalStore("test-project")
             prepared = store.prepare(
                 action_type="first_time_outreach",
@@ -1208,7 +1211,7 @@ class TestBehavioralFeedbackStore:
 
     def test_record_persists_vetoable_feedback(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.BehavioralFeedbackStore("test-project")
             result = store.record(
                 pattern="Amit protects Friday morning for long runs",
@@ -1227,7 +1230,7 @@ class TestPortfolioStores:
 
     def test_holding_round_trips_native_currency_and_baseline(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.PortfolioHoldingStore("test-project")
             holding = store.upsert({
                 "ticker": "VOO",
@@ -1248,7 +1251,7 @@ class TestPortfolioStores:
 
     def test_weekly_snapshot_stores_ils_total_and_observation_time(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.PortfolioSnapshotStore("test-project")
             stored = store.write_weekly({
                 "week": "2026-08-02",
@@ -1270,7 +1273,7 @@ class TestRoutineRunStore:
 
     def test_start_generates_correlation_and_queued_state(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.RoutineRunStore("test-project")
             run = store.start(
                 routine="morning",
@@ -1286,7 +1289,7 @@ class TestRoutineRunStore:
 
     def test_start_is_atomic_and_preserves_first_trigger(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.RoutineRunStore("test-project")
             first = store.start(
                 routine="morning",
@@ -1306,7 +1309,7 @@ class TestRoutineRunStore:
 
     def test_transition_rejects_unknown_review_status(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.RoutineRunStore("test-project")
             store.start(
                 routine="nightly",
@@ -1319,7 +1322,7 @@ class TestRoutineRunStore:
 
     def test_fallback_can_upgrade_once_but_claude_publication_is_terminal(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.RoutineRunStore("test-project")
             store.start(
                 routine="nightly",
@@ -1337,7 +1340,7 @@ class TestRoutineRunStore:
 
     def test_claude_publication_atomically_selects_initial_or_late_status(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.RoutineRunStore("test-project")
             store.start(
                 routine="morning",
@@ -1364,7 +1367,7 @@ class TestRoutineRunStore:
 
     def test_review_publisher_extends_existing_collection_with_common_schema(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             reviews = firestore_db.RoutineReviewStore("test-project")
             published = reviews.publish(
                 routine="morning",
@@ -1394,7 +1397,7 @@ class TestRoutineRunStore:
 
     def test_atomic_fallback_writes_run_and_canonical_review_in_one_transaction(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             runs = firestore_db.RoutineRunStore("test-project")
             runs.start(
                 routine="morning",
@@ -1433,7 +1436,7 @@ class TestRoutineRunStore:
 
     def test_atomic_publication_enforces_claude_over_fallback_precedence(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             runs = firestore_db.RoutineRunStore("test-project")
             runs.start(
                 routine="nightly",
@@ -1515,7 +1518,7 @@ class TestReadCache:
         client, col = _make_mock_client_with_collection()
         for date_str, data in docs.items():
             _stub_existing_doc(col, date_str, data)
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.JournalStore("test-project")
         return store, col
 
@@ -1545,7 +1548,7 @@ class TestReadCache:
         snap = MagicMock()
         snap.exists = False
         col.document.return_value.get.return_value = snap
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.JournalStore("test-project")
 
         assert store.get("2026-06-10") is None
@@ -1554,7 +1557,7 @@ class TestReadCache:
 
     def test_journal_cache_expires_after_ttl(self, monkeypatch):
         store, col = self._journal_store({"2026-06-10": {"summary": "day"}})
-        monkeypatch.setattr(firestore_db, "_READ_CACHE_TTL_SEC", -1)
+        monkeypatch.setattr("memory.stores.base._READ_CACHE_TTL_SEC", -1)
 
         store.get("2026-06-10")
         store.get("2026-06-10")
@@ -1587,7 +1590,7 @@ class TestReadCache:
         snap.to_dict.return_value = {"mood": "sharp"}
         doc_ref.get.return_value = snap
         col.document.return_value = doc_ref
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.SelfStateStore("test-project")
 
         assert store.get() == {"mood": "sharp"}
@@ -1612,7 +1615,7 @@ class TestReadCache:
 class TestEmbeddingUsageStore:
     def test_reserve_then_record_tracks_request_tokens_items_and_cost(self):
         client = _ActionLogFakeClient()
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.EmbeddingUsageStore("test-project")
             assert store.reserve("amit") is True
             store.record(
@@ -1641,7 +1644,7 @@ class TestUserProfileStoreCache:
     def _profile_store(self, data: dict):
         client, col = _make_mock_client_with_collection()
         doc_ref = _stub_existing_doc(col, "amit", data)
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.UserProfileStore("test-project")
         return store, doc_ref
 
@@ -1668,7 +1671,7 @@ class TestUserProfileStoreCache:
         doc_ref = MagicMock()
         doc_ref.get.side_effect = RuntimeError("simulated failure")
         col.document.return_value = doc_ref
-        with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.UserProfileStore("test-project")
 
         assert store.load() == {}
@@ -1723,7 +1726,7 @@ class _IdemClient:
 
 def test_action_idempotency_store_binds_key_to_payload_and_replays_result():
     client = _IdemClient()
-    with patch.object(firestore_db, "_make_firestore_client", return_value=client):
+    with patch("memory.stores.base._make_firestore_client", return_value=client):
         store = firestore_db.ActionIdempotencyStore("test-project")
         first = store.begin(
             "request-1",
