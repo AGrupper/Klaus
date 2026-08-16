@@ -66,7 +66,13 @@ def test_live_and_routine_mcp_mount_independently():
             metadata = client.get("/.well-known/oauth-authorization-server")
 
     assert interactive.status_code == 202
-    assert routine.status_code == 404
+    # NOT a specific status: what matters is that the request never reached a
+    # routine MCP app. The exact rejection code depends on whether frontend/dist
+    # happens to be built — with the SPA mounted, StaticFiles catches every
+    # unmatched request and answers POST with 405; without it, Starlette answers
+    # 404. CI builds the frontend *after* pytest, so pinning 404 passed there and
+    # failed on any developer machine that had run `npm run build`.
+    assert routine.status_code != 202
     assert metadata.status_code == 200
     bundle.interactive.streamable_http_app.assert_called_once()
     bundle.routine.streamable_http_app.assert_not_called()
