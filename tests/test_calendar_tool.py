@@ -411,7 +411,7 @@ def test_is_free_busy_if_any_calendar_busy():
 # error sentinel rather than let the raw socket-level exception propagate.
 # ---------------------------------------------------------------------------
 
-def test_list_events_degrades_gracefully_on_timeout_error():
+def test_list_primary_events_degrades_gracefully_on_timeout_error():
     """A raw TimeoutError (not an HttpError — the socket read itself stalled)
     must be caught and degrade to [] like any other API error, not propagate
     up and crash the caller (core/autonomous.py's gather layer, or a direct
@@ -420,18 +420,18 @@ def test_list_events_degrades_gracefully_on_timeout_error():
     service = MagicMock()
     service.events.return_value.list.return_value = _chain(TimeoutError("The read operation timed out"))
     with patch.object(m, "_get_service", return_value=service):
-        result = m.list_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
+        result = m._list_primary_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
     assert result == []
 
 
-def test_list_events_passes_bounded_num_retries():
+def test_list_primary_events_passes_bounded_num_retries():
     """A single bounded retry (not unbounded) is requested on the read call."""
     m = _mgr()
     service = MagicMock()
     chain = _chain({"items": []})
     service.events.return_value.list.return_value = chain
     with patch.object(m, "_get_service", return_value=service):
-        m.list_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
+        m._list_primary_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
     chain.execute.assert_called_once_with(num_retries=1)
 
 
@@ -464,3 +464,96 @@ def test_delete_event_degrades_gracefully_on_timeout_error():
         result = m.delete_event("evt_1", calendar_id="primary")
     assert result["ok"] is False
     assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# Buffer planning — Amit's scheduling rule (docs/USER.md "scheduling-rules")
+# as a pure function. Before this was extracted from create_event, the only way
+# to check the rule was to mock the whole Google service and read the event
+# bodies back out, so the arithmetic itself was never asserted directly.
+# ---------------------------------------------------------------------------
+
+class TestPlanBufferBlocks:
+    """No network, no clock — just the rule."""
+
+    START = "2026-08-20T14:00:00+03:00"
+    END = "2026-08-20T15:15:00+03:00"
+
+    def _plan(self, travel: int, is_workout: bool):
+        return cal.GoogleCalendarManager._plan_buffer_blocks(
+            "Leg Day", self.START, self.END, travel, is_workout
+        )
+
+    def test_plain_event_with_no_travel_is_left_alone(self):
+        plan = self._plan(travel=0, is_workout=False)
+
+        assert plan["start"] == datetime.fromisoformat(self.START)
+        assert plan["end"] == datetime.fromisoformat(self.END)
+        assert plan["get_ready"] is None
+        assert plan["buffers"] == []
+
+    def test_travel_extends_the_window_on_both_sides(self):
+        plan = self._plan(travel=15, is_workout=False)
+
+        assert plan["start"] == datetime.fromisoformat("2026-08-20T13:45:00+03:00")
+        assert plan["end"] == datetime.fromisoformat("2026-08-20T15:30:00+03:00")
+        # One block before, one after — 30 minutes of buffer in total.
+        kinds = [b["kind"] for b in plan["buffers"]]
+        assert kinds == ["travel", "travel"]
+        assert all(b["minutes"] == 15 for b in plan["buffers"])
+
+    def test_workout_gets_a_get_ready_block_before_the_travel(self):
+        """USER.md: Get Ready at T-60, travel at T-15, session at T-0."""
+        plan = self._plan(travel=15, is_workout=True)
+
+        get_ready = plan["get_ready"]
+        assert get_ready is not None
+        assert get_ready["summary"] == "Get Ready: Leg Day"
+        # 45 min of prep ending where the 15 min of travel begins: 60 before the
+        # session itself, exactly as the rule states.
+        assert get_ready["start"] == datetime.fromisoformat("2026-08-20T13:00:00+03:00")
+        assert get_ready["end"] == datetime.fromisoformat("2026-08-20T13:45:00+03:00")
+        assert get_ready["end"] == plan["start"], "prep must not overlap travel"
+
+    def test_get_ready_and_travel_never_overlap_without_travel(self):
+        plan = self._plan(travel=0, is_workout=True)
+
+        assert plan["get_ready"]["end"] == datetime.fromisoformat(self.START)
+        assert [b["kind"] for b in plan["buffers"]] == ["get_ready"]
+
+    def test_buffers_are_json_safe_for_the_tool_payload(self):
+        """Claude phrases the confirmation, so the blocks ship as data."""
+        import json
+
+        plan = self._plan(travel=15, is_workout=True)
+        assert json.loads(json.dumps(plan["buffers"])) == plan["buffers"]
+
+
+class TestWorkoutClassification:
+    """A Get Ready block must never be treated as a workout (recursion guard)."""
+
+    def test_unset_flag_never_guesses_from_the_title(self):
+        assert cal.GoogleCalendarManager._is_workout_event("Gym session", None) is False
+
+    def test_get_ready_block_is_not_itself_a_workout(self):
+        assert cal.GoogleCalendarManager._is_workout_event("Get Ready: Leg Day", True) is False
+
+    def test_explicit_workout_is_honoured(self):
+        assert cal.GoogleCalendarManager._is_workout_event("Leg Day", True) is True
+
+
+class TestResolveTravelMinutes:
+    def test_workouts_default_to_the_standard_travel_buffer(self):
+        assert cal.GoogleCalendarManager._resolve_travel_minutes(None, True) == 15
+
+    def test_other_events_default_to_no_buffer(self):
+        assert cal.GoogleCalendarManager._resolve_travel_minutes(None, False) == 0
+
+    def test_explicit_zero_suppresses_buffering_for_a_workout(self):
+        assert cal.GoogleCalendarManager._resolve_travel_minutes(0, True) == 0
+
+    def test_negative_travel_is_rejected(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            cal.GoogleCalendarManager._resolve_travel_minutes(-5, True)

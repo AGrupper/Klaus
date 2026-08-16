@@ -41,7 +41,7 @@ no LLM, no Telegram.
 Local dry-run:
 
 ```bash
-HEVY_API_KEY=... GCP_PROJECT_ID=klaus-agent python -m core.strength_ingest
+HEVY_API_KEY=... GCP_PROJECT_ID=klaus-agent python -m core.ingest.strength
 ```
 
 ## Data model

@@ -150,7 +150,7 @@ class TestSelfStateSetAcceptsDailyNote:
         fake_col.document.return_value = fake_doc_ref
 
         with patch(
-            "memory.firestore_db._make_firestore_client",
+            "memory.stores.base._make_firestore_client",
             return_value=fake_client,
         ):
             store = SelfStateStore(

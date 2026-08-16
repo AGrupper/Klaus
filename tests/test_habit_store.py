@@ -119,9 +119,12 @@ def _install_firestore_mock() -> None:
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules.setdefault("dotenv", dotenv_mod)
 
-    # Force re-import of firestore_db so it picks up the mocks
+    # Force re-import of the data layer so it picks up the mocks. The store
+    # implementations live in memory.stores.* and are re-exported by
+    # memory.firestore_db, so dropping only the facade would leave the real
+    # Firestore client bound inside every store module.
     for key in list(sys.modules.keys()):
-        if "memory.firestore_db" in key or key == "memory.firestore_db":
+        if key == "memory.firestore_db" or key.startswith("memory.stores"):
             del sys.modules[key]
 
 

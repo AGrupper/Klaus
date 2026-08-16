@@ -32,9 +32,22 @@ def _no_real_cron_ledger_writes():
 
 
 def _stub_web_server_imports() -> dict:
-    """Clear the cached HTTP boundary so each test gets fresh routes."""
+    """Clear the cached HTTP boundary so each test gets fresh routes.
+
+    The route modules under ``interfaces.routes`` go too. Their APIRouters build
+    their ``Depends(require_hub_session)`` at import time, so a cached router
+    would hand a freshly re-imported ``web_server`` route objects still bound to
+    the previous ``hub_auth.require_hub_session`` object — and
+    ``dependency_overrides`` keys on object identity, so the override would
+    silently fail to apply.
+    """
     for key in list(sys.modules.keys()):
-        if key == "interfaces.web_server" or key.startswith("interfaces.web_server."):
+        if (
+            key == "interfaces.web_server"
+            or key.startswith("interfaces.web_server.")
+            or key == "interfaces.routes"
+            or key.startswith("interfaces.routes.")
+        ):
             del sys.modules[key]
     return {}
 
@@ -87,7 +100,7 @@ def test_internal_routine_fallback_jsonresponse_serializes_atomic_run(
     client = VersionedFirestoreClient(
         server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
     )
-    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
     monkeypatch.setattr(
         memory.firestore_db.firestore,
         "transactional",
@@ -114,7 +127,7 @@ def test_internal_routine_fallback_jsonresponse_serializes_atomic_run(
             )
 
     monkeypatch.setattr(
-        "core.subscription_routines.build_subscription_routine_coordinator",
+        "core.routines.subscription.build_subscription_routine_coordinator",
         lambda: AtomicFallbackCoordinator(),
     )
     with patch.dict(os.environ, _BASE_ENV):
@@ -143,6 +156,7 @@ def _ws_module():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import sync as sync_routes
         yield ws
 
 
@@ -192,8 +206,12 @@ class TestCronHealthkitSync:
         env = _healthkit_env(token="right-token")
 
         digest_mock = MagicMock(return_value=False)
+        # compare_digest is called by the HealthKit verifier, which lives in
+        # interfaces/routes/_verify.py — patch it where it is used.
+        import interfaces.routes._verify as verify  # noqa: PLC0415
+
         with patch.dict(os.environ, env), patch.object(
-            ws.hmac, "compare_digest", digest_mock
+            verify.hmac, "compare_digest", digest_mock
         ):
             client = TestClient(ws.app)
             resp = client.post(
@@ -349,9 +367,7 @@ class TestCronHealthkitSync:
         mock_store.upsert = MagicMock(return_value=None)
         mock_store_cls = MagicMock(name="MealStore-class", return_value=mock_store)
 
-        original_log = ws._log_cron_run
-        ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
-        try:
+        with patch("interfaces.routes.sync._log_cron_run", _fake_log):
             with patch.dict(os.environ, env), patch(
                 "memory.firestore_db.MealStore", mock_store_cls
             ):
@@ -361,8 +377,6 @@ class TestCronHealthkitSync:
                     json=fixture,
                     headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
                 )
-        finally:
-            ws._log_cron_run = original_log  # type: ignore[attr-defined]
 
         assert resp.status_code == 200
         relevant = [c for c in calls if c["job_id"] == "healthkit-sync"]
@@ -385,9 +399,7 @@ class TestCronHealthkitSync:
         def _fake_log(job_id: str, ok: bool, **kwargs) -> None:
             calls.append({"job_id": job_id, "ok": ok, "kwargs": kwargs})
 
-        original_log = ws._log_cron_run
-        ws._log_cron_run = _fake_log  # type: ignore[attr-defined]
-        try:
+        with patch("interfaces.routes.sync._log_cron_run", _fake_log):
             # Patch the ingest_payload function on the healthkit_tool module
             # so the handler hits an exception mid-flow.
             import mcp_tools.healthkit_tool as _hk  # noqa: PLC0415
@@ -400,8 +412,6 @@ class TestCronHealthkitSync:
                     json=fixture,
                     headers={"Authorization": f"Bearer {_VALID_HEALTHKIT_TOKEN}"},
                 )
-        finally:
-            ws._log_cron_run = original_log  # type: ignore[attr-defined]
 
         assert resp.status_code == 500, (
             f"RuntimeError in ingest_payload must surface as 500; got {resp.status_code}"
@@ -489,6 +499,7 @@ class TestSPAMountRegression:
             stubs = _stub_web_server_imports()
             with patch.dict(sys.modules, stubs):
                 import interfaces.web_server as ws  # noqa: PLC0415
+                from interfaces.routes import sync as sync_routes
                 from fastapi.testclient import TestClient  # noqa: PLC0415
 
                 # The SPA catch-all must be registered — otherwise this test
@@ -519,6 +530,7 @@ class TestSPAMountRegression:
         stubs = _stub_web_server_imports()
         with patch.dict(sys.modules, stubs):
             import interfaces.web_server as ws  # noqa: PLC0415
+            from interfaces.routes import sync as sync_routes
             from fastapi.testclient import TestClient  # noqa: PLC0415
 
             registered_tools = {
@@ -583,6 +595,7 @@ class TestSPAMountRegression:
             stubs = _stub_web_server_imports()
             with patch.dict(sys.modules, stubs):
                 import interfaces.web_server as ws  # noqa: PLC0415
+                from interfaces.routes import sync as sync_routes
                 from fastapi.testclient import TestClient  # noqa: PLC0415
 
                 assert any(
@@ -717,6 +730,7 @@ class TestTaskRoutes:
 
         with patch.dict(sys.modules, stubs):
             import interfaces.web_server as ws  # noqa: PLC0415
+            from interfaces.routes import sync as sync_routes
             import interfaces.hub_auth as hub_auth  # noqa: PLC0415
 
             with patch("memory.firestore_db.get_task_store", side_effect=_patched_task_store):
@@ -911,6 +925,7 @@ class TestTaskRoutes:
         stubs = _stub_web_server_imports()
         with patch.dict(sys.modules, stubs):
             import interfaces.web_server as ws  # noqa: PLC0415
+            from interfaces.routes import sync as sync_routes
             import interfaces.hub_auth as hub_auth  # noqa: PLC0415
 
             def _no_session():
@@ -987,6 +1002,7 @@ class TestAuthGoogleCookie:
         }
         with patch.dict(sys.modules, stubs):
             import interfaces.web_server as ws  # noqa: PLC0415
+            from interfaces.routes import sync as sync_routes
             import interfaces.hub_auth as hub_auth  # noqa: PLC0415
             from fastapi.testclient import TestClient  # noqa: PLC0415
 

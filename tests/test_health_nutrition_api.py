@@ -40,7 +40,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }
@@ -85,11 +85,13 @@ def test_nutrition_missing_dates_render_as_null_gaps_never_zero():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
-            ws._health_nutrition_profile = lambda: {
+            hub_health._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
+            hub_health._health_nutrition_profile = lambda: {
                 "nutrition_targets": {"protein_g_per_kg": [1.8, 2.2], "protein_g_floor": 150},
                 "bodyweight_kg": 75,
             }
@@ -118,11 +120,13 @@ def test_nutrition_targets_present_incl_derived_calories():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
-            ws._health_nutrition_profile = lambda: {
+            hub_health._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
+            hub_health._health_nutrition_profile = lambda: {
                 "nutrition_targets": {
                     "protein_g": 150, "carbs_g": 250, "fat_g": 70,
                     "protein_g_per_kg": [1.8, 2.2],
@@ -146,6 +150,8 @@ def test_nutrition_weekly_bucket_selectable():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
@@ -155,8 +161,8 @@ def test_nutrition_weekly_bucket_selectable():
                 for d in range(1, 21)
             ]
             daily_fixture = {"day_records": day_records, "missing_dates": [], "slot_records": []}
-            ws._health_nutrition_daily = lambda start, end: daily_fixture
-            ws._health_nutrition_profile = lambda: {}
+            hub_health._health_nutrition_daily = lambda start, end: daily_fixture
+            hub_health._health_nutrition_profile = lambda: {}
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             resp_30d = client.get("/api/health/nutrition?range=30d")
@@ -174,11 +180,13 @@ def test_nutrition_no_slot_time_leak():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
-            ws._health_nutrition_profile = lambda: {}
+            hub_health._health_nutrition_daily = lambda start, end: _DAILY_FIXTURE
+            hub_health._health_nutrition_profile = lambda: {}
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/nutrition?range=30d")
@@ -203,6 +211,8 @@ def test_nutrition_unauthenticated_returns_401():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         env_no_bypass = {**_ENV, "CRON_DEV_BYPASS": "false"}
@@ -250,6 +260,8 @@ def test_nutrition_daily_single_pass_cached(monkeypatch):
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
+        import core.hub.health_series as hs  # noqa: PLC0415
         import memory.firestore_db as db  # noqa: PLC0415
 
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -270,11 +282,11 @@ def test_nutrition_daily_single_pass_cached(monkeypatch):
 
         monkeypatch.setattr(db, "MealStore", _FakeMealStore)
         # Isolate the module-level cache from other tests in this file.
-        ws._nutrition_daily_cache.clear()
+        hs._nutrition_daily_cache.clear()
 
-        first = ws._health_nutrition_daily("2026-07-01", "2026-07-03")
+        first = hs._health_nutrition_daily("2026-07-01", "2026-07-03")
         calls_after_first = len(call_log)
-        second = ws._health_nutrition_daily("2026-07-01", "2026-07-03")
+        second = hs._health_nutrition_daily("2026-07-01", "2026-07-03")
         calls_after_second = len(call_log)
 
     assert calls_after_first == 3  # one get_day call per date in [start, end]

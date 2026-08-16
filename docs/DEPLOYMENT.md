@@ -9,7 +9,7 @@ other scope are discarded and require explicit re-consent.
 
 The retained public surfaces are the Hub, scoped MCP endpoints, routine
 callbacks, deterministic alerts, and Web Push. Run
-`python scripts/check_claude_first_runtime.py` before deployment.
+`python scripts/active/check_claude_first_runtime.py` before deployment.
 
 ## Desired production state and drift audit
 
@@ -19,7 +19,7 @@ flags, Secret Manager bindings, per-secret IAM, routes, connectors, Firestore,
 Artifact Registry, and the quarantined retirement set. Run the read-only audit:
 
 ```bash
-python scripts/audit_production_drift.py
+python scripts/active/audit_production_drift.py
 ```
 
 The command uses only `gcloud ... describe`, `list`, and `get-iam-policy`
@@ -51,7 +51,7 @@ can be destroyed.
 The operator can inspect the exact plan without changing anything:
 
 ```bash
-python scripts/manage_secret_versions.py \
+python scripts/active/manage_secret_versions.py \
   --project klaus-agent \
   --secret klaus-google-oauth-token
 ```
@@ -59,7 +59,7 @@ python scripts/manage_secret_versions.py \
 Applying it is deliberately explicit and identity-bound:
 
 ```bash
-python scripts/manage_secret_versions.py \
+python scripts/active/manage_secret_versions.py \
   --project klaus-agent \
   --secret klaus-google-oauth-token \
   --destroy-grace-days 7 \
@@ -102,10 +102,10 @@ gcloud secrets remove-iam-policy-binding klaus-google-oauth-token \
   permanently removed. Gather the evidence by measurement rather than by hand:
 
   ```bash
-  python scripts/gather_quarantine_evidence.py \
+  python scripts/active/gather_quarantine_evidence.py \
     --observation-start 2026-08-13T00:00:00Z \
     --out ops/evidence/quarantine-$(date +%F).json
-  python scripts/audit_quarantine.py --evidence ops/evidence/quarantine-$(date +%F).json
+  python scripts/active/audit_quarantine.py --evidence ops/evidence/quarantine-$(date +%F).json
   ```
 
   The gatherer is read-only (`describe`, `list`, `logging read`, Firestore

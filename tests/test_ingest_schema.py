@@ -1,4 +1,4 @@
-"""Tests for Phase 19 schema migration in scripts/ingest_garmin_zip.py.
+"""Tests for Phase 19 schema migration in scripts/archive/ingest_garmin_zip.py.
 
 Covers SCHEMA-01/02/03:
 - 3 new activities columns (training_load, perceived_exertion, feel)
@@ -19,7 +19,7 @@ import pytest  # noqa: F401  -- pytest discovery marker
 
 
 def _import_module():
-    """Load scripts/ingest_garmin_zip.py by path with psycopg2 mocked."""
+    """Load scripts/archive/ingest_garmin_zip.py by path with psycopg2 mocked."""
     if "psycopg2" not in sys.modules:
         psy = MagicMock()
         psy.extras = MagicMock()
@@ -29,7 +29,7 @@ def _import_module():
         sys.modules["psycopg2"] = psy
         sys.modules["psycopg2.extras"] = psy.extras
     spec = importlib.util.spec_from_file_location(
-        "ingest_garmin_zip", "scripts/ingest_garmin_zip.py"
+        "ingest_garmin_zip", "scripts/archive/ingest_garmin_zip.py"
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

@@ -1,4 +1,4 @@
-"""Tests for core/run_ingest.py::run_one_batch.
+"""Tests for core/ingest/run.py::run_one_batch.
 
 Covers backfill vs delta window selection, presence-check skipping of already
 synced runs, non-running filtering, count-bounded draining, the backfill_done
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import core.run_ingest as ri
+import core.ingest.run as ri
 
 
 @pytest.fixture

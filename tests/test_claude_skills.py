@@ -16,10 +16,30 @@ SKILL_NAMES = (
     "klaus-nightly-review",
     "klaus-weekly-review",
 )
+ROUTINE_NAMES = (
+    "klaus-morning-review",
+    "klaus-nightly-review",
+    "klaus-weekly-review",
+)
+
+sys.path.insert(0, str(ROOT / "scripts" / "active"))
+
+
+def _skill_text(name: str) -> str:
+    """Return the SKILL.md text as uploaded, with shared includes expanded.
+
+    Safety rules live once under claude/skills/_shared/ and are expanded inline
+    at package time, so assertions must run against the rendered result. Reading
+    the raw source would let a rule that ships correctly look like a regression —
+    and worse, would stop noticing if the expansion broke.
+    """
+    from package_claude_skills import render_skill
+
+    return render_skill(name)
 
 
 def test_skill_sources_and_mcp_capability_version_match():
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
     for name in SKILL_NAMES:
         skill_dir = ROOT / "claude" / "skills" / name
@@ -37,13 +57,19 @@ def test_uploadable_zips_exactly_match_canonical_sources():
             skill_path = f"{name}/SKILL.md"
             version_path = f"{name}/VERSION"
             assert sorted(archive.namelist()) == [skill_path, version_path]
-            assert archive.read(skill_path) == (source / "SKILL.md").read_bytes()
+            # The shipped SKILL.md is the rendered one — shared includes expanded
+            # inline — so Claude receives a self-contained file with no reference
+            # it might decline to load.
+            assert archive.read(skill_path).decode("utf-8") == _skill_text(name)
             assert archive.read(version_path) == (source / "VERSION").read_bytes()
+            assert b"<!-- INCLUDE:" not in archive.read(skill_path), (
+                f"{name} shipped an unexpanded include marker"
+            )
 
 
 def test_packager_check_mode_detects_no_drift():
     result = subprocess.run(
-        [sys.executable, "scripts/package_claude_skills.py", "--check"],
+        [sys.executable, "scripts/active/package_claude_skills.py", "--check"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -62,7 +88,7 @@ def test_skill_eval_suite_covers_each_skill_with_three_pressure_cases():
 
 def test_skills_encode_non_negotiable_authority_and_safety_rules():
     combined = "\n".join(
-        (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+        _skill_text(name).lower()
         for name in SKILL_NAMES
     )
     required_phrases = (
@@ -80,30 +106,21 @@ def test_skills_encode_non_negotiable_authority_and_safety_rules():
 
 
 def test_routine_skills_forbid_write_based_schema_discovery():
-    routine_names = (
-        "klaus-morning-review", "klaus-nightly-review", "klaus-weekly-review",
-    )
-    for name in routine_names:
-        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+    for name in ROUTINE_NAMES:
+        text = _skill_text(name).lower()
         assert "never call a write tool to discover its schema" in text
         assert "final and one-shot" in text
         assert "correlation_id" in text
         assert "partial_actions" in text
 
-    nightly = (
-        ROOT / "claude" / "skills" / "klaus-nightly-review" / "SKILL.md"
-    ).read_text().lower()
+    nightly = _skill_text("klaus-nightly-review").lower()
     for field in ("summary", "mood", "current_focus", "recent_context", "highlights"):
         assert field in nightly
 
 
 def test_routine_skills_render_exact_published_text_after_success():
-    for name in (
-        "klaus-morning-review",
-        "klaus-nightly-review",
-        "klaus-weekly-review",
-    ):
-        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+    for name in ROUTINE_NAMES:
+        text = _skill_text(name).lower()
         normalized = " ".join(text.split())
         assert "exact published review text" in text
         assert "final assistant response" in text
@@ -116,12 +133,8 @@ def test_routine_skills_render_exact_published_text_after_success():
 
 
 def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
-    for name in (
-        "klaus-morning-review",
-        "klaus-nightly-review",
-        "klaus-weekly-review",
-    ):
-        text = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text().lower()
+    for name in ROUTINE_NAMES:
+        text = _skill_text(name).lower()
         normalized = " ".join(text.split())
         assert "when `delivery_mode` is `shadow`" in normalized
         assert "do not call any mutating tool except the single `publish_review`" in normalized
@@ -129,17 +142,21 @@ def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
         assert "record proposed actions only in `partial_actions`" in normalized
 
 
-def test_skill_version_is_7_3_1_everywhere():
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+def test_skill_version_is_consistent_everywhere():
+    """One version string, asserted in all four places it is written down."""
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.3.1"
-    assert '"skill_version": "7.3.1"' in (
-        ROOT / "core" / "subscription_routines.py"
+    assert EXPECTED_SKILL_VERSION == "7.4.0"
+    assert f'"skill_version": "{EXPECTED_SKILL_VERSION}"' in (
+        ROOT / "core" / "routines" / "subscription.py"
     ).read_text()
-
-
-def _skill_text(name: str) -> str:
-    return (ROOT / "claude" / "skills" / name / "SKILL.md").read_text()
+    for name in SKILL_NAMES:
+        assert (
+            ROOT / "claude" / "skills" / name / "VERSION"
+        ).read_text().strip() == EXPECTED_SKILL_VERSION
+        # Each skill states its own version in prose so Claude can warn Amit when
+        # the uploaded copy is stale.
+        assert EXPECTED_SKILL_VERSION in _skill_text(name)
 
 
 def test_live_agent_captures_and_files_tasks_in_the_moment():
@@ -162,9 +179,48 @@ def test_nightly_review_plans_tomorrow_and_writes_the_plan():
     text = _skill_text("klaus-nightly-review")
     assert "## Plan tomorrow" in text
     lowered = text.lower()
-    assert "3h15" in text or "3 h 15" in text, "must use the real gym footprint"
+    assert "footprints" in lowered, "planning must check the plan against real durations"
     assert "created_at" in text, "tidying needs the staleness field"
     assert "do not wait" in lowered or "without waiting" in lowered
+
+
+def test_skills_read_facts_from_the_profile_instead_of_restating_them():
+    """The regression this consolidation exists to prevent.
+
+    Durable facts about Amit belong in docs/USER.md, which reaches Claude every
+    turn in the snapshot's `profile` block. A fact copied into one skill is a
+    fact the other three do not have — that is how the nightly review ended up
+    knowing his real gym footprint while the morning review, which also plans his
+    day, did not.
+    """
+    for name in SKILL_NAMES:
+        text = _skill_text(name)
+        assert "profile" in text.lower(), f"{name} never mentions the profile block"
+
+    # Specific values that previously lived in exactly one skill each. If one
+    # reappears here, it has been copied back out of USER.md.
+    for name in SKILL_NAMES:
+        lowered = _skill_text(name).lower()
+        assert "3h15" not in lowered, f"{name} restates the gym footprint"
+        assert "median age" not in lowered, f"{name} restates the task-age measurement"
+
+
+def test_shared_safety_rules_are_defined_once():
+    """Untrusted-source handling drifted into three wordings before it was shared."""
+    shared = ROOT / "claude" / "skills" / "_shared"
+    assert (shared / "safety.md").is_file()
+    assert (shared / "routine-contract.md").is_file()
+
+    for name in SKILL_NAMES:
+        source = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text()
+        assert "<!-- INCLUDE: safety -->" in source, f"{name} must share the safety rules"
+        # The prose itself must exist only in the shared file.
+        assert "never instructions" not in source, f"{name} inlines its own untrusted-source rule"
+
+    for name in ROUTINE_NAMES:
+        source = (ROOT / "claude" / "skills" / name / "SKILL.md").read_text()
+        assert "<!-- INCLUDE: routine-contract -->" in source
+        assert "final and one-shot" not in source, f"{name} inlines its own publication contract"
 
 
 def test_nightly_review_still_honours_shadow_mode():

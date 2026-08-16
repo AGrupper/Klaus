@@ -194,7 +194,7 @@ def incident_documents() -> dict[str, dict]:
 
 def test_repair_replaces_only_known_incident_data_and_preserves_morning_state():
     """Eligible incident data is atomically invalidated without losing later state."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     client = FakeFirestoreClient(incident_documents())
 
@@ -223,7 +223,7 @@ def test_repair_replaces_only_known_incident_data_and_preserves_morning_state():
 
 def test_repair_aborts_before_creating_a_batch_when_correlation_id_differs():
     """A document from another run cannot be swept into this repair."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[REVIEW_PATH]["correlation_id"] = "different-correlation-id"
@@ -239,7 +239,7 @@ def test_repair_aborts_before_creating_a_batch_when_correlation_id_differs():
 
 def test_repair_aborts_before_creating_a_batch_when_placeholder_changed():
     """A changed placeholder might be authoritative and must remain untouched."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[REVIEW_PATH]["review_text"] = "A potentially authoritative review."
@@ -255,7 +255,7 @@ def test_repair_aborts_before_creating_a_batch_when_placeholder_changed():
 
 def test_repair_aborts_before_creating_a_batch_when_journal_has_extra_content():
     """The journal is deletable only when it is entirely the observed placeholder."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[JOURNAL_PATH]["legitimate_later_note"] = "Keep this."
@@ -271,7 +271,7 @@ def test_repair_aborts_before_creating_a_batch_when_journal_has_extra_content():
 
 def test_repair_aborts_before_creating_a_batch_when_journal_update_time_changes():
     """A journal timestamp change means the whole document is no longer deletable."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[JOURNAL_PATH]["updated_at"] = "2026-08-09T19:21:00+00:00"
@@ -287,7 +287,7 @@ def test_repair_aborts_before_creating_a_batch_when_journal_update_time_changes(
 
 def test_repair_accepts_firestore_datetime_audit_values():
     """Timestamp preconditions normalize Firestore datetime values and ISO strings."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[REVIEW_PATH]["published_at"] = datetime.fromisoformat(REVIEW_PUBLISHED_AT)
@@ -304,7 +304,7 @@ def test_repair_accepts_firestore_datetime_audit_values():
 
 def test_repair_aborts_before_creating_a_batch_when_self_state_incident_value_changed():
     """A changed incident-owned self-state value is not safe to delete."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[SELF_STATE_PATH]["proposed_mood"] = "reflective"
@@ -326,7 +326,7 @@ def test_repair_aborts_before_creating_a_batch_when_routine_run_identity_changes
     field, value
 ):
     """The historical run must remain the exact published-Claude incident run."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[RUN_PATH][field] = value
@@ -351,7 +351,7 @@ def test_repair_aborts_before_creating_a_batch_when_routine_run_audit_time_chang
     field, value
 ):
     """The batch is limited to the documented run, including its audit times."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     documents = incident_documents()
     documents[RUN_PATH][field] = value
@@ -367,7 +367,7 @@ def test_repair_aborts_before_creating_a_batch_when_routine_run_audit_time_chang
 
 def test_repair_is_idempotent_after_a_completed_invalidation():
     """A rerun reports its safe terminal state without a second commit."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     client = FakeFirestoreClient(incident_documents())
     repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
@@ -384,7 +384,7 @@ def test_repair_is_idempotent_after_a_completed_invalidation():
 
 def test_repair_rejects_an_altered_already_repaired_shape():
     """A repair-shaped record with broken immutable identity is not idempotent."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     client = FakeFirestoreClient(incident_documents())
     repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
@@ -407,7 +407,7 @@ def test_repair_rejects_altered_or_missing_review_audit_time_after_repair(
     field, value
 ):
     """A repair-shaped review still needs its immutable publication audit time."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     client = FakeFirestoreClient(incident_documents())
     repair_incident(client, repaired_at="2026-08-10T09:00:00+00:00")
@@ -424,7 +424,7 @@ def test_repair_rejects_altered_or_missing_review_audit_time_after_repair(
 
 def test_repair_commit_aborts_without_repair_writes_after_concurrent_mutation():
     """Write-time update-time guards prevent a stale repair from partially applying."""
-    from scripts.repair_claude_routine_incident import repair_incident
+    from scripts.archive.repair_claude_routine_incident import repair_incident
 
     client = FakeFirestoreClient(incident_documents())
     client.before_commit = lambda fake: fake.mutate_concurrently(
@@ -444,7 +444,7 @@ def test_repair_commit_aborts_without_repair_writes_after_concurrent_mutation():
 
 def test_dry_run_inspects_and_redacts_known_placeholder_without_creating_batch():
     """Dry-run validates eligibility while keeping placeholder content out of output."""
-    from scripts.repair_claude_routine_incident import inspect_incident
+    from scripts.archive.repair_claude_routine_incident import inspect_incident
 
     client = FakeFirestoreClient(incident_documents())
 
@@ -463,7 +463,7 @@ def test_dry_run_inspects_and_redacts_known_placeholder_without_creating_batch()
 def test_cli_defaults_to_the_read_only_repair_inspection(monkeypatch, capsys):
     """Omitting --apply cannot create a batch or commit an incident repair."""
     import sys
-    from scripts import repair_claude_routine_incident as repair
+    from scripts.archive import repair_claude_routine_incident as repair
 
     client = FakeFirestoreClient(incident_documents())
     monkeypatch.setattr(repair, "_client", lambda: client)

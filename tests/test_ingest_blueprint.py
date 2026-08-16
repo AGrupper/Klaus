@@ -1,4 +1,4 @@
-"""Tests for scripts/ingest_blueprint.py — pure function build_profile_dict().
+"""Tests for scripts/archive/ingest_blueprint.py — pure function build_profile_dict().
 
 These tests cover the blueprint→structured-dict builder. build_profile_dict() is
 a pure function with no Firestore calls and no env dependencies, so no mocking is needed.
@@ -15,7 +15,7 @@ import pytest
 # Ensure project root is on sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from scripts.ingest_blueprint import build_profile_dict
+from scripts.archive.ingest_blueprint import build_profile_dict
 
 
 # ---------------------------------------------------------------------------

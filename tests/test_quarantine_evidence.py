@@ -12,8 +12,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from scripts.audit_quarantine import evaluate_quarantine
-from scripts.gather_quarantine_evidence import (
+from scripts.active.audit_quarantine import evaluate_quarantine
+from scripts.active.gather_quarantine_evidence import (
     build_evidence,
     claude_completed_routines,
     resources_are_disabled,
@@ -176,7 +176,7 @@ def test_access_query_counts_use_not_the_act_of_retiring():
     DisableSecretVersion and DestroySecretVersion calls on 2026-08-13 — the
     retirement itself. Counting those would keep the gate shut forever.
     """
-    from scripts.gather_quarantine_evidence import secret_access_query
+    from scripts.active.gather_quarantine_evidence import secret_access_query
 
     query = secret_access_query(POLICY)
 
@@ -188,7 +188,7 @@ def test_access_query_counts_use_not_the_act_of_retiring():
 
 def test_scheduler_query_targets_job_execution():
     """A paused job that never fires must produce no execution entries."""
-    from scripts.gather_quarantine_evidence import scheduler_run_query
+    from scripts.active.gather_quarantine_evidence import scheduler_run_query
 
     query = scheduler_run_query(POLICY)
 
@@ -197,7 +197,7 @@ def test_scheduler_query_targets_job_execution():
 
 
 def test_service_account_query_targets_authenticated_use():
-    from scripts.gather_quarantine_evidence import service_account_use_query
+    from scripts.active.gather_quarantine_evidence import service_account_use_query
 
     query = service_account_use_query(POLICY)
 
@@ -211,7 +211,7 @@ def test_gatherer_runs_from_the_repository_root():
     import sys
 
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "gather_quarantine_evidence.py"), "--help"],
+        [sys.executable, str(ROOT / "scripts" / "active" / "gather_quarantine_evidence.py"), "--help"],
         cwd=ROOT,
         capture_output=True,
         text=True,

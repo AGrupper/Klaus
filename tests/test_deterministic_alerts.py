@@ -10,7 +10,7 @@ TZ = ZoneInfo("Asia/Jerusalem")
 
 
 def test_rules_only_surface_explicit_time_bound_conditions():
-    from core.deterministic_alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_daytime_rules
 
     now = datetime(2026, 8, 8, 14, 20, tzinfo=TZ)
     snapshot = {
@@ -28,7 +28,7 @@ def test_rules_only_surface_explicit_time_bound_conditions():
 
 
 def test_rules_detect_due_followup_calendar_overlap_and_travel_conflict():
-    from core.deterministic_alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_daytime_rules
 
     now = datetime(2026, 8, 8, 14, 20, tzinfo=TZ)
     snapshot = {
@@ -65,7 +65,7 @@ def test_rules_detect_due_followup_calendar_overlap_and_travel_conflict():
 
 
 def test_rules_include_only_critical_automation_failures():
-    from core.deterministic_alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_daytime_rules
 
     alerts = evaluate_daytime_rules(
         {"tasks": [], "habits_pending": [], "today": {"calendar": {"timed": []}}},
@@ -81,7 +81,7 @@ def test_rules_include_only_critical_automation_failures():
 
 def test_runner_deduplicates_topics_and_marks_followup_after_success():
     import asyncio
-    from core.deterministic_alerts import run_rule_evaluator
+    from core.routines.alerts import run_rule_evaluator
 
     sent = []
     marked = []
@@ -112,7 +112,7 @@ def test_runner_deduplicates_topics_and_marks_followup_after_success():
 
 
 def test_subscription_heartbeat_collects_retained_infrastructure_checkers():
-    from core import heartbeat
+    from core.routines import heartbeat
 
     expected = [
         heartbeat.Signal(
@@ -124,10 +124,10 @@ def test_subscription_heartbeat_collects_retained_infrastructure_checkers():
             remediation="Inspect Cloud Build and Cloud Run logs.",
         )
     ]
-    with patch("core.heartbeat.check_cron_health", return_value=expected), patch(
-        "core.heartbeat.check_mcp_routine_health", return_value=[]
-    ), patch("core.heartbeat._check_push_health", return_value=[]), patch(
-        "core.heartbeat.check_deployment_identity", return_value=[]
+    with patch("core.routines.heartbeat.check_cron_health", return_value=expected), patch(
+        "core.routines.heartbeat.check_mcp_routine_health", return_value=[]
+    ), patch("core.routines.heartbeat._check_push_health", return_value=[]), patch(
+        "core.routines.heartbeat.check_deployment_identity", return_value=[]
     ):
         result = heartbeat.collect_deterministic_signals(datetime(2026, 8, 8, 12, 0, tzinfo=TZ))
 

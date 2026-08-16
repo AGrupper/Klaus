@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from memory import firestore_db
+from memory.stores import base as stores_base
 from memory.pinecone_db import MemoryStore
 
 
@@ -153,7 +154,7 @@ def test_embedding_quota_failure_is_fail_closed_before_provider_call():
 def test_embedding_reservations_use_canonical_user_and_jerusalem_day(monkeypatch):
     """A UTC-date implementation would charge after local midnight to yesterday."""
     client = _FirestoreClient()
-    monkeypatch.setattr(firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(stores_base, "_make_firestore_client", lambda *_args: client)
     monkeypatch.setattr(firestore_db.firestore, "transactional", lambda function: function)
     store = firestore_db.EmbeddingUsageStore("project", "database")
 

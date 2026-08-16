@@ -3,7 +3,7 @@
 ## Implementation
 
 - Added `POST /cron/deterministic-alerts` as the canonical scheduler endpoint.
-  It verifies the scheduler request, calls only `core.deterministic_alerts`, and
+  It verifies the scheduler request, calls only `core.routines.alerts`, and
   records its deterministic run outcome. `POST /cron/autonomous-tick` is a
   `410 Gone` tombstone.
 - Replaced the heartbeat's model/cost/deployment polling implementation with

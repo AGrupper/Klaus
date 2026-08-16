@@ -29,18 +29,17 @@ def test_deterministic_alerts_is_the_canonical_scheduler_endpoint(monkeypatch):
     web_server = _web_server()
     evaluator = AsyncMock(return_value={"evaluated": 2, "sent": 1, "quiet_hours": False})
     deterministic = MagicMock(run_rule_evaluator=evaluator)
-    web_server._log_cron_run = MagicMock()
     web_server._application = None
 
     with patch.dict(os.environ, _ENV), patch.dict(
-        sys.modules, {"core.deterministic_alerts": deterministic}
-    ):
+        sys.modules, {"core.routines.alerts": deterministic}
+    ), patch("interfaces.routes.cron._log_cron_run") as log_cron_run:
         response = TestClient(web_server.app).post("/cron/deterministic-alerts")
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "evaluated": 2, "sent": 1, "quiet_hours": False}
     evaluator.assert_awaited_once()
-    web_server._log_cron_run.assert_called_once_with("deterministic-alerts", ok=True)
+    log_cron_run.assert_called_once_with("deterministic-alerts", ok=True)
 
 
 def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
@@ -49,7 +48,9 @@ def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
     import inspect
     import interfaces.web_server as web_server
 
-    source = inspect.getsource(web_server.cron_deterministic_alerts)
+    source = inspect.getsource(
+        __import__("interfaces.routes.cron", fromlist=["cron_deterministic_alerts"]).cron_deterministic_alerts
+    )
     names = {
         alias.name
         for node in ast.walk(ast.parse(source))
@@ -88,16 +89,15 @@ def _life_snapshot_dispatch_nodes(tools):
 
     nodes = []
     for tool_name in ("task_list", "get_habit_adherence", "get_self_status"):
-        registered = tools._HANDLERS[tool_name]
-        referenced = [
-            value
-            for name, value in inspect.getclosurevars(registered).globals.items()
-            if name.startswith("_handle_") and inspect.isfunction(value)
-        ]
+        # The registry maps a name to exactly one handler function. Before the
+        # package split this was a lambda over module globals, so the closure had
+        # to be inspected to find the handler behind it; the mapping is direct now.
+        registered = tools.registered_tools()[tool_name]
+        referenced = [registered] if inspect.isfunction(registered) else []
         assert len(referenced) == 1, (
             f"{tool_name} must map to exactly one retained handler", referenced
         )
-        nodes.append((f"core.tools._HANDLERS[{tool_name!r}]", referenced[0]))
+        nodes.append((f"core.tools registry[{tool_name!r}]", referenced[0]))
     return tuple(nodes)
 
 
@@ -109,22 +109,22 @@ def _deterministic_execution_nodes():
     unreachable legacy bodies pending Task 2. These nodes are the only
     functions the evaluator reaches through its default loaders.
     """
-    import core.deterministic_alerts as deterministic
-    import core.heartbeat as heartbeat
+    import core.routines.alerts as deterministic
+    import core.routines.heartbeat as heartbeat
     import core.life_snapshot as life_snapshot
     import core.push_sender as push_sender
     import core.tools as tools
     import interfaces.web_server as hub
 
     return (
-        ("core.deterministic_alerts", deterministic.run_rule_evaluator),
-        ("core.heartbeat", heartbeat.collect_deterministic_signals),
-        ("core.heartbeat", heartbeat._read_cron_ledger),
-        ("core.heartbeat", heartbeat._as_utc),
-        ("core.heartbeat", heartbeat.check_cron_health),
-        ("core.heartbeat", heartbeat.check_mcp_routine_health),
-        ("core.heartbeat", heartbeat._check_push_health),
-        ("core.heartbeat", heartbeat.check_deployment_identity),
+        ("core.routines.alerts", deterministic.run_rule_evaluator),
+        ("core.routines.heartbeat", heartbeat.collect_deterministic_signals),
+        ("core.routines.heartbeat", heartbeat._read_cron_ledger),
+        ("core.routines.heartbeat", heartbeat._as_utc),
+        ("core.routines.heartbeat", heartbeat.check_cron_health),
+        ("core.routines.heartbeat", heartbeat.check_mcp_routine_health),
+        ("core.routines.heartbeat", heartbeat._check_push_health),
+        ("core.routines.heartbeat", heartbeat.check_deployment_identity),
         ("core.life_snapshot", life_snapshot.build_life_snapshot),
         ("core.life_snapshot", life_snapshot._normalized_hub_today),
         ("core.life_snapshot", life_snapshot._default_directives_loader),
@@ -281,7 +281,9 @@ def test_weekly_cutover_is_enabled_with_the_other_claude_routines(monkeypatch):
         "KLAUS_ROUTINE_WEEKLY_CUTOVER": "true",
     }
     with patch.dict(os.environ, env):
-        assert all(web_server._routine_cutover_enabled(name) for name in ("morning", "nightly", "weekly"))
+        from interfaces import flags  # noqa: PLC0415
+
+        assert all(flags._routine_cutover_enabled(name) for name in ("morning", "nightly", "weekly"))
 
 
 def test_task_store_refuses_firestore_as_an_authority(monkeypatch):

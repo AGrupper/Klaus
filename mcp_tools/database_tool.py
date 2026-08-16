@@ -36,7 +36,11 @@ class DatabaseUnavailableError(Exception):
 MAX_ROWS = 200
 
 
-def query_health_database(sql_query: str, max_rows: int = MAX_ROWS) -> list[dict] | str:
+def query_health_database(
+    sql_query: str,
+    max_rows: int = MAX_ROWS,
+    params: tuple | list | dict | None = None,
+) -> list[dict] | str:
     """Execute a read-only SELECT or CTE SQL query against the Postgres database.
 
     Defense in depth (the parse checks are a fast fail; the read-only DB session is
@@ -52,6 +56,11 @@ def query_health_database(sql_query: str, max_rows: int = MAX_ROWS) -> list[dict
         max_rows:  Row cap (default MAX_ROWS). Results beyond the cap are dropped
                    and a {"_truncated": True, "_max_rows": N} sentinel record is
                    appended so the caller can tell the result was cut off.
+        params:    Optional bind parameters for psycopg2 placeholders (``%s`` or
+                   ``%(name)s``). Callers inside Klaus that build a query around a
+                   value should pass it here rather than formatting it into the
+                   string — the value is then quoted by the driver and can never
+                   change the shape of the statement.
 
     Returns:
         A list of dictionaries representing row records, or an error string.
@@ -106,7 +115,7 @@ def query_health_database(sql_query: str, max_rows: int = MAX_ROWS) -> list[dict
         # RealDictCursor parses row records as clean key-value dictionaries
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             logger.info("Executing analytical query...")
-            cur.execute(sql_query)
+            cur.execute(sql_query, params)
             # Fetch one extra row so we can tell "exactly max_rows" apart
             # from "more rows were available" without pulling the full set.
             records = cur.fetchmany(max_rows + 1)

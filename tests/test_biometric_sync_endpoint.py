@@ -24,7 +24,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }
@@ -42,7 +42,7 @@ def test_biometric_sync_returns_batch_result_with_dev_bypass():
 
         batch = {"ok": True, "mode": "delta", "processed": 2, "remaining": 0, "done": True}
         with patch.dict(os.environ, _BASE_ENV):
-            with patch("core.biometric_ingest.run_one_batch", return_value=batch) as rob:
+            with patch("core.ingest.biometric.run_one_batch", return_value=batch) as rob:
                 client = TestClient(ws.app, raise_server_exceptions=True)
                 resp = client.post("/cron/biometric-sync")
 

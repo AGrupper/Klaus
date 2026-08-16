@@ -79,8 +79,15 @@ def _install_firestore_mock() -> MagicMock:
     install_fake_base_query()
 
     # Force re-import so `from google.cloud import firestore` rebinds to OUR mock.
-    if "memory.firestore_db" in sys.modules:
-        del sys.modules["memory.firestore_db"]
+    # Evict the data layer so it re-imports against the mocks above. The
+    # store implementations live in memory.stores.* and are re-exported by
+    # memory.firestore_db, so dropping only the facade would leave the real
+    # Firestore client bound inside every store module.
+    for _cached in [
+        name for name in list(sys.modules)
+        if name == "memory.firestore_db" or name.startswith("memory.stores")
+    ]:
+        del sys.modules[_cached]
 
     return firestore_mock
 

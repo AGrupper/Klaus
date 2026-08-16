@@ -15,7 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 def test_healthkit_push_script_help_exits_zero():
     """HEALTHKIT-08 — CLI is importable AND prints --help text."""
-    script = _REPO_ROOT / "scripts" / "test_healthkit_push.py"
+    script = _REPO_ROOT / "scripts" / "active" / "test_healthkit_push.py"
     assert script.exists(), f"missing CLI: {script}"
     result = subprocess.run(
         [sys.executable, str(script), "--help"],
@@ -31,7 +31,7 @@ def test_healthkit_push_script_help_exits_zero():
 
 def test_resync_run_details_script_help_exits_zero():
     """Lap-resync CLI is importable AND prints --help text with its flags."""
-    script = _REPO_ROOT / "scripts" / "resync_run_details.py"
+    script = _REPO_ROOT / "scripts" / "archive" / "resync_run_details.py"
     assert script.exists(), f"missing CLI: {script}"
     result = subprocess.run(
         [sys.executable, str(script), "--help"],

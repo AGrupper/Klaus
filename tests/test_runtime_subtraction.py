@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_cleanup_guard_rejects_forbidden_runtime_markers(tmp_path: Path) -> None:
     """The deploy guard must reject SDK imports and retired configuration."""
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     source = tmp_path / "unsafe.py"
     source.write_text(
@@ -52,7 +52,7 @@ def test_cleanup_guard_rejects_forbidden_runtime_markers(tmp_path: Path) -> None
 def test_cleanup_guard_rejects_bypass_cases(
     tmp_path: Path, content: str, marker: str,
 ) -> None:
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     (tmp_path / "unsafe.py").write_text(content, encoding="utf-8")
     assert any(marker in violation for violation in find_violations(tmp_path))
@@ -60,7 +60,7 @@ def test_cleanup_guard_rejects_bypass_cases(
 
 def test_cleanup_guard_accepts_the_checked_in_runtime() -> None:
     """Current deployable code has no legacy generative or Telegram residue."""
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     assert find_violations(ROOT) == []
 
@@ -142,9 +142,15 @@ def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
         ("POST", "/api/chat/regenerate"),
         ("POST", "/api/chat/stop"),
     }
+    # iter_routes, not app.routes: FastAPI 0.141 hides routes registered via
+    # include_router behind a private wrapper object, so a flat walk would miss
+    # every tombstone that lives in a route module and this contract would
+    # silently stop being checked.
+    from interfaces.routes import iter_routes
+
     registered = {
         (method, route.path): route.endpoint
-        for route in app.routes
+        for route in iter_routes(app)
         for method in getattr(route, "methods", set())
     }
 
@@ -162,7 +168,11 @@ def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
 def test_retired_web_and_frontend_implementations_are_physically_absent() -> None:
     """Source subtraction removes dead chat/transport bodies, not just reachability."""
     web_source = (ROOT / "interfaces" / "web_server.py").read_text(encoding="utf-8")
-    tools_source = (ROOT / "core" / "tools.py").read_text(encoding="utf-8")
+    # core/tools is a package now; scan every module in it.
+    tools_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "core" / "tools").glob("*.py"))
+    )
 
     for forbidden in (
         "core.hub_attachments",
@@ -242,14 +252,14 @@ def test_retired_web_and_frontend_implementations_are_physically_absent() -> Non
 
 def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:
     """Both nightly trigger entrypoints must use a helper independent of old code."""
-    from interfaces.web_server import nightly_target_date_now
+    from interfaces.routes.triggers import nightly_target_date_now
 
     assert len(nightly_target_date_now()) == 10
 
 
 def test_single_user_identity_requires_explicit_provider_neutral_setting(monkeypatch) -> None:
     """MCP namespaces never fall back to the former transport user-id setting."""
-    from interfaces.mcp_runtime import _resolve_single_user_id
+    from interfaces.mcp.runtime import _resolve_single_user_id
 
     monkeypatch.delenv("KLAUS_USER_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456")
@@ -264,7 +274,7 @@ def test_google_oauth_always_requests_calendar_and_rejects_stale_gmail_token() -
     """A broad cached token must re-consent instead of silently retaining Gmail."""
     from unittest.mock import MagicMock, patch
 
-    from core.auth_google import CALENDAR_SCOPE, GoogleAuthManager
+    from core.auth.google import CALENDAR_SCOPE, GoogleAuthManager
 
     token_storage = MagicMock()
     token_storage.load.return_value = json.dumps({
@@ -275,7 +285,7 @@ def test_google_oauth_always_requests_calendar_and_rejects_stale_gmail_token() -
 
     assert manager.scopes == [CALENDAR_SCOPE]
     with patch(
-        "core.auth_google.Credentials.from_authorized_user_info",
+        "core.auth.google.Credentials.from_authorized_user_info",
         return_value=stale_credentials,
     ):
         assert manager._load_cached_token() is None

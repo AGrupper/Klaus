@@ -1,4 +1,4 @@
-"""Tests for Phase 19 Garmin parser extensions in scripts/ingest_garmin_zip.py.
+"""Tests for Phase 19 Garmin parser extensions in scripts/archive/ingest_garmin_zip.py.
 
 Covers INGEST-01/02:
 - parse_and_ingest_activities extracts activityTrainingLoad / workoutRpe /
@@ -38,7 +38,7 @@ def _import_module():
         sys.modules["psycopg2"] = psy
         sys.modules["psycopg2.extras"] = psy.extras
     spec = importlib.util.spec_from_file_location(
-        "ingest_garmin_zip", "scripts/ingest_garmin_zip.py"
+        "ingest_garmin_zip", "scripts/archive/ingest_garmin_zip.py"
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)

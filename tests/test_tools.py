@@ -505,7 +505,7 @@ class TestMemorySingletonsConstruct:
         from memory.pinecone_db import MemoryStore
 
         monkeypatch.setenv("PINECONE_API_KEY", "test-key")
-        monkeypatch.setattr(tools, "_memory_store", None)
+        monkeypatch.setattr("core.tools.memory._memory_store", None)
 
         store = tools._get_memory_store()
         assert isinstance(store, MemoryStore)
@@ -514,8 +514,8 @@ class TestMemorySingletonsConstruct:
         from mcp_tools.memory import MemoryTool
 
         monkeypatch.setenv("PINECONE_API_KEY", "test-key")
-        monkeypatch.setattr(tools, "_memory_store", None)
-        monkeypatch.setattr(tools, "_memory_tool", None)
+        monkeypatch.setattr("core.tools.memory._memory_store", None)
+        monkeypatch.setattr("core.tools.memory._memory_tool", None)
 
         tool = tools._get_memory_tool()
         assert isinstance(tool, MemoryTool)
@@ -865,7 +865,7 @@ class TestNativeTaskTools:
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t1", "title": "Call dentist", "status": "active"}
 
-        with patch("core.tools._get_task_store", return_value=mock_store):
+        with patch("core.tools.tasks._get_task_store", return_value=mock_store):
             result = tools._HANDLERS["task_create"]({"title": "Call dentist", "due_date": "2026-06-25"})
 
         # create was called once, with a single positional dict (not kwargs)
@@ -883,7 +883,7 @@ class TestNativeTaskTools:
 
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t-v7", "title": "Deep work"}
-        with patch("core.tools._get_task_store", return_value=mock_store):
+        with patch("core.tools.tasks._get_task_store", return_value=mock_store):
             tools._handle_task_create(
                 title="Deep work",
                 estimated_minutes=90,
@@ -951,7 +951,7 @@ class TestNativeTaskTools:
         from core import tools
         mock_store = MagicMock()
         mock_store.create.return_value = {"id": "t1", "title": "Buy milk"}
-        with patch("core.tools._get_task_store", return_value=mock_store):
+        with patch("core.tools.tasks._get_task_store", return_value=mock_store):
             tools._handle_task_create(title="Buy milk", tags=["tag-errand"])
         assert mock_store.create.call_args.args[0]["tag_ids"] == ["tag-errand"]
 
@@ -960,7 +960,7 @@ class TestNativeTaskTools:
         from core import tools
         mock_store = MagicMock()
         mock_store.get_upcoming.return_value = [{"id": "t1", "title": "Book"}]
-        with patch("core.tools._get_task_store", return_value=mock_store):
+        with patch("core.tools.tasks._get_task_store", return_value=mock_store):
             tools._handle_task_list(upcoming_days=7)
         assert mock_store.get_upcoming.call_args.kwargs["days"] == 7
 
@@ -974,7 +974,7 @@ class TestNativeTaskTools:
             {"id": "b", "title": "far", "due_date": "2099-01-01"},
             {"id": "c", "title": "undated", "due_date": None},
         ]
-        with patch("core.tools._get_task_store", return_value=legacy):
+        with patch("core.tools.tasks._get_task_store", return_value=legacy):
             out = _json.loads(tools._handle_task_list(upcoming_days=7))
         assert [t["title"] for t in out] == ["soon"]
 
@@ -998,7 +998,7 @@ class TestNativeTaskTools:
 
         mock_store = MagicMock()
         mock_store.update.return_value = {"id": "t1", "due_date": "2026-08-14"}
-        with patch("core.tools._get_task_store", return_value=mock_store):
+        with patch("core.tools.tasks._get_task_store", return_value=mock_store):
             tools._handle_task_reschedule(
                 task_id="t1",
                 due_date="2026-08-14",
@@ -1100,7 +1100,7 @@ class TestUpdateCalendarEventRegistration:
     def test_update_calendar_event_dispatches_to_manager(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.update_event.return_value = {"ok": True, "event_id": "evt1"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = tools._HANDLERS["update_calendar_event"](
                 {"event_id": "evt1", "calendar_id": "training_cal_id", "summary": "New"}
             )
@@ -1117,7 +1117,7 @@ class TestUpdateCalendarEventRegistration:
     def test_delete_calendar_event_forwards_calendar_id(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.delete_event.return_value = {"ok": True, "event_id": "evt1"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             tools._HANDLERS["delete_calendar_event"](
                 {"event_id": "evt1", "calendar_id": "training_cal_id"}
             )
@@ -1137,7 +1137,7 @@ class TestCalendarCreateIdempotency:
         mock_cal.list_all_events.return_value = [
             {"id": "evt-existing", "summary": "Upper Body", "start": "s", "end": "e"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "upper  body",
             )
@@ -1147,7 +1147,7 @@ class TestCalendarCreateIdempotency:
     def test_existing_event_at_no_match_returns_none(self):
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
             )
@@ -1156,7 +1156,7 @@ class TestCalendarCreateIdempotency:
     def test_existing_event_at_fails_open_on_error(self):
         mock_cal = MagicMock()
         mock_cal.list_all_events.side_effect = RuntimeError("Calendar API down")
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
             )
@@ -1168,7 +1168,7 @@ class TestCalendarCreateIdempotency:
         mock_cal.list_all_events.return_value = [
             {"id": "evt-existing", "summary": "Upper Body", "start": "s", "end": "e"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Upper Body",
                 start_iso="2026-08-02T18:00:00+03:00",
@@ -1185,7 +1185,7 @@ class TestCalendarCreateIdempotency:
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
         mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Upper Body",
                 start_iso="2026-08-02T18:00:00+03:00",
@@ -1209,7 +1209,7 @@ class TestCalendarDuplicateCheckScoping:
             {"id": "evt-personal", "summary": "Upper Body",
              "calendar_id": "personal_cal_id"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00",
                 "Upper Body", calendar_id="training_cal_id",
@@ -1224,7 +1224,7 @@ class TestCalendarDuplicateCheckScoping:
             {"id": "evt-training", "summary": "Upper Body",
              "calendar_id": "training_cal_id"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00",
                 "Upper Body", calendar_id="training_cal_id",
@@ -1241,7 +1241,7 @@ class TestCalendarDuplicateCheckScoping:
             {"id": "evt-anywhere", "summary": "Upper Body",
              "calendar_id": "some_other_cal"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             found = tools._existing_event_at(
                 "2026-08-02T18:00:00+03:00", "2026-08-02T19:00:00+03:00", "Upper Body",
             )
@@ -1252,7 +1252,7 @@ class TestCalendarDuplicateCheckScoping:
         past the match on a busy multi-day window."""
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             tools._existing_event_at(
                 "2026-08-02T00:00:00+03:00", "2026-08-05T00:00:00+03:00", "Upper Body",
             )
@@ -1266,7 +1266,7 @@ class TestCalendarDuplicateCheckScoping:
             {"id": "evt-existing", "summary": "Standup"},
         ]
         mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Standup"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Standup",
                 start_iso="2026-08-03T14:00:00+03:00",
@@ -1286,7 +1286,7 @@ class TestCalendarDuplicateCheckScoping:
         mock_cal.list_all_events.return_value = [
             {"id": "evt-existing", "summary": "Standup"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Standup",
                 start_iso="2026-08-03T14:00:00+03:00",
@@ -1318,7 +1318,7 @@ class TestActionAuditTrail:
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
         mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Upper Body",
                 start_iso="2026-08-02T18:00:00+03:00",
@@ -1339,7 +1339,7 @@ class TestActionAuditTrail:
         mock_cal.list_all_events.return_value = [
             {"id": "evt-existing", "summary": "Upper Body"},
         ]
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Upper Body",
                 start_iso="2026-08-02T18:00:00+03:00",
@@ -1351,7 +1351,7 @@ class TestActionAuditTrail:
     def test_successful_delete_records_action(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.delete_event.return_value = {"ok": True, "event_id": "evt1"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._HANDLERS["delete_calendar_event"]({"event_id": "evt1"}))
         appended = fake_action_log.instances[0].appended
         assert len(appended) == 1
@@ -1361,7 +1361,7 @@ class TestActionAuditTrail:
     def test_successful_update_records_action(self, fake_action_log):
         mock_cal = MagicMock()
         mock_cal.update_event.return_value = {"ok": True, "event_id": "evt1"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._HANDLERS["update_calendar_event"](
                 {"event_id": "evt1", "summary": "New"}
             ))
@@ -1378,7 +1378,7 @@ class TestTrainingCalendarWriteBack:
         mock_cal.list_all_events.return_value = []
         mock_cal.create_event.return_value = {"event_id": "workout-1", "summary": "Upper Body"}
         training = MagicMock()
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal), patch(
             "memory.firestore_db.TrainingLogStore", return_value=training
         ):
             out = json.loads(tools._handle_create_calendar_event(
@@ -1408,7 +1408,7 @@ class TestTrainingCalendarWriteBack:
         training.get_by_slot.return_value = {
             "date": "2026-08-08", "slot": "workout-1", "type": "Upper Body"
         }
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal), patch(
             "memory.firestore_db.TrainingLogStore", return_value=training
         ):
             json.loads(tools._handle_update_calendar_event(
@@ -1427,7 +1427,7 @@ class TestTrainingCalendarWriteBack:
         training.get_by_slot.return_value = {
             "date": "2026-08-08", "slot": "workout-1", "type": "Upper Body"
         }
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal), patch(
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal), patch(
             "memory.firestore_db.TrainingLogStore", return_value=training
         ):
             json.loads(tools._handle_delete_calendar_event("workout-1"))
@@ -1441,7 +1441,7 @@ class TestTrainingCalendarWriteBack:
         mock_cal = MagicMock()
         mock_cal.list_all_events.return_value = []
         mock_cal.create_event.return_value = {"event_id": "evt-new", "summary": "Upper Body"}
-        with patch("core.tools._get_calendar_tool", return_value=mock_cal):
+        with patch("core.tools.calendar._get_calendar_tool", return_value=mock_cal):
             out = json.loads(tools._handle_create_calendar_event(
                 summary="Upper Body",
                 start_iso="2026-08-02T18:00:00+03:00",
@@ -2043,7 +2043,7 @@ class TestForgetMemory:
         mock_store._get_index.return_value = mock_index
         mock_tool = tools_module_memory_tool(mock_store)
 
-        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+        monkeypatch.setattr("core.tools.memory._memory_tool", mock_tool)
 
         result_str = tools._handle_forget_memory(vector_id="abc-123")
         result = json.loads(result_str)
@@ -2057,7 +2057,7 @@ class TestForgetMemory:
         mock_store._get_index.return_value = mock_index
         mock_tool = tools_module_memory_tool(mock_store)
 
-        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+        monkeypatch.setattr("core.tools.memory._memory_tool", mock_tool)
 
         result_str = tools._handle_forget_memory(vector_id="")
         result = json.loads(result_str)
@@ -2072,7 +2072,7 @@ class TestForgetMemory:
         mock_store._get_index.return_value = mock_index
         mock_tool = tools_module_memory_tool(mock_store)
 
-        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+        monkeypatch.setattr("core.tools.memory._memory_tool", mock_tool)
 
         # Handler dispatch always passes JSON-decoded args, so a malformed
         # call site could pass a non-string (e.g. None or an int). Exercise
@@ -2089,7 +2089,7 @@ class TestForgetMemory:
         mock_store._get_index.return_value = mock_index
         mock_tool = tools_module_memory_tool(mock_store)
 
-        monkeypatch.setattr(tools, "_memory_tool", mock_tool)
+        monkeypatch.setattr("core.tools.memory._memory_tool", mock_tool)
 
         assert "forget_memory" in tools._HANDLERS
         result_str = tools._HANDLERS["forget_memory"]({"vector_id": "xyz-789"})

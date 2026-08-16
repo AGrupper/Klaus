@@ -6,7 +6,7 @@ user had already done.
 """
 from __future__ import annotations
 
-from core.training_reality import reconcile_training_reality
+from core.training.reality import reconcile_training_reality
 
 
 TODAY = "2026-08-15"
@@ -178,7 +178,7 @@ def test_get_training_reality_is_a_read_tool_on_both_mcp_endpoints():
     only reads, so it belongs in READ_TOOLS rather than either write set.
     """
     from core.tools import TOOL_SCHEMAS, _HANDLERS
-    from interfaces.mcp_server import (
+    from interfaces.mcp.server import (
         INTERACTIVE_TOOLS,
         READ_TOOLS,
         ROUTINE_TOOLS,
@@ -255,7 +255,7 @@ def test_degraded_sources_still_confirm_sessions_that_have_evidence():
 
 def test_build_marks_reality_degraded_when_a_source_fails(monkeypatch):
     """The gather wrapper must pass its own degradation into the reconciler."""
-    import core.training_reality as module
+    import core.training.reality as module
 
     monkeypatch.setattr(module, "_read_training_log", lambda *a, **k: (None, "training_log"))
     monkeypatch.setattr(module, "_read_strength_sessions", lambda *a, **k: ([], None))

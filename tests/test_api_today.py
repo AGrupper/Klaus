@@ -53,7 +53,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }
@@ -94,8 +94,9 @@ def test_today_calendar_uses_the_process_shared_calendar_client():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
-        first = ws._today_calendar("2026-08-14")
-        second = ws._today_calendar("2026-08-14")
+        from interfaces.routes import hub_today
+        first = hub_today._today_calendar("2026-08-14")
+        second = hub_today._today_calendar("2026-08-14")
 
     expected = {
         "all_day": [],
@@ -118,15 +119,15 @@ def test_today_calendar_reads_secondary_calendars_not_just_primary():
 
     Regression: this read used list_events (primary only) while every training
     session lives on a separate "Training" calendar. The Hub therefore showed an
-    empty day, and because core.deterministic_alerts reads this same snapshot,
+    empty day, and because core.routines.alerts reads this same snapshot,
     conflict and leave-by pushes could never fire for a workout. Verified live on
     2026-08-16: three real events, snapshot returned zero. Claude masked it by
     reaching the calendar through list_all_events instead.
     """
     stubs = _stub_web_server_imports()
     shared_calendar = MagicMock()
-    shared_calendar.list_events.side_effect = AssertionError(
-        "primary-only list_events must not be used for the Hub snapshot"
+    shared_calendar._list_primary_events.side_effect = AssertionError(
+        "the primary-only fallback must not be used for the Hub snapshot"
     )
     shared_calendar.list_all_events.return_value = [
         {
@@ -144,8 +145,9 @@ def test_today_calendar_reads_secondary_calendars_not_just_primary():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
 
-        out = ws._today_calendar("2026-08-16")
+        out = hub_today._today_calendar("2026-08-16")
 
     assert len(out["timed"]) == 1, "secondary-calendar event was dropped"
     assert out["timed"][0]["title"] == "Easy Run (Treadmill)"
@@ -164,20 +166,21 @@ def test_today_returns_expected_keys():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
             # Monkeypatch the 8 per-source helpers so no real I/O occurs.
-            ws._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
-            ws._today_garmin = lambda: {"sleep": 7.5, "hrv": 55,
+            hub_today._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
+            hub_today._today_garmin = lambda: {"sleep": 7.5, "hrv": 55,
                                         "body_battery": 78, "resting_hr": 52}
-            ws._today_weather = lambda: "Sunny, 28°C, H 31°/L 22°"
-            ws._today_meals = lambda today_iso: [
+            hub_today._today_weather = lambda: "Sunny, 28°C, H 31°/L 22°"
+            hub_today._today_meals = lambda today_iso: [
                 {"slot_label": "Breakfast", "slot_time": "08:00",
                  "macros": {"kcal": 500, "protein_g": 30, "carbs_g": 60,
                             "fat_g": 15, "fiber_g": 5}}
             ]
-            ws._today_training = lambda today_iso: {
+            hub_today._today_training = lambda today_iso: {
                 "item": "Upper Body A",
                 "block_context": "Week 1 of 16 — Upper Body A",
                 "block_label": "Aerobic Base",
@@ -185,12 +188,12 @@ def test_today_returns_expected_keys():
                 "split_name": "Upper Body A",
                 "benchmark_due": False,
             }
-            ws._today_nutrition_totals = lambda today_iso: {
+            hub_today._today_nutrition_totals = lambda today_iso: {
                 "kcal": 1800, "protein_g": 140, "carbs_g": 200,
                 "fat_g": 60, "fiber_g": 25,
             }
-            ws._today_departure_windows = lambda calendar: calendar
-            ws._today_coach_note = lambda today_iso: "Hit protein target today — +15g above yesterday."
+            hub_today._today_departure_windows = lambda calendar: calendar
+            hub_today._today_coach_note = lambda today_iso: "Hit protein target today — +15g above yesterday."
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/today")
@@ -232,13 +235,14 @@ def test_no_datetimewithnanoseconds_leak():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
             # Inject DatetimeWithNanoseconds-like object into the garmin response
             # (simulates Firestore SERVER_TIMESTAMP read-back before _jsonsafe_doc).
-            ws._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
-            ws._today_garmin = lambda: {
+            hub_today._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
+            hub_today._today_garmin = lambda: {
                 "sleep": 7.0,
                 "hrv": 50,
                 "body_battery": 75,
@@ -246,8 +250,8 @@ def test_no_datetimewithnanoseconds_leak():
                 # Simulate a stray DatetimeWithNanoseconds that slipped through
                 "_updated_at": _FakeDatetimeWithNanoseconds(),
             }
-            ws._today_weather = lambda: "Partly cloudy, 26°C"
-            ws._today_meals = lambda today_iso: [{
+            hub_today._today_weather = lambda: "Partly cloudy, 26°C"
+            hub_today._today_meals = lambda today_iso: [{
                 "slot_label": "Lunch",
                 "slot_time": "12:00",
                 "macros": {
@@ -260,10 +264,10 @@ def test_no_datetimewithnanoseconds_leak():
                     "_ts": _FakeDatetimeWithNanoseconds(),
                 },
             }]
-            ws._today_training = lambda today_iso: None
-            ws._today_nutrition_totals = lambda today_iso: {}
-            ws._today_departure_windows = lambda calendar: calendar
-            ws._today_coach_note = lambda today_iso: None
+            hub_today._today_training = lambda today_iso: None
+            hub_today._today_nutrition_totals = lambda today_iso: {}
+            hub_today._today_departure_windows = lambda calendar: calendar
+            hub_today._today_coach_note = lambda today_iso: None
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/today")
@@ -300,15 +304,16 @@ def test_meal_slot_time_not_eating_time():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
             # Provide realistic-looking meal data using the canonical slot shape
             # that _today_meals() produces.
-            ws._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
-            ws._today_garmin = lambda: None
-            ws._today_weather = lambda: None
-            ws._today_meals = lambda today_iso: [
+            hub_today._today_calendar = lambda today_iso: {"all_day": [], "timed": []}
+            hub_today._today_garmin = lambda: None
+            hub_today._today_weather = lambda: None
+            hub_today._today_meals = lambda today_iso: [
                 {
                     "slot_label": "Breakfast",
                     "slot_time": "08:00",   # canonical slot identifier — NOT eating time
@@ -328,10 +333,10 @@ def test_meal_slot_time_not_eating_time():
                                "fat_g": 18, "fiber_g": 7},
                 },
             ]
-            ws._today_training = lambda today_iso: None
-            ws._today_nutrition_totals = lambda today_iso: {}
-            ws._today_departure_windows = lambda calendar: calendar
-            ws._today_coach_note = lambda today_iso: None
+            hub_today._today_training = lambda today_iso: None
+            hub_today._today_nutrition_totals = lambda today_iso: {}
+            hub_today._today_departure_windows = lambda calendar: calendar
+            hub_today._today_coach_note = lambda today_iso: None
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/today")
@@ -374,6 +379,7 @@ def test_unauthenticated_returns_401():
 
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         # Use the dev-bypass env EXCEPT override CRON_DEV_BYPASS to false
@@ -406,6 +412,7 @@ def test_today_garmin_maps_to_frontend_contract():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
 
         with patch.dict(os.environ, _ENV):
             fake = {
@@ -416,7 +423,7 @@ def test_today_garmin_maps_to_frontend_contract():
                 "sleep_score": 82,  # extra source fields the frontend never reads
             }
             with patch("mcp_tools.garmin_tool.fetch_garmin_today", return_value=fake):
-                out = ws._today_garmin()
+                out = hub_today._today_garmin()
 
     assert out == {"sleep": 7.5, "hrv": 55, "body_battery": 78, "resting_hr": 52}
 
@@ -441,9 +448,10 @@ def _departure_windows(calendar, env_extra=None):
     """Run _today_departure_windows with web_server's imports stubbed out."""
     with patch.dict(sys.modules, _stub_web_server_imports()):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_today
 
         with patch.dict(os.environ, {**_ENV, **(env_extra or {})}):
-            return ws._today_departure_windows(calendar)
+            return hub_today._today_departure_windows(calendar)
 
 
 def test_departure_windows_use_the_configured_travel_time():
@@ -484,7 +492,7 @@ def test_departure_windows_fall_back_to_the_default_travel_time():
 def test_departure_windows_survive_a_malformed_travel_override():
     """A bad env value must not strip leave_by from the whole day.
 
-    leave_by is what core.deterministic_alerts fires the "leave now" push on,
+    leave_by is what core.routines.alerts fires the "leave now" push on,
     and that path has no LLM fallback — losing it fails silently.
     """
     from datetime import datetime, timedelta  # noqa: PLC0415
@@ -527,7 +535,7 @@ def test_departure_window_actually_fires_the_deterministic_leave_now_push():
     from datetime import datetime  # noqa: PLC0415
     from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-    from core.deterministic_alerts import evaluate_daytime_rules  # noqa: PLC0415
+    from core.routines.alerts import evaluate_daytime_rules  # noqa: PLC0415
 
     tz = ZoneInfo("Asia/Jerusalem")
     # Departure is 15 min before an 18:00 event, so 17:45. "Now" is 17:50:
@@ -566,16 +574,16 @@ def test_departure_windows_skip_an_unparseable_start_without_losing_the_day():
 
 def test_sanitize_coach_note_strips_controls_and_markdown_header():
     """_sanitize_coach_note strips bidi/format control chars + a leading # (CR-04)."""
-    stubs = _stub_web_server_imports()
-    with patch.dict(sys.modules, stubs):
-        import interfaces.web_server as ws  # noqa: PLC0415
+    # A pure string function: call it where it is defined rather than through a
+    # route module that has no reason to import it.
+    from core.hub.today import _sanitize_coach_note
 
-        # "## " markdown header + LRM (U+200E) + RLM (U+200F) format controls.
-        raw = "## ‎Hit your protein target‏ today"
-        out = ws._sanitize_coach_note(raw)
+    # "## " markdown header + LRM (U+200E) + RLM (U+200F) format controls.
+    raw = "## ‎Hit your protein target‏ today"
+    out = _sanitize_coach_note(raw)
 
     assert out == "Hit your protein target today"
     assert "‎" not in out and "‏" not in out
     assert not out.startswith("#")
     # Length is clamped.
-    assert len(ws._sanitize_coach_note("x" * 1000)) <= 280
+    assert len(_sanitize_coach_note("x" * 1000)) <= 280

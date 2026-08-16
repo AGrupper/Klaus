@@ -1,4 +1,4 @@
-"""Tests for core/biometric_ingest.py::run_one_batch.
+"""Tests for core/ingest/biometric.py::run_one_batch.
 
 Covers backfill vs delta window selection, presence-diff against Postgres,
 the always-refetch of today+yesterday, the skipped_dates ledger for empty
@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import core.biometric_ingest as bi
+import core.ingest.biometric as bi
 
 
 def _today_iso() -> str:

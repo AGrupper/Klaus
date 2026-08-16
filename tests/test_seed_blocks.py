@@ -1,7 +1,7 @@
-"""Tests for scripts/seed_training_blocks.py — Phase 23 BLOCK-01.
+"""Tests for scripts/archive/seed_training_blocks.py — Phase 23 BLOCK-01.
 
 RED tests — written before implementation. All should FAIL until
-scripts/seed_training_blocks.py is created.
+scripts/archive/seed_training_blocks.py is created.
 
 Tests cover:
   - build_blocks_list() returns exactly 4 blocks with locked labels/dates
@@ -71,8 +71,15 @@ def _install_firestore_mock() -> MagicMock:
     dotenv_mod.load_dotenv = MagicMock()
     sys.modules["dotenv"] = dotenv_mod
 
-    if "memory.firestore_db" in sys.modules:
-        del sys.modules["memory.firestore_db"]
+    # Evict the data layer so it re-imports against the mocks above. The
+    # store implementations live in memory.stores.* and are re-exported by
+    # memory.firestore_db, so dropping only the facade would leave the real
+    # Firestore client bound inside every store module.
+    for _cached in [
+        name for name in list(sys.modules)
+        if name == "memory.firestore_db" or name.startswith("memory.stores")
+    ]:
+        del sys.modules[_cached]
 
     return firestore_mock
 
@@ -92,11 +99,11 @@ def _firestore_mock(isolated_modules):
     # Also evict the seed script module if previously imported
     if "seed_training_blocks" in sys.modules:
         del sys.modules["seed_training_blocks"]
-    if "scripts.seed_training_blocks" in sys.modules:
-        del sys.modules["scripts.seed_training_blocks"]
+    if "scripts.archive.seed_training_blocks" in sys.modules:
+        del sys.modules["scripts.archive.seed_training_blocks"]
 
     # Add scripts directory to path for import
-    scripts_dir = str(Path(__file__).parent.parent / "scripts")
+    scripts_dir = str(Path(__file__).parent.parent / "scripts" / "archive")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
 

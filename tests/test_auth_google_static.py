@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from core.auth_google import CALENDAR_SCOPE, GoogleAuthManager
+from core.auth.google import CALENDAR_SCOPE, GoogleAuthManager
 
 
 class RecordingTokenStorage:
@@ -43,7 +43,7 @@ def test_expired_access_token_refreshes_in_memory_without_rotating_storage() -> 
         credentials.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
 
     with patch(
-        "core.auth_google.Credentials.refresh",
+        "core.auth.google.Credentials.refresh",
         new=refresh_without_network,
     ):
         credentials = manager.get_credentials()

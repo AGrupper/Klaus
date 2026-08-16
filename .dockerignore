@@ -11,8 +11,20 @@ __pycache__/
 !.env.example
 config/
 local_mac/
-.worktrees/
 tests/
+
+# Git worktrees. Both locations: .worktrees/ was already excluded, but agent
+# worktrees land under .claude/ and were being copied into the image — 8.7 MB of
+# duplicate source, including modules deleted from the live tree.
+.worktrees/
+.claude/
+
+# Planning and design history. Never read at runtime, unlike docs/, which stays
+# in the image because read_coaching_guide and the user-profile reader load from
+# it while the service is running.
+.planning/
+.superpowers/
+docs/archive/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

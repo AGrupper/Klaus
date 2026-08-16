@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
 
-from core.auth_google import GoogleAuthManager
+from core.auth.google import GoogleAuthManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,16 @@ _TRANSIENT_ERRORS = (HttpError, OSError)
 # NOT applied to insert/patch/delete calls: retrying a write whose response
 # was merely lost (not the request) risks a duplicate side effect.
 _READ_NUM_RETRIES = 1
+
+# Scheduling rules from docs/USER.md ("scheduling-rules"). They live here as
+# named constants rather than inline numbers because they are Amit's routine,
+# not arbitrary defaults: a workout is bracketed by travel, and a "Get Ready"
+# block precedes the whole thing.
+_DEFAULT_WORKOUT_TRAVEL_MINUTES = 15
+_GET_READY_MINUTES = 45
+
+_KLAUS_EVENT_MARKER = {"klaus_owned": "true", "klaus_version": "7"}
+_CALENDAR_TIMEZONE = "Asia/Jerusalem"
 
 
 class GoogleCalendarManager:
@@ -84,7 +94,7 @@ class GoogleCalendarManager:
     # Public API                                                           #
     # ------------------------------------------------------------------ #
 
-    def list_events(
+    def _list_primary_events(
         self,
         time_min_iso: str,
         time_max_iso: str,
@@ -260,15 +270,13 @@ class GoogleCalendarManager:
     ) -> list[dict]:
         """List events across ALL of the user's writable calendars, merged.
 
-        Unlike :meth:`list_events` (primary only) this enumerates every calendar
+        Unlike the primary-only fallback this enumerates every calendar
         the user can write to and tags each event with both its calendar display
         name (``"calendar"``) and the real ``"calendar_id"`` — the latter is what
         the edit/delete tools need to act on an event in its own calendar.
 
         Buffer blocks (``Get Ready:`` / ``Travel:``) are intentionally NOT
         stripped here so Klaus can see and manage a workout's prep block himself.
-        (:meth:`list_training_events` keeps its stripped view for the training
-        check-in.)
 
         Args:
             time_min_iso: RFC 3339 / ISO 8601 window start.
@@ -285,7 +293,7 @@ class GoogleCalendarManager:
         if not calendars:
             # Fall back to the primary-only view so we degrade gracefully rather
             # than returning nothing if calendarList is unavailable.
-            events = self.list_events(time_min_iso, time_max_iso, max_results)
+            events = self._list_primary_events(time_min_iso, time_max_iso, max_results)
             for ev in events:
                 ev.setdefault("calendar", "primary")
                 ev.setdefault("calendar_id", "primary")
@@ -364,79 +372,6 @@ class GoogleCalendarManager:
         except _TRANSIENT_ERRORS:
             logger.warning("Could not verify Klaus ownership for event %s", event_id)
             return False
-
-    def list_training_events(
-        self,
-        time_min_iso: str,
-        time_max_iso: str,
-        calendar_name: str = "Training",
-        max_results: int = 20,
-    ) -> list[dict]:
-        """List events from the named training calendar, filtering buffer blocks.
-
-        Resolves the calendar by display name (D-01) rather than a hardcoded ID,
-        then returns events excluding ``Get Ready:`` and ``Travel:`` buffer blocks
-        created by the automatic workout-prep logic (D-02).
-
-        Args:
-            time_min_iso:   RFC 3339 / ISO 8601 window start.
-            time_max_iso:   RFC 3339 / ISO 8601 window end.
-            calendar_name:  Display name of the training calendar.  Defaults to
-                            ``_TRAINING_CALENDAR_NAME`` (``"Training"``).
-            max_results:    Maximum events to return (default 20).
-
-        Returns:
-            A list of dicts, each containing ``"id"``, ``"summary"``, ``"start"``,
-            ``"end"``, ``"description"``.  Returns ``[]`` if the calendar is not
-            found or on any API error.  Never raises.
-        """
-        cal_id = self.get_calendar_id_by_name(calendar_name)
-        if cal_id is None:
-            logger.warning("Training calendar %r not found", calendar_name)
-            return []
-        try:
-            service = self._get_service()
-            result = (
-                service.events()
-                .list(
-                    calendarId=cal_id,          # NOT "primary" — resolved by name
-                    timeMin=time_min_iso,
-                    timeMax=time_max_iso,
-                    singleEvents=True,
-                    orderBy="startTime",
-                    maxResults=max_results,
-                )
-                .execute(num_retries=_READ_NUM_RETRIES)
-            )
-            events: list[dict] = []
-            for item in result.get("items", []):
-                summary = item.get("summary", "") or ""
-                # D-02: skip buffer blocks added by create_event workout logic
-                if summary.startswith("Get Ready:") or summary.startswith("Travel:"):
-                    continue
-                start_field = item.get("start", {})
-                end_field = item.get("end", {})
-                # WHY prefer dateTime over date: same normalisation as list_events
-                start = start_field.get("dateTime") or start_field.get("date", "")
-                end = end_field.get("dateTime") or end_field.get("date", "")
-                events.append(
-                    {
-                        "id": item.get("id", ""),
-                        "summary": summary,
-                        "start": start,
-                        "end": end,
-                        "description": item.get("description", ""),
-                    }
-                )
-            return events
-        except Exception:
-            logger.warning(
-                "list_training_events(%r, %r) failed",
-                time_min_iso,
-                time_max_iso,
-                exc_info=True,
-            )
-            return []
 
     def is_free(self, start_iso: str, end_iso: str) -> dict:
         """Check whether ALL writable calendars are free in the given window.
@@ -569,7 +504,9 @@ class GoogleCalendarManager:
                 - "start"                   (str)  — Buffered start ISO string.
                 - "end"                     (str)  — Buffered end ISO string.
                 - "travel_minutes_each_way" (int)  — Travel buffer used.
-                - "confirmation"            (str)  — Human-readable summary.
+                - "calendar_id"             (str)  — Calendar it landed in.
+                - "buffers"                 (list) — Buffer blocks applied, each
+                  ``{"kind", "start", "end"}``. Claude turns this into prose.
                 - "get_ready_event_id"      (str)  — (Workout only) ID of the
                   prep block event.
             On API error:
@@ -579,47 +516,10 @@ class GoogleCalendarManager:
         Raises:
             ValueError: If `travel_minutes_each_way` is negative.
         """
-        # -------------------------------------------------------------- #
-        # Step 1 — Determine whether this is a workout and set travel.   #
-        # -------------------------------------------------------------- #
-        # A "training block" is defined by membership of the Training calendar,
-        # not by title keywords. On creation, the caller (the brain) decides
-        # whether the event is a workout and passes is_workout explicitly. When
-        # unset we default to non-workout — there is no keyword fallback.
-        if is_workout is None:
-            is_workout = False
-        # Get Ready prep blocks are buffer events, never workouts themselves —
-        # guard against a caller accidentally re-flagging one as a workout.
-        if is_workout and summary.lower().startswith("get ready"):
-            is_workout = False
+        is_workout = self._is_workout_event(summary, is_workout)
+        travel = self._resolve_travel_minutes(travel_minutes_each_way, is_workout)
+        plan = self._plan_buffer_blocks(summary, start_iso, end_iso, travel, is_workout)
 
-        if travel_minutes_each_way is not None:
-            travel = travel_minutes_each_way
-        else:
-            # WHY default 15 for workouts: user's personal routine requires
-            # travel to/from any workout venue (per docs/USER.md).
-            travel = 15 if is_workout else 0
-
-        if travel < 0:
-            raise ValueError(
-                f"travel_minutes_each_way must be >= 0, got {travel}"
-            )
-
-        # -------------------------------------------------------------- #
-        # Step 2 — Compute buffered start and end times.                 #
-        # -------------------------------------------------------------- #
-        # WHY fromisoformat: stdlib approach, handles the RFC 3339 strings
-        # that Google Calendar returns (Python 3.11+ handles "Z" suffix too;
-        # earlier versions need "+00:00" form — callers should normalise).
-        parsed_start: datetime = datetime.fromisoformat(start_iso)
-        parsed_end: datetime = datetime.fromisoformat(end_iso)
-
-        buffered_start: datetime = parsed_start - timedelta(minutes=travel)
-        buffered_end: datetime = parsed_end + timedelta(minutes=travel)
-
-        # -------------------------------------------------------------- #
-        # Step 3 — Build description, prepending the travel note if needed.
-        # -------------------------------------------------------------- #
         if travel > 0:
             # WHY prepend: keeps the buffer notice at the top so it's visible
             # in the calendar event preview without scrolling.
@@ -628,132 +528,47 @@ class GoogleCalendarManager:
                 + description
             )
 
-        # -------------------------------------------------------------- #
-        # Step 4 — Insert the main event.                                #
-        # -------------------------------------------------------------- #
         try:
             service = self._get_service()
-
-            # Workouts go to the dedicated Training calendar (D-01) so the evening
-            # training check-in — which reads ONLY the Training calendar — can see
-            # them. Fall back to the primary calendar if no Training calendar exists.
-            # An explicit calendar_id always wins; otherwise workouts route to the
-            # Training calendar and everything else to primary.
-            if calendar_id:
-                target_cal = calendar_id
-            else:
-                target_cal = "primary"
-                if is_workout:
-                    training_cal_id = self.get_calendar_id_by_name(self._TRAINING_CALENDAR_NAME)
-                    if training_cal_id:
-                        target_cal = training_cal_id
-
-            event_body: dict = {
-                "summary": summary,
-                "description": description,
-                "extendedProperties": {
-                    "private": {"klaus_owned": "true", "klaus_version": "7"},
-                },
-                "start": {
-                    "dateTime": buffered_start.isoformat(),
-                    # WHY explicit timeZone: even though the dateTime string is
-                    # already tz-aware, Google Calendar uses this field when
-                    # rendering the event in the user's calendar UI.
-                    "timeZone": "Asia/Jerusalem",
-                },
-                "end": {
-                    "dateTime": buffered_end.isoformat(),
-                    "timeZone": "Asia/Jerusalem",
-                },
-            }
+            target_cal = self._target_calendar(is_workout, calendar_id)
 
             created_event: dict = (
                 service.events()
-                .insert(calendarId=target_cal, body=event_body)
+                .insert(
+                    calendarId=target_cal,
+                    body=self._klaus_event_body(
+                        summary, description, plan["start"], plan["end"]
+                    ),
+                )
                 .execute()
             )
 
-            event_id: str = created_event.get("id", "")
-
-            # -------------------------------------------------------------- #
-            # Step 5 — For workouts, create the "Get Ready" prep block.      #
-            # -------------------------------------------------------------- #
-            get_ready_event_id: str | None = None
-
-            if is_workout:
-                # WHY 45 minutes: user's personal pre-workout routine takes
-                # ~45 min (per docs/USER.md), so we block it out automatically
-                # rather than relying on manual entry.
-                get_ready_start: datetime = buffered_start - timedelta(minutes=45)
-                get_ready_end: datetime = buffered_start  # ends when workout starts
-
-                get_ready_body: dict = {
-                    "summary": f"Get Ready: {summary}",
-                    "description": "Pre-workout prep block (per personal routine).",
-                    "extendedProperties": {
-                        "private": {"klaus_owned": "true", "klaus_version": "7"},
-                    },
-                    "start": {
-                        "dateTime": get_ready_start.isoformat(),
-                        "timeZone": "Asia/Jerusalem",
-                    },
-                    "end": {
-                        "dateTime": get_ready_end.isoformat(),
-                        "timeZone": "Asia/Jerusalem",
-                    },
-                }
-
-                get_ready_event: dict = (
-                    service.events()
-                    .insert(calendarId=target_cal, body=get_ready_body)
-                    .execute()
-                )
-                get_ready_event_id = get_ready_event.get("id", "")
-
-            # -------------------------------------------------------------- #
-            # Step 6 — Build human-readable confirmation string and return.  #
-            # -------------------------------------------------------------- #
-            # Format times as HH:MM for readability in the confirmation message.
-            start_display = buffered_start.strftime("%H:%M")
-            end_display = buffered_end.strftime("%H:%M")
-
-            if is_workout:
-                get_ready_display = (buffered_start - timedelta(minutes=45)).strftime(
-                    "%H:%M"
-                )
-                if travel > 0:
-                    confirmation = (
-                        f"'{summary}' scheduled for {start_display}–{end_display} "
-                        f"(includes {travel}-min travel buffer). "
-                        f"Get Ready block created at {get_ready_display}."
-                    )
-                else:
-                    confirmation = (
-                        f"'{summary}' scheduled for {start_display}–{end_display}. "
-                        f"Get Ready block created at {get_ready_display}."
-                    )
-            else:
-                if travel > 0:
-                    confirmation = (
-                        f"'{summary}' scheduled for {start_display}–{end_display} "
-                        f"(includes {travel}-min travel buffer)."
-                    )
-                else:
-                    confirmation = (
-                        f"'{summary}' scheduled for {start_display}–{end_display}."
-                    )
-
             result: dict = {
-                "event_id": event_id,
+                "event_id": created_event.get("id", ""),
                 "summary": summary,
-                "start": buffered_start.isoformat(),
-                "end": buffered_end.isoformat(),
+                "start": plan["start"].isoformat(),
+                "end": plan["end"].isoformat(),
                 "travel_minutes_each_way": travel,
-                "confirmation": confirmation,
+                "calendar_id": target_cal,
+                "buffers": plan["buffers"],
             }
 
-            if is_workout and get_ready_event_id is not None:
-                result["get_ready_event_id"] = get_ready_event_id
+            get_ready = plan["get_ready"]
+            if get_ready is not None:
+                get_ready_event: dict = (
+                    service.events()
+                    .insert(
+                        calendarId=target_cal,
+                        body=self._klaus_event_body(
+                            get_ready["summary"],
+                            "Pre-workout prep block (per personal routine).",
+                            get_ready["start"],
+                            get_ready["end"],
+                        ),
+                    )
+                    .execute()
+                )
+                result["get_ready_event_id"] = get_ready_event.get("id", "")
 
             return result
 
@@ -766,6 +581,169 @@ class GoogleCalendarManager:
                 exc,
             )
             return {"error": str(exc), "summary": summary}
+
+    @staticmethod
+    def _is_workout_event(summary: str, is_workout: bool | None) -> bool:
+        """Decide whether an event is a training block.
+
+        A training block is defined by the caller's judgement and by Training-
+        calendar membership, never by title keywords — so an unset flag means
+        "not a workout" rather than triggering a guess.
+
+        The one override: a "Get Ready" block is itself a buffer. Letting one be
+        flagged as a workout would generate buffers for the buffer, which is the
+        infinite recursion this guard exists to prevent.
+        """
+        if not is_workout:
+            return False
+        return not summary.lower().startswith("get ready")
+
+    @staticmethod
+    def _resolve_travel_minutes(travel_minutes_each_way: int | None, is_workout: bool) -> int:
+        """Return the travel buffer to apply on each side of an event.
+
+        Args:
+            travel_minutes_each_way: Explicit caller value; 0 suppresses buffering.
+            is_workout: Whether the event is a training block.
+
+        Returns:
+            int: Explicit value when given, otherwise Amit's standard workout
+            travel buffer for workouts and 0 for everything else.
+
+        Raises:
+            ValueError: If the explicit value is negative.
+        """
+        if travel_minutes_each_way is None:
+            return _DEFAULT_WORKOUT_TRAVEL_MINUTES if is_workout else 0
+        if travel_minutes_each_way < 0:
+            raise ValueError(
+                f"travel_minutes_each_way must be >= 0, got {travel_minutes_each_way}"
+            )
+        return travel_minutes_each_way
+
+    @staticmethod
+    def _plan_buffer_blocks(
+        summary: str,
+        start_iso: str,
+        end_iso: str,
+        travel: int,
+        is_workout: bool,
+    ) -> dict:
+        """Work out the real footprint of an event before anything is written.
+
+        Pure: no network, no clock. This is the whole of Amit's scheduling rule
+        from docs/USER.md, in one testable place — the buffered window plus the
+        "Get Ready" block that precedes a workout.
+
+        Args:
+            summary:    Event title, used to name the prep block.
+            start_iso:  Requested start (RFC 3339 / ISO 8601, timezone-aware).
+            end_iso:    Requested end (RFC 3339 / ISO 8601, timezone-aware).
+            travel:     Travel minutes to add on each side.
+            is_workout: Whether to add the pre-workout prep block.
+
+        Returns:
+            dict: ``start`` and ``end`` datetimes for the buffered event,
+            ``get_ready`` (a ``{"summary", "start", "end"}`` spec or None), and
+            ``buffers`` — a JSON-safe description of what was applied, for the
+            caller to report.
+        """
+        # WHY fromisoformat: stdlib, and it handles the RFC 3339 strings Google
+        # Calendar returns (3.11+ accepts a "Z" suffix; older callers should
+        # normalise to "+00:00").
+        parsed_start = datetime.fromisoformat(start_iso)
+        parsed_end = datetime.fromisoformat(end_iso)
+
+        buffered_start = parsed_start - timedelta(minutes=travel)
+        buffered_end = parsed_end + timedelta(minutes=travel)
+
+        buffers: list[dict] = []
+        if travel > 0:
+            buffers.append(
+                {
+                    "kind": "travel",
+                    "minutes": travel,
+                    "start": buffered_start.isoformat(),
+                    "end": parsed_start.isoformat(),
+                }
+            )
+            buffers.append(
+                {
+                    "kind": "travel",
+                    "minutes": travel,
+                    "start": parsed_end.isoformat(),
+                    "end": buffered_end.isoformat(),
+                }
+            )
+
+        get_ready = None
+        if is_workout:
+            # The prep block ends exactly when the buffered event begins, so
+            # travel and preparation never overlap.
+            get_ready_start = buffered_start - timedelta(minutes=_GET_READY_MINUTES)
+            get_ready = {
+                "summary": f"Get Ready: {summary}",
+                "start": get_ready_start,
+                "end": buffered_start,
+            }
+            buffers.append(
+                {
+                    "kind": "get_ready",
+                    "minutes": _GET_READY_MINUTES,
+                    "start": get_ready_start.isoformat(),
+                    "end": buffered_start.isoformat(),
+                }
+            )
+
+        return {
+            "start": buffered_start,
+            "end": buffered_end,
+            "get_ready": get_ready,
+            "buffers": buffers,
+        }
+
+    def _target_calendar(self, is_workout: bool, calendar_id: str | None) -> str:
+        """Choose the calendar an event should be created in.
+
+        An explicit ``calendar_id`` always wins. Otherwise workouts route to the
+        dedicated Training calendar (D-01) — which is what makes them training
+        blocks — falling back to primary when no such calendar exists.
+        """
+        if calendar_id:
+            return calendar_id
+        if is_workout:
+            training_cal_id = self.get_calendar_id_by_name(self._TRAINING_CALENDAR_NAME)
+            if training_cal_id:
+                return training_cal_id
+        return "primary"
+
+    @staticmethod
+    def _klaus_event_body(
+        summary: str, description: str, start: datetime, end: datetime
+    ) -> dict:
+        """Build a Google Calendar event body marked as Klaus-owned.
+
+        The ``klaus_owned`` marker is what lets routines move or delete an event
+        autonomously; anything without it is treated as user-created and is never
+        touched. Every event Klaus creates goes through here so the marker cannot
+        be forgotten on one path.
+        """
+        return {
+            "summary": summary,
+            "description": description,
+            "extendedProperties": {"private": dict(_KLAUS_EVENT_MARKER)},
+            "start": {
+                # WHY an explicit timeZone even though dateTime is already
+                # tz-aware: Google Calendar uses this field when rendering the
+                # event in the user's UI.
+                "dateTime": start.isoformat(),
+                "timeZone": _CALENDAR_TIMEZONE,
+            },
+            "end": {
+                "dateTime": end.isoformat(),
+                "timeZone": _CALENDAR_TIMEZONE,
+            },
+        }
 
     def _find_calendar_for_event(self, event_id: str) -> str | None:
         """Return the ID of the writable calendar that contains ``event_id``.

@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 def test_retained_scheduler_staleness_is_reported_without_legacy_jobs(monkeypatch):
     """A missed deterministic scheduler produces a critical health signal."""
-    from core import heartbeat
+    from core.routines import heartbeat
 
     stale = datetime.now(timezone.utc) - timedelta(hours=3)
     monkeypatch.setattr(
@@ -24,7 +24,7 @@ def test_retained_scheduler_staleness_is_reported_without_legacy_jobs(monkeypatc
 
 def test_push_health_reports_missing_subscriptions_without_telegram_fallback(monkeypatch):
     """Enabled Web Push with no browser subscription is a critical infrastructure signal."""
-    from core import heartbeat
+    from core.routines import heartbeat
 
     subscriptions = MagicMock()
     subscriptions.list_all.return_value = []
@@ -40,7 +40,7 @@ def test_push_health_reports_missing_subscriptions_without_telegram_fallback(mon
 
 def test_deployment_identity_uses_runtime_metadata_not_github_polling(monkeypatch):
     """The health surface names the serving Cloud Run revision without network polling."""
-    from core.heartbeat import deployment_identity
+    from core.routines.heartbeat import deployment_identity
 
     monkeypatch.setenv("K_SERVICE", "klaus-agent")
     monkeypatch.setenv("K_REVISION", "klaus-agent-00042")
@@ -49,7 +49,7 @@ def test_deployment_identity_uses_runtime_metadata_not_github_polling(monkeypatc
 
 def test_collects_scheduler_mcp_push_and_deployment_checks(monkeypatch):
     """All retained health domains participate in deterministic alert evaluation."""
-    from core import heartbeat
+    from core.routines import heartbeat
 
     expected = heartbeat.Signal("mcp:ok", "warning", "mcp", "MCP", "detail", "fix")
     monkeypatch.setattr(heartbeat, "check_cron_health", lambda now=None: [])

@@ -1,4 +1,4 @@
-"""Tests for core/pace_history.py — fetch_dense_pace_history().
+"""Tests for core/training/pace_history.py — fetch_dense_pace_history().
 
 Covers the Phase 25 code-review fixes:
   - WR-02 / IN-02: per-day aggregation so LIMIT counts distinct days and the
@@ -12,7 +12,7 @@ from __future__ import annotations
 import sys
 import types
 
-import core.pace_history as ph
+import core.training.pace_history as ph
 
 
 def _install_fake_db(monkeypatch, capture: dict, rows):

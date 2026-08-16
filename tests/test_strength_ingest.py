@@ -1,4 +1,4 @@
-"""Tests for core/strength_ingest.py::run_one_batch.
+"""Tests for core/ingest/strength.py::run_one_batch.
 
 Covers backfill vs delta mode selection, page-bounded draining, cursor advance
 discipline (only on full drain), updated/deleted event application, idempotency,
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import core.strength_ingest as si
+import core.ingest.strength as si
 
 
 @pytest.fixture

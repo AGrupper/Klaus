@@ -1,4 +1,4 @@
-"""Tests for core/projection.py — project_goal_progress() pure-function helper.
+"""Tests for core/training/projection.py — project_goal_progress() pure-function helper.
 
 Covers PROG-02-A through PROG-02-G and PROG-02-N:
   - 0 data points → no_data result (PROG-02-A)
@@ -15,7 +15,7 @@ Every call uses today_iso="2026-08-01" — never relies on the system clock.
 """
 from __future__ import annotations
 
-from core.projection import project_goal_progress, FACET_DIRECTION, GOAL_METRIC_TO_FACET
+from core.training.projection import project_goal_progress, FACET_DIRECTION, GOAL_METRIC_TO_FACET
 
 
 # ---------------------------------------------------------------------------

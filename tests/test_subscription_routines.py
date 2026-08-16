@@ -108,7 +108,7 @@ class FakeReviewStore:
 
 
 def test_trigger_persists_pending_before_remote_fire_and_schedules_timeout():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     events = []
     runs = FakeRunStore()
@@ -146,7 +146,7 @@ def test_trigger_persists_pending_before_remote_fire_and_schedules_timeout():
 
 
 def test_trigger_drops_hostile_session_url_but_keeps_run_running():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     runs = FakeRunStore()
     coordinator = SubscriptionRoutineCoordinator(
@@ -170,7 +170,7 @@ def test_trigger_drops_hostile_session_url_but_keeps_run_running():
 
 
 def test_same_routine_date_deduplicates_without_second_remote_fire():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     fires = []
     runs = FakeRunStore()
@@ -193,7 +193,7 @@ def test_same_routine_date_deduplicates_without_second_remote_fire():
 
 
 def test_shadow_run_has_separate_identity_and_tells_claude_not_to_deliver():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     fires = []
     runs = FakeRunStore()
@@ -225,7 +225,7 @@ def test_shadow_run_has_separate_identity_and_tells_claude_not_to_deliver():
 
 
 def test_timeout_publishes_deterministic_review_without_judgment_writes():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     runs = FakeRunStore()
     reviews = FakeReviewStore()
@@ -274,7 +274,7 @@ def test_timeout_publishes_deterministic_review_without_judgment_writes():
 
 
 def test_late_callback_after_fallback_does_not_trigger_second_fallback_push():
-    from core.subscription_routines import SubscriptionRoutineCoordinator
+    from core.routines.subscription import SubscriptionRoutineCoordinator
 
     runs = FakeRunStore()
     reviews = FakeReviewStore()
@@ -304,8 +304,8 @@ def test_stale_fallback_retries_without_overwriting_claude_publication(monkeypat
     """A stale fallback transaction retries and cannot overwrite Claude."""
     import core.push_sender
     import memory.firestore_db
-    from core.subscription_routines import SubscriptionRoutineCoordinator
-    from interfaces.mcp_runtime import build_custom_handlers
+    from core.routines.subscription import SubscriptionRoutineCoordinator
+    from interfaces.mcp.runtime import build_custom_handlers
     from tests.routine_firestore_fakes import (
         VersionedFirestoreClient,
         transactional_with_retry,
@@ -314,7 +314,7 @@ def test_stale_fallback_retries_without_overwriting_claude_publication(monkeypat
     client = VersionedFirestoreClient(
         server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
     )
-    monkeypatch.setattr(memory.firestore_db, "_make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
     monkeypatch.setattr(
         memory.firestore_db.firestore,
         "transactional",
@@ -394,7 +394,7 @@ def test_stale_fallback_retries_without_overwriting_claude_publication(monkeypat
 
 
 def test_remote_fire_uses_claude_subscription_routine_api_contract(monkeypatch):
-    from core.subscription_routines import fire_remote_claude_routine
+    from core.routines.subscription import fire_remote_claude_routine
 
     monkeypatch.setenv(
         "CLAUDE_ROUTINE_TRIGGER_URL_MORNING",
@@ -445,7 +445,7 @@ def test_remote_fire_uses_claude_subscription_routine_api_contract(monkeypatch):
 
 
 def test_remote_fire_requires_a_routine_trigger_token(monkeypatch):
-    from core.subscription_routines import fire_remote_claude_routine
+    from core.routines.subscription import fire_remote_claude_routine
 
     monkeypatch.setenv(
         "CLAUDE_ROUTINE_TRIGGER_URL_NIGHTLY",
