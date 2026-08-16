@@ -168,7 +168,11 @@ def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
 def test_retired_web_and_frontend_implementations_are_physically_absent() -> None:
     """Source subtraction removes dead chat/transport bodies, not just reachability."""
     web_source = (ROOT / "interfaces" / "web_server.py").read_text(encoding="utf-8")
-    tools_source = (ROOT / "core" / "tools.py").read_text(encoding="utf-8")
+    # core/tools is a package now; scan every module in it.
+    tools_source = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / "core" / "tools").glob("*.py"))
+    )
 
     for forbidden in (
         "core.hub_attachments",

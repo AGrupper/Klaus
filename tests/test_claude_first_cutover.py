@@ -89,16 +89,15 @@ def _life_snapshot_dispatch_nodes(tools):
 
     nodes = []
     for tool_name in ("task_list", "get_habit_adherence", "get_self_status"):
-        registered = tools._HANDLERS[tool_name]
-        referenced = [
-            value
-            for name, value in inspect.getclosurevars(registered).globals.items()
-            if name.startswith("_handle_") and inspect.isfunction(value)
-        ]
+        # The registry maps a name to exactly one handler function. Before the
+        # package split this was a lambda over module globals, so the closure had
+        # to be inspected to find the handler behind it; the mapping is direct now.
+        registered = tools.registered_tools()[tool_name]
+        referenced = [registered] if inspect.isfunction(registered) else []
         assert len(referenced) == 1, (
             f"{tool_name} must map to exactly one retained handler", referenced
         )
-        nodes.append((f"core.tools._HANDLERS[{tool_name!r}]", referenced[0]))
+        nodes.append((f"core.tools registry[{tool_name!r}]", referenced[0]))
     return tuple(nodes)
 
 
