@@ -1,48 +1,126 @@
 # User Profile & Core Context
 
-## 1. Current Status & Environment
-* **Location:** Tel Aviv, Israel.
-* **Life Stage:** Pre-military window (recently finished high school). Minimal weekday obligations.
-* **Employment:** Part-time at "Studio" (restaurant).
-* **General Profile:** Highly ambitious and driven, enjoys building technical projects, highly social with a close group of friends. Prone to occasional procrastination.
+Everything Klaus should already know about Amit, in one place.
 
-## 2. Hardcoded Routines & Fitness Strategy
-* **Five Fingers Practice:** Every Wednesday and Sunday, 18:45 to 21:00.
-* **Fitness Alignment:** No scheduling anything on Friday mornings unless it is important. I like having a running workout/long run on Friday mornings.
+This file is **served to Klaus on every turn** in the `profile` block of
+`get_life_snapshot`, and section-by-section through `read_user_profile`. It is
+the single source of these facts: they must not be restated inside individual
+skills, because a fact written into one skill is a fact the other three do not
+have.
 
-## 3. Travel & Buffer Constraints
-* **Standard Travel Buffer:** Unless explicitly stated otherwise, the agent must automatically add a 15-minute travel block immediately preceding any scheduled event, and a 15-minute return block immediately following the event (total standard buffer: 30 minutes).
+What belongs here: durable facts about Amit and the shape of his life. What does
+not: instructions about how Klaus should behave (that is `docs/AGENT.md`), how
+Klaus should coach (`docs/COACHING_GUIDE.md`), or anything that changes daily —
+live state comes from the rest of the snapshot.
 
-## 4. Pre-Workout Logic
-* **What counts as a training block:** A training block is any event living in the dedicated **Training** calendar (excluding its automatic "Get Ready"/"Travel" buffer blocks) — not any event matching a keyword. When Klaus is asked to create a new event, Klaus judges whether it is a workout; if so it is routed to the Training calendar with the buffers below. (Typical workouts: Running, Biking, Basketball, Gym, Five Fingers practice.)
-* **The Timeline Sequence:** For any training block, the schedule must reflect:
-    * **T-Minus 60 minutes:** "Get Ready" block begins.
-    * **T-Minus 15 minutes:** "Travel" block begins.
-    * **T-Zero:** Workout/Practice event begins.
+<!-- SECTION: identity -->
+## Identity
 
-## 5. Procrastination & Accountability Protocols
-* **Strict Intervention:** If essential tasks (like coding projects or required errands) are delayed without a valid physical or scheduling conflict, the agent is authorized to politely challenge the delay and restrict scheduling leisure or social events until primary tasks are addressed.
-* **Actionable Reminders:** If a high-priority task is pending by late afternoon, the agent should actively suggest setting a micro-timer (e.g., 25 minutes) to initiate momentum rather than simply moving the deadline.
+- **Location:** Tel Aviv, Israel. Timezone `Asia/Jerusalem`, and all times in
+  Klaus's world are local unless stated otherwise.
+- **Life stage:** Pre-military window, after finishing high school. Weekday
+  obligations are light, which means his time is mostly self-directed — the
+  constraint on his days is his own planning, not an external schedule.
+- **Work:** Part-time at "Studio", a restaurant. See `rhythms` for shift shapes.
+- **Character:** Ambitious and driven, builds technical projects for their own
+  sake, highly social with a close group of friends. Prone to occasional
+  procrastination on the things he says matter most — see `working-style`.
+- **Language:** Klaus always replies in English, even when Amit writes in
+  Hebrew, unless Amit asks otherwise.
+- **Money:** Reported in ILS (₪). Foreign holdings are converted at the current
+  `USD_ILS` rate, and an estimated cost basis is always labelled as estimated.
 
-## 6. Five Fingers Template
+<!-- SECTION: rhythms -->
+## Rhythms
 
-The following Hebrew message template is used for all pre-practice and morning-after pings to sub-team members. The `{name}` placeholder is replaced with the teammate's nickname (or first name).
+**The training week lives in the calendar and the training plan, not in this
+file.** Read it. Do not assume a fixed weekly template and do not hardcode
+session times — recurring fixtures (practice, long runs) appear as real calendar
+events and planned sessions, and that is the authority on when they happen. If a
+fixture is not in the calendar, it is not scheduled, and saying so is more
+useful than inferring it from habit.
 
-```
-מה אומר {name}? אתה בא היום?
-```
+**He plans tomorrow every night.** He will do this whether or not Klaus helps,
+so the nightly review should arrive with a finished draft he edits rather than a
+proposal he has to author or approve.
 
-<!-- Replace the template above with your actual Hebrew text before going live. -->
-<!-- Template applies to all ping reasons: missed-last-week, shaky-attendance, social check-in. -->
+**Studio shifts** come in four shapes. Each has a fixed travel and eating
+buffer, because he eats at the restaurant before travelling home:
 
-## 7. Studio Restaurant Work Shift Rules
-* **Shift Types & Typical Hours:**
-    * **Morning/Opening Shift:**
-        * **Opening Start (11:00):** Shift ends early at 16:30. Post-shift eating & travel buffer is 16:30–17:00 (gets home at 17:00).
-        * **Late Start (11:30):** Shift ends at 17:00. Post-shift eating & travel buffer is 17:00–17:30 (gets home at 17:30).
-    * **Evening Shift:**
-        * **Early Evening Start (17:00 with early release):** Shift ends at 22:30. Post-shift eating & travel buffer is 22:30–23:00 (gets home at 23:00).
-        * **Late/Standard Evening Start (17:00 or 18:00):** Shift ends at 23:00. Post-shift eating & travel buffer is 23:00–23:30 (gets home at 23:30). Note: 23:00 is also referred to as "11:00" in 12-hour spoken format.
-* **Travel & Eating Buffers:**
-    * **Pre-shift:** A 15-minute travel buffer immediately preceding the shift start.
-    * **Post-shift:** A 30-minute combined eating and travel buffer immediately following the shift (since Amit eats at the restaurant before traveling home).
+| Shift | Starts | Ends | Home by |
+|---|---|---|---|
+| Opening | 11:00 | 16:30 | 17:00 |
+| Late morning | 11:30 | 17:00 | 17:30 |
+| Early evening (early release) | 17:00 | 22:30 | 23:00 |
+| Standard evening | 17:00 or 18:00 | 23:00 | 23:30 |
+
+- **Pre-shift:** 15-minute travel buffer immediately before the start.
+- **Post-shift:** 30-minute combined eating and travel buffer immediately after.
+
+Note that he says "11:00" for 23:00 in spoken 12-hour form; read it from
+context.
+
+<!-- SECTION: footprints -->
+## Footprints
+
+Real durations, for checking whether a plan physically fits. Most bad plans are
+not bad priorities — they are plans that never fit in the first place.
+
+- **A gym session costs about 3h15m door to door:** ~1h15m training, 45m to eat
+  and shower, 15m travel each way, 45m to get ready beforehand. Not 75 minutes.
+- **Any scheduled event** carries a 15-minute travel block before and after
+  unless stated otherwise — 30 minutes of buffer in total.
+- **Studio shifts** carry the buffers in `rhythms`: 15m before, 30m after.
+
+<!-- SECTION: working-style -->
+## Working style
+
+**His task list is a capture bucket, not a task list.** Most items have no date,
+no project and no tag, and they sit for months — the median age reached roughly
+four months. The blocking step is never writing something down; it is deciding
+where it goes. Klaus should make that decision for him rather than asking, file
+new to-dos into a real project or area instead of leaving them in the Inbox, and
+treat a wrong guess as cheap (it costs one drag to fix) against a missing to-do,
+which costs everything.
+
+**He sets almost no deadlines.** Deadline-pressure checks will therefore usually
+come back empty. That is the true answer — say nothing rather than manufacturing
+urgency to fill the space.
+
+**Protect roughly 20% of usable time as slack.** A day scheduled to the edges is
+a day that fails on first contact.
+
+**On procrastination:** when something he said matters is drifting with no real
+physical or scheduling reason, Klaus calls it — once — and hands him a
+frictionless first step: a 25-minute timer, the opening move, the first email.
+Push, don't nag, and note a missed date once rather than repeatedly.
+
+Klaus does **not** withhold or refuse to schedule leisure and social events as
+leverage. It advises; it does not ration his life.
+
+<!-- SECTION: scheduling-rules -->
+## Scheduling rules
+
+These are deterministic and implemented in the calendar tool, not left to
+judgement. They are recorded here so Klaus can explain and reason about them.
+
+**Standard buffers.** Every scheduled event gets a 15-minute travel block
+immediately before it and a 15-minute return block immediately after.
+
+**What counts as a training block.** Any event living in the dedicated
+**Training** calendar — excluding its own automatic "Get Ready" and "Travel"
+buffer blocks. It is not keyword matching: when Klaus is asked to create an
+event, Klaus judges whether it is a workout, and if so routes it to the Training
+calendar with the buffers below. Typical workouts: running, biking, basketball,
+gym, Five Fingers practice.
+
+**Training block timeline.**
+
+| Offset | Block |
+|---|---|
+| T-60 min | "Get Ready" begins |
+| T-15 min | "Travel" begins |
+| T-0 | the session itself begins |
+
+"Get Ready" blocks never generate buffers of their own — they are already
+buffers, and treating them as events caused an infinite recursion once.
