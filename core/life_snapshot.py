@@ -11,9 +11,15 @@ from zoneinfo import ZoneInfo
 
 
 async def _normalized_hub_today() -> dict[str, Any]:
-    """Build the exact normalized state used by ``GET /api/today``."""
-    # Lazy import avoids a module cycle while web_server is mounting MCP.
-    from interfaces import web_server as hub
+    """Build the exact normalized state used by ``GET /api/today``.
+
+    Both surfaces call the same builders, so Claude and the Hub can never
+    disagree about what today looks like. These used to live inside
+    ``interfaces.web_server`` and had to be reached through a lazy import to
+    dodge a module cycle — core depending on the HTTP layer. They are now in
+    ``core.hub``, so this is an ordinary import.
+    """
+    from core.hub import today as hub
     from memory.firestore_db import _jsonsafe_doc
 
     loop = asyncio.get_running_loop()
