@@ -18,6 +18,7 @@ Direction (FACET_DIRECTION):
 from __future__ import annotations
 
 import logging
+import statistics
 from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Optional
@@ -52,6 +53,17 @@ GOAL_METRIC_TO_FACET: dict[str, str] = {
 # (half_marathon_time is special-cased below)
 _FACET_TO_METRIC: dict[str, str] = {v: k for k, v in GOAL_METRIC_TO_FACET.items()}
 
+# Facet → unit. A lookup table like the two above, rather than a ternary over a
+# facet-name tuple buried in _resolve_target: adding a facet should mean editing
+# these tables and nothing else.
+FACET_UNIT: dict[str, str] = {
+    "bench_press_1rm": "kg",
+    "squat_1rm":       "kg",
+    "push_ups":        "reps",
+    "pull_ups":        "reps",
+    "threshold_pace":  "sec_per_km",
+}
+
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -70,6 +82,31 @@ class ProjectionResult:
     on_track: Optional[bool]           # None when can't project
     unit: str
     confidence_label: str              # human-readable
+
+    @classmethod
+    def empty(cls, facet: str, confidence: str, label: str, **overrides) -> dict:
+        """Build a result with nothing projected, as a plain dict.
+
+        Four call sites used to spell out all eleven fields to say the same
+        thing — "there is not enough data" — and a fifth duplicated the shape as
+        a raw dict literal in the error path. Any field added to the dataclass
+        had to be added five times or the payload silently disagreed with itself.
+        """
+        base = dict(
+            facet=facet,
+            confidence=confidence,
+            data_point_count=0,
+            projected_value=None,
+            target_value=None,
+            target_date=None,
+            gap=None,
+            behind_by=None,
+            on_track=None,
+            unit="",
+            confidence_label=label,
+        )
+        base.update(overrides)
+        return asdict(cls(**base))
 
 
 # ---------------------------------------------------------------------------
@@ -108,20 +145,25 @@ def _linear_project(points: list[tuple[float, float]], target_t: float) -> float
         Never raises.
     """
     # Caller contract: only invoked with n >= 2 (project_goal_progress returns
-    # baseline_only for one unique-date point and no_data for zero). The n == 0
-    # guard below is defensive — it keeps the helper from raising ZeroDivisionError
-    # if it is ever reused directly with an empty list.
-    n = len(points)
-    if n == 0:
+    # baseline_only for one unique-date point and no_data for zero). The guards
+    # below are defensive — they keep the helper safe if it is ever reused
+    # directly with an empty or degenerate list.
+    if not points:
         return 0.0
-    ts = [p[0] for p in points]
-    vs = [p[1] for p in points]
-    t_mean = sum(ts) / n
-    v_mean = sum(vs) / n
-    num = sum((ts[i] - t_mean) * (vs[i] - v_mean) for i in range(n))
-    den = sum((ts[i] - t_mean) ** 2 for i in range(n))
-    slope = num / den if den != 0 else 0.0
-    return v_mean + slope * (target_t - t_mean)
+
+    times = [t for t, _ in points]
+    values = [v for _, v in points]
+
+    try:
+        slope, intercept = statistics.linear_regression(times, values)
+    except statistics.StatisticsError:
+        # Every point shares the same date, so there is no trend to fit. Hold the
+        # mean flat rather than raising — history deduplicated by date makes this
+        # unreachable from project_goal_progress, but a flat line is the honest
+        # answer for a caller that gets here another way.
+        return statistics.fmean(values)
+
+    return intercept + slope * target_t
 
 
 def _select_goal(candidates: list[dict], today_iso: str) -> Optional[dict]:
@@ -181,8 +223,7 @@ def _resolve_target(
     goal = _select_goal(candidates, today_iso)
     if goal is not None:
         raw_value = (goal.get("metrics") or {})[metric_key]
-        unit = "kg" if facet in ("bench_press_1rm", "squat_1rm") else "reps"
-        return float(raw_value), goal.get("target_date"), unit
+        return float(raw_value), goal.get("target_date"), FACET_UNIT.get(facet, "reps")
 
     return None, None, ""
 
@@ -269,34 +310,17 @@ def project_goal_progress(
         count_noun = "readings" if facet == "threshold_pace" else "benchmarks"
 
         if n == 0:
-            return asdict(ProjectionResult(
-                facet=facet,
-                confidence="no_data",
-                data_point_count=0,
-                projected_value=None,
-                target_value=target_value,
-                target_date=target_date_str,
-                gap=None,
-                behind_by=None,
-                on_track=None,
-                unit=unit,
-                confidence_label="no measured data",
-            ))
+            return ProjectionResult.empty(
+                facet, "no_data", "no measured data",
+                target_value=target_value, target_date=target_date_str, unit=unit,
+            )
 
         if n == 1:
-            return asdict(ProjectionResult(
-                facet=facet,
-                confidence="baseline_only",
+            return ProjectionResult.empty(
+                facet, "baseline_only", "baseline only, no trend yet",
                 data_point_count=1,
-                projected_value=None,
-                target_value=target_value,
-                target_date=target_date_str,
-                gap=None,
-                behind_by=None,
-                on_track=None,
-                unit=unit,
-                confidence_label="baseline only, no trend yet",
-            ))
+                target_value=target_value, target_date=target_date_str, unit=unit,
+            )
 
         # ------------------------------------------------------------------
         # n >= 2: compute linear projection
@@ -374,16 +398,4 @@ def project_goal_progress(
         logger.warning(
             "projection: unexpected error for facet %s", facet, exc_info=True
         )
-        return {
-            "facet": facet,
-            "confidence": "no_data",
-            "data_point_count": 0,
-            "projected_value": None,
-            "target_value": None,
-            "target_date": None,
-            "gap": None,
-            "behind_by": None,
-            "on_track": None,
-            "unit": "",
-            "confidence_label": "projection error",
-        }
+        return ProjectionResult.empty(facet, "no_data", "projection error")
