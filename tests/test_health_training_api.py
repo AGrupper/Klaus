@@ -65,20 +65,21 @@ def test_training_returns_expected_keys():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_training_strength = lambda start, end: [
+            hub_health._health_training_strength = lambda start, end: [
                 {"date": "2026-07-01", "workout_id": "w1", "total_volume_kg": 1000.0},
             ]
-            ws._health_training_runs = lambda start, end: [
+            hub_health._health_training_runs = lambda start, end: [
                 {"date": "2026-07-02", "activity_id": "a1", "avg_pace_sec_per_km": 300},
             ]
-            ws._health_training_benchmarks = lambda start, end: [
+            hub_health._health_training_benchmarks = lambda start, end: [
                 {"date": "2026-07-03", "facet": "bench_press_1rm", "value": 100.0,
                  "previous_value": 95.0},
             ]
-            ws._health_training_blocks = lambda: [
+            hub_health._health_training_blocks = lambda: [
                 {"block_id": "b1", "label": "Aerobic Base", "start_date": "2026-06-21",
                  "end_date": "2026-07-18", "block_number": 1},
             ]
@@ -99,20 +100,21 @@ def test_training_reverse_chronological_interleave():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_training_strength = lambda start, end: [
+            hub_health._health_training_strength = lambda start, end: [
                 {"date": "2026-07-01", "workout_id": "w1", "total_volume_kg": 1000.0},
             ]
-            ws._health_training_runs = lambda start, end: [
+            hub_health._health_training_runs = lambda start, end: [
                 {"date": "2026-07-03", "activity_id": "a1", "avg_pace_sec_per_km": 300},
             ]
-            ws._health_training_benchmarks = lambda start, end: [
+            hub_health._health_training_benchmarks = lambda start, end: [
                 {"date": "2026-07-02", "facet": "bench_press_1rm", "value": 100.0,
                  "previous_value": None},
             ]
-            ws._health_training_blocks = lambda: []
+            hub_health._health_training_blocks = lambda: []
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/training?range=30d")
@@ -130,6 +132,7 @@ def test_training_weekly_bucket_selectable():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
@@ -142,10 +145,10 @@ def test_training_weekly_bucket_selectable():
                  "avg_pace_sec_per_km": 300, "distance_m": 5000.0}
                 for d in range(1, 21)
             ]
-            ws._health_training_strength = lambda start, end: []
-            ws._health_training_runs = lambda start, end: run_data
-            ws._health_training_benchmarks = lambda start, end: []
-            ws._health_training_blocks = lambda: []
+            hub_health._health_training_strength = lambda start, end: []
+            hub_health._health_training_runs = lambda start, end: run_data
+            hub_health._health_training_benchmarks = lambda start, end: []
+            hub_health._health_training_blocks = lambda: []
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             resp_7d = client.get("/api/health/training?range=7d")
@@ -171,6 +174,7 @@ def test_training_unauthenticated_returns_401():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         env_no_bypass = {**_ENV, "CRON_DEV_BYPASS": "false"}
@@ -196,6 +200,7 @@ def test_training_blocks_sequential_number_and_label(monkeypatch):
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        import core.hub.health_series as hs  # noqa: PLC0415
         import memory.firestore_db as db  # noqa: PLC0415
 
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -215,7 +220,7 @@ def test_training_blocks_sequential_number_and_label(monkeypatch):
 
         monkeypatch.setattr(db, "BlockStore", _FakeBlockStore)
 
-        blocks = ws._health_training_blocks()
+        blocks = hs._health_training_blocks()
 
     assert [b["block_number"] for b in blocks] == [1, 2, 3]
     assert [b["label"] for b in blocks] == ["Aerobic Base", "Capacity Build", "Peak"]
@@ -230,6 +235,7 @@ def test_training_benchmarks_previous_value_present_and_null(monkeypatch):
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        import core.hub.health_series as hs  # noqa: PLC0415
         import memory.firestore_db as db  # noqa: PLC0415
 
         monkeypatch.setenv("GCP_PROJECT_ID", "test-project")
@@ -260,7 +266,7 @@ def test_training_benchmarks_previous_value_present_and_null(monkeypatch):
 
         monkeypatch.setattr(db, "BenchmarkStore", _FakeBenchmarkStore)
 
-        result = ws._health_training_benchmarks("2026-07-01", "2026-07-31")
+        result = hs._health_training_benchmarks("2026-07-01", "2026-07-31")
 
     by_facet = {b["facet"]: b for b in result}
     assert by_facet["bench_press_1rm"]["previous_value"] == 90.0

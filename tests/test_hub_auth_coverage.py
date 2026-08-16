@@ -35,22 +35,19 @@ PUBLIC_API_ROUTES = {
 def _api_routes(app):
     """Return (path, route) for every API route, however FastAPI nests them.
 
-    Walked recursively: newer FastAPI wraps ``include_router`` results in a
-    router object, so real routes are not all top-level in ``app.routes``.
+    Traversal is shared with production code (``interfaces.routes.iter_routes``),
+    which is the point: newer FastAPI hides ``include_router`` results behind a
+    wrapper exposing ``original_router`` rather than ``routes``, so a walker that
+    guesses the attribute name finds nothing and this guard passes vacuously.
     Assuming a flat list is what broke the MCP mount test twice.
     """
-    found = []
+    from interfaces.routes import iter_routes
 
-    def walk(container):
-        for route in getattr(container, "routes", []):
-            path = getattr(route, "path", None)
-            if path and getattr(route, "dependant", None) is not None:
-                found.append((path, route))
-            if getattr(route, "routes", None):
-                walk(route)
-
-    walk(app)
-    return found
+    return [
+        (route.path, route)
+        for route in iter_routes(app)
+        if getattr(route, "path", None) and getattr(route, "dependant", None) is not None
+    ]
 
 
 def _depends_on(route, target) -> bool:

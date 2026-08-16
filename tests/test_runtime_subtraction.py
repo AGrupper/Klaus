@@ -142,9 +142,15 @@ def test_retired_web_routes_are_minimal_registered_tombstones() -> None:
         ("POST", "/api/chat/regenerate"),
         ("POST", "/api/chat/stop"),
     }
+    # iter_routes, not app.routes: FastAPI 0.141 hides routes registered via
+    # include_router behind a private wrapper object, so a flat walk would miss
+    # every tombstone that lives in a route module and this contract would
+    # silently stop being checked.
+    from interfaces.routes import iter_routes
+
     registered = {
         (method, route.path): route.endpoint
-        for route in app.routes
+        for route in iter_routes(app)
         for method in getattr(route, "methods", set())
     }
 

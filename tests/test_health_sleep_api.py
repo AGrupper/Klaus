@@ -73,11 +73,12 @@ def test_sleep_returns_series_header_stats_pipeline_active_true():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_sleep_data = lambda start, end: _ROWS_FIXTURE
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: _ROWS_FIXTURE
+            hub_health._health_sleep_pipeline_active = lambda: True
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=30d")
@@ -111,11 +112,12 @@ def test_sleep_serializes_decimal_rows_without_500():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_sleep_data = lambda start, end: decimal_rows
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: decimal_rows
+            hub_health._health_sleep_pipeline_active = lambda: True
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=30d")
@@ -136,11 +138,12 @@ def test_sleep_empty_table_pipeline_active_false():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_sleep_data = lambda start, end: []
-            ws._health_sleep_pipeline_active = lambda: False
+            hub_health._health_sleep_data = lambda start, end: []
+            hub_health._health_sleep_pipeline_active = lambda: False
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=30d")
@@ -161,11 +164,12 @@ def test_sleep_empty_range_but_pipeline_active_true():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
-            ws._health_sleep_data = lambda start, end: []  # nothing in THIS range
-            ws._health_sleep_pipeline_active = lambda: True  # but the table has rows
+            hub_health._health_sleep_data = lambda start, end: []  # nothing in THIS range
+            hub_health._health_sleep_pipeline_active = lambda: True  # but the table has rows
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=7d")
@@ -180,6 +184,7 @@ def test_sleep_weekly_bucket_selectable():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
@@ -189,8 +194,8 @@ def test_sleep_weekly_bucket_selectable():
                  "body_battery_max": 70, "training_readiness": 8}
                 for d in range(1, 21)
             ]
-            ws._health_sleep_data = lambda start, end: rows
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: rows
+            hub_health._health_sleep_pipeline_active = lambda: True
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             resp_30d = client.get("/api/health/sleep?range=30d")
@@ -210,6 +215,7 @@ def test_sleep_weekly_series_share_one_aligned_axis():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         # 3 ISO weeks; the MIDDLE week has sleep_score/duration but NO
@@ -225,8 +231,8 @@ def test_sleep_weekly_series_share_one_aligned_axis():
                 "body_battery_max": 70, "training_readiness": 8,
             })
         with patch.dict(os.environ, _ENV):
-            ws._health_sleep_data = lambda start, end: rows
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: rows
+            hub_health._health_sleep_pipeline_active = lambda: True
             client = TestClient(ws.app, raise_server_exceptions=True)
             data = client.get("/api/health/sleep?range=1y").json()["series"]
 
@@ -246,6 +252,7 @@ def test_sleep_unauthenticated_returns_401():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         env_no_bypass = {**_ENV, "CRON_DEV_BYPASS": "false"}
@@ -265,6 +272,7 @@ def test_sleep_baseline_fallback_fires_when_hrv_baseline_sparse():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
@@ -281,8 +289,8 @@ def test_sleep_baseline_fallback_fires_when_hrv_baseline_sparse():
                     "body_battery_max": 70,
                     "training_readiness": 8,
                 })
-            ws._health_sleep_data = lambda start, end: rows
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: rows
+            hub_health._health_sleep_pipeline_active = lambda: True
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=30d")
@@ -303,6 +311,7 @@ def test_sleep_baseline_uses_stored_column_when_dense():
     stubs = _stub_web_server_imports()
     with patch.dict(sys.modules, stubs):
         import interfaces.web_server as ws  # noqa: PLC0415
+        from interfaces.routes import hub_health
         from fastapi.testclient import TestClient  # noqa: PLC0415
 
         with patch.dict(os.environ, _ENV):
@@ -312,8 +321,8 @@ def test_sleep_baseline_uses_stored_column_when_dense():
                  "body_battery_max": 70, "training_readiness": 8}
                 for d in range(1, 11)
             ]
-            ws._health_sleep_data = lambda start, end: rows
-            ws._health_sleep_pipeline_active = lambda: True
+            hub_health._health_sleep_data = lambda start, end: rows
+            hub_health._health_sleep_pipeline_active = lambda: True
 
             client = TestClient(ws.app, raise_server_exceptions=True)
             response = client.get("/api/health/sleep?range=30d")

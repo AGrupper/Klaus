@@ -32,9 +32,22 @@ def _no_real_cron_ledger_writes():
 
 
 def _stub_web_server_imports() -> dict:
-    """Clear the cached HTTP boundary so each test gets fresh routes."""
+    """Clear the cached HTTP boundary so each test gets fresh routes.
+
+    The route modules under ``interfaces.routes`` go too. Their APIRouters build
+    their ``Depends(require_hub_session)`` at import time, so a cached router
+    would hand a freshly re-imported ``web_server`` route objects still bound to
+    the previous ``hub_auth.require_hub_session`` object — and
+    ``dependency_overrides`` keys on object identity, so the override would
+    silently fail to apply.
+    """
     for key in list(sys.modules.keys()):
-        if key == "interfaces.web_server" or key.startswith("interfaces.web_server."):
+        if (
+            key == "interfaces.web_server"
+            or key.startswith("interfaces.web_server.")
+            or key == "interfaces.routes"
+            or key.startswith("interfaces.routes.")
+        ):
             del sys.modules[key]
     return {}
 
