@@ -248,7 +248,7 @@ def test_retired_web_and_frontend_implementations_are_physically_absent() -> Non
 
 def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:
     """Both nightly trigger entrypoints must use a helper independent of old code."""
-    from interfaces.web_server import nightly_target_date_now
+    from interfaces.routes.triggers import nightly_target_date_now
 
     assert len(nightly_target_date_now()) == 10
 

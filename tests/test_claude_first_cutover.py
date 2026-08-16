@@ -29,18 +29,17 @@ def test_deterministic_alerts_is_the_canonical_scheduler_endpoint(monkeypatch):
     web_server = _web_server()
     evaluator = AsyncMock(return_value={"evaluated": 2, "sent": 1, "quiet_hours": False})
     deterministic = MagicMock(run_rule_evaluator=evaluator)
-    web_server._log_cron_run = MagicMock()
     web_server._application = None
 
     with patch.dict(os.environ, _ENV), patch.dict(
         sys.modules, {"core.deterministic_alerts": deterministic}
-    ):
+    ), patch("interfaces.routes.cron._log_cron_run") as log_cron_run:
         response = TestClient(web_server.app).post("/cron/deterministic-alerts")
 
     assert response.status_code == 200
     assert response.json() == {"ok": True, "evaluated": 2, "sent": 1, "quiet_hours": False}
     evaluator.assert_awaited_once()
-    web_server._log_cron_run.assert_called_once_with("deterministic-alerts", ok=True)
+    log_cron_run.assert_called_once_with("deterministic-alerts", ok=True)
 
 
 def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
@@ -49,7 +48,9 @@ def test_deterministic_endpoint_does_not_depend_on_model_or_telegram_runtime():
     import inspect
     import interfaces.web_server as web_server
 
-    source = inspect.getsource(web_server.cron_deterministic_alerts)
+    source = inspect.getsource(
+        __import__("interfaces.routes.cron", fromlist=["cron_deterministic_alerts"]).cron_deterministic_alerts
+    )
     names = {
         alias.name
         for node in ast.walk(ast.parse(source))
