@@ -37,6 +37,7 @@ READ_TOOLS = frozenset(
         "list_standing_directives",
         "get_training_profile",
         "read_coaching_guide",
+        "read_user_profile",
         "fetch_training_status",
         "fetch_recent_activities",
         "get_acwr",

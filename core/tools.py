@@ -733,6 +733,29 @@ TOOL_SCHEMAS: list[dict] = [
         },
     },
     {
+        "name": "read_user_profile",
+        "description": (
+            "Read one section of Amit's durable profile verbatim from docs/USER.md. "
+            "The whole profile is already included in every get_life_snapshot, so call "
+            "this only when you need a section word-for-word — for example to quote a "
+            "scheduling rule back while explaining a decision."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "section": {
+                    "type": "string",
+                    "description": (
+                        "Section to retrieve. One of: 'identity', 'rhythms', "
+                        "'footprints', 'working-style', 'scheduling-rules'. "
+                        "Free-text also accepted — nearest section slug is matched."
+                    ),
+                },
+            },
+            "required": ["section"],
+        },
+    },
+    {
         "name": "update_training_profile",
         "description": (
             "Merge new fields into Amit's stored training profile. "
@@ -2272,50 +2295,45 @@ def _handle_read_coaching_guide(topic: str) -> str:
     NEVER concatenated into a filesystem path. '..' / '/' / absolute paths fail to
     match a slug and return error JSON — they cannot escape to the filesystem.
     """
-    import re as _re
-    root = Path(__file__).resolve().parent.parent
-    guide_path = root / "docs" / "COACHING_GUIDE.md"
-    try:
-        content = guide_path.read_text(encoding="utf-8")
-    except OSError:
+    from core import doc_sections
+
+    content = doc_sections.read_document("COACHING_GUIDE.md")
+    if content is None:
         return json.dumps({"error": "COACHING_GUIDE.md not found"})
 
-    # Normalize topic slug: strip, lowercase, spaces/underscores -> hyphens
-    slug = topic.strip().lower().replace(" ", "-").replace("_", "-")
+    section = doc_sections.find_section(content, topic)
+    if section is None:
+        return json.dumps({"error": f"Section '{topic}' not found in COACHING_GUIDE.md"})
 
-    # Find section by exact anchor <!-- SECTION: slug -->
-    pattern = _re.compile(
-        r"<!-- SECTION: " + _re.escape(slug) + r" -->(.*?)(?=<!-- SECTION:|$)",
-        _re.DOTALL | _re.IGNORECASE,
-    )
-    m = pattern.search(content)
-    if m:
-        return json.dumps({"topic": slug, "content": m.group(1).strip()})
+    return json.dumps({"topic": doc_sections.slugify(topic), "content": section})
 
-    # Fuzzy fallback: unambiguous single-anchor match only (WR-02 hardening).
-    # For each word in the slug, skip short words (< 4 chars), then count how many
-    # section anchors contain that word. Only proceed when exactly one anchor matches
-    # (unambiguous). Ambiguous or zero matches skip to the next word.
-    for word in slug.split("-"):
-        if not word or len(word) < 4:
-            continue
-        anchor_re = _re.compile(
-            r"<!-- SECTION: [^>]*" + _re.escape(word) + r"[^>]* -->",
-            _re.IGNORECASE,
+
+def _handle_read_user_profile(section: str) -> str:
+    """Return one section of Amit's profile from docs/USER.md.
+
+    The whole profile already ships in every get_life_snapshot, so this is for
+    the narrower case where Claude wants one section verbatim — for example to
+    quote a scheduling rule back while explaining a decision.
+
+    Args:
+        section: Section slug, e.g. "footprints". Matched against authored
+            anchors only, never used as a path (see doc_sections).
+
+    Returns:
+        str: JSON with "section" and "content", or "error" when not found.
+    """
+    from core import user_profile
+
+    body = user_profile.section(section)
+    if body is None:
+        available = ", ".join(user_profile.load_sections()) or "none"
+        return json.dumps(
+            {"error": f"Section '{section}' not found in USER.md. Available: {available}"}
         )
-        candidate_anchors = anchor_re.findall(content)
-        if len(candidate_anchors) != 1:
-            continue  # zero or multiple matches → ambiguous, skip this word
-        # Exactly one anchor matches → safe to return its section content
-        section_re = _re.compile(
-            r"<!-- SECTION: [^>]*" + _re.escape(word) + r"[^>]* -->(.*?)(?=<!-- SECTION:|$)",
-            _re.DOTALL | _re.IGNORECASE,
-        )
-        fm = section_re.search(content)
-        if fm:
-            return json.dumps({"topic": slug, "content": fm.group(1).strip()})
 
-    return json.dumps({"error": f"Section '{topic}' not found in COACHING_GUIDE.md"})
+    from core import doc_sections
+
+    return json.dumps({"section": doc_sections.slugify(section), "content": body})
 
 
 def _handle_update_training_profile(patch: dict) -> str:
@@ -3030,6 +3048,8 @@ _HANDLERS: dict[str, object] = {
     "update_plan":             lambda args: _handle_update_training_profile(**args),
     # Phase 22 — coaching guide on-demand lookup (COACH-01)
     "read_coaching_guide":     lambda args: _handle_read_coaching_guide(**args),
+    # docs/USER.md — the single source of ambient facts about Amit.
+    "read_user_profile":       lambda args: _handle_read_user_profile(**args),
     "fetch_training_status":   lambda args: _handle_fetch_training_status(),
     "fetch_recent_activities": lambda args: _handle_fetch_recent_activities(**args),
     "get_acwr":                lambda args: _handle_get_acwr(),

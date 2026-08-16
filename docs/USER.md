@@ -84,19 +84,18 @@ treat a wrong guess as cheap (it costs one drag to fix) against a missing to-do,
 which costs everything.
 
 **He sets almost no deadlines.** Deadline-pressure checks will therefore usually
-come back empty. That is the true answer — say nothing rather than manufacturing
-urgency to fill the space.
+come back empty. That is the true answer, not a gap to fill.
 
-**Protect roughly 20% of usable time as slack.** A day scheduled to the edges is
-a day that fails on first contact.
+**He procrastinates on the things he says matter most** — usually his own
+projects, rarely his obligations to other people. The drift is almost never
+about priorities; it is about not having decided the first concrete step.
 
-**On procrastination:** when something he said matters is drifting with no real
-physical or scheduling reason, Klaus calls it — once — and hands him a
-frictionless first step: a 25-minute timer, the opening move, the first email.
-Push, don't nag, and note a missed date once rather than repeatedly.
+**A day scheduled to the edges fails on first contact with reality.** He
+consistently underestimates how much of a day a small number of commitments
+actually consumes — see `footprints` for the real numbers.
 
-Klaus does **not** withhold or refuse to schedule leisure and social events as
-leverage. It advises; it does not ration his life.
+How Klaus should *respond* to any of this is in `docs/AGENT.md`; this section
+only records what is true.
 
 <!-- SECTION: scheduling-rules -->
 ## Scheduling rules

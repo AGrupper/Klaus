@@ -76,12 +76,19 @@ async def _call(loader: Callable[..., Any], *args) -> Any:
     return await asyncio.to_thread(loader, *args)
 
 
+def _default_profile_loader() -> dict[str, Any]:
+    from core.user_profile import profile_block
+
+    return profile_block()
+
+
 async def build_life_snapshot(
     *,
     today_loader: Callable[[], dict | Awaitable[dict]] | None = None,
     dispatcher: Callable[[str, dict], Any] | None = None,
     directives_loader: Callable[[], list[dict]] | None = None,
     reviews_loader: Callable[[str], dict[str, Any]] | None = None,
+    profile_loader: Callable[[], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Return compact state first; Claude can lazily retrieve detail afterward."""
     if dispatcher is None:
@@ -91,6 +98,7 @@ async def build_life_snapshot(
     today_loader = today_loader or _normalized_hub_today
     directives_loader = directives_loader or _default_directives_loader
     reviews_loader = reviews_loader or _default_reviews_loader
+    profile_loader = profile_loader or _default_profile_loader
 
     today = await _call(today_loader)
     today_iso = str(today.get("today") or datetime.now(ZoneInfo("Asia/Jerusalem")).date())
@@ -106,8 +114,12 @@ async def build_life_snapshot(
     habits = _parse_dispatch_result(habits_raw)
     self_state = _parse_dispatch_result(self_raw)
     return {
-        "schema_version": "klaus.life-snapshot.v1",
+        "schema_version": "klaus.life-snapshot.v2",
         "generated_at": datetime.now(ZoneInfo("Asia/Jerusalem")).isoformat(),
+        # Who Amit is. Included on every snapshot so no skill has to restate a
+        # fact about him, and so all four skills know the same things. Sourced
+        # from docs/USER.md — see core/user_profile.
+        "profile": profile_loader(),
         "today": today,
         "tasks": list(tasks if isinstance(tasks, list) else [])[:100],
         "habits_pending": list(habits if isinstance(habits, list) else [])[:50],
@@ -117,6 +129,5 @@ async def build_life_snapshot(
         "memory": {
             "authoritative_store": "pinecone",
             "conversation_context": "claude_project",
-            "rule": "Recall proactively; save only durable facts or contextual chunks.",
         },
     }
