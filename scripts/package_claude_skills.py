@@ -1,11 +1,28 @@
 #!/usr/bin/env python3
-"""Build or verify deterministic upload ZIPs for repository Claude skills."""
+"""Build or verify deterministic upload ZIPs for repository Claude skills.
+
+Skills share safety rules. The publication contract, shadow-mode restrictions
+and untrusted-source handling were copy-pasted across the routine skills and had
+already drifted — the untrusted-source rule existed in three different wordings,
+which is how a safety rule quietly stops meaning the same thing.
+
+Those blocks now live once under `claude/skills/_shared/` and are pulled in with
+
+    <!-- INCLUDE: routine-contract -->
+
+which this packager **expands inline** into the SKILL.md that goes into the ZIP.
+Inline expansion is deliberate rather than shipping the shared files alongside:
+a bundled reference file is loaded at the model's discretion, and a publication
+contract that might not be read is not a contract. What Claude receives is one
+self-contained SKILL.md; what a human edits is one copy of each rule.
+"""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import io
 import json
+import re
 import sys
 import zipfile
 from pathlib import Path
@@ -13,6 +30,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "claude" / "skills"
+SHARED_ROOT = SOURCE_ROOT / "_shared"
 DIST_ROOT = ROOT / "claude" / "dist"
 SKILLS = (
     "klaus-live-agent",
@@ -23,21 +41,63 @@ SKILLS = (
 FILES = ("SKILL.md", "VERSION")
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 
+_INCLUDE_RE = re.compile(r"^[ \t]*<!-- INCLUDE: ([a-z0-9-]+) -->[ \t]*$", re.MULTILINE)
+
+
+class SkillBuildError(RuntimeError):
+    """Raised when a skill source cannot be rendered."""
+
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _archive_bytes(skill_dir: Path) -> bytes:
+def render_skill(name: str) -> str:
+    """Return a skill's SKILL.md with every shared include expanded inline.
+
+    This is exactly the text uploaded to the Claude Project, so tests assert
+    against it rather than against the source file — a rule that lives in a
+    shared include is still a rule the skill ships.
+
+    Args:
+        name: Skill directory name, e.g. ``"klaus-nightly-review"``.
+
+    Returns:
+        str: Fully expanded SKILL.md text.
+
+    Raises:
+        SkillBuildError: If an include names a file that does not exist.
+    """
+    source = (SOURCE_ROOT / name / "SKILL.md").read_text(encoding="utf-8")
+
+    def _expand(match: re.Match) -> str:
+        shared = SHARED_ROOT / f"{match.group(1)}.md"
+        if not shared.is_file():
+            raise SkillBuildError(
+                f"{name}/SKILL.md includes '{match.group(1)}', "
+                f"but {shared.relative_to(ROOT)} does not exist"
+            )
+        return shared.read_text(encoding="utf-8").strip()
+
+    return _INCLUDE_RE.sub(_expand, source)
+
+
+def _skill_payload(name: str) -> dict[str, bytes]:
+    """Return the exact file bytes shipped for one skill."""
+    return {
+        "SKILL.md": render_skill(name).encode("utf-8"),
+        "VERSION": (SOURCE_ROOT / name / "VERSION").read_bytes(),
+    }
+
+
+def _archive_bytes(name: str, payload: dict[str, bytes]) -> bytes:
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for filename in FILES:
-            data = (skill_dir / filename).read_bytes()
-            archive_path = f"{skill_dir.name}/{filename}"
-            info = zipfile.ZipInfo(archive_path, ZIP_TIMESTAMP)
+            info = zipfile.ZipInfo(f"{name}/{filename}", ZIP_TIMESTAMP)
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, data)
+            archive.writestr(info, payload[filename])
     return output.getvalue()
 
 
@@ -46,13 +106,15 @@ def _expected() -> tuple[dict[str, bytes], bytes]:
     manifest_items = []
     versions = set()
     for name in SKILLS:
-        source = SOURCE_ROOT / name
-        version = (source / "VERSION").read_text(encoding="utf-8").strip()
+        payload = _skill_payload(name)
+        version = payload["VERSION"].decode("utf-8").strip()
         versions.add(version)
         artifact_name = f"{name}-{version}.zip"
-        artifact = _archive_bytes(source)
+        artifact = _archive_bytes(name, payload)
         artifacts[artifact_name] = artifact
-        source_digest = _sha256(b"".join((source / item).read_bytes() for item in FILES))
+        # Digest the rendered payload, not the raw sources: editing a shared
+        # include changes what ships, so it must change the recorded hash.
+        source_digest = _sha256(b"".join(payload[item] for item in FILES))
         manifest_items.append(
             {
                 "name": name,

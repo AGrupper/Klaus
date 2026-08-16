@@ -1,34 +1,34 @@
 {
   "schema_version": 1,
-  "skill_version": "7.3.1",
+  "skill_version": "7.4.0",
   "skills": [
     {
-      "artifact": "klaus-live-agent-7.3.1.zip",
-      "artifact_sha256": "bdd202f304e9883077a3dd76e1b34df70c40fcee565b04901bebbc16b4001037",
+      "artifact": "klaus-live-agent-7.4.0.zip",
+      "artifact_sha256": "2dba80ae2058a9e49cc77669de8a4be853f5d0a6907301d71b9c1bef25d6f7f1",
       "name": "klaus-live-agent",
-      "source_sha256": "ad265cdd549f3863012f8900ea586135e0ff86a234a40c978f5a2e93ae0f21a5",
-      "version": "7.3.1"
+      "source_sha256": "2003b2857f50d9d43fd64c78e68dccf63abca446edbdff5188b459b898bf234a",
+      "version": "7.4.0"
     },
     {
-      "artifact": "klaus-morning-review-7.3.1.zip",
-      "artifact_sha256": "3b8a83fb8e355faf9efb770dc9b0e5595c1a871ba8b203c554739c5566fbb1d8",
+      "artifact": "klaus-morning-review-7.4.0.zip",
+      "artifact_sha256": "37ad83cc441cc489a66588c31fbe9b064aa6b62a7c4d2029daf6463702c1fc7f",
       "name": "klaus-morning-review",
-      "source_sha256": "f65ea9a564e6969b3ebcc1ed12e6fa130e87588140daaf3ff920b033050d1806",
-      "version": "7.3.1"
+      "source_sha256": "d3106ee8b65127c5eba199b10073b2364b6172bd7c1d7d22460e11fc5024b9f0",
+      "version": "7.4.0"
     },
     {
-      "artifact": "klaus-nightly-review-7.3.1.zip",
-      "artifact_sha256": "df245eb43b929188a476e85cf7fc6be1f96275130cdcbdf2a7e1d5b623924fc6",
+      "artifact": "klaus-nightly-review-7.4.0.zip",
+      "artifact_sha256": "46ff633271cb03f102cba8fd1d38c93a3df5ca7bfe970783a2993e70a0aa3b07",
       "name": "klaus-nightly-review",
-      "source_sha256": "afc31e9f46411eb12756422b6057fdf173bd5e31af39a77015c60a1cf53ddd43",
-      "version": "7.3.1"
+      "source_sha256": "6c5dc6bcd376a62f2218c114c59e8a3d3759cc83566c3e71e561650948f51616",
+      "version": "7.4.0"
     },
     {
-      "artifact": "klaus-weekly-review-7.3.1.zip",
-      "artifact_sha256": "78c981da5f1fc2a2b8a4f18ab7d047fe4064b00e9c59f3880be2d5b5a7e3e6b4",
+      "artifact": "klaus-weekly-review-7.4.0.zip",
+      "artifact_sha256": "a4fd9926b4f54160c03edc3be76b273edbad0100c74ada3caa11829983667527",
       "name": "klaus-weekly-review",
-      "source_sha256": "e6f3b8fe77cd6351081784e32ad4f2aaf7121ff96a3ddc11d1a1a410c80c6004",
-      "version": "7.3.1"
+      "source_sha256": "8eb03d50880987e0e5af3c1096865400701bb3631d995d9634f1d5774ead790a",
+      "version": "7.4.0"
     }
   ]
 }
