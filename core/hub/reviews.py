@@ -28,7 +28,7 @@ _REVIEW_CLIENT_FIELDS = frozenset({
 
 def _review_for_client(review: dict, runs) -> dict:
     """Return a browser-safe canonical review with optional Claude navigation."""
-    from core.review_delivery import normalise_claude_session_url
+    from core.routines.delivery import normalise_claude_session_url
 
     result = {
         key: value for key, value in review.items() if key in _REVIEW_CLIENT_FIELDS

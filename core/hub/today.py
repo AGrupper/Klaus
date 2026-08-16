@@ -35,7 +35,7 @@ def _today_calendar(today_iso: str) -> dict:
     Reads EVERY writable calendar, not just primary. This used to call
     ``list_events`` (primary only), which made the whole no-model side of Klaus
     blind to the Training calendar — where every session actually lives. The Hub
-    showed an empty day and, worse, ``core.deterministic_alerts`` reads this same
+    showed an empty day and, worse, ``core.routines.alerts`` reads this same
     snapshot, so conflict and leave-by pushes could never fire for a workout. It
     stayed hidden because Claude reaches the calendar through ``list_all_events``
     and compensated; only the deterministic paths were affected.
@@ -357,7 +357,7 @@ def _today_departure_windows(calendar: dict) -> dict:
     produce one number for a fixed commute, so travel time is now configuration.
 
     The output contract is deliberately unchanged: the Hub renders these two
-    fields, and `core.deterministic_alerts` raises the "leave now" push off
+    fields, and `core.routines.alerts` raises the "leave now" push off
     leave_by. That alert has no LLM in the loop, so nothing else can produce it.
 
     Returns the same calendar dict, mutated in place. Per-event errors are

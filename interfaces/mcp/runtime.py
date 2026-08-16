@@ -8,8 +8,8 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from interfaces.mcp_oauth import FirestoreOAuthStore, OAuthAuthorizationService
-from interfaces.mcp_server import WRITE_TOOLS, create_mcp_bundle
+from interfaces.mcp.oauth import FirestoreOAuthStore, OAuthAuthorizationService
+from interfaces.mcp.server import WRITE_TOOLS, create_mcp_bundle
 
 
 _RISK_CATEGORIES = frozenset(
@@ -195,7 +195,7 @@ def build_custom_handlers() -> dict[str, Any]:
         return snapshots.write_weekly(snapshot)
 
     def get_routine(arguments: dict) -> dict:
-        from core.review_delivery import public_routine_run
+        from core.routines.delivery import public_routine_run
         from memory.firestore_db import RoutineRunStore
 
         correlation_id = str(arguments.get("correlation_id") or "")
@@ -206,7 +206,7 @@ def build_custom_handlers() -> dict[str, Any]:
     def publish_review(arguments: dict) -> dict:
         text, structured, action_ids, partial_actions = _validate_publish_review(arguments)
 
-        from core.review_delivery import (
+        from core.routines.delivery import (
             normalise_claude_session_url,
             public_routine_run,
             routine_review_path,

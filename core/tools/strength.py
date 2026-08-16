@@ -248,11 +248,11 @@ def _handle_get_training_reality(
 ) -> str:
     """WB-04 return the reconciled planned-vs-actual training window.
 
-    The reconciliation itself lives in ``core.training_reality`` so it stays
+    The reconciliation itself lives in ``core.training.reality`` so it stays
     testable without any live store. This handler only adapts it to the tool
     boundary.
     """
-    from core.training_reality import build_training_reality
+    from core.training.reality import build_training_reality
 
     return json.dumps(build_training_reality(days_back, days_forward))
 

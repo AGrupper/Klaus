@@ -243,7 +243,7 @@ def _handle_get_goal_projection(facet: str) -> str:
 
     from datetime import datetime
     from zoneinfo import ZoneInfo
-    from core.projection import project_goal_progress
+    from core.training.projection import project_goal_progress
 
     today_iso = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
 
@@ -253,7 +253,7 @@ def _handle_get_goal_projection(facet: str) -> str:
 
     # D-04: threshold_pace uses dense Garmin Postgres points; strength facets use BenchmarkStore.
     if facet == "threshold_pace":
-        from core.pace_history import fetch_dense_pace_history
+        from core.training.pace_history import fetch_dense_pace_history
         history = fetch_dense_pace_history(today_iso)
         if not history:
             # Fallback to sparse BenchmarkStore when no Garmin running data exists

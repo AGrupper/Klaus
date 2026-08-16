@@ -3,7 +3,7 @@
 The heartbeat is intentionally observational: it reads retained scheduler
 ledgers, MCP/Routine configuration, Web Push health, and deployment identity.
 It never constructs a model client, sends Telegram, or performs autonomous
-outreach.  ``core.deterministic_alerts`` is the sole scheduler-owned notifier.
+outreach.  ``core.routines.alerts`` is the sole scheduler-owned notifier.
 """
 from __future__ import annotations
 

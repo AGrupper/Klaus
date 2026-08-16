@@ -80,7 +80,7 @@ async def cron_morning_backstop(request: Request) -> JSONResponse:
 async def cron_deterministic_alerts(request: Request) -> JSONResponse:
     """Run deterministic daytime rules with no legacy runtime dependency."""
     await _verify_cron_request(request)
-    from core.deterministic_alerts import run_rule_evaluator
+    from core.routines.alerts import run_rule_evaluator
 
     try:
         result = await run_rule_evaluator()
@@ -115,7 +115,7 @@ async def cron_strength_sync(request: Request) -> JSONResponse:
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
     Pull-only with no conversation-runtime dependency. The only sink is
-    StrengthSessionStore (via core.strength_ingest.run_one_batch). On the first
+    StrengthSessionStore (via core.ingest.strength.run_one_batch). On the first
     run this backfills full Hevy history over several ticks; thereafter it applies
     incremental workout events. Re-run until the response shows done:true.
 
@@ -124,7 +124,7 @@ async def cron_strength_sync(request: Request) -> JSONResponse:
     """
     await _verify_cron_request(request)
     import asyncio as _asyncio
-    import core.strength_ingest as _strength
+    import core.ingest.strength as _strength
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _strength.run_one_batch)
@@ -143,7 +143,7 @@ async def cron_things_sync(request: Request) -> JSONResponse:
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
     Pull-only with no conversation-runtime dependency. The only sink is the
-    Firestore mirror (via core.things_ingest.run_one_batch).
+    Firestore mirror (via core.ingest.things.run_one_batch).
 
     A backstop, not the primary path: ThingsTaskStore checks the journal head on
     every read and pulls its own delta, so conversational reads are already fresh.
@@ -155,7 +155,7 @@ async def cron_things_sync(request: Request) -> JSONResponse:
     """
     await _verify_cron_request(request)
     import asyncio as _asyncio
-    import core.things_ingest as _things
+    import core.ingest.things as _things
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _things.run_one_batch)
@@ -175,7 +175,7 @@ async def cron_run_sync(request: Request) -> JSONResponse:
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
     Pull-only with no conversation-runtime dependency. The only sink is
-    RunDetailStore (via core.run_ingest.run_one_batch). On the first run this
+    RunDetailStore (via core.ingest.run.run_one_batch). On the first run this
     backfills per-run detail over several ticks; thereafter it pulls detail for
     new runs only. Kept a SEPARATE job from strength-sync so a Garmin rate-limit
     never marks the Hevy sync failed. Re-run until the response shows done:true.
@@ -185,7 +185,7 @@ async def cron_run_sync(request: Request) -> JSONResponse:
     """
     await _verify_cron_request(request)
     import asyncio as _asyncio
-    import core.run_ingest as _run
+    import core.ingest.run as _run
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _run.run_one_batch)
@@ -205,7 +205,7 @@ async def cron_biometric_sync(request: Request) -> JSONResponse:
     Authenticated via OIDC bearer token from Cloud Scheduler.
 
     Pull-only with no conversation-runtime dependency. The only sink is
-    the Postgres daily_biometrics table (via core.biometric_ingest.run_one_batch),
+    the Postgres daily_biometrics table (via core.ingest.biometric.run_one_batch),
     which powers rolling HRV/resting-HR baselines. On the first run this
     backfills ~90 days over several ticks; thereafter it heals today+yesterday
     and pulls any missed days. Re-run until the response shows done:true.
@@ -215,7 +215,7 @@ async def cron_biometric_sync(request: Request) -> JSONResponse:
     """
     await _verify_cron_request(request)
     import asyncio as _asyncio
-    import core.biometric_ingest as _biometric
+    import core.ingest.biometric as _biometric
     try:
         loop = _asyncio.get_running_loop()
         result = await loop.run_in_executor(None, _biometric.run_one_batch)
@@ -237,7 +237,7 @@ async def cron_heartbeat(request: Request) -> JSONResponse:
         JSONResponse: ``{"ok": true}`` with HTTP 200.
     """
     await _verify_cron_request(request)
-    from core.heartbeat import collect_deterministic_signals
+    from core.routines.heartbeat import collect_deterministic_signals
 
     try:
         signals = await asyncio.to_thread(collect_deterministic_signals)

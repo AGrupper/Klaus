@@ -39,7 +39,7 @@ def _skill_text(name: str) -> str:
 
 
 def test_skill_sources_and_mcp_capability_version_match():
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
     for name in SKILL_NAMES:
         skill_dir = ROOT / "claude" / "skills" / name
@@ -144,11 +144,11 @@ def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
 
 def test_skill_version_is_consistent_everywhere():
     """One version string, asserted in all four places it is written down."""
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
     assert EXPECTED_SKILL_VERSION == "7.4.0"
     assert f'"skill_version": "{EXPECTED_SKILL_VERSION}"' in (
-        ROOT / "core" / "subscription_routines.py"
+        ROOT / "core" / "routines" / "subscription.py"
     ).read_text()
     for name in SKILL_NAMES:
         assert (

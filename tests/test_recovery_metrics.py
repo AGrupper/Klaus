@@ -1,4 +1,4 @@
-"""Tests for core/recovery_metrics.py — recovery-deviation baseline math.
+"""Tests for core/training/recovery.py — recovery-deviation baseline math.
 
 compute_recovery_deviation is pure (no I/O); fetch_biometric_rows is exercised
 only for its fail-open contract. Covers: silent-omit (None) within band /
@@ -7,7 +7,7 @@ Garmin weeklyAvg preferred over the computed median, and malformed rows.
 """
 from __future__ import annotations
 
-from core.recovery_metrics import (
+from core.training.recovery import (
     DEVIATION_THRESHOLDS,
     compute_recovery_deviation,
     fetch_biometric_rows,

@@ -39,7 +39,7 @@ async def internal_routine_fallback(request: Request) -> JSONResponse:
         raise HTTPException(
             status_code=400, detail={"error": "invalid correlation_id"}
         )
-    from core.subscription_routines import build_subscription_routine_coordinator
+    from core.routines.subscription import build_subscription_routine_coordinator
 
     result = await build_subscription_routine_coordinator().publish_timeout_fallback(
         correlation_id
@@ -51,7 +51,7 @@ async def _start_subscription_routine(
     routine: str, target_date: str, trigger: str,
 ) -> JSONResponse:
     """Fire a subscription-backed routine and preserve the trigger API contract."""
-    from core.subscription_routines import build_subscription_routine_coordinator
+    from core.routines.subscription import build_subscription_routine_coordinator
 
     loop = asyncio.get_running_loop()
     coordinator = build_subscription_routine_coordinator()

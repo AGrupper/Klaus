@@ -107,7 +107,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }

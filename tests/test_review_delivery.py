@@ -1,6 +1,6 @@
 import pytest
 
-from core.review_delivery import (
+from core.routines.delivery import (
     normalise_claude_session_url,
     routine_review_path,
     routine_review_title,

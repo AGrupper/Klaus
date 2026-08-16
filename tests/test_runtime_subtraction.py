@@ -259,7 +259,7 @@ def test_nightly_target_date_is_a_retained_deterministic_helper() -> None:
 
 def test_single_user_identity_requires_explicit_provider_neutral_setting(monkeypatch) -> None:
     """MCP namespaces never fall back to the former transport user-id setting."""
-    from interfaces.mcp_runtime import _resolve_single_user_id
+    from interfaces.mcp.runtime import _resolve_single_user_id
 
     monkeypatch.delenv("KLAUS_USER_ID", raising=False)
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_IDS", "123456")
@@ -274,7 +274,7 @@ def test_google_oauth_always_requests_calendar_and_rejects_stale_gmail_token() -
     """A broad cached token must re-consent instead of silently retaining Gmail."""
     from unittest.mock import MagicMock, patch
 
-    from core.auth_google import CALENDAR_SCOPE, GoogleAuthManager
+    from core.auth.google import CALENDAR_SCOPE, GoogleAuthManager
 
     token_storage = MagicMock()
     token_storage.load.return_value = json.dumps({
@@ -285,7 +285,7 @@ def test_google_oauth_always_requests_calendar_and_rejects_stale_gmail_token() -
 
     assert manager.scopes == [CALENDAR_SCOPE]
     with patch(
-        "core.auth_google.Credentials.from_authorized_user_info",
+        "core.auth.google.Credentials.from_authorized_user_info",
         return_value=stale_credentials,
     ):
         assert manager._load_cached_token() is None

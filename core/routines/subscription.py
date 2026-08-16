@@ -9,7 +9,7 @@ import os
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from core.review_delivery import (
+from core.routines.delivery import (
     normalise_claude_session_url,
     routine_review_path,
     routine_review_title,
@@ -300,7 +300,7 @@ def build_subscription_routine_coordinator() -> SubscriptionRoutineCoordinator:
     """Build production dependencies lazily for Cloud Run request handlers."""
     from core.life_snapshot import build_life_snapshot
     from core.push_sender import send_push_to_all
-    from core.routine_dispatch import enqueue_routine_fallback
+    from core.routines.dispatch import enqueue_routine_fallback
     from memory.firestore_db import RoutineReviewStore, RoutineRunStore
 
     project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")

@@ -39,7 +39,7 @@ logger = logging.getLogger("resync_run_details")
 
 def resync(days: int, dry_run: bool, only_typed: bool) -> dict:
     """Refetch + upsert run details for the window. Returns a summary dict."""
-    from core.run_ingest import REQUEST_DELAY_SEC, _store
+    from core.ingest.run import REQUEST_DELAY_SEC, _store
     from mcp_tools.garmin_tool import (
         RUNNING_ACTIVITY_TYPES,
         fetch_garmin_activities,

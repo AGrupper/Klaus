@@ -16,7 +16,7 @@ Two modes, chosen by the presence of the ``last_synced_at`` cursor:
     upserts are keyed on workout_id).
 
 Local dry-run:
-    HEVY_API_KEY=... GCP_PROJECT_ID=... python -m core.strength_ingest
+    HEVY_API_KEY=... GCP_PROJECT_ID=... python -m core.ingest.strength
 """
 from __future__ import annotations
 

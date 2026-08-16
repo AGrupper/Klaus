@@ -32,7 +32,7 @@ def test_deterministic_alerts_is_the_canonical_scheduler_endpoint(monkeypatch):
     web_server._application = None
 
     with patch.dict(os.environ, _ENV), patch.dict(
-        sys.modules, {"core.deterministic_alerts": deterministic}
+        sys.modules, {"core.routines.alerts": deterministic}
     ), patch("interfaces.routes.cron._log_cron_run") as log_cron_run:
         response = TestClient(web_server.app).post("/cron/deterministic-alerts")
 
@@ -109,22 +109,22 @@ def _deterministic_execution_nodes():
     unreachable legacy bodies pending Task 2. These nodes are the only
     functions the evaluator reaches through its default loaders.
     """
-    import core.deterministic_alerts as deterministic
-    import core.heartbeat as heartbeat
+    import core.routines.alerts as deterministic
+    import core.routines.heartbeat as heartbeat
     import core.life_snapshot as life_snapshot
     import core.push_sender as push_sender
     import core.tools as tools
     import interfaces.web_server as hub
 
     return (
-        ("core.deterministic_alerts", deterministic.run_rule_evaluator),
-        ("core.heartbeat", heartbeat.collect_deterministic_signals),
-        ("core.heartbeat", heartbeat._read_cron_ledger),
-        ("core.heartbeat", heartbeat._as_utc),
-        ("core.heartbeat", heartbeat.check_cron_health),
-        ("core.heartbeat", heartbeat.check_mcp_routine_health),
-        ("core.heartbeat", heartbeat._check_push_health),
-        ("core.heartbeat", heartbeat.check_deployment_identity),
+        ("core.routines.alerts", deterministic.run_rule_evaluator),
+        ("core.routines.heartbeat", heartbeat.collect_deterministic_signals),
+        ("core.routines.heartbeat", heartbeat._read_cron_ledger),
+        ("core.routines.heartbeat", heartbeat._as_utc),
+        ("core.routines.heartbeat", heartbeat.check_cron_health),
+        ("core.routines.heartbeat", heartbeat.check_mcp_routine_health),
+        ("core.routines.heartbeat", heartbeat._check_push_health),
+        ("core.routines.heartbeat", heartbeat.check_deployment_identity),
         ("core.life_snapshot", life_snapshot.build_life_snapshot),
         ("core.life_snapshot", life_snapshot._normalized_hub_today),
         ("core.life_snapshot", life_snapshot._default_directives_loader),

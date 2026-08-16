@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from googleapiclient.errors import HttpError
 
-from core.auth_google import GoogleAuthManager
+from core.auth.google import GoogleAuthManager
 
 logger = logging.getLogger(__name__)
 

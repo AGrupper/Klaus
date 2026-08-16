@@ -127,7 +127,7 @@ def test_internal_routine_fallback_jsonresponse_serializes_atomic_run(
             )
 
     monkeypatch.setattr(
-        "core.subscription_routines.build_subscription_routine_coordinator",
+        "core.routines.subscription.build_subscription_routine_coordinator",
         lambda: AtomicFallbackCoordinator(),
     )
     with patch.dict(os.environ, _BASE_ENV):

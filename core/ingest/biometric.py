@@ -26,7 +26,7 @@ presence-diff retries the day on the next tick (self-healing).
 
 Local dry-run:
     GARMIN_EMAIL=... GARMIN_PASSWORD=... DATABASE_URL=... GCP_PROJECT_ID=... \
-        python -m core.biometric_ingest
+        python -m core.ingest.biometric
 """
 from __future__ import annotations
 

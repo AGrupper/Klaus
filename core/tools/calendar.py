@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Lazy singletons. WHY lazy: importing this module must never trigger OAuth or
 # network I/O — it is imported during tests and at cold start, long before any
 # tool is actually called.
-from core.auth_google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402
+from core.auth.google import GoogleAuthManager, build_auth_manager_from_env  # noqa: E402
 from mcp_tools.calendar_tool import GoogleCalendarManager  # noqa: E402
 
 _auth_manager: GoogleAuthManager | None = None

@@ -27,7 +27,7 @@ def _token(*scopes: str, resource: str = "https://klaus.example.com/mcp/interact
 
 
 def _oauth_service():
-    from interfaces.mcp_oauth import InMemoryOAuthStore, OAuthAuthorizationService
+    from interfaces.mcp.oauth import InMemoryOAuthStore, OAuthAuthorizationService
 
     return OAuthAuthorizationService(
         InMemoryOAuthStore(),
@@ -37,7 +37,7 @@ def _oauth_service():
 
 
 def test_interactive_and_routine_servers_have_distinct_tool_catalogs():
-    from interfaces.mcp_server import create_mcp_bundle
+    from interfaces.mcp.server import create_mcp_bundle
 
     bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
     interactive = {tool.name for tool in bundle.interactive._tool_manager.list_tools()}
@@ -58,7 +58,7 @@ def test_interactive_and_routine_servers_have_distinct_tool_catalogs():
 
 def test_legacy_tools_publish_their_exact_nested_argument_schemas():
     """Claude must see the canonical fields instead of an untyped object."""
-    from interfaces.mcp_server import _schema_metadata, create_mcp_bundle
+    from interfaces.mcp.server import _schema_metadata, create_mcp_bundle
 
     bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
     tools = {tool.name: tool for tool in bundle.interactive._tool_manager.list_tools()}
@@ -91,8 +91,8 @@ def test_legacy_tools_publish_their_exact_nested_argument_schemas():
 
 def test_custom_tools_publish_exact_nested_argument_schemas():
     """Claude must receive strict, handler-aligned schemas for custom tools."""
-    from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
-    from interfaces.mcp_server import create_mcp_bundle
+    from interfaces.mcp.custom_schemas import CUSTOM_TOOL_SCHEMAS
+    from interfaces.mcp.server import create_mcp_bundle
 
     bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
     interactive = {
@@ -230,7 +230,7 @@ def test_custom_schema_rejects_invalid_arguments_before_any_side_effect(
     endpoint, tool_name, arguments, scopes, idempotency_key
 ):
     """Strict custom schemas must be enforced before any stateful operation."""
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     recorder = _GatewaySideEffectRecorder()
     gateway = KlausMCPGateway(
@@ -265,7 +265,7 @@ def test_custom_schema_rejects_invalid_arguments_before_any_side_effect(
 
 def test_custom_schema_error_does_not_disclose_dynamic_object_keys():
     """Validation errors must not echo payload-controlled nested object paths."""
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     recorder = _GatewaySideEffectRecorder()
     gateway = KlausMCPGateway(
@@ -314,7 +314,7 @@ def test_custom_schema_error_does_not_disclose_dynamic_object_keys():
 
 def test_custom_schema_allows_valid_arguments_to_reach_handler():
     """Schema enforcement must not block a valid custom handler invocation."""
-    from interfaces.mcp_server import KlausMCPGateway
+    from interfaces.mcp.server import KlausMCPGateway
 
     recorder = _GatewaySideEffectRecorder()
     gateway = KlausMCPGateway(
@@ -339,7 +339,7 @@ def test_custom_schema_allows_valid_arguments_to_reach_handler():
 
 def test_empty_object_custom_schema_rejects_extras_before_dispatcher():
     """A custom schema remains enforced even if no custom handler is installed."""
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     recorder = _GatewaySideEffectRecorder()
     gateway = KlausMCPGateway(dispatcher=recorder.dispatcher)
@@ -359,7 +359,7 @@ def test_empty_object_custom_schema_rejects_extras_before_dispatcher():
 
 def test_legacy_tool_without_custom_schema_preserves_existing_argument_behavior():
     """Only the explicit custom-schema registry is enforced at this boundary."""
-    from interfaces.mcp_server import KlausMCPGateway
+    from interfaces.mcp.server import KlausMCPGateway
 
     recorder = _GatewaySideEffectRecorder()
     gateway = KlausMCPGateway(dispatcher=recorder.dispatcher)
@@ -380,7 +380,7 @@ def test_legacy_tool_without_custom_schema_preserves_existing_argument_behavior(
 
 
 def test_capability_gate_can_mount_a_strictly_read_only_interactive_catalog():
-    from interfaces.mcp_server import create_mcp_bundle
+    from interfaces.mcp.server import create_mcp_bundle
 
     bundle = create_mcp_bundle(
         _oauth_service(), dispatcher=lambda _name, _args: "{}", read_only=True
@@ -394,7 +394,7 @@ def test_capability_gate_can_mount_a_strictly_read_only_interactive_catalog():
 
 
 def test_every_write_requires_idempotency_key_before_dispatch():
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     called = []
     gateway = KlausMCPGateway(dispatcher=lambda name, args: called.append((name, args)))
@@ -411,7 +411,7 @@ def test_every_write_requires_idempotency_key_before_dispatch():
 
 
 def test_scope_filtering_is_enforced_inside_tool_execution():
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     gateway = KlausMCPGateway(dispatcher=lambda _name, _args: "{}")
     with pytest.raises(MCPToolError, match="klaus.memory"):
@@ -427,7 +427,7 @@ def test_scope_filtering_is_enforced_inside_tool_execution():
 
 
 def test_routine_token_cannot_cross_into_interactive_endpoint():
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     gateway = KlausMCPGateway(dispatcher=lambda _name, _args: "{}")
     routine_token = _token(
@@ -456,14 +456,14 @@ def test_no_notion_tool_is_served_on_either_endpoint():
     the skills, which tell Claude to treat retrieved pages as untrusted data
     regardless of which connector fetched them.
     """
-    from interfaces.mcp_server import INTERACTIVE_TOOLS, ROUTINE_TOOLS
+    from interfaces.mcp.server import INTERACTIVE_TOOLS, ROUTINE_TOOLS
 
     served = INTERACTIVE_TOOLS | ROUTINE_TOOLS
     assert not [name for name in served if name.startswith("notion_")]
 
 
 def test_skill_version_is_reported_in_every_tool_metadata():
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION, create_mcp_bundle
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION, create_mcp_bundle
 
     bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
     for server in (bundle.interactive, bundle.routine):
@@ -472,7 +472,7 @@ def test_skill_version_is_reported_in_every_tool_metadata():
 
 
 def test_tool_metadata_reports_routine_and_approval_scopes():
-    from interfaces.mcp_server import create_mcp_bundle
+    from interfaces.mcp.server import create_mcp_bundle
 
     bundle = create_mcp_bundle(_oauth_service(), dispatcher=lambda _name, _args: "{}")
     interactive = {
@@ -489,7 +489,7 @@ def test_tool_metadata_reports_routine_and_approval_scopes():
 
 
 def test_successful_write_is_deduplicated_and_audited_once():
-    from interfaces.mcp_server import KlausMCPGateway
+    from interfaces.mcp.server import KlausMCPGateway
 
     class FakeIdempotency:
         def __init__(self):
@@ -546,7 +546,7 @@ def test_publish_review_replay_sanitizes_legacy_cached_run_without_mutating_it(
     replay_status,
 ):
     """Legacy cached routine runs must be safe on both gateway replay paths."""
-    from interfaces.mcp_server import KlausMCPGateway
+    from interfaces.mcp.server import KlausMCPGateway
 
     stored_run = hostile_routine_run(status="published_claude")
     cached_result = {
@@ -630,9 +630,9 @@ def test_registered_publish_review_structured_output_serializes_atomic_run(
 ):
     """The real registered MCP converter must serialize live and shadow results."""
     import core.push_sender
-    import interfaces.mcp_server as mcp_server
+    import interfaces.mcp.server as mcp_server
     import memory.firestore_db
-    from interfaces.mcp_runtime import build_custom_handlers
+    from interfaces.mcp.runtime import build_custom_handlers
     from tests.routine_firestore_fakes import (
         VersionedFirestoreClient,
         transactional_with_retry,
@@ -714,7 +714,7 @@ def test_registered_publish_review_structured_output_serializes_atomic_run(
 
 
 def test_routine_cannot_move_or_delete_user_owned_calendar_event():
-    from interfaces.mcp_server import KlausMCPGateway, MCPToolError
+    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
 
     gateway = KlausMCPGateway(
         dispatcher=lambda _name, _args: "{}",
@@ -741,7 +741,7 @@ def test_routine_cannot_move_or_delete_user_owned_calendar_event():
 
 def test_streamable_http_protocol_rejects_unauthorized_and_initializes_with_token():
     service = _oauth_service()
-    from interfaces.mcp_server import create_mcp_bundle
+    from interfaces.mcp.server import create_mcp_bundle
 
     client_registration = service.register_client({
         "redirect_uris": ["https://claude.ai/api/mcp/auth_callback"],

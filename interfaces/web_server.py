@@ -274,8 +274,8 @@ def _configure_subscription_interfaces() -> None:
 
     from mcp.server.transport_security import TransportSecuritySettings
 
-    from interfaces.mcp_oauth import build_oauth_router
-    from interfaces.mcp_runtime import (
+    from interfaces.mcp.oauth import build_oauth_router
+    from interfaces.mcp.runtime import (
         create_production_mcp_bundle,
         create_production_oauth_service,
     )

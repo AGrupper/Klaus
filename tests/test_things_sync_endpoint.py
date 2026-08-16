@@ -1,4 +1,4 @@
-"""Tests for core/things_ingest.py and the POST /cron/things-sync route.
+"""Tests for core/ingest/things.py and the POST /cron/things-sync route.
 
 Mirrors tests/test_strength_sync_endpoint.py: stub heavy web_server imports,
 exercise the OIDC gate (dev-bypass + 401 without bearer), and confirm
@@ -30,7 +30,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }
@@ -53,7 +53,7 @@ def test_things_sync_returns_batch_result_with_dev_bypass():
         batch = {"ok": True, "mode": "delta", "cursor": 343,
                  "entities": 261, "open_todos": 54, "done": True}
         with patch.dict(os.environ, _BASE_ENV):
-            with patch("core.things_ingest.run_one_batch", return_value=batch) as rob:
+            with patch("core.ingest.things.run_one_batch", return_value=batch) as rob:
                 client = TestClient(ws.app, raise_server_exceptions=True)
                 resp = client.post("/cron/things-sync")
 
@@ -89,7 +89,7 @@ def test_batch_reports_counts_on_success():
     fake._refresh.return_value = {"a": {}, "b": {}}
     fake.list.return_value = [{"id": "a"}]
     with patch.object(store_mod, "ThingsTaskStore", return_value=fake):
-        import core.things_ingest as ingest
+        import core.ingest.things as ingest
         result = ingest.run_one_batch()
 
     assert result["ok"] is True
@@ -105,7 +105,7 @@ def test_batch_reports_failure_when_things_is_degraded():
     fake._refresh.return_value = {"a": {}}
     with patch.object(store_mod, "ThingsTaskStore", return_value=fake):
         store_mod._cache["stale_reason"] = "Things Cloud unreachable"
-        import core.things_ingest as ingest
+        import core.ingest.things as ingest
         result = ingest.run_one_batch()
 
     assert result["ok"] is False
@@ -117,7 +117,7 @@ def test_batch_never_raises():
     """The cron contract: report the failure, do not propagate it."""
     store_mod.reset_cache()
     with patch.object(store_mod, "ThingsTaskStore", side_effect=RuntimeError("boom")):
-        import core.things_ingest as ingest
+        import core.ingest.things as ingest
         result = ingest.run_one_batch()
 
     assert result == {"ok": False, "error": "boom", "done": True}
@@ -129,7 +129,7 @@ def test_batch_labels_cold_start_as_replay():
     fake._refresh.return_value = {}
     fake.list.return_value = []
     with patch.object(store_mod, "ThingsTaskStore", return_value=fake):
-        import core.things_ingest as ingest
+        import core.ingest.things as ingest
         assert ingest.run_one_batch()["mode"] == "replay"
 
 
@@ -140,6 +140,6 @@ def test_batch_labels_warm_cache_as_delta():
     fake._refresh.return_value = {"a": {}}
     fake.list.return_value = []
     with patch.object(store_mod, "ThingsTaskStore", return_value=fake):
-        import core.things_ingest as ingest
+        import core.ingest.things as ingest
         assert ingest.run_one_batch()["mode"] == "delta"
     store_mod.reset_cache()

@@ -398,7 +398,7 @@ def _hrv_baseline_with_fallback(rows: list[dict]) -> dict[str, float | None]:
     own rolling weekly average); when that column is sparse (fewer than half of
     the given rows have a value), fall back to a rolling median of
     `hrv_overnight` over the prior <=7 days — mirrors
-    core.recovery_metrics.compute_recovery_deviation's own fallback
+    core.training.recovery.compute_recovery_deviation's own fallback
     (`median(prior_hrv)`), reused rather than reinvented (RESEARCH.md Pitfall 5).
 
     Args:

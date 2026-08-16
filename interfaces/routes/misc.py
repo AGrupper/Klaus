@@ -80,7 +80,7 @@ async def api_shadow_routine(
         raise HTTPException(
             status_code=400, detail={"error": "target_date must be YYYY-MM-DD"}
         ) from exc
-    from core.subscription_routines import build_subscription_routine_coordinator
+    from core.routines.subscription import build_subscription_routine_coordinator
 
     coordinator = build_subscription_routine_coordinator()
     result = await asyncio.get_running_loop().run_in_executor(
@@ -277,8 +277,8 @@ async def api_agent_status(
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
     """Expose capability gates, routine state, and Ask Claude launch config."""
-    from core.review_delivery import public_routine_run
-    from interfaces.mcp_server import EXPECTED_SKILL_VERSION
+    from core.routines.delivery import public_routine_run
+    from interfaces.mcp.server import EXPECTED_SKILL_VERSION
     from memory.firestore_db import RoutineRunStore, _jsonsafe_doc
 
     project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")

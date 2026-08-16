@@ -20,7 +20,7 @@ no events endpoint, so we list summaries (cheap) and diff against what we've
 already stored. Upserts are idempotent (doc id = activity_id), so re-runs are safe.
 
 Local dry-run:
-    GARMIN_EMAIL=... GARMIN_PASSWORD=... GCP_PROJECT_ID=... python -m core.run_ingest
+    GARMIN_EMAIL=... GARMIN_PASSWORD=... GCP_PROJECT_ID=... python -m core.ingest.run
 """
 from __future__ import annotations
 

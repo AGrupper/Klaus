@@ -16,5 +16,5 @@ token. **Everything here is gitignored** except this README.
 6. Download the JSON and save it here as `credentials.json`.
 
 ### `token.json` (auto-generated)
-Created automatically the first time you run `python -m core.auth_google`.
+Created automatically the first time you run `python -m core.auth.google`.
 It stores the long-lived refresh token. Delete it to force re-auth.

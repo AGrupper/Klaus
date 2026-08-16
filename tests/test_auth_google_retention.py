@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.auth_google import SecretManagerTokenStorage
+from core.auth.google import SecretManagerTokenStorage
 from core.secret_retention import build_retention_plan
 
 

@@ -17,7 +17,7 @@ based on the `GOOGLE_TOKEN_STORAGE` env var.
 Run this file directly to perform the one-time browser consent and verify
 that credentials work end-to-end:
 
-    python -m core.auth_google
+    python -m core.auth.google
 """
 from __future__ import annotations
 

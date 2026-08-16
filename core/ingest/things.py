@@ -20,7 +20,7 @@ thin trigger.
 Local dry-run::
 
     THINGS_EMAIL=... THINGS_PASSWORD=... GCP_PROJECT_ID=... \\
-        python -m core.things_ingest
+        python -m core.ingest.things
 """
 from __future__ import annotations
 

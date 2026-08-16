@@ -16,8 +16,8 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.types import ToolAnnotations
 from pydantic import WithJsonSchema
 
-from interfaces.mcp_custom_schemas import custom_tool_schema
-from interfaces.mcp_oauth import KlausTokenVerifier, OAuthAuthorizationService
+from interfaces.mcp.custom_schemas import custom_tool_schema
+from interfaces.mcp.oauth import KlausTokenVerifier, OAuthAuthorizationService
 
 
 EXPECTED_SKILL_VERSION = "7.4.0"
@@ -328,7 +328,7 @@ class KlausMCPGateway:
         """Sanitize stored results only where the routine-run contract applies."""
         if tool_name != "publish_review" or "run" not in result:
             return result
-        from core.review_delivery import public_routine_run
+        from core.routines.delivery import public_routine_run
 
         return {**result, "run": public_routine_run(result.get("run"))}
 
@@ -364,7 +364,7 @@ class MCPServerBundle:
 def _schema_metadata() -> dict[str, dict[str, Any]]:
     """Return canonical retained schemas without the removed self manifest."""
     from core.tools import get_all_schemas
-    from interfaces.mcp_custom_schemas import CUSTOM_TOOL_SCHEMAS
+    from interfaces.mcp.custom_schemas import CUSTOM_TOOL_SCHEMAS
 
     metadata = {
         schema["name"]: {

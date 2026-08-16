@@ -59,7 +59,7 @@ class RoutineReviewStore:
         """Build and validate the canonical routine-review record."""
         from datetime import datetime, timezone
 
-        from core.review_delivery import normalise_claude_session_url
+        from core.routines.delivery import normalise_claude_session_url
 
         if routine not in cls._COLLECTIONS:
             raise ValueError(f"unsupported routine: {routine}")

@@ -14,7 +14,7 @@ from tests.test_web_server import _stub_web_server_imports
 
 
 def _fake_runtime_module():
-    from interfaces.mcp_oauth import InMemoryOAuthStore, OAuthAuthorizationService
+    from interfaces.mcp.oauth import InMemoryOAuthStore, OAuthAuthorizationService
 
     service = OAuthAuthorizationService(
         InMemoryOAuthStore(),
@@ -44,7 +44,7 @@ def _fake_runtime_module():
 def test_live_and_routine_mcp_mount_independently():
     stubs = _stub_web_server_imports()
     runtime, bundle = _fake_runtime_module()
-    stubs["interfaces.mcp_runtime"] = runtime
+    stubs["interfaces.mcp.runtime"] = runtime
     env = {
         "KLAUS_MCP_ENABLED": "true",
         "KLAUS_CLAUDE_LIVE_ENABLED": "true",
@@ -109,7 +109,7 @@ def test_advertised_mcp_urls_accept_post_without_trailing_slash():
     try:
         stubs = _stub_web_server_imports()
         runtime, _bundle = _fake_runtime_module()
-        stubs["interfaces.mcp_runtime"] = runtime
+        stubs["interfaces.mcp.runtime"] = runtime
         env = {
             "KLAUS_MCP_ENABLED": "true",
             "KLAUS_CLAUDE_LIVE_ENABLED": "true",

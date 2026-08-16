@@ -53,7 +53,7 @@ def _stub_web_server_imports() -> dict:
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
         "telegram.ext": sys.modules.get("telegram.ext", MagicMock()),
         "telegram.error": sys.modules.get("telegram.error", MagicMock()),
-        "core.auth_google": MagicMock(name="core.auth_google"),
+        "core.auth.google": MagicMock(name="core.auth.google"),
         "core.main": MagicMock(name="core.main"),
         "interfaces._router": MagicMock(name="interfaces._router"),
     }
@@ -119,7 +119,7 @@ def test_today_calendar_reads_secondary_calendars_not_just_primary():
 
     Regression: this read used list_events (primary only) while every training
     session lives on a separate "Training" calendar. The Hub therefore showed an
-    empty day, and because core.deterministic_alerts reads this same snapshot,
+    empty day, and because core.routines.alerts reads this same snapshot,
     conflict and leave-by pushes could never fire for a workout. Verified live on
     2026-08-16: three real events, snapshot returned zero. Claude masked it by
     reaching the calendar through list_all_events instead.
@@ -492,7 +492,7 @@ def test_departure_windows_fall_back_to_the_default_travel_time():
 def test_departure_windows_survive_a_malformed_travel_override():
     """A bad env value must not strip leave_by from the whole day.
 
-    leave_by is what core.deterministic_alerts fires the "leave now" push on,
+    leave_by is what core.routines.alerts fires the "leave now" push on,
     and that path has no LLM fallback — losing it fails silently.
     """
     from datetime import datetime, timedelta  # noqa: PLC0415
@@ -535,7 +535,7 @@ def test_departure_window_actually_fires_the_deterministic_leave_now_push():
     from datetime import datetime  # noqa: PLC0415
     from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-    from core.deterministic_alerts import evaluate_daytime_rules  # noqa: PLC0415
+    from core.routines.alerts import evaluate_daytime_rules  # noqa: PLC0415
 
     tz = ZoneInfo("Asia/Jerusalem")
     # Departure is 15 min before an 18:00 event, so 17:45. "Now" is 17:50:

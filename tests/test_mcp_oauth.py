@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 def test_firestore_oauth_store_adds_native_ttl_timestamp(monkeypatch):
     """OAuth records keep epoch expiry and gain a Firestore TTL timestamp."""
-    from interfaces.mcp_oauth import FirestoreOAuthStore
+    from interfaces.mcp.oauth import FirestoreOAuthStore
 
     client = MagicMock()
     monkeypatch.setattr(
@@ -33,7 +33,7 @@ def _challenge(verifier: str) -> str:
 
 @pytest.fixture()
 def oauth_service():
-    from interfaces.mcp_oauth import InMemoryOAuthStore, OAuthAuthorizationService
+    from interfaces.mcp.oauth import InMemoryOAuthStore, OAuthAuthorizationService
 
     return OAuthAuthorizationService(
         store=InMemoryOAuthStore(),
@@ -69,7 +69,7 @@ def test_dynamic_client_registration_accepts_public_https_client(oauth_service):
     ["http://claude.ai/callback", "javascript:alert(1)", "https://claude.ai/cb#fragment"],
 )
 def test_registration_rejects_unsafe_redirects(oauth_service, redirect_uri):
-    from interfaces.mcp_oauth import OAuthRequestError
+    from interfaces.mcp.oauth import OAuthRequestError
 
     with pytest.raises(OAuthRequestError) as exc:
         oauth_service.register_client(
@@ -82,7 +82,7 @@ def test_registration_rejects_unsafe_redirects(oauth_service, redirect_uri):
 
 
 def test_authorization_code_is_pkce_bound_and_single_use(oauth_service):
-    from interfaces.mcp_oauth import OAuthRequestError
+    from interfaces.mcp.oauth import OAuthRequestError
 
     client = _registered_client(oauth_service)
     verifier = "v" * 64
@@ -127,7 +127,7 @@ def test_authorization_code_is_pkce_bound_and_single_use(oauth_service):
 
 
 def test_routine_scope_can_never_include_approval(oauth_service):
-    from interfaces.mcp_oauth import OAuthRequestError
+    from interfaces.mcp.oauth import OAuthRequestError
 
     client = _registered_client(oauth_service)
     with pytest.raises(OAuthRequestError) as exc:
@@ -144,7 +144,7 @@ def test_routine_scope_can_never_include_approval(oauth_service):
 
 
 def test_resource_and_scope_sets_are_endpoint_specific(oauth_service):
-    from interfaces.mcp_oauth import OAuthRequestError
+    from interfaces.mcp.oauth import OAuthRequestError
 
     client = _registered_client(oauth_service)
     with pytest.raises(OAuthRequestError) as exc:
@@ -161,7 +161,7 @@ def test_resource_and_scope_sets_are_endpoint_specific(oauth_service):
 
 
 def test_refresh_token_rotates_and_old_token_cannot_be_reused(oauth_service):
-    from interfaces.mcp_oauth import OAuthRequestError
+    from interfaces.mcp.oauth import OAuthRequestError
 
     client = _registered_client(oauth_service)
     verifier = "z" * 64
@@ -232,7 +232,7 @@ def test_token_verification_is_resource_bound_and_revocable(oauth_service):
 
 def test_oauth_http_routes_publish_metadata_and_complete_pkce_flow(oauth_service):
     from fastapi import FastAPI
-    from interfaces.mcp_oauth import build_oauth_router
+    from interfaces.mcp.oauth import build_oauth_router
 
     async def allowed_subject() -> str:
         return "amit.grupper@gmail.com"
@@ -302,7 +302,7 @@ def test_oauth_http_routes_publish_metadata_and_complete_pkce_flow(oauth_service
 
 def test_authorize_route_requires_existing_google_backed_subject(oauth_service):
     from fastapi import FastAPI
-    from interfaces.mcp_oauth import build_oauth_router
+    from interfaces.mcp.oauth import build_oauth_router
 
     async def no_session() -> str:
         raise HTTPException(status_code=401, detail={"error": "Not authenticated"})

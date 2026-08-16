@@ -6,7 +6,7 @@ Usage:
 
 Why this exists
 ---------------
-`core/heartbeat.py:check_cron_health` raises a CRITICAL `cron:<job>:failing`
+`core/routines/heartbeat.py:check_cron_health` raises a CRITICAL `cron:<job>:failing`
 signal purely on `heartbeat_runs/<job>.consecutive_failures >= 3`. That counter
 ONLY resets on a *successful* run (`memory/firestore_db.py:record_cron_run`).
 
