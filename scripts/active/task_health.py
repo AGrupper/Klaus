@@ -8,7 +8,7 @@ the targets can actually be checked.
 Read-only. Every number comes from the Things mirror; no new storage.
 
 Usage:
-    PYTHONPATH=. .venv/bin/python scripts/task_health.py
+    PYTHONPATH=. .venv/bin/python scripts/active/task_health.py
 """
 from __future__ import annotations
 

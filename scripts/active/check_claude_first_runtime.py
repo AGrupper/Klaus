@@ -102,7 +102,7 @@ def find_violations(root: Path) -> list[str]:
         relative = path.relative_to(root)
         if not _is_scanned(relative):
             continue
-        if relative == Path("scripts/check_claude_first_runtime.py"):
+        if relative == Path("scripts/active/check_claude_first_runtime.py"):
             continue
         try:
             text = path.read_text(encoding="utf-8")
@@ -137,7 +137,7 @@ def find_violations(root: Path) -> list[str]:
 def main() -> int:
     """Run the subtraction guard as a CI/deploy command."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("root", nargs="?", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("root", nargs="?", type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     violations = find_violations(args.root.resolve())
     if violations:

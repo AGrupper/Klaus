@@ -3,11 +3,11 @@
 
 One-shot operator-run script that dumps Garmin export JSON keys to verify
 the ASSUMED field names from RESEARCH §Garmin Export Field Map BEFORE the
-parser code in scripts/ingest_garmin_zip.py is finalized.
+parser code in scripts/archive/ingest_garmin_zip.py is finalized.
 
 Usage:
-    python scripts/probe_garmin_export_keys.py /path/to/garmin_export.zip
-    python scripts/probe_garmin_export_keys.py /path/to/unzipped_export_dir
+    python scripts/archive/probe_garmin_export_keys.py /path/to/garmin_export.zip
+    python scripts/archive/probe_garmin_export_keys.py /path/to/unzipped_export_dir
 
 Outputs:
     - Glob counts for each Phase 19 file class
@@ -101,7 +101,7 @@ def _resolve_root(path: str):
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python scripts/probe_garmin_export_keys.py /path/to/export.zip-or-dir")
+        print("Usage: python scripts/archive/probe_garmin_export_keys.py /path/to/export.zip-or-dir")
         print("(Wave-0 probe — NOT for CI)")
         return 0
 

@@ -11,13 +11,13 @@ from pathlib import Path
 import pytest
 
 from core.secret_retention import build_retention_plan
-from scripts.audit_production_drift import (
+from scripts.active.audit_production_drift import (
     _fetch_runtime_inventory,
     _normalize_bucket_storage_class,
     audit_snapshot,
     load_manifest,
 )
-from scripts.audit_quarantine import evaluate_quarantine
+from scripts.active.audit_quarantine import evaluate_quarantine
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -227,7 +227,7 @@ def test_live_runtime_inventory_is_fetched_instead_of_copied_from_manifest(monke
             return b'{"observed_routes":["GET /health"],"connectors":["calendar"],"tombstones":["POST /telegram-webhook"],"embedding":{"model":"gemini-embedding-2","daily_request_limit":200}}'
 
     monkeypatch.setattr(
-        "scripts.audit_production_drift.urllib.request.urlopen",
+        "scripts.active.audit_production_drift.urllib.request.urlopen",
         lambda request, timeout: Response(),
     )
 
@@ -519,7 +519,7 @@ def test_operator_scripts_are_directly_executable_from_repository_root():
         "audit_quarantine.py",
     ):
         result = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / script), "--help"],
+            [sys.executable, str(ROOT / "scripts" / "active" / script), "--help"],
             cwd=ROOT,
             capture_output=True,
             text=True,

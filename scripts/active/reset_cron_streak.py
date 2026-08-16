@@ -1,8 +1,8 @@
 """Clear a stale cron failure-streak so the heartbeat stops re-alerting.
 
 Usage:
-    python scripts/reset_cron_streak.py <job-id> [--dry-run]
-    python scripts/reset_cron_streak.py --list
+    python scripts/active/reset_cron_streak.py <job-id> [--dry-run]
+    python scripts/active/reset_cron_streak.py --list
 
 Why this exists
 ---------------
@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as a script
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import os
 

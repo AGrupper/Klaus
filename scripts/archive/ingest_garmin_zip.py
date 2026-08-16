@@ -7,8 +7,10 @@ from psycopg2.extras import execute_values
 from datetime import datetime, date, timezone
 from pathlib import Path
 
-# Add project root to sys.path
-project_root = "/Users/amitgrupper/Desktop/Klaus"
+# Add project root to sys.path. Derived from this file's location rather than
+# hardcoded — it used to be an absolute path to one developer's home directory,
+# which made the script unrunnable anywhere else, including in CI.
+project_root = str(Path(__file__).resolve().parents[2])
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -443,7 +445,7 @@ def parse_and_ingest_vo2_max(conn, extract_dir):
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python scripts/ingest_garmin_zip.py <path_to_unzipped_garmin_folder_or_zip>")
+        print("Usage: python scripts/archive/ingest_garmin_zip.py <path_to_unzipped_garmin_folder_or_zip>")
         sys.exit(1)
 
     path = sys.argv[1]

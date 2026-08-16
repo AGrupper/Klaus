@@ -22,7 +22,7 @@ ROUTINE_NAMES = (
     "klaus-weekly-review",
 )
 
-sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "scripts" / "active"))
 
 
 def _skill_text(name: str) -> str:
@@ -69,7 +69,7 @@ def test_uploadable_zips_exactly_match_canonical_sources():
 
 def test_packager_check_mode_detects_no_drift():
     result = subprocess.run(
-        [sys.executable, "scripts/package_claude_skills.py", "--check"],
+        [sys.executable, "scripts/active/package_claude_skills.py", "--check"],
         cwd=ROOT,
         capture_output=True,
         text=True,

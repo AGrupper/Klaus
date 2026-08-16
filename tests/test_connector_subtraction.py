@@ -13,7 +13,7 @@ def test_runtime_guard_rejects_retired_connector_and_dependency_residue(
     tmp_path: Path,
 ) -> None:
     """Deployment must fail if removed connectors or support packages return."""
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     (tmp_path / "requirements.txt").write_text(
         "google-cloud-monitoring>=2.20\n"

@@ -87,7 +87,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Verify the subtraction boundary
-        run: python scripts/check_claude_first_runtime.py
+        run: python scripts/active/check_claude_first_runtime.py
 
       # A missing GitHub secret interpolates to the empty string, so a renamed
       # secret deploys green and only fails later, at the first MCP call, with

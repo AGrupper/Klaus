@@ -10,7 +10,7 @@ committing it and watching what happens.
 
 Usage::
 
-    .venv/bin/python scripts/diff_things_payload.py --title reference
+    .venv/bin/python scripts/archive/diff_things_payload.py --title reference
 
 Create the reference to-do in Things first, with as many features set as
 possible (note, When, deadline, reminder, tag, checklist, repeat, project).

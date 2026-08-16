@@ -8,7 +8,7 @@ healthkit:test-{ts}, prompts to delete the test doc(s).
 Usage:
     export HEALTHKIT_WEBHOOK_TOKEN=<the-token-from-secret-manager>
     export GCP_PROJECT_ID=klaus-agent  # lowercase per CLAUDE.md invariant
-    python scripts/test_healthkit_push.py \\
+    python scripts/active/test_healthkit_push.py \\
         --url https://klaus-agent-XXXX.run.app/cron/healthkit-sync \\
         --count 2
 
@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 
 def _parse_args() -> argparse.Namespace:

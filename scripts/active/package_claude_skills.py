@@ -28,7 +28,7 @@ import zipfile
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SOURCE_ROOT = ROOT / "claude" / "skills"
 SHARED_ROOT = SOURCE_ROOT / "_shared"
 DIST_ROOT = ROOT / "claude" / "dist"

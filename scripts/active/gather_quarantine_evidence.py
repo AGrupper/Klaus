@@ -29,7 +29,7 @@ from typing import Any, Iterable
 
 logger = logging.getLogger(__name__)
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 # The runbook invokes this by path from the repository root, so the project
 # packages are not importable unless we put the root on sys.path ourselves.
 if str(ROOT) not in sys.path:
@@ -335,7 +335,7 @@ def main() -> int:
     if offenders:
         print("Quarantined resources that are not inert:")
         print("\n".join(f"- {offender}" for offender in offenders))
-    print(f"Now run: python scripts/audit_quarantine.py --evidence {args.out}")
+    print(f"Now run: python scripts/active/audit_quarantine.py --evidence {args.out}")
     return 1 if (errors or offenders) else 0
 
 

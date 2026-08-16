@@ -186,7 +186,7 @@ and redeploying Cloud Run):
 ```bash
 export HEALTHKIT_WEBHOOK_TOKEN=<the-token>
 export GCP_PROJECT_ID=klaus-agent
-python scripts/test_healthkit_push.py \
+python scripts/active/test_healthkit_push.py \
     --url https://klaus-agent-XXXX.run.app/cron/healthkit-sync \
     --count 2
 ```

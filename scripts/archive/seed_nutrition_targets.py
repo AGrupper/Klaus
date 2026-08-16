@@ -1,7 +1,7 @@
 """One-off seed of Amit's performance-fueling anchors into the training profile.
 
 Usage:
-    python scripts/seed_nutrition_targets.py [--dry-run]
+    python scripts/archive/seed_nutrition_targets.py [--dry-run]
 
 Writes the `nutrition_targets` block into users/amit via
 ``UserProfileStore.update`` (merge=True — leaves every other profile field
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as a script
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 load_dotenv(override=True)

@@ -6,7 +6,7 @@ Builds the 4 mesocycle block docs from the blueprint's 16-week training plan
 `users/amit` via `UserProfileStore.update`.
 
 Usage:
-    python scripts/seed_training_blocks.py [--dry-run] [--force]
+    python scripts/archive/seed_training_blocks.py [--dry-run] [--force]
 
 Flags:
     --dry-run   Print the JSON payload without writing to Firestore.
@@ -38,7 +38,7 @@ import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as a script
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 load_dotenv(override=True)   # INVARIANT: override=True always

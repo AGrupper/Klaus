@@ -4,7 +4,7 @@ Builds the v4.0 structured profile dict from the in-repo blueprint (source of tr
 and writes it to `users/amit` via `UserProfileStore.update(merge=True)`.
 
 Usage:
-    python scripts/ingest_blueprint.py [--dry-run] [--force]
+    python scripts/archive/ingest_blueprint.py [--dry-run] [--force]
 
 Flags:
     --dry-run   Print the JSON payload without writing to Firestore.
@@ -30,7 +30,7 @@ import sys
 from pathlib import Path
 
 # Ensure project root is on sys.path when run as a script
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 load_dotenv(override=True)          # INVARIANT: override=True always

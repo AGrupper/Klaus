@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_cleanup_guard_rejects_forbidden_runtime_markers(tmp_path: Path) -> None:
     """The deploy guard must reject SDK imports and retired configuration."""
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     source = tmp_path / "unsafe.py"
     source.write_text(
@@ -52,7 +52,7 @@ def test_cleanup_guard_rejects_forbidden_runtime_markers(tmp_path: Path) -> None
 def test_cleanup_guard_rejects_bypass_cases(
     tmp_path: Path, content: str, marker: str,
 ) -> None:
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     (tmp_path / "unsafe.py").write_text(content, encoding="utf-8")
     assert any(marker in violation for violation in find_violations(tmp_path))
@@ -60,7 +60,7 @@ def test_cleanup_guard_rejects_bypass_cases(
 
 def test_cleanup_guard_accepts_the_checked_in_runtime() -> None:
     """Current deployable code has no legacy generative or Telegram residue."""
-    from scripts.check_claude_first_runtime import find_violations
+    from scripts.active.check_claude_first_runtime import find_violations
 
     assert find_violations(ROOT) == []
 

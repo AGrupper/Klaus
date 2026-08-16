@@ -7,8 +7,8 @@ activity_id and ``set(merge=True)`` replaces the splits array wholesale, so a
 direct refetch cleanly overwrites the stale aggregate docs.
 
 Usage (local, Garmin creds + GCP_PROJECT_ID from .env):
-    python scripts/resync_run_details.py --days 45 --only-typed
-    python scripts/resync_run_details.py --days 7 --dry-run
+    python scripts/archive/resync_run_details.py --days 45 --only-typed
+    python scripts/archive/resync_run_details.py --days 7 --dry-run
 
 Flags:
     --days N       look-back window (default 30)

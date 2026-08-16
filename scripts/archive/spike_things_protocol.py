@@ -12,8 +12,8 @@ to the ``/commit`` endpoint.  The worst it can do is read.
 
 Usage::
 
-    .venv/bin/python scripts/spike_things_protocol.py            # summary only
-    .venv/bin/python scripts/spike_things_protocol.py --dump     # + raw JSON dump
+    .venv/bin/python scripts/archive/spike_things_protocol.py            # summary only
+    .venv/bin/python scripts/archive/spike_things_protocol.py --dump     # + raw JSON dump
 
 Requires ``THINGS_EMAIL`` and ``THINGS_PASSWORD`` in ``.env``.
 

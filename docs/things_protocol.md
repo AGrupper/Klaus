@@ -1,7 +1,7 @@
 # Things Cloud protocol — reverse-engineered reference
 
 **Status:** derived empirically on 2026-08-11 by replaying Amit's real journal
-(321 elements → 487 entities) with `scripts/spike_things_protocol.py`.
+(321 elements → 487 entities) with `scripts/archive/spike_things_protocol.py`.
 Cross-checked against [disrupted/things-cloud-api](https://github.com/disrupted/things-cloud-api).
 
 Cultured Code publishes **no** API and no schema documentation. Everything below was
@@ -425,7 +425,7 @@ show up in Klaus's reads until deleted by hand.
 ## 6. Reproducing
 
 ```bash
-.venv/bin/python scripts/spike_things_protocol.py --dump
+.venv/bin/python scripts/archive/spike_things_protocol.py --dump
 ```
 
 Read-only — it never references the `/commit` endpoint. Needs `THINGS_EMAIL` and

@@ -1,7 +1,7 @@
 """One-off cleanup of duplicate HealthKit meal documents in Firestore.
 
 Usage:
-    python scripts/dedupe_healthkit_meals.py [--days N] [--apply]
+    python scripts/archive/dedupe_healthkit_meals.py [--days N] [--apply]
 
 Background
 ----------
@@ -33,10 +33,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 # Ensure project root is on sys.path when run as a script
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
-load_dotenv(str(Path(__file__).parent.parent / ".env"), override=True)
+load_dotenv(str(Path(__file__).resolve().parents[2] / ".env"), override=True)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

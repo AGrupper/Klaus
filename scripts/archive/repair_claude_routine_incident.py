@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 # Make direct ``python scripts/...`` invocation behave like package imports.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from dotenv import load_dotenv
 from google.cloud import firestore
