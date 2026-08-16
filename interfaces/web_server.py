@@ -1065,7 +1065,15 @@ def _today_calendar(today_iso: str) -> dict:
     TIME-01: all-day events are pinned at top; timed events sorted by start ascending.
     Returns {"all_day": [...], "timed": [...]} or {"all_day": [], "timed": []} on error.
 
-    Each event dict carries: id, title, start, end, location (if present).
+    Each event dict carries: id, title, start, end, calendar, location (if present).
+
+    Reads EVERY writable calendar, not just primary. This used to call
+    ``list_events`` (primary only), which made the whole no-model side of Klaus
+    blind to the Training calendar — where every session actually lives. The Hub
+    showed an empty day and, worse, ``core.deterministic_alerts`` reads this same
+    snapshot, so conflict and leave-by pushes could never fire for a workout. It
+    stayed hidden because Claude reaches the calendar through ``list_all_events``
+    and compensated; only the deterministic paths were affected.
     """
     try:
         # WHY shared: the singleton retains Google's short-lived access token
@@ -1084,7 +1092,9 @@ def _today_calendar(today_iso: str) -> dict:
         )
 
         cal = _get_calendar_tool()
-        raw_events = cal.list_events(
+        # max_results is per calendar here, and list_all_events already merges
+        # chronologically and falls back to primary if calendarList is unreadable.
+        raw_events = cal.list_all_events(
             day_start.isoformat(),
             day_end.isoformat(),
             max_results=50,
@@ -1095,6 +1105,7 @@ def _today_calendar(today_iso: str) -> dict:
         for ev in raw_events:
             start_str = ev.get("start", "")
             location = ev.get("location", "")
+            calendar_name = ev.get("calendar", "")
             entry = {
                 "id": ev.get("id", ""),
                 "title": ev.get("summary", ""),
@@ -1103,6 +1114,8 @@ def _today_calendar(today_iso: str) -> dict:
             }
             if location:
                 entry["location"] = location
+            if calendar_name:
+                entry["calendar"] = calendar_name
             # All-day events have a date-only "start" (YYYY-MM-DD, length 10 with no 'T').
             if "T" not in start_str and len(start_str) == 10:
                 # All-day events surface as title strings to match the frontend

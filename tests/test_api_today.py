@@ -78,13 +78,14 @@ def test_today_calendar_uses_the_process_shared_calendar_client():
     """Repeated snapshots use the shared Calendar client and its in-memory token."""
     stubs = _stub_web_server_imports()
     shared_calendar = MagicMock()
-    shared_calendar.list_events.return_value = [
+    shared_calendar.list_all_events.return_value = [
         {
             "id": "event-1",
             "summary": "Static OAuth design review",
             "start": "2026-08-14T15:00:00+03:00",
             "end": "2026-08-14T15:30:00+03:00",
             "location": "",
+            "calendar": "primary",
         }
     ]
     shared_tools = MagicMock(name="core.tools")
@@ -104,11 +105,51 @@ def test_today_calendar_uses_the_process_shared_calendar_client():
                 "title": "Static OAuth design review",
                 "start": "2026-08-14T15:00:00+03:00",
                 "end": "2026-08-14T15:30:00+03:00",
+                "calendar": "primary",
             }
         ],
     }
     assert first == expected
     assert second == expected
+
+
+def test_today_calendar_reads_secondary_calendars_not_just_primary():
+    """Events on a non-primary calendar must reach the snapshot.
+
+    Regression: this read used list_events (primary only) while every training
+    session lives on a separate "Training" calendar. The Hub therefore showed an
+    empty day, and because core.deterministic_alerts reads this same snapshot,
+    conflict and leave-by pushes could never fire for a workout. Verified live on
+    2026-08-16: three real events, snapshot returned zero. Claude masked it by
+    reaching the calendar through list_all_events instead.
+    """
+    stubs = _stub_web_server_imports()
+    shared_calendar = MagicMock()
+    shared_calendar.list_events.side_effect = AssertionError(
+        "primary-only list_events must not be used for the Hub snapshot"
+    )
+    shared_calendar.list_all_events.return_value = [
+        {
+            "id": "run-1",
+            "summary": "Easy Run (Treadmill)",
+            "start": "2026-08-16T10:00:00+03:00",
+            "end": "2026-08-16T10:45:00+03:00",
+            "location": "",
+            "calendar": "Training",
+        }
+    ]
+    shared_tools = MagicMock(name="core.tools")
+    shared_tools._get_calendar_tool.return_value = shared_calendar
+    stubs["core.tools"] = shared_tools
+
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        out = ws._today_calendar("2026-08-16")
+
+    assert len(out["timed"]) == 1, "secondary-calendar event was dropped"
+    assert out["timed"][0]["title"] == "Easy Run (Treadmill)"
+    assert out["timed"][0]["calendar"] == "Training"
 
 
 def test_today_returns_expected_keys():
