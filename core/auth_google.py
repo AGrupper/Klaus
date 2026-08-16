@@ -1,7 +1,7 @@
 """Persistent Google OAuth 2.0 manager for Calendar.
 
-Implements the Phase-1 auth boilerplate (per `docs/TECHNICAL_PLAN.md` §3.1
-and §4). Holds a refresh token so the agent can call Google APIs indefinitely
+Implements the Google auth boundary described in `docs/ARCHITECTURE.md`.
+Holds a refresh token so the agent can call Google APIs indefinitely
 without user re-consent — this works because the OAuth consent screen is
 configured as **Internal**, which exempts refresh tokens from the standard
 7-day expiry.

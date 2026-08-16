@@ -1,6 +1,6 @@
 """Report the task-list health figures behind the success criteria.
 
-The design at docs/superpowers/specs/2026-08-14-klaus-task-partnership-design.md
+The design at docs/archive/specs/2026-08-14-klaus-task-partnership-design.md
 sets numeric targets against a 2026-08-14 baseline: 17 real to-dos, 1 dated,
 0 with deadlines, 2 filed, median age 116 days. This prints the same figures so
 the targets can actually be checked.

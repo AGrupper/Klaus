@@ -17,7 +17,7 @@ plans. Payments, credentials/security, permanent bulk deletion, medical
 commitments, and first-time outreach require an immutable, expiring prepared
 action whose payload hash is confirmed through the interactive endpoint.
 
-See [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md) for the complete authorization and
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the complete authorization and
 cutover contract.
 
 Audit date: 2026-06-10. Scope: auth on all inbound endpoints, Telegram access control,

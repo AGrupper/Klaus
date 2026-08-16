@@ -1,11 +1,14 @@
-"""Firestore-backed state storage.
+"""Firestore-backed state storage — see `docs/ARCHITECTURE.md` for the data layer.
 
-One store class (per `docs/TECHNICAL_PLAN.md` §1 and §3.4):
+Every persistent Klaus record lives here, in one store class per domain
+(profile, meals, training, tasks, habits, follow-ups, directives, approvals,
+push subscriptions, portfolio, routine runs and reviews). Each store owns a
+single top-level collection, builds its client through `_make_firestore_client`,
+and returns JSON-safe documents via `_jsonsafe_doc` so Firestore timestamps and
+Decimals never reach a caller that is about to serialise them.
 
-1. `UserProfileStore` — read/write static user configuration (stub, Phase 5).
-
-Note: FirestoreQueue (the Things 3 task queue) was removed when the task backend
-was migrated to TickTick Open API (see mcp_tools/ticktick_tool.py).
+Klaus is single-user, so collections are flat and unprefixed; `KLAUS_USER_ID`
+namespaces the vector store, not this one.
 """
 from __future__ import annotations
 

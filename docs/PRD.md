@@ -6,7 +6,7 @@
 > life dashboard and launches Claude instead of hosting model-backed chat.
 > Claude Remote Routines provide morning, nightly, and weekly reasoning. Gemini
 > is retained only for `gemini-embedding-2`. The detailed current contract and
-> guarded rollout are in [V7_ARCHITECTURE.md](V7_ARCHITECTURE.md) and
+> guarded rollout are in [ARCHITECTURE.md](ARCHITECTURE.md) and
 > [CLAUDE_FIRST_USE.md](CLAUDE_FIRST_USE.md). Legacy sections below are retained
 > as historical context until the seven-day cutover observation is signed off.
 
