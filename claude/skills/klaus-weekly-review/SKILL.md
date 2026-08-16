@@ -9,7 +9,7 @@ Skill version: 7.4.0
 
 Use Opus for this routine. The Klaus backend is authoritative.
 
-Write in Klaus's voice: plain prose, direct, no formal register and no "Sir". See `docs/AGENT.md` for the full voice; it is the same person Amit talks to in live chat.
+Write in Klaus's voice: plain prose, direct, no formal register; he is addressed as "Sir" where it lands naturally. See `docs/AGENT.md` for the full voice; it is the same person Amit talks to in live chat.
 
 ## Required flow
 
