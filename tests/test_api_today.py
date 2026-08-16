@@ -78,13 +78,14 @@ def test_today_calendar_uses_the_process_shared_calendar_client():
     """Repeated snapshots use the shared Calendar client and its in-memory token."""
     stubs = _stub_web_server_imports()
     shared_calendar = MagicMock()
-    shared_calendar.list_events.return_value = [
+    shared_calendar.list_all_events.return_value = [
         {
             "id": "event-1",
             "summary": "Static OAuth design review",
             "start": "2026-08-14T15:00:00+03:00",
             "end": "2026-08-14T15:30:00+03:00",
             "location": "",
+            "calendar": "primary",
         }
     ]
     shared_tools = MagicMock(name="core.tools")
@@ -104,11 +105,51 @@ def test_today_calendar_uses_the_process_shared_calendar_client():
                 "title": "Static OAuth design review",
                 "start": "2026-08-14T15:00:00+03:00",
                 "end": "2026-08-14T15:30:00+03:00",
+                "calendar": "primary",
             }
         ],
     }
     assert first == expected
     assert second == expected
+
+
+def test_today_calendar_reads_secondary_calendars_not_just_primary():
+    """Events on a non-primary calendar must reach the snapshot.
+
+    Regression: this read used list_events (primary only) while every training
+    session lives on a separate "Training" calendar. The Hub therefore showed an
+    empty day, and because core.deterministic_alerts reads this same snapshot,
+    conflict and leave-by pushes could never fire for a workout. Verified live on
+    2026-08-16: three real events, snapshot returned zero. Claude masked it by
+    reaching the calendar through list_all_events instead.
+    """
+    stubs = _stub_web_server_imports()
+    shared_calendar = MagicMock()
+    shared_calendar.list_events.side_effect = AssertionError(
+        "primary-only list_events must not be used for the Hub snapshot"
+    )
+    shared_calendar.list_all_events.return_value = [
+        {
+            "id": "run-1",
+            "summary": "Easy Run (Treadmill)",
+            "start": "2026-08-16T10:00:00+03:00",
+            "end": "2026-08-16T10:45:00+03:00",
+            "location": "",
+            "calendar": "Training",
+        }
+    ]
+    shared_tools = MagicMock(name="core.tools")
+    shared_tools._get_calendar_tool.return_value = shared_calendar
+    stubs["core.tools"] = shared_tools
+
+    with patch.dict(sys.modules, stubs):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        out = ws._today_calendar("2026-08-16")
+
+    assert len(out["timed"]) == 1, "secondary-calendar event was dropped"
+    assert out["timed"][0]["title"] == "Easy Run (Treadmill)"
+    assert out["timed"][0]["calendar"] == "Training"
 
 
 def test_today_returns_expected_keys():
@@ -148,7 +189,7 @@ def test_today_returns_expected_keys():
                 "kcal": 1800, "protein_g": 140, "carbs_g": 200,
                 "fat_g": 60, "fiber_g": 25,
             }
-            ws._today_routes = lambda calendar, today_iso: calendar
+            ws._today_departure_windows = lambda calendar: calendar
             ws._today_coach_note = lambda today_iso: "Hit protein target today — +15g above yesterday."
 
             client = TestClient(ws.app, raise_server_exceptions=True)
@@ -221,7 +262,7 @@ def test_no_datetimewithnanoseconds_leak():
             }]
             ws._today_training = lambda today_iso: None
             ws._today_nutrition_totals = lambda today_iso: {}
-            ws._today_routes = lambda calendar, today_iso: calendar
+            ws._today_departure_windows = lambda calendar: calendar
             ws._today_coach_note = lambda today_iso: None
 
             client = TestClient(ws.app, raise_server_exceptions=True)
@@ -289,7 +330,7 @@ def test_meal_slot_time_not_eating_time():
             ]
             ws._today_training = lambda today_iso: None
             ws._today_nutrition_totals = lambda today_iso: {}
-            ws._today_routes = lambda calendar, today_iso: calendar
+            ws._today_departure_windows = lambda calendar: calendar
             ws._today_coach_note = lambda today_iso: None
 
             client = TestClient(ws.app, raise_server_exceptions=True)
@@ -380,79 +421,147 @@ def test_today_garmin_maps_to_frontend_contract():
     assert out == {"sleep": 7.5, "hrv": 55, "body_battery": 78, "resting_hr": 52}
 
 
-def test_today_routes_computes_iso_leave_by_and_get_ready():
-    """_today_routes attaches ISO leave_by + get_ready_at (= leave_by − 45 min).
+def _located_calendar(start="2026-06-15T18:00:00+03:00"):
+    """One located timed event — the only shape that earns a departure window."""
+    return {
+        "all_day": [],
+        "timed": [
+            {
+                "id": "e1",
+                "title": "Gym",
+                "start": start,
+                "end": "2026-06-15T19:00:00+03:00",
+                "location": "Tel Aviv Gym",
+            }
+        ],
+    }
+
+
+def _departure_windows(calendar, env_extra=None):
+    """Run _today_departure_windows with web_server's imports stubbed out."""
+    with patch.dict(sys.modules, _stub_web_server_imports()):
+        import interfaces.web_server as ws  # noqa: PLC0415
+
+        with patch.dict(os.environ, {**_ENV, **(env_extra or {})}):
+            return ws._today_departure_windows(calendar)
+
+
+def test_departure_windows_use_the_configured_travel_time():
+    """leave_by = start − configured travel; get_ready_at = leave_by − 45 min.
 
     The frontend reads event.leave_by / event.get_ready_at as ISO datetimes,
-    NOT leave_by_minutes_before (int). Get Ready is 45 min before leaving (USER.md).
+    NOT leave_by_minutes_before (int). Get Ready is 45 min before leaving
+    (USER.md). This contract outlived the Google Routes API that used to
+    produce the travel number.
     """
     from datetime import datetime, timedelta  # noqa: PLC0415
 
-    stubs = _stub_web_server_imports()
-    with patch.dict(sys.modules, stubs):
-        import interfaces.web_server as ws  # noqa: PLC0415
-
-        with patch.dict(os.environ, _ENV):
-            start = "2026-06-15T18:00:00+03:00"
-            calendar = {
-                "all_day": [],
-                "timed": [
-                    {
-                        "id": "e1",
-                        "title": "Gym",
-                        "start": start,
-                        "end": "2026-06-15T19:00:00+03:00",
-                        "location": "Tel Aviv Gym",
-                    }
-                ],
-            }
-            with patch(
-                "mcp_tools.routes_tool.get_travel_time",
-                return_value={"duration_minutes": 30, "summary": "30 min"},
-            ) as travel_time:
-                out = ws._today_routes(calendar, "2026-06-15")
+    start = "2026-06-15T18:00:00+03:00"
+    out = _departure_windows(
+        _located_calendar(start), {"KLAUS_TRAVEL_MINUTES_DEFAULT": "30"}
+    )
 
     ev = out["timed"][0]
     assert "leave_by" in ev and "get_ready_at" in ev
     assert "leave_by_minutes_before" not in ev  # old (broken) contract removed
     leave_by = datetime.fromisoformat(ev["leave_by"])
     get_ready = datetime.fromisoformat(ev["get_ready_at"])
-    start_dt = datetime.fromisoformat(start)
-    assert leave_by == start_dt - timedelta(minutes=30)
+    assert leave_by == datetime.fromisoformat(start) - timedelta(minutes=30)
     assert get_ready == leave_by - timedelta(minutes=45)
-    travel_time.assert_called_once_with(
-        origin="Tel Aviv",
-        destination="Tel Aviv Gym",
-        departure_time_iso=start,
-        user_id="123456",
-        event_id="e1",
-    )
 
 
-def test_today_routes_omits_travel_fields_when_cost_breaker_blocks():
-    """A Routes cap hit must leave the calendar usable and unmodified."""
-    stubs = _stub_web_server_imports()
-    with patch.dict(sys.modules, stubs):
-        import interfaces.web_server as ws  # noqa: PLC0415
+def test_departure_windows_fall_back_to_the_default_travel_time():
+    """An unset override still produces leave_by — the alert depends on it."""
+    from datetime import datetime, timedelta  # noqa: PLC0415
 
-        calendar = {
-            "all_day": [],
-            "timed": [{
-                "id": "blocked-event",
-                "title": "Dinner",
-                "start": "2026-06-15T18:00:00+03:00",
-                "end": "2026-06-15T19:00:00+03:00",
-                "location": "Jaffa",
-            }],
-        }
-        with patch.dict(os.environ, _ENV), patch(
-            "mcp_tools.routes_tool.get_travel_time", return_value=None
-        ):
-            out = ws._today_routes(calendar, "2026-06-15")
+    start = "2026-06-15T18:00:00+03:00"
+    out = _departure_windows(_located_calendar(start), {"KLAUS_TRAVEL_MINUTES_DEFAULT": ""})
+
+    leave_by = datetime.fromisoformat(out["timed"][0]["leave_by"])
+    assert leave_by == datetime.fromisoformat(start) - timedelta(minutes=15)
+
+
+def test_departure_windows_survive_a_malformed_travel_override():
+    """A bad env value must not strip leave_by from the whole day.
+
+    leave_by is what core.deterministic_alerts fires the "leave now" push on,
+    and that path has no LLM fallback — losing it fails silently.
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    start = "2026-06-15T18:00:00+03:00"
+    for bad in ("not-a-number", "-5"):
+        out = _departure_windows(
+            _located_calendar(start), {"KLAUS_TRAVEL_MINUTES_DEFAULT": bad}
+        )
+        leave_by = datetime.fromisoformat(out["timed"][0]["leave_by"])
+        assert leave_by == datetime.fromisoformat(start) - timedelta(minutes=15), bad
+
+
+def test_departure_windows_skip_events_without_a_location():
+    """No location means no journey, so no leave_by and no Get Ready block."""
+    calendar = {
+        "all_day": [],
+        "timed": [{
+            "id": "no-location",
+            "title": "Call",
+            "start": "2026-06-15T18:00:00+03:00",
+            "end": "2026-06-15T19:00:00+03:00",
+        }],
+    }
+    out = _departure_windows(calendar)
 
     assert out is calendar
     assert "leave_by" not in out["timed"][0]
     assert "get_ready_at" not in out["timed"][0]
+
+
+def test_departure_window_actually_fires_the_deterministic_leave_now_push():
+    """End-to-end seam: the field this computes is the field the alert reads.
+
+    These two halves live in different modules and could drift on field name or
+    timestamp format with every unit test still green. The push has no LLM
+    fallback, so drift here fails silently — the user simply stops being told
+    to leave. Feed the real producer's output to the real consumer.
+    """
+    from datetime import datetime  # noqa: PLC0415
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+
+    from core.deterministic_alerts import evaluate_daytime_rules  # noqa: PLC0415
+
+    tz = ZoneInfo("Asia/Jerusalem")
+    # Departure is 15 min before an 18:00 event, so 17:45. "Now" is 17:50:
+    # leave_by has passed but the event has not started — the alert window.
+    calendar = _departure_windows(_located_calendar("2026-06-15T18:00:00+03:00"))
+    now = datetime(2026, 6, 15, 17, 50, tzinfo=tz)
+
+    alerts = evaluate_daytime_rules(
+        {"tasks": [], "habits_pending": [], "today": {"calendar": calendar}},
+        [],
+        [],
+        now=now,
+    )
+
+    travel = [a for a in alerts if a["kind"] == "travel_conflict"]
+    assert travel, f"no travel_conflict raised from {calendar['timed'][0]}"
+    assert "Gym" in travel[0]["text"]
+
+
+def test_departure_windows_skip_an_unparseable_start_without_losing_the_day():
+    """One bad event must not prevent the rest of the calendar rendering."""
+    calendar = {
+        "all_day": [],
+        "timed": [
+            {"id": "bad", "title": "Broken", "start": "not-a-date",
+             "end": "", "location": "Jaffa"},
+            {"id": "good", "title": "Gym", "start": "2026-06-15T18:00:00+03:00",
+             "end": "2026-06-15T19:00:00+03:00", "location": "Tel Aviv Gym"},
+        ],
+    }
+    out = _departure_windows(calendar)
+
+    assert "leave_by" not in out["timed"][0]
+    assert "leave_by" in out["timed"][1]
 
 
 def test_sanitize_coach_note_strips_controls_and_markdown_header():

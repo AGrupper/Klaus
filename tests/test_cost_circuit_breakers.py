@@ -1,4 +1,9 @@
-"""Behavioral tests for the retained embedding and Routes cost breakers."""
+"""Behavioral tests for the retained embedding cost breaker.
+
+The Google Routes breaker lived here too, until Routes was retired: departure
+windows now come from a configured travel time, so there is no per-call billing
+left to cap. Embeddings remain the only metered provider call in the runtime.
+"""
 from __future__ import annotations
 
 import threading
@@ -11,7 +16,6 @@ import pytest
 
 from memory import firestore_db
 from memory.pinecone_db import MemoryStore
-from mcp_tools import routes_tool
 
 
 class _Snapshot:
@@ -165,164 +169,3 @@ def test_embedding_reservations_use_canonical_user_and_jerusalem_day(monkeypatch
         "amit:2026-01-02",
     }
     assert client.transaction_count == 3
-
-
-def test_routes_reservations_enforce_daily_and_rolling_minute_caps(monkeypatch):
-    """Removing either atomic boundary would allow excess billable computations."""
-    client = _FirestoreClient()
-    monkeypatch.setattr(firestore_db, "_make_firestore_client", lambda *_args: client)
-    monkeypatch.setattr(firestore_db.firestore, "transactional", lambda function: function)
-    store = firestore_db.RoutesUsageStore("project", "database")
-    start = datetime(2026, 8, 13, 7, 0, tzinfo=timezone.utc)
-
-    for _ in range(5):
-        assert store.reserve("amit", now=start, daily_limit=25, minute_limit=5) is True
-    assert store.reserve("amit", now=start, daily_limit=25, minute_limit=5) is False
-    assert store.reserve(
-        "amit", now=start + timedelta(seconds=61), daily_limit=25, minute_limit=5
-    ) is True
-
-    for index in range(6, 25):
-        assert store.reserve(
-            "amit",
-            now=start + timedelta(seconds=61 * index),
-            daily_limit=25,
-            minute_limit=5,
-        ) is True
-    assert store.reserve(
-        "amit", now=start + timedelta(hours=2), daily_limit=25, minute_limit=5
-    ) is False
-
-
-def test_routes_minute_cap_survives_jerusalem_day_rollover(monkeypatch):
-    """Local midnight must reset daily quota without resetting the rolling minute."""
-    client = _FirestoreClient()
-    monkeypatch.setattr(firestore_db, "_make_firestore_client", lambda *_args: client)
-    monkeypatch.setattr(firestore_db.firestore, "transactional", lambda function: function)
-    store = firestore_db.RoutesUsageStore("project", "database")
-    before_midnight = datetime(2026, 1, 1, 21, 59, 45, tzinfo=timezone.utc)
-
-    for offset in range(5):
-        assert store.reserve(
-            "amit",
-            now=before_midnight + timedelta(seconds=offset),
-            daily_limit=25,
-            minute_limit=5,
-        ) is True
-
-    assert store.reserve(
-        "amit",
-        now=before_midnight + timedelta(seconds=20),
-        daily_limit=25,
-        minute_limit=5,
-    ) is False
-    assert set(client.data["routes_usage"]) == {
-        "amit:2026-01-01",
-    }
-
-
-def test_routes_cache_is_persisted_by_event_and_departure_window(monkeypatch):
-    """Changing Cloud Run instances must not cause a second billable route lookup."""
-    client = _FirestoreClient()
-    monkeypatch.setattr(firestore_db, "_make_firestore_client", lambda *_args: client)
-    store = firestore_db.RoutesUsageStore("project", "database")
-    now = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
-    result = {"duration_minutes": 18, "distance_km": 6.2, "summary": "Ayalon"}
-
-    store.put_cached(
-        "amit",
-        event_id="calendar-123",
-        departure_time_iso="2026-08-13T14:01:00+03:00",
-        result=result,
-        now=now,
-    )
-
-    assert store.get_cached(
-        "amit",
-        event_id="calendar-123",
-        departure_time_iso="2026-08-13T14:29:00+03:00",
-        now=now + timedelta(minutes=5),
-    ) == result
-    assert store.get_cached(
-        "amit",
-        event_id="different-event",
-        departure_time_iso="2026-08-13T14:29:00+03:00",
-        now=now + timedelta(minutes=5),
-    ) is None
-
-
-def test_routes_quota_block_omits_estimate_without_provider_call(monkeypatch):
-    """A cap hit should degrade to None, not call Routes or fail Calendar."""
-    usage = MagicMock()
-    usage.get_cached.return_value = None
-    usage.reserve.return_value = False
-    monkeypatch.setattr(routes_tool, "_get_usage_store", lambda: usage)
-    session = MagicMock()
-    monkeypatch.setattr(routes_tool, "_get_authorized_session", lambda: session)
-
-    result = routes_tool.get_travel_time(
-        origin="Tel Aviv",
-        destination="Dizengoff Center",
-        departure_time_iso="2026-08-13T14:00:00+03:00",
-        user_id="amit",
-        event_id="calendar-123",
-    )
-
-    assert result is None
-    session.post.assert_not_called()
-
-
-def test_routes_persisted_cache_precedes_quota_and_provider(monkeypatch):
-    """A cache hit must consume neither the daily cap nor an API request."""
-    cached = {"duration_minutes": 11, "distance_km": 4.0, "summary": "Namir"}
-    usage = MagicMock()
-    usage.get_cached.return_value = cached
-    monkeypatch.setattr(routes_tool, "_get_usage_store", lambda: usage)
-    session = MagicMock()
-    monkeypatch.setattr(routes_tool, "_get_authorized_session", lambda: session)
-
-    result = routes_tool.get_travel_time(
-        origin="Tel Aviv",
-        destination="University",
-        departure_time_iso="2026-08-13T14:00:00+03:00",
-        user_id="amit",
-        event_id="calendar-123",
-    )
-
-    assert result == cached
-    usage.reserve.assert_not_called()
-    session.post.assert_not_called()
-
-
-def test_routes_cache_write_failure_does_not_discard_computed_estimate(monkeypatch):
-    """A post-provider cache outage must not break the Calendar response."""
-    usage = MagicMock()
-    usage.get_cached.return_value = None
-    usage.reserve.return_value = True
-    usage.put_cached.side_effect = RuntimeError("cache write unavailable")
-    monkeypatch.setattr(routes_tool, "_get_usage_store", lambda: usage)
-    response = MagicMock()
-    response.json.return_value = {
-        "routes": [{
-            "duration": "900s",
-            "distanceMeters": 6200,
-            "description": "Ayalon",
-        }]
-    }
-    session = MagicMock()
-    session.post.return_value = response
-    monkeypatch.setattr(routes_tool, "_get_authorized_session", lambda: session)
-
-    result = routes_tool.get_travel_time(
-        origin="Tel Aviv",
-        destination="Jaffa",
-        departure_time_iso="2026-08-13T14:00:00+03:00",
-        user_id="amit",
-        event_id="calendar-123",
-    )
-
-    assert result == {
-        "duration_minutes": 15,
-        "distance_km": 6.2,
-        "summary": "Ayalon",
-    }

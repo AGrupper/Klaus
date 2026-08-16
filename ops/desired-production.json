@@ -18,6 +18,7 @@
       "GOOGLE_TOKEN_STORAGE": "secret_manager",
       "GOOGLE_TOKEN_SECRET_NAME": "klaus-google-oauth-token",
       "GOOGLE_API_TIMEOUT_SECONDS": "30",
+      "KLAUS_TRAVEL_MINUTES_DEFAULT": "15",
       "GOOGLE_OAUTH_CLIENT_ID": "<required>",
       "CLAUDE_PROJECT_URL": "<required>",
       "CLAUDE_ROUTINE_TRIGGER_URL_MORNING": "<required>",
@@ -70,15 +71,15 @@
       "OCCASION_CASCADE",
       "CHAT_LOGS_BUCKET",
       "NOTION_CHAT_LOG_DB_ID",
-      "NOTION_AI_CHAT_DB_ID"
+      "NOTION_AI_CHAT_DB_ID",
+      "NOTION_API_TOKEN",
+      "HOME_ADDRESS"
     ],
     "secret_bindings": {
       "GEMINI_EMBEDDING_API_KEY": "klaus-gemini-embedding-key",
       "PINECONE_API_KEY": "klaus-pinecone-key",
-      "NOTION_API_TOKEN": "klaus-notion-api-token",
       "GARMIN_EMAIL": "klaus-garmin-email",
       "GARMIN_PASSWORD": "klaus-garmin-password",
-      "HOME_ADDRESS": "klaus-home-address",
       "PG_CONNECTION_STRING": "klaus-postgres-connection-string",
       "HEALTHKIT_WEBHOOK_TOKEN": "klaus-healthkit-webhook-token",
       "HEVY_API_KEY": "klaus-hevy-api-key",
@@ -173,10 +174,8 @@
       "klaus-google-oauth-token",
       "klaus-gemini-embedding-key",
       "klaus-pinecone-key",
-      "klaus-notion-api-token",
       "klaus-garmin-email",
       "klaus-garmin-password",
-      "klaus-home-address",
       "klaus-postgres-connection-string",
       "klaus-healthkit-webhook-token",
       "klaus-hevy-api-key",
@@ -213,7 +212,11 @@
     "api_key_uid": "01ec21d8-6962-4c99-9baf-d9da003ad965",
     "daily_request_limit": 200,
     "monthly_budget_ils": 15,
-    "budget_alert_thresholds_percent": [50, 90, 100]
+    "budget_alert_thresholds_percent": [
+      50,
+      90,
+      100
+    ]
   },
   "iam": {
     "required_project_roles": [
@@ -236,12 +239,26 @@
     "database": "klaus-firestore",
     "deletion_protection": true,
     "ttl_fields": [
-      {"collection_group": "oauth_authorization_codes", "field": "expire_at"},
-      {"collection_group": "oauth_access_tokens", "field": "expire_at"},
-      {"collection_group": "oauth_refresh_tokens", "field": "expire_at"},
-      {"collection_group": "action_idempotency", "field": "expire_at"},
-      {"collection_group": "pending_approvals", "field": "expire_at"}
-      ,{"collection_group": "routes_cache", "field": "expires_at"}
+      {
+        "collection_group": "oauth_authorization_codes",
+        "field": "expire_at"
+      },
+      {
+        "collection_group": "oauth_access_tokens",
+        "field": "expire_at"
+      },
+      {
+        "collection_group": "oauth_refresh_tokens",
+        "field": "expire_at"
+      },
+      {
+        "collection_group": "action_idempotency",
+        "field": "expire_at"
+      },
+      {
+        "collection_group": "pending_approvals",
+        "field": "expire_at"
+      }
     ]
   },
   "artifact_registry": {
@@ -261,9 +278,7 @@
   "connectors": [
     "claude_mcp",
     "calendar",
-    "google_routes",
     "things",
-    "notion",
     "garmin",
     "hevy",
     "healthkit_lifesum",

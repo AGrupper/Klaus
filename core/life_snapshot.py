@@ -26,7 +26,7 @@ async def _normalized_hub_today() -> dict[str, Any]:
         loop.run_in_executor(None, hub._today_training, today_iso),
         loop.run_in_executor(None, hub._today_nutrition_totals, today_iso),
     )
-    calendar = await loop.run_in_executor(None, hub._today_routes, calendar, today_iso)
+    calendar = await loop.run_in_executor(None, hub._today_departure_windows, calendar)
     coach_note = await loop.run_in_executor(None, hub._today_coach_note, today_iso)
     return _jsonsafe_doc(
         {

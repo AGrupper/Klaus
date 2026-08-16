@@ -124,7 +124,6 @@ _CONNECTOR_EVIDENCE = {
     "calendar": {"tools": {"list_calendar_events", "create_calendar_event"}},
     "google_routes": {"routes": {"GET /api/today"}},
     "things": {"tools": {"task_list", "task_create"}},
-    "notion": {"tools": {"notion_search", "notion_create_page"}},
     "garmin": {"tools": {"fetch_garmin_today"}},
     "hevy": {"tools": {"get_strength_progress"}},
     "healthkit_lifesum": {"routes": {"POST /cron/healthkit-sync"}},
@@ -1055,8 +1054,8 @@ async def api_auth_me(request: Request) -> JSONResponse:
 # MUST be registered BEFORE the SPA mount (Pitfall 1).                        #
 # --------------------------------------------------------------------------- #
 
-# Process-local TTL for non-billable Hub health aggregation. Billable Routes
-# caching lives in the persisted RoutesUsageStore boundary.
+# Process-local TTL for Hub health aggregation. Nothing behind it is billable
+# per-call any more — the Routes API and its persisted cost ledger are gone.
 _HEALTH_CACHE_TTL_SECONDS = 1800  # 30 minutes
 
 
@@ -1066,7 +1065,15 @@ def _today_calendar(today_iso: str) -> dict:
     TIME-01: all-day events are pinned at top; timed events sorted by start ascending.
     Returns {"all_day": [...], "timed": [...]} or {"all_day": [], "timed": []} on error.
 
-    Each event dict carries: id, title, start, end, location (if present).
+    Each event dict carries: id, title, start, end, calendar, location (if present).
+
+    Reads EVERY writable calendar, not just primary. This used to call
+    ``list_events`` (primary only), which made the whole no-model side of Klaus
+    blind to the Training calendar — where every session actually lives. The Hub
+    showed an empty day and, worse, ``core.deterministic_alerts`` reads this same
+    snapshot, so conflict and leave-by pushes could never fire for a workout. It
+    stayed hidden because Claude reaches the calendar through ``list_all_events``
+    and compensated; only the deterministic paths were affected.
     """
     try:
         # WHY shared: the singleton retains Google's short-lived access token
@@ -1085,7 +1092,9 @@ def _today_calendar(today_iso: str) -> dict:
         )
 
         cal = _get_calendar_tool()
-        raw_events = cal.list_events(
+        # max_results is per calendar here, and list_all_events already merges
+        # chronologically and falls back to primary if calendarList is unreadable.
+        raw_events = cal.list_all_events(
             day_start.isoformat(),
             day_end.isoformat(),
             max_results=50,
@@ -1096,6 +1105,7 @@ def _today_calendar(today_iso: str) -> dict:
         for ev in raw_events:
             start_str = ev.get("start", "")
             location = ev.get("location", "")
+            calendar_name = ev.get("calendar", "")
             entry = {
                 "id": ev.get("id", ""),
                 "title": ev.get("summary", ""),
@@ -1104,6 +1114,8 @@ def _today_calendar(today_iso: str) -> dict:
             }
             if location:
                 entry["location"] = location
+            if calendar_name:
+                entry["calendar"] = calendar_name
             # All-day events have a date-only "start" (YYYY-MM-DD, length 10 with no 'T').
             if "T" not in start_str and len(start_str) == 10:
                 # All-day events surface as title strings to match the frontend
@@ -1335,66 +1347,83 @@ def _today_coach_note(today_iso: str) -> str | None:
         return None
 
 
-def _today_routes(calendar: dict, today_iso: str) -> dict:
+# Get Ready block before leaving (USER.md: 45 min prep before departure).
+_GET_READY_MINUTES = 45
+
+# One-way travel time for a located event, in minutes. Amit's commute is a
+# fixed ~15 minutes each way (USER.md gym template), so a constant produces the
+# same departure window a traffic lookup did for the trips he actually makes.
+_DEFAULT_TRAVEL_MINUTES = 15
+
+
+def _configured_travel_minutes() -> int:
+    """Return the configured one-way travel time, falling back to the default.
+
+    Kept permissive on purpose: a malformed or negative override must not strip
+    leave_by from the whole day, because that is the field the deterministic
+    departure alert fires on.
+    """
+    raw = os.environ.get("KLAUS_TRAVEL_MINUTES_DEFAULT", "").strip()
+    if not raw:
+        return _DEFAULT_TRAVEL_MINUTES
+    try:
+        minutes = int(raw)
+    except ValueError:
+        logger.warning(
+            "KLAUS_TRAVEL_MINUTES_DEFAULT=%r is not an integer; using %d",
+            raw, _DEFAULT_TRAVEL_MINUTES,
+        )
+        return _DEFAULT_TRAVEL_MINUTES
+    if minutes < 0:
+        logger.warning(
+            "KLAUS_TRAVEL_MINUTES_DEFAULT=%d is negative; using %d",
+            minutes, _DEFAULT_TRAVEL_MINUTES,
+        )
+        return _DEFAULT_TRAVEL_MINUTES
+    return minutes
+
+
+def _today_departure_windows(calendar: dict) -> dict:
     """Attach leave_by + get_ready_at to timed events that have a location.
 
-    TIME-05: calls routes_tool.get_travel_time() per located event. That retained
-    boundary owns the persisted event/departure-window cache and atomic cost
-    limits, so this HTTP layer must not keep a divergent process-local cache.
+    TIME-05. This used to call the Google Routes API per located event, behind a
+    persisted cache and a 25/day cost breaker. That was a lot of moving parts to
+    produce one number for a fixed commute, so travel time is now configuration.
 
-    Returns the same calendar dict with leave_by/get_ready_at fields added to
-    located timed events. All errors are swallowed per-event — one bad Routes call
-    must not prevent the rest of the calendar from rendering.
+    The output contract is deliberately unchanged: the Hub renders these two
+    fields, and `core.deterministic_alerts` raises the "leave now" push off
+    leave_by. That alert has no LLM in the loop, so nothing else can produce it.
+
+    Returns the same calendar dict, mutated in place. Per-event errors are
+    swallowed — one unparseable start time must not prevent the rest of the
+    calendar from rendering.
     """
     from datetime import datetime as _dt, timedelta as _td
 
-    # Get Ready block before leaving (USER.md: 45 min prep before departure).
-    _GET_READY_MINUTES = 45
-
-    def _attach_leave_by(ev: dict, start_iso: str, duration_minutes) -> None:
-        """Set ISO leave_by + get_ready_at on a located event (frontend contract).
-
-        leave_by = event start − travel duration; get_ready_at = leave_by − 45 min.
-        """
-        if duration_minutes is None or not start_iso:
-            return
-        try:
-            start_dt = _dt.fromisoformat(start_iso)
-        except ValueError:
-            return
-        leave_by_dt = start_dt - _td(minutes=duration_minutes)
-        ev["leave_by"] = leave_by_dt.isoformat()
-        ev["get_ready_at"] = (leave_by_dt - _td(minutes=_GET_READY_MINUTES)).isoformat()
-
+    travel_minutes = _configured_travel_minutes()
     try:
-        from mcp_tools.routes_tool import get_travel_time  # lazy import
-
-        timed_events = calendar.get("timed", [])
-        for ev in timed_events:
-            location = ev.get("location", "")
-            if not location:
+        for ev in calendar.get("timed", []):
+            if not ev.get("location"):
                 continue
-            event_id = ev.get("id", "")
             start_iso = ev.get("start", "")
+            if not start_iso:
+                continue
             try:
-                result = get_travel_time(
-                    origin="Tel Aviv",  # Amit's home base per USER.md
-                    destination=location,
-                    departure_time_iso=start_iso,
-                    user_id=os.environ.get("KLAUS_USER_ID", ""),
-                    event_id=event_id,
-                )
-                if result:
-                    _attach_leave_by(ev, start_iso, result.get("duration_minutes"))
-            except Exception:
+                start_dt = _dt.fromisoformat(start_iso)
+            except ValueError:
                 logger.warning(
-                    "_today_routes: get_travel_time failed for event %s → %s",
-                    event_id, location, exc_info=True
+                    "_today_departure_windows: unparseable start %r for event %s",
+                    start_iso, ev.get("id", ""),
                 )
-
+                continue
+            leave_by_dt = start_dt - _td(minutes=travel_minutes)
+            ev["leave_by"] = leave_by_dt.isoformat()
+            ev["get_ready_at"] = (
+                leave_by_dt - _td(minutes=_GET_READY_MINUTES)
+            ).isoformat()
         return calendar
     except Exception:
-        logger.warning("_today_routes() failed", exc_info=True)
+        logger.warning("_today_departure_windows() failed", exc_info=True)
         return calendar
 
 
@@ -1470,9 +1499,9 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
         loop.run_in_executor(None, _today_nutrition_totals, today_iso),
     )
 
-    # Phase 2: routes depends on calendar output (per-event; cached TTL).
+    # Phase 2: departure windows depend on calendar output (per-event).
     calendar_with_routes = await loop.run_in_executor(
-        None, _today_routes, calendar_data, today_iso
+        None, _today_departure_windows, calendar_data
     )
 
     # Phase 3: coach note is a lightweight Firestore read (single cached doc).
@@ -3412,7 +3441,6 @@ async def api_agent_status(
     project_url = os.environ.get("CLAUDE_PROJECT_URL", "")
     gate = _subscription_capability_gate()
     embedding_usage = {}
-    routes_usage = {}
     canonical_user_id = os.environ.get("KLAUS_USER_ID", "")
     try:
         from memory.firestore_db import EmbeddingUsageStore
@@ -3425,16 +3453,6 @@ async def api_agent_status(
         )
     except Exception:
         logger.warning("Could not read embedding quota health", exc_info=True)
-    try:
-        from memory.firestore_db import RoutesUsageStore
-
-        routes_usage = await asyncio.get_running_loop().run_in_executor(
-            None,
-            RoutesUsageStore(project, database).summary,
-            canonical_user_id,
-        )
-    except Exception:
-        logger.warning("Could not read Routes quota health", exc_info=True)
     embedding_request_count = max(0, int(embedding_usage.get("embedding_calls", 0)))
     embedding_daily_limit = max(1, int(embedding_usage.get("daily_limit", 200)))
     return JSONResponse(
@@ -3474,16 +3492,6 @@ async def api_agent_status(
                             if os.environ.get("GEMINI_EMBEDDING_COST_PER_MILLION_TOKENS")
                             else "provider_tokens_only_rate_not_configured"
                         ),
-                    },
-                    "google_routes": {
-                        "request_count": routes_usage.get("computation_count", 0),
-                        "daily_limit": routes_usage.get("daily_limit", 25),
-                        "daily_remaining": routes_usage.get("daily_remaining", 25),
-                        "rolling_minute_count": routes_usage.get(
-                            "rolling_minute_count", 0
-                        ),
-                        "minute_limit": routes_usage.get("minute_limit", 5),
-                        "minute_remaining": routes_usage.get("minute_remaining", 5),
                     },
                 },
             }

@@ -449,7 +449,6 @@ def test_deploy_still_uses_workload_identity_federation():
     assert "--update-secrets" not in workflow
     assert "CLAUDE_PROJECT_URL=${{ vars.CLAUDE_PROJECT_URL }}" in workflow
     for binding in (
-        "NOTION_API_TOKEN=klaus-notion-api-token:latest",
         "GARMIN_EMAIL=klaus-garmin-email:latest",
         "GARMIN_PASSWORD=klaus-garmin-password:latest",
         "PG_CONNECTION_STRING=klaus-postgres-connection-string:latest",

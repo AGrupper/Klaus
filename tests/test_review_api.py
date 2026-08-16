@@ -319,8 +319,13 @@ def test_agent_status_exposes_only_public_routine_run_fields(review_client, monk
     )
 
 
-def test_agent_status_exposes_embedding_and_routes_quota_health(review_client, monkeypatch):
-    """Authenticated settings show remaining app limits without credentials."""
+def test_agent_status_exposes_embedding_quota_health(review_client, monkeypatch):
+    """Authenticated settings show remaining app limits without credentials.
+
+    Embeddings are the only metered provider call left. The google_routes block
+    went with the Routes API — a configured travel time cannot run up a bill, so
+    reporting a quota for it would be reporting a number that cannot move.
+    """
     client, _reviews, _runs, _ws, _hub_auth = review_client
     import memory.firestore_db
 
@@ -331,21 +336,7 @@ def test_agent_status_exposes_embedding_and_routes_quota_health(review_client, m
             assert period == "today"
             return {"embedding_calls": 17, "daily_limit": 200}
 
-    class RoutesUsage:
-        @staticmethod
-        def summary(user_id):
-            assert user_id == "123456"
-            return {
-                "computation_count": 4,
-                "daily_limit": 25,
-                "daily_remaining": 21,
-                "rolling_minute_count": 2,
-                "minute_limit": 5,
-                "minute_remaining": 3,
-            }
-
     monkeypatch.setattr(memory.firestore_db, "EmbeddingUsageStore", lambda *_args: EmbeddingUsage())
-    monkeypatch.setattr(memory.firestore_db, "RoutesUsageStore", lambda *_args: RoutesUsage())
 
     response = client.get("/api/agent/status")
 
@@ -354,12 +345,5 @@ def test_agent_status_exposes_embedding_and_routes_quota_health(review_client, m
     assert usage["gemini_embeddings"]["request_count"] == 17
     assert usage["gemini_embeddings"]["daily_limit"] == 200
     assert usage["gemini_embeddings"]["daily_remaining"] == 183
-    assert usage["google_routes"] == {
-        "request_count": 4,
-        "daily_limit": 25,
-        "daily_remaining": 21,
-        "rolling_minute_count": 2,
-        "minute_limit": 5,
-        "minute_remaining": 3,
-    }
+    assert "google_routes" not in usage
     assert "key" not in str(usage).lower()

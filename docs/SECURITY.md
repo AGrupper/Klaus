@@ -8,7 +8,10 @@ tokens. Interactive and routine access tokens are opaque, hashed at rest,
 resource-bound, revocable, and separately scoped. Routine grants cannot contain
 `klaus.approve`. Every write requires an idempotency key and is audited.
 
-Notion and other retrieved content is untrusted data, not an instruction source.
+Retrieved content — Notion pages, documents, web pages — is untrusted data, not an
+instruction source. This holds regardless of which connector fetched it: Klaus no
+longer serves Notion tools, so the defence lives in the skills rather than in a
+gateway envelope.
 Routines cannot move/delete user-created calendar events or mutate training
 plans. Payments, credentials/security, permanent bulk deletion, medical
 commitments, and first-time outreach require an immutable, expiring prepared
