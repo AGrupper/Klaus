@@ -2215,56 +2215,6 @@ def _handle_cancel_standing_directive(id: str) -> str:
     return json.dumps({"ok": bool(ok)})
 
 
-def render_standing_directives_block(directives: list[dict], *, style: str = "prose") -> str:
-    """One shared formatter for the standing-directives context block.
-
-    ``style="prose"`` — chat/compose system-prompt injection: a bulleted,
-    human-readable block headed "**Active standing directives:**".
-    ``style="json"``  — the triage snapshot: compact, machine-parseable JSON.
-
-    Callers own their own (cached) store read; this function only formats.
-    This is the ONE formatter consumed by all 5 injection sites (chat,
-    tick triage, Layer-2 compose, follow-up compose, interim legacy-cron
-    gathers) — mirrors ``_format_now_block`` in core/autonomous.py ("one
-    helper, N call sites, no drift").
-
-    Args:
-        directives: List of directive dicts (as returned by
-            ``StandingDirectiveStore.list_active()``/``list_all()``).
-        style: "prose" (default) or "json".
-
-    Returns:
-        "" for an empty list in prose style (empty-state-omits-block
-        discipline, matching self_state/journal_digest/training_profile);
-        "[]" for an empty list in json style.
-    """
-    if not directives:
-        return "" if style == "prose" else "[]"
-
-    if style == "json":
-        return json.dumps([
-            {
-                "text": d.get("text", ""),
-                "origin": d.get("origin", ""),
-                "expires_at": d.get("expires_at"),
-                "condition_text": d.get("condition_text"),
-            }
-            for d in directives
-        ], ensure_ascii=False)
-
-    lines = ["**Active standing directives:**"]
-    for d in directives:
-        line = f"- {d.get('text', '')}"
-        if d.get("expires_at"):
-            line += f" (until {d['expires_at']})"
-        elif d.get("condition_text"):
-            line += f" (until: {d['condition_text']})"
-        if d.get("origin") == "klaus_self":
-            line += " [self-proposed]"
-        lines.append(line)
-    return "\n".join(lines)
-
-
 # ------------------------------------------------------------------ #
 # Phase 19 Plan 02 — training profile + Garmin live handlers         #
 # ------------------------------------------------------------------ #
@@ -2698,75 +2648,76 @@ def _handle_get_training_context(days: int = 14) -> str:
     today = datetime.now(tz).date()
     ctx: dict = {"window_days": days}
 
-    try:
+    def load_strength_sessions():
         from memory.firestore_db import StrengthSessionStore
-        ctx["strength_sessions"] = StrengthSessionStore(project_id, database).get_recent(days)
-    except Exception:
-        logger.warning("get_training_context: strength fetch failed", exc_info=True)
-        ctx["strength_sessions"] = None
+        return StrengthSessionStore(project_id, database).get_recent(days)
 
-    try:
+    def load_training_log():
         from memory.firestore_db import TrainingLogStore
-        ctx["training_log"] = TrainingLogStore(project_id, database).get_recent(days)
-    except Exception:
-        logger.warning("get_training_context: training_log fetch failed", exc_info=True)
-        ctx["training_log"] = None
+        return TrainingLogStore(project_id, database).get_recent(days)
 
-    try:
+    def load_garmin_activities():
         from mcp_tools.garmin_tool import fetch_garmin_activities
-        ctx["garmin_activities"] = fetch_garmin_activities(days)
-    except Exception:
-        logger.warning("get_training_context: garmin activities failed", exc_info=True)
-        ctx["garmin_activities"] = None
+        return fetch_garmin_activities(days)
 
-    try:
+    def load_run_details():
         from memory.firestore_db import RunDetailStore
-        ctx["run_details"] = RunDetailStore(project_id, database).get_recent(days)
-    except Exception:
-        logger.warning("get_training_context: run detail fetch failed", exc_info=True)
-        ctx["run_details"] = None
+        return RunDetailStore(project_id, database).get_recent(days)
 
-    try:
+    def load_training_status():
         from mcp_tools.garmin_tool import fetch_garmin_training_status
-        ctx["training_status"] = fetch_garmin_training_status()
-    except Exception:
-        logger.warning("get_training_context: training status failed", exc_info=True)
-        ctx["training_status"] = None
+        return fetch_garmin_training_status()
 
-    try:
+    def load_acwr():
         from mcp_tools.garmin_tool import compute_acwr_from_db
-        ctx["acwr"] = compute_acwr_from_db()
-    except Exception:
-        logger.warning("get_training_context: acwr failed", exc_info=True)
-        ctx["acwr"] = None
+        return compute_acwr_from_db()
 
-    try:
+    def load_nutrition_by_day():
         from memory.firestore_db import MealStore
-        ms = MealStore(project_id, database)
+        store = MealStore(project_id, database)
         nutrition: dict = {}
-        for i in range(days):
-            d = (today - timedelta(days=i)).isoformat()
-            agg = ms.get_day_aggregate(d)
-            if agg:
-                nutrition[d] = agg.get("totals", {})
-        ctx["nutrition_by_day"] = nutrition
-    except Exception:
-        logger.warning("get_training_context: nutrition failed", exc_info=True)
-        ctx["nutrition_by_day"] = None
+        for offset in range(days):
+            day = (today - timedelta(days=offset)).isoformat()
+            aggregate = store.get_day_aggregate(day)
+            if aggregate:
+                nutrition[day] = aggregate.get("totals", {})
+        return nutrition
 
-    try:
+    def load_biometrics():
         from mcp_tools.database_tool import query_health_database
         start = (today - timedelta(days=days)).isoformat()
+        # Bound parameter, not string interpolation: the date is built here from
+        # an int, but a query executor should never be handed a value it has to
+        # trust. The driver quotes it, so no value can change the statement.
         sql = (
             "SELECT date, resting_hr, hrv_baseline, hrv_overnight, "
             "sleep_duration, sleep_score FROM daily_biometrics "
-            f"WHERE date >= '{start}' ORDER BY date DESC"
+            "WHERE date >= %s ORDER BY date DESC"
         )
-        rows = query_health_database(sql)
-        ctx["biometrics"] = rows if isinstance(rows, list) else None
-    except Exception:
-        logger.warning("get_training_context: biometrics failed", exc_info=True)
-        ctx["biometrics"] = None
+        rows = query_health_database(sql, params=(start,))
+        # A blocked or failed query returns an error *string*; only a list is data.
+        return rows if isinstance(rows, list) else None
+
+    # Every block is best-effort fail-open: one outage sets its key to None
+    # rather than aborting the whole snapshot. Imports stay inside each loader so
+    # a missing dependency degrades one key instead of all eight.
+    sources = (
+        ("strength_sessions", load_strength_sessions),
+        ("training_log", load_training_log),
+        ("garmin_activities", load_garmin_activities),
+        ("run_details", load_run_details),
+        ("training_status", load_training_status),
+        ("acwr", load_acwr),
+        ("nutrition_by_day", load_nutrition_by_day),
+        ("biometrics", load_biometrics),
+    )
+
+    for key, load in sources:
+        try:
+            ctx[key] = load()
+        except Exception:
+            logger.warning("get_training_context: %s fetch failed", key, exc_info=True)
+            ctx[key] = None
 
     return json.dumps(ctx, default=str)
 
@@ -2813,15 +2764,6 @@ def _handle_get_run_detail(
 # Default cycle start used for week-number framing when the profile has no
 # plan_start_date set yet (anchor: first mesocycle block, 2026-06-21).
 _PLAN_START_DEFAULT = "2026-06-21"
-
-
-def epley_1rm(weight: float, reps: int) -> float:
-    """Epley 1RM estimate: weight * (1 + reps/30), rounded to 1 decimal.
-
-    Exposed for handler/brain use when deriving a 1RM from a bench/squat top-set.
-    The brain normally passes the computed value to log_benchmark directly.
-    """
-    return round(weight * (1 + reps / 30), 1)
 
 
 def _block_stores():

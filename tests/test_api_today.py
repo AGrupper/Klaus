@@ -125,8 +125,8 @@ def test_today_calendar_reads_secondary_calendars_not_just_primary():
     """
     stubs = _stub_web_server_imports()
     shared_calendar = MagicMock()
-    shared_calendar.list_events.side_effect = AssertionError(
-        "primary-only list_events must not be used for the Hub snapshot"
+    shared_calendar._list_primary_events.side_effect = AssertionError(
+        "the primary-only fallback must not be used for the Hub snapshot"
     )
     shared_calendar.list_all_events.return_value = [
         {
