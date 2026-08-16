@@ -7,11 +7,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime
 
 from core.tools.registry import tool
-from core.tools.state import _get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +84,7 @@ def _handle_set_standing_directive(
         JSON string of the persisted directive doc, plus a `"superseded"`
         bool key when `supersedes` was provided.
     """
-    from datetime import datetime, timezone as _tz
+    from datetime import timezone as _tz
 
     normalized_expiry = expires_at
     if expires_at:

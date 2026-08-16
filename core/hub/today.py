@@ -12,9 +12,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +42,7 @@ def _today_calendar(today_iso: str) -> dict:
         # in process memory. Rebuilding authentication for every ten-minute
         # snapshot would repeatedly exchange the same static refresh grant.
         from core.tools import _get_calendar_tool  # lazy import — Shared Pattern 5
-        from datetime import date as _date, datetime as _dt
+        from datetime import datetime as _dt
         from zoneinfo import ZoneInfo as _ZI
 
         tz = _ZI("Asia/Jerusalem")

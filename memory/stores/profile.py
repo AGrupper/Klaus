@@ -7,11 +7,8 @@ Split out of memory/firestore_db.py, which re-exports everything here.
 from __future__ import annotations
 
 import logging
-import os
-from decimal import Decimal
 
 from google.cloud import firestore
-from google.api_core.exceptions import GoogleAPICallError
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +18,6 @@ from memory.stores.base import (
     _cache_get,
     _cache_invalidate_prefix,
     _cache_put,
-    _jsonsafe_doc,
-    _jsonsafe_value,
-    _where,
 )
 
 

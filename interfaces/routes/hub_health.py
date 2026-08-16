@@ -7,10 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from core.hub.health_series import (
@@ -25,7 +23,6 @@ from core.hub.health_series import (
     _health_training_strength,
     _hrv_baseline_with_fallback,
     _MILEAGE_WEEKLY_THRESHOLD_DAYS,
-    _nutrition_daily_cache,
     _NUTRITION_MACRO_KEYS,
     _range_bounds,
     _resolve_calories_target,

@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from interfaces.hub_auth import require_hub_session

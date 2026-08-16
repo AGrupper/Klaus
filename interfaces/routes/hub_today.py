@@ -14,7 +14,6 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from core.hub.today import (
-    _sanitize_coach_note,
     _today_calendar,
     _today_coach_note,
     _today_departure_windows,

@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from interfaces.flags import _flag_enabled, _routine_cutover_enabled
+from interfaces.flags import _routine_cutover_enabled
 from interfaces.routes._verify import (
     _verify_cron_request,
     _verify_morning_trigger_request,

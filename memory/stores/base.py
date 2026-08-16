@@ -11,7 +11,6 @@ import os
 from decimal import Decimal
 
 from google.cloud import firestore
-from google.api_core.exceptions import GoogleAPICallError
 
 logger = logging.getLogger(__name__)
 

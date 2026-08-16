@@ -8,11 +8,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 
 from core.tools.registry import tool
-from core.tools.state import _get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +92,6 @@ def _handle_fetch_garmin_today() -> str:
 def _handle_get_self_status() -> str:
     """Return retained operational state without model, cost, or fallback telemetry."""
     import os as _os
-    from datetime import datetime, timezone
 
     result: dict = {}
 

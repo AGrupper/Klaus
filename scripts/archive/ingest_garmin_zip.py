@@ -4,7 +4,7 @@ import json
 import zipfile
 import psycopg2
 from psycopg2.extras import execute_values
-from datetime import datetime, date, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add project root to sys.path. Derived from this file's location rather than

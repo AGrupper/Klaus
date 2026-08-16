@@ -9,23 +9,15 @@ from __future__ import annotations
 
 import logging
 import os
-from decimal import Decimal
 from zoneinfo import ZoneInfo as _ZoneInfo
 
 from google.cloud import firestore
-from google.api_core.exceptions import GoogleAPICallError
 
 logger = logging.getLogger(__name__)
 
 from memory.stores import base
 from memory.stores.base import (
-    _DESCENDING,
-    _cache_get,
-    _cache_invalidate_prefix,
-    _cache_put,
     _jsonsafe_doc,
-    _jsonsafe_value,
-    _where,
 )
 
 
@@ -41,7 +33,7 @@ def _advance_once(base, rule: dict):
 
     cadence values: "daily" | "weekdays" | "weekly" | "monthly" | "every_n_days"
     """
-    from datetime import date as _date, timedelta
+    from datetime import timedelta
     import calendar
 
     cadence = rule.get("cadence", "daily")
@@ -325,7 +317,6 @@ class TaskStore:
             Exception: Re-raises any Firestore write failure after logging.
         """
         import uuid
-        from datetime import date
 
         snap = self._col.document(task_id).get()
         if not snap.exists:

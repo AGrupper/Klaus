@@ -16,18 +16,13 @@ Container entry point:
 """
 from __future__ import annotations
 
-import asyncio
-import hmac
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
-from datetime import date as _date_cls, datetime, timedelta
 from typing import AsyncGenerator
-from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request
 
 from interfaces.hub_auth import require_hub_session  # HUB-01: used by /api/* Depends
 
@@ -85,15 +80,12 @@ from core.hub.reviews import _REVIEW_CLIENT_FIELDS, _review_for_client  # noqa: 
 # interfaces/routes/__init__.py for why that matters).
 from interfaces.flags import (
     _flag_enabled,
-    _routine_cutover_enabled,
-    _subscription_capability_gate,
 )
 from interfaces.routes import iter_routes
 from interfaces.routes.retired import (  # noqa: F401
     retired_cloud_agent_runtime,
     retired_hub_chat_runtime,
 )
-from interfaces.routes._stores import _get_hub_settings_store
 from interfaces.routes import auth as auth_routes
 from interfaces.routes import cron as cron_routes
 from interfaces.routes import health as health_routes
@@ -536,8 +528,6 @@ app.include_router(sync_routes.router)
 
 
 # --------------------------------------------------------------------------- #
-from pydantic import BaseModel, Field  # noqa: E402 (lazy placement — keeps cold-start fast)
-from typing import Literal  # noqa: E402
 
 
 

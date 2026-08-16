@@ -11,14 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from interfaces.flags import _flag_enabled
 from interfaces.routes._verify import _log_cron_run, _verify_cron_request
 from interfaces.routes.triggers import (
     _routine_cutover_enabled,

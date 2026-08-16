@@ -206,8 +206,12 @@ class TestCronHealthkitSync:
         env = _healthkit_env(token="right-token")
 
         digest_mock = MagicMock(return_value=False)
+        # compare_digest is called by the HealthKit verifier, which lives in
+        # interfaces/routes/_verify.py — patch it where it is used.
+        import interfaces.routes._verify as verify  # noqa: PLC0415
+
         with patch.dict(os.environ, env), patch.object(
-            ws.hmac, "compare_digest", digest_mock
+            verify.hmac, "compare_digest", digest_mock
         ):
             client = TestClient(ws.app)
             resp = client.post(

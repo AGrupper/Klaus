@@ -281,7 +281,9 @@ def test_weekly_cutover_is_enabled_with_the_other_claude_routines(monkeypatch):
         "KLAUS_ROUTINE_WEEKLY_CUTOVER": "true",
     }
     with patch.dict(os.environ, env):
-        assert all(web_server._routine_cutover_enabled(name) for name in ("morning", "nightly", "weekly"))
+        from interfaces import flags  # noqa: PLC0415
+
+        assert all(flags._routine_cutover_enabled(name) for name in ("morning", "nightly", "weekly"))
 
 
 def test_task_store_refuses_firestore_as_an_authority(monkeypatch):

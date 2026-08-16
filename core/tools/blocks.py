@@ -7,11 +7,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime
 
 from core.tools.registry import tool
-from core.tools.state import _get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -241,7 +239,6 @@ def _handle_get_goal_projection(facet: str) -> str:
             {"error": f"Unknown facet: {facet!r}. Valid: {sorted(_BENCHMARK_FACETS)}"}
         )
 
-    from datetime import datetime
     from zoneinfo import ZoneInfo
     from core.training.projection import project_goal_progress
 

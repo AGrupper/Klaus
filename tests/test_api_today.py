@@ -574,17 +574,16 @@ def test_departure_windows_skip_an_unparseable_start_without_losing_the_day():
 
 def test_sanitize_coach_note_strips_controls_and_markdown_header():
     """_sanitize_coach_note strips bidi/format control chars + a leading # (CR-04)."""
-    stubs = _stub_web_server_imports()
-    with patch.dict(sys.modules, stubs):
-        import interfaces.web_server as ws  # noqa: PLC0415
-        from interfaces.routes import hub_today
+    # A pure string function: call it where it is defined rather than through a
+    # route module that has no reason to import it.
+    from core.hub.today import _sanitize_coach_note
 
-        # "## " markdown header + LRM (U+200E) + RLM (U+200F) format controls.
-        raw = "## ‎Hit your protein target‏ today"
-        out = hub_today._sanitize_coach_note(raw)
+    # "## " markdown header + LRM (U+200E) + RLM (U+200F) format controls.
+    raw = "## ‎Hit your protein target‏ today"
+    out = _sanitize_coach_note(raw)
 
     assert out == "Hit your protein target today"
     assert "‎" not in out and "‏" not in out
     assert not out.startswith("#")
     # Length is clamped.
-    assert len(hub_today._sanitize_coach_note("x" * 1000)) <= 280
+    assert len(_sanitize_coach_note("x" * 1000)) <= 280
