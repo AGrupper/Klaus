@@ -4,6 +4,12 @@
  * Covers the iOS soft-keyboard inset calculation used to anchor phone bottom
  * sheets above the keyboard. window.visualViewport is mocked as a minimal
  * event target so the resize/scroll listeners can be driven synchronously.
+ *
+ * The focus requirement is load-bearing, not cosmetic: without it, pulling
+ * the page down made iOS report a shifted viewport, the hook read it as a
+ * ~700px keyboard, and every fixed bottom sheet was lifted that far — sliding
+ * the *closed* Customize sheet into view on every scroll (Amit's UAT, four
+ * misdiagnosed rounds). A keyboard is only possible while a field has focus.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -21,6 +27,15 @@ interface MockVV {
   addEventListener: (t: string, cb: () => void) => void
   removeEventListener: (t: string, cb: () => void) => void
   emit: (t: string) => void
+}
+
+/** Focus a real text input so the hook accepts that a keyboard may exist. */
+function focusTextField(): HTMLInputElement {
+  const input = document.createElement('input')
+  input.type = 'text'
+  document.body.appendChild(input)
+  input.focus()
+  return input
 }
 
 function makeMockVV(height: number, offsetTop = 0): MockVV {
@@ -72,6 +87,7 @@ describe('useVisualViewport', () => {
 
   // Case 2: keyboard open → inset equals the covered height
   it('returns the keyboard height when the visual viewport shrinks', () => {
+    const field = focusTextField()
     const vv = makeMockVV(800, 0)
     setVV(vv)
     const { result } = renderHook(() => useVisualViewport())
@@ -82,15 +98,45 @@ describe('useVisualViewport', () => {
     })
 
     expect(result.current.keyboardInset).toBe(300)
+    field.remove()
   })
 
   // Case 3: offsetTop is subtracted (page panned up under the keyboard)
-  it('subtracts visualViewport.offsetTop', () => {
+  it('subtracts visualViewport.offsetTop while a field is focused', () => {
+    const field = focusTextField()
     const vv = makeMockVV(500, 40)
     setVV(vv)
     const { result } = renderHook(() => useVisualViewport())
     // 800 - 500 - 40 = 260
     expect(result.current.keyboardInset).toBe(260)
+    field.remove()
+  })
+
+  // Case 3b: THE REGRESSION GUARD. Same shifted viewport, but nothing is
+  // focused — that is an overscroll, not a keyboard, and must report 0.
+  it('reports 0 for a shifted viewport when no field is focused (overscroll)', () => {
+    ;(document.activeElement as HTMLElement | null)?.blur?.()
+    const vv = makeMockVV(500, 40)
+    setVV(vv)
+    const { result } = renderHook(() => useVisualViewport())
+    expect(result.current.keyboardInset).toBe(0)
+  })
+
+  // Case 3c: blurring the field must release the inset, not strand it.
+  it('drops back to 0 when the field blurs', () => {
+    const field = focusTextField()
+    const vv = makeMockVV(500, 0)
+    setVV(vv)
+    const { result } = renderHook(() => useVisualViewport())
+    expect(result.current.keyboardInset).toBe(300)
+
+    act(() => {
+      field.blur()
+      window.dispatchEvent(new Event('focusout'))
+    })
+
+    expect(result.current.keyboardInset).toBe(0)
+    field.remove()
   })
 
   // Case 4: sub-pixel noise is clamped to 0 (no jitter without a keyboard)

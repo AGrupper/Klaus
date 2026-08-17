@@ -56,8 +56,16 @@ body {
 
 html {
   overflow-x: hidden;
-  /* Keep the page from rubber-banding sideways on iOS. */
-  overscroll-behavior-x: none;
+  /* No document-level rubber-band in any direction. The app has its own
+     scroller and its own pull-to-refresh; letting the document bounce dragged
+     `position: fixed` elements along with it, which is how a *closed* bottom
+     sheet ended up sliding into view on every pull. */
+  overscroll-behavior: none;
+  height: 100%;
+}
+
+body {
+  overscroll-behavior: none;
 }
 
 /* Nothing may push the layout wider than the screen — a single overflowing

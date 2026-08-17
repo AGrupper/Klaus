@@ -102,7 +102,10 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
           position: 'fixed',
           left: 0,
           right: 0,
-          bottom: keyboardInset,
+          // A closed sheet ignores the keyboard inset entirely. Belt to the
+          // braces below: nothing about the viewport may ever lift a sheet
+          // that is supposed to be off-screen.
+          bottom: open ? keyboardInset : 0,
           zIndex: 401,
           maxWidth: '430px',
           margin: '0 auto',
@@ -110,14 +113,21 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
           borderRadius: '20px 20px 0 0',
           boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',
           transform: open ? `translateY(${dragOffset}px)` : 'translateY(105%)',
-          transition: dragging
-            ? 'none'
-            : 'transform 0.32s cubic-bezier(0.3,0.9,0.3,1)',
+          transitionTimingFunction: 'cubic-bezier(0.3,0.9,0.3,1)',
           // Cap the sheet, then let the body scroll inside it.
           maxHeight: '88dvh',
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
+          // The real guarantee: a closed sheet is not rendered or hittable at
+          // all, so no viewport shift, overscroll or stray tap can reveal it.
+          // `visibility` still animates out cleanly because it is delayed
+          // until the slide-down transition finishes.
+          visibility: open ? 'visible' : 'hidden',
+          pointerEvents: open ? 'auto' : 'none',
+          transitionProperty: 'transform, visibility',
+          transitionDuration: dragging ? '0s, 0s' : '0.32s, 0s',
+          transitionDelay: open ? '0s, 0s' : '0s, 0.32s',
         }}
       >
         {/* Drag zone: handle + header. touchAction none so the browser doesn't

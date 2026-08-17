@@ -12,7 +12,8 @@
  * Bounded-height root: `height: 100dvh` (not min-height) so <main> stays the
  * real scroll container (UAT gap-closure lesson, Phase 26).
  */
-import { useState, type ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Header } from './Header'
 import { TabBar } from './TabBar'
 import { BellSheet } from '../bell/BellSheet'
@@ -21,6 +22,7 @@ import { OfflineIndicator } from '../shared/OfflineIndicator'
 import { InstallBanner } from '../shared/InstallBanner'
 import { UpdatePrompt } from '../shared/UpdatePrompt'
 import { UndoToast } from '../shared/UndoToast'
+import { PullToRefresh } from '../shared/PullToRefresh'
 import { useNotifications } from '../../hooks/useNotifications'
 import { useSettings } from '../../hooks/useSettings'
 
@@ -32,9 +34,20 @@ export function AppShell({ children }: AppShellProps) {
   const [bellOpen, setBellOpen] = useState(false)
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const notifications = useNotifications()
+  const queryClient = useQueryClient()
 
   // Load once at the shell so the account theme applies before any page needs it.
   useSettings()
+
+  /** Pull down anywhere in the app to refetch everything it shows. */
+  const refresh = useCallback(
+    () =>
+      queryClient.refetchQueries({
+        type: 'active',
+        queryKey: undefined, // every live query: today, routines, bell, settings
+      }),
+    [queryClient],
+  )
 
   // Opening the bell deliberately does NOT clear the unread dot — "Mark all
   // read" inside the sheet is the explicit gesture (it also clears delivered
@@ -73,19 +86,22 @@ export function AppShell({ children }: AppShellProps) {
           onOpenBell={openBell}
           onOpenCustomize={() => setCustomizeOpen(true)}
         />
-        <main
+        <PullToRefresh
+          onRefresh={refresh}
           className="hub-main"
           style={{
             flex: 1,
             minHeight: 0,
             overflowY: 'auto',
+            overflowX: 'hidden',
             WebkitOverflowScrolling: 'touch',
-            display: 'flex',
-            flexDirection: 'column',
+            // Keep the gesture inside this scroller — the document must never
+            // rubber-band, or fixed elements ride along with it.
+            overscrollBehaviorY: 'contain',
           }}
         >
           {children}
-        </main>
+        </PullToRefresh>
       </div>
 
       <TabBar />

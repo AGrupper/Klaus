@@ -13,6 +13,7 @@
  * variables update on tap so the preview never lags the finger.
  */
 import { Check } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import {
   ACCENT_COLORS,
   applyAppearance,
@@ -122,6 +123,7 @@ interface CustomizeSheetProps {
 export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
   const { appearance, homeSections } = useSettings()
   const { save, flush } = useUpdateSettings()
+  const navigate = useNavigate()
 
   function setAppearance(next: Appearance) {
     applyAppearance(next)   // live preview, instant
@@ -272,6 +274,26 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
       <p style={{ fontSize: '12.5px', color: 'var(--muted)', lineHeight: 1.5, margin: '12px 2px 6px' }}>
         Everything here saves to your account — same look on iPhone and Mac.
         Routines and their items are edited on the Routines tab.
+      </p>
+      <p style={{ fontSize: '12px', color: 'var(--faint)', lineHeight: 1.5, margin: '2px 2px 10px' }}>
+        Build {__BUILD_ID__} UTC ·{' '}
+        <button
+          onClick={() => {
+            handleClose()
+            navigate('/settings')
+          }}
+          style={{
+            border: 'none',
+            background: 'none',
+            padding: 0,
+            font: 'inherit',
+            color: 'var(--accent)',
+            fontWeight: 600,
+            cursor: 'pointer',
+          }}
+        >
+          Settings
+        </button>
       </p>
     </Sheet>
   )
