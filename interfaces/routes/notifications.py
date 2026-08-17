@@ -69,6 +69,7 @@ async def api_notifications(
     ``claude_session_url`` (client falls back to the Project URL when a
     fallback review has none), alerts/actions open the relevant Hub spot.
     """
+    from core.hub.actions import humanize_action
     from core.hub.reviews import _review_for_client
     from memory.firestore_db import (  # lazy import
         ActionLogStore,
@@ -126,10 +127,15 @@ async def api_notifications(
         })
 
     for entry in actions:
+        # humanize_action returns None for entries the bell suppresses
+        # (publish_review duplicates the review item itself).
+        title = humanize_action(entry)
+        if title is None:
+            continue
         items.append({
             "id": str(entry.get("id") or ""),
             "type": "action",
-            "title": "Klaus did: " + str(entry.get("detail") or entry.get("action") or ""),
+            "title": title,
             "body": None,
             "at": str(entry.get("at") or ""),
             "claude_session_url": None,

@@ -423,7 +423,7 @@ function KlausCorner() {
       const day = Number.isNaN(due.getTime()) ? '' : DUE_FORMAT.format(due)
       return { key: `f-${f.id}`, title: day ? `${day} — follow-up` : 'Follow-up', sub: f.note }
     }),
-    ...recentActions.map((a) => ({ key: `a-${a.id}`, title: 'Filed today', sub: a.title.replace(/^Klaus did: /, '') })),
+    ...recentActions.map((a) => ({ key: `a-${a.id}`, title: 'Klaus did', sub: a.title })),
   ]
 
   return (
