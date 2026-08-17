@@ -7,6 +7,7 @@
  */
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Flame, House } from 'lucide-react'
+import { tapFeedback } from '../../utils/haptics'
 
 const TABS = [
   { label: 'Today', path: '/', icon: House },
@@ -40,8 +41,12 @@ export function TabBar() {
         return (
           <button
             key={path}
-            onClick={() => navigate(path)}
+            onClick={() => {
+              if (!active) tapFeedback()
+              navigate(path)
+            }}
             aria-current={active ? 'page' : undefined}
+            className="press"
             style={{
               flex: 1,
               border: 'none',
@@ -56,6 +61,7 @@ export function TabBar() {
               padding: '4px 0',
               minHeight: '44px',
               cursor: 'pointer',
+              transition: 'color 0.2s var(--ease)',
             }}
           >
             <Icon size={21} strokeWidth={1.8} aria-hidden="true" />

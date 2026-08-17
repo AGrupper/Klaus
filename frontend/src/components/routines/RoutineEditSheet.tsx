@@ -8,14 +8,14 @@
  *  - deleting now asks what to do with the items instead of silently
  *    dumping them into "Unassigned".
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Check } from 'lucide-react'
 import type { Routine } from '../../api/routines'
 import { useCreateRoutine, useDeleteRoutine, useEditRoutine } from '../../hooks/useRoutines'
 import { useUndoStore } from '../../store/undoStore'
-import { normalizeHex } from '../../tokens'
+import { CALENDAR_COLORS, normalizeHex } from '../../tokens'
+import { tapFeedback } from '../../utils/haptics'
 import { Sheet } from '../shared/Sheet'
-
-const COLOR_PRESETS = ['#B0762A', '#4C4C8F', '#B02A2A', '#20563A', '#1F4E63', '#8F2D3C']
 
 const inputStyle: React.CSSProperties = {
   width: '100%',
@@ -48,10 +48,9 @@ interface RoutineEditSheetProps {
 export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetProps) {
   const [name, setName] = useState('')
   const [emoji, setEmoji] = useState('')
-  const [color, setColor] = useState<string>(COLOR_PRESETS[0])
+  const [color, setColor] = useState<string>(CALENDAR_COLORS[0].hex)
   const [anchorTime, setAnchorTime] = useState('')
   const [confirmingDelete, setConfirmingDelete] = useState(false)
-  const colorPicker = useRef<HTMLInputElement>(null)
 
   const createMutation = useCreateRoutine()
   const editMutation = useEditRoutine()
@@ -62,7 +61,7 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
     if (!open) return
     setName(routine?.name ?? '')
     setEmoji(routine?.emoji ?? '')
-    setColor(routine?.color ?? COLOR_PRESETS[0])
+    setColor(routine?.color ?? CALENDAR_COLORS[0].hex)
     setAnchorTime(routine?.anchor_time ?? '')
     setConfirmingDelete(false)
   }, [open, routine])
@@ -152,61 +151,52 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
       </p>
 
       <span style={labelStyle}>Colour</span>
-      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        {COLOR_PRESETS.map((preset) => (
-          <button
-            key={preset}
-            onClick={() => setColor(preset)}
-            aria-label={preset}
-            aria-pressed={color.toUpperCase() === preset.toUpperCase()}
-            style={{
-              width: '40px',
-              height: '40px',
-              borderRadius: '50%',
-              border: color.toUpperCase() === preset.toUpperCase()
-                ? '3px solid var(--ink)'
-                : '3px solid transparent',
-              background: preset,
-              cursor: 'pointer',
-              padding: 0,
-            }}
-          />
-        ))}
-        <button
-          onClick={() => colorPicker.current?.click()}
-          aria-label="Custom colour"
-          style={{
-            width: '40px',
-            height: '40px',
-            borderRadius: '50%',
-            position: 'relative',
-            border: COLOR_PRESETS.some((p) => p.toUpperCase() === color.toUpperCase())
-              ? '3px solid transparent'
-              : '3px solid var(--ink)',
-            background: 'conic-gradient(#E8453C, #E8A23D, #3FA55B, #2E7CF6, #7C5CD6, #E8453C)',
-            cursor: 'pointer',
-            padding: 0,
-          }}
-        >
-          <input
-            ref={colorPicker}
-            type="color"
-            value={color}
-            onChange={(e) => setColor(e.target.value.toUpperCase())}
-            tabIndex={-1}
-            aria-hidden="true"
-            style={{
-              position: 'absolute', inset: 0, width: '100%', height: '100%',
-              opacity: 0, border: 'none', padding: 0, cursor: 'pointer',
-            }}
-          />
-        </button>
+      <div
+        role="radiogroup"
+        aria-label="Routine colour"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}
+      >
+        {CALENDAR_COLORS.map(({ name, hex }) => {
+          const selected = color.toUpperCase() === hex.toUpperCase()
+          return (
+            <button
+              key={hex}
+              role="radio"
+              aria-checked={selected}
+              aria-label={name}
+              title={name}
+              className="press"
+              onClick={() => {
+                tapFeedback()
+                setColor(hex)
+              }}
+              style={{
+                aspectRatio: '1',
+                width: '100%',
+                borderRadius: '50%',
+                border: 'none',
+                background: hex,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: selected
+                  ? '0 0 0 3px var(--ground), 0 0 0 5px var(--ink)'
+                  : 'none',
+                transition: 'box-shadow 0.18s var(--ease)',
+              }}
+            >
+              {selected && <Check size={15} color="#FFFFFF" strokeWidth={3.5} aria-hidden="true" />}
+            </button>
+          )
+        })}
       </div>
 
       <div style={{ display: 'flex', gap: '10px', margin: '22px 0 6px' }}>
         <button
           onClick={handleSave}
           disabled={!canSave}
+          className="press"
           style={{
             flex: 1,
             minHeight: '48px',
@@ -225,6 +215,7 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
         {editing && !confirmingDelete && (
           <button
             onClick={() => setConfirmingDelete(true)}
+            className="press"
             style={{
               minHeight: '48px',
               padding: '0 16px',

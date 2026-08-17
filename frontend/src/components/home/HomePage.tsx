@@ -55,9 +55,17 @@ function greetingFor(hour: number): string {
 // Section shells
 // ---------------------------------------------------------------------------
 
-function Section({ label, children }: { label: string; children: React.ReactNode }) {
+function Section({
+  label,
+  children,
+  step = 0,
+}: {
+  label: string
+  children: React.ReactNode
+  step?: number
+}) {
   return (
-    <div style={{ margin: '4px 20px 18px' }}>
+    <div className={`rise${step ? ` rise-${step}` : ''}`} style={{ margin: '4px 20px 18px' }}>
       <div
         style={{
           fontFamily: 'var(--font-display)',
@@ -96,6 +104,7 @@ function KlausCta() {
       target="_blank"
       rel="noopener noreferrer"
       aria-disabled={!url}
+      className="press rise"
       style={{
         margin: '0 20px 16px',
         display: 'flex',
@@ -361,7 +370,7 @@ function Timeline({ today }: { today: TodayData }) {
   rows.sort((a, b) => a.sort - b.sort)
 
   return (
-    <Section label="Today">
+    <Section label="Today" step={1}>
       <Group>
         {rows.length === 0 && (
           <div style={{ padding: '14px', fontSize: '14px', color: 'var(--muted)' }}>
@@ -383,6 +392,7 @@ function Timeline({ today }: { today: TodayData }) {
             <button
               key={row.key}
               onClick={row.onClick}
+              className="press-row"
               style={{
                 display: 'block', width: '100%', textAlign: 'left',
                 border: 'none', background: 'none', padding: 0, cursor: 'pointer',
@@ -420,7 +430,7 @@ function StatsRow({ today }: { today: TodayData }) {
     : []
 
   return (
-    <Section label="This morning">
+    <Section label="This morning" step={2}>
       {garmin ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
           {stats.map(({ value, label }) => (
@@ -487,7 +497,7 @@ function KlausCorner() {
   ]
 
   return (
-    <Section label="Klaus's corner">
+    <Section label="Klaus's corner" step={3}>
       <Group>
         {rows.map((row, index) => (
           <div
@@ -551,7 +561,7 @@ function PortfolioCard() {
   // produced quotes, so a zero total means "no valuation yet", not ₪0.
   if (latest == null || latest === 0) {
     return (
-      <Section label="Portfolio">
+      <Section label="Portfolio" step={4}>
         <Group>
           <div style={{ padding: '12px 14px', fontSize: '13.5px', color: 'var(--muted)' }}>
             No valuation yet — Klaus records one with the weekly review.
@@ -562,7 +572,7 @@ function PortfolioCard() {
   }
 
   return (
-    <Section label="Portfolio">
+    <Section label="Portfolio" step={4}>
       <Group>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', padding: '12px 14px' }}>
           <span
@@ -613,6 +623,7 @@ export function HomePage() {
   return (
     <div style={{ paddingBottom: '24px' }}>
       <h1
+        className="rise"
         style={{
           fontFamily: 'var(--font-display)',
           fontWeight: 700,
@@ -633,7 +644,12 @@ export function HomePage() {
       <KlausCta />
 
       {isLoading && (
-        <div style={{ margin: '0 20px', color: 'var(--muted)', fontSize: '14px' }}>Loading your day…</div>
+        <div style={{ margin: '0 20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <div className="skeleton" style={{ height: '18px', width: '35%' }} />
+          <div className="skeleton" style={{ height: '132px', borderRadius: 'var(--r)' }} />
+          <div className="skeleton" style={{ height: '18px', width: '45%', marginTop: '8px' }} />
+          <div className="skeleton" style={{ height: '68px', borderRadius: 'var(--r)' }} />
+        </div>
       )}
       {isError && (
         <div style={{ margin: '0 20px', color: 'var(--muted)', fontSize: '14px' }}>

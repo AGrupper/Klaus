@@ -30,6 +30,42 @@ export const destructive = '#C0392B'
 export const defaultAccent = '#1C2540'  // midnight
 export const defaultFlame = '#B02A2A'   // dark red
 
+// ---------------------------------------------------------------------------
+// Palette — Google Calendar's event colours                                   //
+// ---------------------------------------------------------------------------
+
+/**
+ * The eleven named colours Google Calendar uses for events, plus the two
+ * defaults above. Amit asked for exactly this set and no free-form picker:
+ * they're familiar, they're already tuned to read on a light ground, and a
+ * fixed list means no unreadable choices.
+ */
+export const CALENDAR_COLORS: Array<{ name: string; hex: string }> = [
+  { name: 'Tomato', hex: '#D50000' },
+  { name: 'Flamingo', hex: '#E67C73' },
+  { name: 'Tangerine', hex: '#F4511E' },
+  { name: 'Banana', hex: '#F6BF26' },
+  { name: 'Sage', hex: '#33B679' },
+  { name: 'Basil', hex: '#0B8043' },
+  { name: 'Peacock', hex: '#039BE5' },
+  { name: 'Blueberry', hex: '#3F51B5' },
+  { name: 'Lavender', hex: '#7986CB' },
+  { name: 'Grape', hex: '#8E24AA' },
+  { name: 'Graphite', hex: '#616161' },
+]
+
+/** Accent options: the calendar palette plus Klaus's own midnight. */
+export const ACCENT_COLORS: Array<{ name: string; hex: string }> = [
+  { name: 'Midnight', hex: defaultAccent },
+  ...CALENDAR_COLORS,
+]
+
+/** Flame options: the calendar palette plus Klaus's own dark red. */
+export const FLAME_COLORS: Array<{ name: string; hex: string }> = [
+  { name: 'Ember', hex: defaultFlame },
+  ...CALENDAR_COLORS,
+]
+
 export const radius = 12
 
 // --------------------------------------------------------------------------- //

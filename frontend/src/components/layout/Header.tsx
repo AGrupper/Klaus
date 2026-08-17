@@ -9,6 +9,8 @@
  */
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Bell, Settings2 } from 'lucide-react'
+import { useTapGuard } from '../../hooks/useTapGuard'
+import { tapFeedback } from '../../utils/haptics'
 
 const DATE_FORMAT = new Intl.DateTimeFormat('en-US', {
   weekday: 'long',
@@ -31,10 +33,18 @@ function HeaderButton({
   onClick: () => void
   children: React.ReactNode
 }) {
+  // Pull-to-refresh often starts with a thumb on these buttons, and iOS still
+  // fires a click on release — which was opening Customize on every pull
+  // (Amit's UAT). useTapGuard swallows a click that travelled.
+  const guard = useTapGuard(() => {
+    tapFeedback()
+    onClick()
+  })
   return (
     <button
-      onClick={onClick}
+      {...guard}
       aria-label={label}
+      className="press"
       style={{
         position: 'relative',
         width: '38px',
@@ -91,9 +101,11 @@ export function Header({ unread, onOpenBell, onOpenCustomize }: HeaderProps) {
               key={path}
               onClick={() => navigate(path)}
               aria-current={active ? 'page' : undefined}
+              className="press"
               style={{
                 border: 'none',
                 borderRadius: '999px',
+                transition: 'background 0.2s var(--ease), color 0.2s var(--ease)',
                 padding: '7px 14px',
                 fontSize: '13px',
                 fontWeight: 600,

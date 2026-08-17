@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Pencil, Plus } from 'lucide-react'
 import type { Routine, RoutineMember } from '../../api/routines'
 import { useCheckinMember } from '../../hooks/useRoutines'
+import { successFeedback, tapFeedback } from '../../utils/haptics'
 
 const RING_RADIUS = 32
 const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS // ≈ 201
@@ -31,6 +32,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
   useEffect(() => {
     if (routine.done_today && !wasDone.current) {
       setPop(true)
+      successFeedback()  // the routine closing is worth feeling
       const id = setTimeout(() => setPop(false), 500)
       return () => clearTimeout(id)
     }
@@ -77,7 +79,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
           strokeDasharray={RING_CIRCUMFERENCE}
           strokeDashoffset={offset}
           transform="rotate(-90 38 38)"
-          style={{ transition: 'stroke-dashoffset 0.5s cubic-bezier(0.3,0.8,0.3,1)' }}
+          style={{ transition: 'stroke-dashoffset 0.55s var(--spring), stroke 0.25s var(--ease)' }}
         />
         <text
           x="38"
@@ -114,6 +116,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
             <button
               onClick={() => onEditRoutine(routine)}
               aria-label={`Edit ${routine.name}`}
+              className="press"
               style={{
                 border: 'none',
                 background: 'none',
@@ -157,9 +160,11 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
             return (
               <div key={habit.id} style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
                 <button
-                  onClick={() =>
+                  onClick={() => {
+                    tapFeedback()
                     checkin.mutate({ habitId: habit.id, date: todayIso, done: !habit.done_today })
-                  }
+                  }}
+                  className="press"
                   disabled={inactive}
                   aria-label={`${habit.done_today ? 'Uncheck' : 'Check off'} ${habit.name}`}
                   aria-pressed={habit.done_today}
@@ -175,7 +180,9 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
                     justifyContent: 'center',
                     cursor: inactive ? 'default' : 'pointer',
                     opacity: inactive ? 0.35 : 1,
-                    transition: 'background 0.18s, border-color 0.18s',
+                    transition:
+                      'background 0.2s var(--ease), border-color 0.2s var(--ease), transform 0.25s var(--spring)',
+                    transform: habit.done_today ? 'scale(1.06)' : 'scale(1)',
                     padding: 0,
                   }}
                 >
@@ -185,10 +192,13 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
                 </button>
                 <button
                   onClick={() => onEditHabit(habit)}
+                  className="press-row"
                   style={{
                     border: 'none',
                     background: 'none',
-                    padding: '3px 0',
+                    borderRadius: '8px',
+                    padding: '3px 6px 3px 0',
+                    transition: 'color 0.2s var(--ease)',
                     fontSize: '14.5px',
                     textAlign: 'left',
                     cursor: 'pointer',
@@ -214,6 +224,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
           })}
           <button
             onClick={() => onAddHabit(routine)}
+            className="press"
             style={{
               display: 'inline-flex',
               alignItems: 'center',

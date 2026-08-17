@@ -74,6 +74,70 @@ input:focus-visible {
   100% { transform: scale(1); }
 }
 
+/* ==========================================================================
+   Motion. The app felt "stiff" in UAT because nothing acknowledged a touch
+   and every state change snapped. Three rules fix most of it:
+     1. anything tappable dips under the finger (.press),
+     2. entrances settle rather than appear (.rise),
+     3. springs, not linear ramps, for anything that moves a distance.
+   ========================================================================== */
+
+:root {
+  --spring: cubic-bezier(0.32, 1.35, 0.5, 1);
+  --ease: cubic-bezier(0.25, 0.8, 0.35, 1);
+}
+
+/* Kill the grey flash iOS paints over tapped elements — we supply our own. */
+button,
+a,
+[role="button"] {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Press feedback: the element dips immediately, releases with a spring. */
+.press {
+  transition: transform 0.22s var(--spring), opacity 0.16s var(--ease),
+    background-color 0.18s var(--ease);
+}
+.press:active {
+  transform: scale(0.96);
+  opacity: 0.9;
+  transition-duration: 0.06s;
+}
+/* Rows are wide, so a uniform scale looks wrong — dim instead. */
+.press-row {
+  transition: background-color 0.18s var(--ease);
+}
+.press-row:active {
+  background-color: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+
+/* Entrance: content settles in rather than snapping into place. */
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise {
+  animation: rise 0.34s var(--ease) both;
+}
+/* Stagger a list so it cascades instead of arriving as a slab. */
+.rise-1 { animation-delay: 0.03s; }
+.rise-2 { animation-delay: 0.06s; }
+.rise-3 { animation-delay: 0.09s; }
+.rise-4 { animation-delay: 0.12s; }
+.rise-5 { animation-delay: 0.15s; }
+
+/* Skeleton shimmer — a calm pulse beats a "Loading…" string. */
+@keyframes shimmer {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.skeleton {
+  background: var(--sep);
+  border-radius: 8px;
+  animation: shimmer 1.4s var(--ease) infinite;
+}
+
 /* Phone: the bottom tab bar is position:fixed (60px + safe-area), so main
    content reserves that space. Desktop (>=768px) moves tabs into the header —
    reset to 0. (Class-driven, never inline display — Pitfall 2.) */

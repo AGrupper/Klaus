@@ -49,6 +49,7 @@ export function RoutinesPage() {
   return (
     <div style={{ paddingBottom: '24px' }}>
       <h1
+        className="rise"
         style={{
           fontFamily: 'var(--font-display)',
           fontWeight: 700,
@@ -65,7 +66,10 @@ export function RoutinesPage() {
       <p style={{ margin: '0 20px 18px', color: 'var(--muted)', fontSize: '14px' }}>{sub}</p>
 
       {isLoading && (
-        <div style={{ margin: '0 20px', color: 'var(--muted)', fontSize: '14px' }}>Loading routines…</div>
+        <div style={{ margin: '0 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div className="skeleton" style={{ height: '140px', borderRadius: 'var(--r)' }} />
+          <div className="skeleton" style={{ height: '160px', borderRadius: 'var(--r)' }} />
+        </div>
       )}
       {isError && (
         <div style={{ margin: '0 20px', color: 'var(--muted)', fontSize: '14px' }}>
@@ -73,9 +77,12 @@ export function RoutinesPage() {
         </div>
       )}
 
-      {routines.map((routine) => (
-        <RingCard
+      {routines.map((routine, index) => (
+        <div
           key={routine.id ?? 'unassigned'}
+          className={`rise rise-${Math.min(index + 1, 5)}`}
+        >
+        <RingCard
           routine={routine}
           todayIso={todayIso}
           onEditRoutine={(r) => {
@@ -93,6 +100,7 @@ export function RoutinesPage() {
             setHabitSheetOpen(true)
           }}
         />
+        </div>
       ))}
 
       <div style={{ margin: '4px 20px' }}>
@@ -101,6 +109,7 @@ export function RoutinesPage() {
             setEditRoutine(null)
             setRoutineSheetOpen(true)
           }}
+          className="press"
           style={{
             display: 'inline-flex',
             alignItems: 'center',

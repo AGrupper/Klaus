@@ -1,28 +1,30 @@
 /**
- * CustomizeSheet.tsx — self-serve personalization (the mockup-gate winner).
+ * CustomizeSheet.tsx — self-serve personalization.
  *
- *  - Accent + flame: 4 presets each, a native color picker behind a rainbow
- *    swatch, and a typeable hex field. Live preview via applyAppearance();
- *    persisted whole to PATCH /api/settings on change (account-wide).
+ *  - Accent + flame: a fixed swatch grid of Google Calendar's event colours
+ *    (Amit's call — "use the same colours as Google Calendar and just leave
+ *    it at that"). No hex field, no eyedropper: a closed set can't produce an
+ *    unreadable theme, and the colours are already familiar.
  *  - Font: Notion-style Ag cards — SF / New York / SF Rounded / SF Mono
  *    (all native faces, zero downloads).
  *  - Home sections: iOS-style toggles for leave-by, numbers, corner, portfolio.
+ *
+ * Writes are debounced and last-write-wins (useUpdateSettings); the CSS
+ * variables update on tap so the preview never lags the finger.
  */
-import { useRef } from 'react'
 import { Check } from 'lucide-react'
 import {
+  ACCENT_COLORS,
   applyAppearance,
+  FLAME_COLORS,
   FONT_STACKS,
-  normalizeHex,
   type Appearance,
   type FontChoice,
 } from '../../tokens'
 import { defaultHomeSections, useSettings, useUpdateSettings } from '../../hooks/useSettings'
 import type { HomeSections } from '../../api/settings'
 import { Sheet } from '../shared/Sheet'
-
-const ACCENT_PRESETS = ['#1C2540', '#1C1C1E', '#1F4E63', '#20563A']
-const FLAME_PRESETS = ['#B02A2A', '#8F2D3C', '#C2410C', '#B0762A']
+import { tapFeedback } from '../../utils/haptics'
 
 const FONT_OPTIONS: Array<{ id: FontChoice; label: string }> = [
   { id: 'default', label: 'Default' },
@@ -55,150 +57,55 @@ function Label({ children }: { children: React.ReactNode }) {
   )
 }
 
-interface ColorRowProps {
-  presets: string[]
+interface SwatchGridProps {
+  options: Array<{ name: string; hex: string }>
   value: string
   onChange: (hex: string) => void
   ariaLabel: string
 }
 
-function ColorRow({ presets, value, onChange, ariaLabel }: ColorRowProps) {
-  const pickerRef = useRef<HTMLInputElement>(null)
-  const isCustom = !presets.includes(value)
-
-  function Ring({ on }: { on: boolean }) {
-    return on ? (
-      <span
-        style={{
-          position: 'absolute',
-          inset: '-5px',
-          borderRadius: '50%',
-          border: '2px solid var(--ink)',
-        }}
-        aria-hidden="true"
-      />
-    ) : null
-  }
-
+function SwatchGrid({ options, value, onChange, ariaLabel }: SwatchGridProps) {
   return (
-    <>
-      <div style={{ display: 'flex', gap: '10px' }} role="radiogroup" aria-label={ariaLabel}>
-        {presets.map((hex) => (
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}
+    >
+      {options.map(({ name, hex }) => {
+        const selected = value.toUpperCase() === hex.toUpperCase()
+        return (
           <button
             key={hex}
             role="radio"
-            aria-checked={value === hex}
-            aria-label={hex}
-            onClick={() => onChange(hex)}
+            aria-checked={selected}
+            aria-label={name}
+            title={name}
+            className="press"
+            onClick={() => {
+              tapFeedback()
+              onChange(hex)
+            }}
             style={{
-              width: '44px',
-              height: '44px',
+              aspectRatio: '1',
+              width: '100%',
               borderRadius: '50%',
               border: 'none',
-              position: 'relative',
               background: hex,
               cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: selected
+                ? '0 0 0 3px var(--ground), 0 0 0 5px var(--ink)'
+                : 'none',
+              transition: 'box-shadow 0.18s ease',
             }}
           >
-            <Ring on={value === hex} />
-            {value === hex && (
-              <Check size={16} color="#FFFFFF" strokeWidth={3} aria-hidden="true" />
-            )}
+            {selected && <Check size={15} color="#FFFFFF" strokeWidth={3.5} aria-hidden="true" />}
           </button>
-        ))}
-        {/* Rainbow swatch → native color picker */}
-        <button
-          aria-label={`Custom ${ariaLabel}`}
-          onClick={() => pickerRef.current?.click()}
-          style={{
-            width: '44px',
-            height: '44px',
-            borderRadius: '50%',
-            border: 'none',
-            position: 'relative',
-            background: 'conic-gradient(#E8453C, #E8A23D, #3FA55B, #2E7CF6, #7C5CD6, #E8453C)',
-            cursor: 'pointer',
-          }}
-        >
-          <Ring on={isCustom} />
-          <input
-            ref={pickerRef}
-            type="color"
-            value={value}
-            onChange={(e) => onChange(e.target.value.toUpperCase())}
-            aria-hidden="true"
-            tabIndex={-1}
-            style={{
-              position: 'absolute',
-              inset: 0,
-              width: '100%',
-              height: '100%',
-              opacity: 0,
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-            }}
-          />
-        </button>
-      </div>
-      {/* Hex field */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '2px',
-          marginTop: '10px',
-          background: 'var(--surface)',
-          borderRadius: '10px',
-          padding: '9px 12px',
-          width: 'fit-content',
-        }}
-      >
-        <span
-          style={{
-            color: 'var(--faint)',
-            fontWeight: 600,
-            fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-            fontSize: '14px',
-          }}
-        >
-          #
-        </span>
-        <input
-          value={value.replace(/^#/, '')}
-          maxLength={6}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label={`${ariaLabel} hex value`}
-          onChange={(e) => {
-            const hex = normalizeHex(e.target.value)
-            if (hex) onChange(hex)
-          }}
-          style={{
-            border: 'none',
-            background: 'none',
-            outline: 'none',
-            width: '74px',
-            fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
-            fontSize: '14px',
-            fontWeight: 600,
-            color: 'var(--ink)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.04em',
-          }}
-        />
-        <span
-          style={{
-            width: '18px',
-            height: '18px',
-            borderRadius: '6px',
-            marginLeft: '6px',
-            background: value,
-          }}
-          aria-hidden="true"
-        />
-      </div>
-    </>
+        )
+      })}
+    </div>
   )
 }
 
@@ -217,6 +124,7 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
   }
 
   function toggleSection(id: keyof HomeSections) {
+    tapFeedback()
     const next = { ...defaultHomeSections, ...homeSections, [id]: !homeSections[id] }
     save({ home_sections: next })
   }
@@ -230,19 +138,19 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
   return (
     <Sheet open={open} onClose={handleClose} title="Customize">
       <Label>Accent</Label>
-      <ColorRow
-        presets={ACCENT_PRESETS}
-        value={appearance.accent.toUpperCase()}
+      <SwatchGrid
+        options={ACCENT_COLORS}
+        value={appearance.accent}
         onChange={(accent) => setAppearance({ ...appearance, accent })}
-        ariaLabel="Accent color"
+        ariaLabel="Accent colour"
       />
 
       <Label>Streak flame</Label>
-      <ColorRow
-        presets={FLAME_PRESETS}
-        value={appearance.flame.toUpperCase()}
+      <SwatchGrid
+        options={FLAME_COLORS}
+        value={appearance.flame}
         onChange={(flame) => setAppearance({ ...appearance, flame })}
-        ariaLabel="Flame color"
+        ariaLabel="Flame colour"
       />
 
       <Label>Font</Label>
@@ -252,7 +160,11 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
           return (
             <button
               key={id}
-              onClick={() => setAppearance({ ...appearance, font: id })}
+              className="press"
+              onClick={() => {
+                tapFeedback()
+                setAppearance({ ...appearance, font: id })
+              }}
               aria-pressed={active}
               style={{
                 border: `1.5px solid ${active ? 'var(--accent)' : 'transparent'}`,
@@ -336,13 +248,14 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
                   style={{
                     position: 'absolute',
                     top: '2.5px',
-                    left: on ? '21.5px' : '2.5px',
+                    left: '2.5px',
+                    transform: on ? 'translateX(19px)' : 'translateX(0)',
                     width: '24px',
                     height: '24px',
                     borderRadius: '50%',
                     background: '#FFFFFF',
                     boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
-                    transition: 'left 0.2s',
+                    transition: 'transform 0.24s cubic-bezier(0.32,1.4,0.5,1)',
                   }}
                   aria-hidden="true"
                 />
