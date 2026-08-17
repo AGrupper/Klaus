@@ -38,7 +38,11 @@ Cloud Scheduler ──OIDC──▶  /cron/*, /trigger/*   ─┘
    approve). OAuth 2.1 + PKCE; the token verifier and scope sets live with the
    MCP server.
 2. **Hub API** — the React dashboard reads and writes through `/api/*`, gated by
-   a signed session cookie tied to a single allowed Google account.
+   a signed session cookie tied to a single allowed Google account. The Hub
+   itself is two screens (Today and Routines) plus a notification bell and a
+   Customize sheet; tasks, health charts and the Claude launcher tab were
+   retired from the UI in v8.0, though their read APIs remain for Claude and
+   for the day view.
 3. **Cron and triggers** — Cloud Scheduler drives ingestion (Garmin, Hevy,
    HealthKit, Things), deterministic alerts, and the routine backstops. iOS
    Shortcuts hit `/trigger/*` for the real wake and sleep moments.
@@ -56,7 +60,7 @@ never produces silence.
 | `core/` | Business logic and pure transformations. `tools.py` is the deterministic tool catalog and dispatcher; the rest is ingestion, routines, training maths and alerts. |
 | `mcp_tools/` | Clients for outside systems — Google Calendar, Garmin, Hevy, Things, HealthKit, weather, the health database, vector memory. |
 | `memory/` | Persistence. `firestore_db.py` (the stores), `pinecone_db.py` (vectors + embeddings), `things_store.py` (the Things mirror). |
-| `frontend/` | The Web Hub: React + TypeScript + Vite, served as static files from the same origin. |
+| `frontend/` | The Web Hub: React + TypeScript + Vite, served as static files from the same origin. Theming is CSS custom properties written at runtime by `src/tokens.ts` from the account's saved appearance, so the Customize sheet re-skins the app without a rebuild. |
 | `claude/` | Claude Project assets — the four skills, their build artifacts and evals. |
 | `ops/` | Declared desired production state and retirement policies. |
 | `scripts/` | Operational tooling and archived one-off migrations. |

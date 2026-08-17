@@ -36,7 +36,7 @@ Detail in `docs/ARCHITECTURE.md`.
 | Training | Garmin, Hevy | Per-run detail and per-set strength. Reconciled into one status per session. |
 | Nutrition | HealthKit via iOS Shortcut | Per-meal macros including fiber. |
 | Recovery | Garmin | Sleep, HRV, resting HR, body battery. |
-| Habits | Firestore | Streaks and adherence. |
+| Habits | Firestore | Streaks and adherence. Grouped into named routines; a routine's streak counts days on which every scheduled member was completed. |
 | Long-term memory | Pinecone | `gemini-embedding-2`; the only generative-adjacent capability in production. |
 | Portfolio | Firestore + Claude web research | Weekly ILS valuation with sourced quotes. |
 
