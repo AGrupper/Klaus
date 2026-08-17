@@ -1,9 +1,12 @@
 """Generate the Klaus app icons — no image libraries required.
 
-Draws a geometric "K" monogram in paper white on the Paper Hub's midnight
-accent and writes the four PNGs the PWA needs. Anti-aliasing is analytic
-(distance-to-segment with a one-pixel smoothstep), so the edges are clean
-without supersampling, and the whole thing is pure stdlib (zlib + struct).
+The mark follows the style Amit picked (Conductor's icon): a dark ground, a
+white rounded plate inset in it, and the glyph punched out of the plate as
+chunky pixel blocks. Klaus's glyph is a 5×5 block "K".
+
+Anti-aliasing is analytic — every shape is a signed distance field sampled
+with a one-pixel ramp — so edges are clean without supersampling, and the
+whole thing is pure stdlib (zlib + struct).
 
 Run:  .venv/bin/python -m scripts.generate_app_icons
 Outputs (frontend/public/): icon-192.png, icon-512.png,
@@ -23,67 +26,107 @@ PAPER = (0xF7, 0xF7, 0xF9)
 
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "frontend" / "public"
 
-# "K" as three capsules in unit coordinates (origin top-left, y down).
-# Tuned so the junction reads as one letter rather than three sticks.
-# x values are shifted ~0.027 left of the naive layout so the mark's painted
-# extent (strokes + cap radius) is centred, not its centre-line.
-_STROKES = [
-    ((0.308, 0.235), (0.308, 0.765)),   # stem
-    ((0.673, 0.235), (0.338, 0.505)),   # upper arm
-    ((0.356, 0.487), (0.691, 0.765)),   # lower leg
+# The plate: a rounded square centred in the canvas, as a fraction of it.
+_PLATE_SIZE = 0.66
+_PLATE_RADIUS = 0.145      # corner radius, fraction of canvas
+
+# The glyph: a 5×5 block "K" punched out of the plate.
+_GLYPH = [
+    "#···#",
+    "#··#·",
+    "###··",
+    "#··#·",
+    "#···#",
 ]
-_THICKNESS = 0.088   # capsule diameter in unit coords
+_GLYPH_INSET = 0.12        # padding inside the plate, fraction of plate size
+_BLOCK_GAP = 0.13          # gap between blocks, fraction of a cell
+_BLOCK_RADIUS = 0.22       # block corner radius, fraction of a block
 
 
-def _distance_to_segment(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
-    """Shortest distance from point p to segment ab."""
-    abx, aby = bx - ax, by - ay
-    apx, apy = px - ax, py - ay
-    denom = abx * abx + aby * aby
-    t = 0.0 if denom == 0 else max(0.0, min(1.0, (apx * abx + apy * aby) / denom))
-    dx, dy = apx - t * abx, apy - t * aby
-    return (dx * dx + dy * dy) ** 0.5
+def _rounded_rect_distance(
+    px: float, py: float, cx: float, cy: float, half_w: float, half_h: float, radius: float
+) -> float:
+    """Signed distance from a point to a rounded rectangle (negative inside)."""
+    dx = abs(px - cx) - half_w + radius
+    dy = abs(py - cy) - half_h + radius
+    outside = ((max(dx, 0.0) ** 2) + (max(dy, 0.0) ** 2)) ** 0.5
+    inside = min(max(dx, dy), 0.0)
+    return outside + inside - radius
 
 
-def _render(size: int, mark_scale: float) -> bytes:
+def _coverage(distance: float, feather: float) -> float:
+    """1 inside the shape, 0 outside, ramped across one pixel."""
+    value = (feather / 2 - distance) / feather
+    return 0.0 if value < 0.0 else (1.0 if value > 1.0 else value)
+
+
+def _blend(base: tuple, over: tuple, alpha: float) -> tuple:
+    return tuple(base[i] + (over[i] - base[i]) * alpha for i in range(3))
+
+
+def _render(size: int, plate_scale: float) -> bytes:
     """Return raw RGB bytes for one icon.
 
     Args:
         size: Square edge length in pixels.
-        mark_scale: Monogram size relative to the canvas. Below 1.0 shrinks
-            the K toward the centre so a maskable crop cannot clip it.
+        plate_scale: Plate size relative to the default. Below 1.0 shrinks the
+            mark toward the centre so a maskable crop cannot clip it.
     """
-    half = 0.5
-    radius = _THICKNESS / 2 * mark_scale
-    # One pixel expressed in unit coords — the anti-aliasing ramp width.
     feather = 1.0 / size
+    half_plate = _PLATE_SIZE * plate_scale / 2
+    plate_radius = _PLATE_RADIUS * plate_scale
 
-    # Pre-scale the strokes around the canvas centre.
-    strokes = [
-        (
-            (half + (ax - half) * mark_scale, half + (ay - half) * mark_scale),
-            (half + (bx - half) * mark_scale, half + (by - half) * mark_scale),
-        )
-        for (ax, ay), (bx, by) in _STROKES
+    # Geometry of the glyph grid, in unit coordinates.
+    rows, cols = len(_GLYPH), len(_GLYPH[0])
+    grid_half = half_plate * (1 - _GLYPH_INSET)
+    cell = (grid_half * 2) / max(rows, cols)
+    block_half = cell * (1 - _BLOCK_GAP) / 2
+    block_radius = block_half * 2 * _BLOCK_RADIUS
+    grid_left = 0.5 - (cols * cell) / 2
+    grid_top = 0.5 - (rows * cell) / 2
+
+    # Pre-compute each block's centre so the inner loop stays cheap.
+    blocks = [
+        (grid_left + (col + 0.5) * cell, grid_top + (row + 0.5) * cell)
+        for row, line in enumerate(_GLYPH)
+        for col, mark in enumerate(line)
+        if mark == "#"
     ]
 
-    rows = bytearray()
+    rows_out = bytearray()
     for y in range(size):
-        rows.append(0)  # PNG filter byte: None
+        rows_out.append(0)  # PNG filter byte: None
         py = (y + 0.5) / size
         for x in range(size):
             px = (x + 0.5) / size
-            distance = min(
-                _distance_to_segment(px, py, ax, ay, bx, by)
-                for (ax, ay), (bx, by) in strokes
+
+            colour = MIDNIGHT
+
+            # 1. The white plate.
+            plate = _coverage(
+                _rounded_rect_distance(px, py, 0.5, 0.5, half_plate, half_plate, plate_radius),
+                feather,
             )
-            # coverage: 1 inside the capsule, 0 outside, ramped across a pixel
-            coverage = (radius + feather / 2 - distance) / feather
-            coverage = 0.0 if coverage < 0.0 else (1.0 if coverage > 1.0 else coverage)
+            if plate > 0:
+                colour = _blend(colour, PAPER, plate)
+
+                # 2. The glyph, punched back out of the plate.
+                nearest = min(
+                    (
+                        _rounded_rect_distance(
+                            px, py, bx, by, block_half, block_half, block_radius
+                        )
+                        for bx, by in blocks
+                    ),
+                    default=1.0,
+                )
+                block = _coverage(nearest, feather)
+                if block > 0:
+                    colour = _blend(colour, MIDNIGHT, block)
+
             for channel in range(3):
-                value = MIDNIGHT[channel] + (PAPER[channel] - MIDNIGHT[channel]) * coverage
-                rows.append(int(value + 0.5))
-    return bytes(rows)
+                rows_out.append(int(colour[channel] + 0.5))
+    return bytes(rows_out)
 
 
 def _write_png(path: Path, size: int, raw: bytes) -> None:
@@ -108,16 +151,16 @@ def _write_png(path: Path, size: int, raw: bytes) -> None:
 
 def main() -> int:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    # (filename, pixel size, monogram scale)
+    # (filename, pixel size, plate scale)
     #   maskable shrinks the mark into the 80% safe zone Android/iOS may crop.
     targets = [
         ("icon-192.png", 192, 1.0),
         ("icon-512.png", 512, 1.0),
-        ("icon-512-maskable.png", 512, 0.72),
+        ("icon-512-maskable.png", 512, 0.74),
         ("apple-touch-icon.png", 180, 1.0),
     ]
-    for filename, size, mark_scale in targets:
-        raw = _render(size, mark_scale)
+    for filename, size, plate_scale in targets:
+        raw = _render(size, plate_scale)
         path = OUTPUT_DIR / filename
         _write_png(path, size, raw)
         print(f"wrote {path.relative_to(OUTPUT_DIR.parent.parent)} ({size}×{size})")

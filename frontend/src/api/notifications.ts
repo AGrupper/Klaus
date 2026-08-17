@@ -91,3 +91,19 @@ export function dismissDelivered(tags?: string[]): void {
     ...(tags ? { tags } : {}),
   })
 }
+
+/**
+ * Set the home-screen badge to `count`.
+ *
+ * The service worker increments the badge on every push and has always had a
+ * RESET_BADGE handler — but nothing ever called it, so the number only ever
+ * grew and survived "Mark all read" (Amit's UAT). The Hub now drives the
+ * badge from the real unread count.
+ */
+export function setBadgeCount(count: number): void {
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker?.controller) return
+  navigator.serviceWorker.controller.postMessage({
+    type: 'RESET_BADGE',
+    count: Math.max(0, Math.floor(count)),
+  })
+}

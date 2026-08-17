@@ -12,7 +12,8 @@
  * Bounded-height root: `height: 100dvh` (not min-height) so <main> stays the
  * real scroll container (UAT gap-closure lesson, Phase 26).
  */
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Header } from './Header'
 import { TabBar } from './TabBar'
@@ -35,6 +36,7 @@ export function AppShell({ children }: AppShellProps) {
   const [customizeOpen, setCustomizeOpen] = useState(false)
   const notifications = useNotifications()
   const queryClient = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   // Load once at the shell so the account theme applies before any page needs it.
   useSettings()
@@ -55,6 +57,16 @@ export function AppShell({ children }: AppShellProps) {
   function openBell() {
     setBellOpen(true)
   }
+
+  // ?bell=1 — how a review notification tap arrives (see App.tsx routes).
+  // Consume the param so a later refresh doesn't reopen the sheet.
+  useEffect(() => {
+    if (searchParams.get('bell') !== '1') return
+    setBellOpen(true)
+    const next = new URLSearchParams(searchParams)
+    next.delete('bell')
+    setSearchParams(next, { replace: true })
+  }, [searchParams, setSearchParams])
 
   return (
     <div

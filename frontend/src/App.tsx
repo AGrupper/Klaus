@@ -107,6 +107,13 @@ export default function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/routines" element={<RoutinesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        {/*
+          Review pushes still carry the historical /klaus/reviews/:routine/:date
+          destination (core/routines/delivery.py builds it, and pushes already
+          delivered to Amit's phone hold it). The dedicated review page is gone,
+          so land on Today with the bell open — the review is the top item.
+        */}
+        <Route path="/klaus/reviews/*" element={<Navigate to="/?bell=1" replace />} />
         {/* Old bookmarked paths (tasks/health/klaus) land on Today */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -7,13 +7,14 @@
  * so the dot behaves sensibly before settings load, and the later of the two
  * always wins.
  */
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   dismissDelivered,
   fetchFollowups,
   fetchNotifications,
   getLastSeen,
+  setBadgeCount,
   setLastSeen,
 } from '../api/notifications'
 import { useSettings, useUpdateSettings } from './useSettings'
@@ -36,6 +37,12 @@ export function useNotifications() {
   const cursor = serverCursor > localCursor ? serverCursor : localCursor
   const unread = items.filter((item) => item.at > cursor).length
 
+  // Keep the home-screen badge equal to the unread count, so marking things
+  // read here clears the number on the icon too.
+  useEffect(() => {
+    setBadgeCount(unread)
+  }, [unread])
+
   /** Stamp the cursor at the newest item — clears the unread dot everywhere. */
   const markSeen = useCallback(() => {
     if (items.length === 0) return
@@ -44,10 +51,11 @@ export function useNotifications() {
     save({ bell_last_seen: newest })  // and syncs to every other device
   }, [items, save])
 
-  /** "Mark all read": clear the dot AND every delivered lock-screen push. */
+  /** "Mark all read": clear the dot, the badge, and every delivered push. */
   const markAllRead = useCallback(() => {
     markSeen()
     dismissDelivered()
+    setBadgeCount(0)
   }, [markSeen])
 
   /** Reading one item clears just its notification (if it pushed at all). */
