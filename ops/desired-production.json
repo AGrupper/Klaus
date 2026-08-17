@@ -37,7 +37,6 @@
       "KLAUS_ROUTINE_WEEKLY_CUTOVER": "true",
       "KLAUS_DETERMINISTIC_ALERTS_ENABLED": "true",
       "KLAUS_EMBEDDING_METER_ENABLED": "true",
-      "KLAUS_TRAINING_WRITEBACK_ENABLED": "true",
       "CLOUD_SCHEDULER_SA_EMAIL": "klaus-heartbeat@klaus-agent.iam.gserviceaccount.com",
       "CLOUD_TASKS_QUEUE": "klaus-updates",
       "CLOUD_TASKS_LOCATION": "me-central1",

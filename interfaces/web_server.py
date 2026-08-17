@@ -178,8 +178,9 @@ app = FastAPI(
 _MCP_MOUNT_PATHS = frozenset({"/mcp/interactive", "/mcp/routine"})
 
 _CONNECTOR_EVIDENCE = {
-    "calendar": {"tools": {"list_calendar_events", "create_calendar_event"}},
-    "google_routes": {"routes": {"GET /api/today"}},
+    # Klaus publishes no calendar tools; the retained dependency is the read
+    # behind the Hub day view, so that route is the evidence it is still wired.
+    "calendar": {"routes": {"GET /api/today"}},
     "things": {"tools": {"task_list", "task_create"}},
     "garmin": {"tools": {"fetch_garmin_today"}},
     "hevy": {"tools": {"get_strength_progress"}},
