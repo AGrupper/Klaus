@@ -77,14 +77,79 @@ jobs:
       # Exchange the GitHub OIDC token for short-lived GCP credentials.
       # The WIF provider is scoped to this exact repo via attribute.repository,
       # so no other repo can impersonate the deployer SA.
+      #
+      # Done with curl rather than google-github-actions/auth, and the Cloud
+      # SDK setup step is gone entirely, because every action a workflow names
+      # is downloaded from codeload.github.com at run time — and that CDN
+      # killed three consecutive deploys on 2026-08-17 (429 on setup-gcloud,
+      # then 429 and 503/502 on auth). Neither action did anything the runner
+      # cannot: gcloud ships preinstalled on ubuntu-latest, and the WIF
+      # handshake is three HTTP calls. Fewer downloads, fewer ways for someone
+      # else's outage to stop a deploy.
+      #
+      # The exchange, in order:
+      #   1. GitHub mints an OIDC JWT for this run, audienced to the provider.
+      #   2. Google STS trades that JWT for a federated access token.
+      #   3. That token impersonates the deployer SA for a real access token.
+      # CLOUDSDK_AUTH_ACCESS_TOKEN is what every later gcloud call
+      # authenticates with; it expires within the hour and is masked from logs.
       - name: Authenticate to Google Cloud (WIF)
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOYER_SA }}
+        env:
+          PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOYER_SA: ${{ secrets.GCP_DEPLOYER_SA }}
+        run: |
+          set -euo pipefail
 
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+          if [ -z "$PROVIDER" ] || [ -z "$DEPLOYER_SA" ]; then
+            echo "::error::GCP_WORKLOAD_IDENTITY_PROVIDER or GCP_DEPLOYER_SA is empty."
+            exit 1
+          fi
+
+          audience="https://iam.googleapis.com/${PROVIDER}"
+
+          oidc_token=$(curl -sS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" | jq -r '.value')
+          if [ -z "$oidc_token" ] || [ "$oidc_token" = "null" ]; then
+            echo "::error::GitHub did not return an OIDC token (needs id-token: write)."
+            exit 1
+          fi
+
+          sts_body=$(jq -nc \
+            --arg audience "//iam.googleapis.com/${PROVIDER}" \
+            --arg token "$oidc_token" \
+            '{
+               audience: $audience,
+               grantType: "urn:ietf:params:oauth:grant-type:token-exchange",
+               requestedTokenType: "urn:ietf:params:oauth:token-type:access_token",
+               scope: "https://www.googleapis.com/auth/cloud-platform",
+               subjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+               subjectToken: $token
+             }')
+          federated_token=$(curl -sS -X POST https://sts.googleapis.com/v1/token \
+            -H 'Content-Type: application/json' \
+            -d "$sts_body" | jq -r '.access_token')
+          if [ -z "$federated_token" ] || [ "$federated_token" = "null" ]; then
+            echo "::error::STS refused the token exchange — check the WIF provider"
+            echo "::error::and its attribute.repository condition."
+            exit 1
+          fi
+          echo "::add-mask::$federated_token"
+
+          access_token=$(curl -sS -X POST \
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${DEPLOYER_SA}:generateAccessToken" \
+            -H "Authorization: Bearer ${federated_token}" \
+            -H 'Content-Type: application/json' \
+            -d '{"scope":["https://www.googleapis.com/auth/cloud-platform"]}' | jq -r '.accessToken')
+          if [ -z "$access_token" ] || [ "$access_token" = "null" ]; then
+            echo "::error::Could not impersonate ${DEPLOYER_SA}. The WIF principal"
+            echo "::error::needs roles/iam.workloadIdentityUser on that account."
+            exit 1
+          fi
+          echo "::add-mask::$access_token"
+
+          echo "CLOUDSDK_AUTH_ACCESS_TOKEN=${access_token}" >> "$GITHUB_ENV"
+          echo "Authenticated as ${DEPLOYER_SA}."
 
       - name: Verify the subtraction boundary
         run: python scripts/active/check_claude_first_runtime.py
@@ -154,10 +219,15 @@ jobs:
           fi
           echo "All required secrets and variables resolve."
 
-      # Configures Docker's credential helper so subsequent docker push calls
-      # are automatically authenticated against Artifact Registry.
+      # Log Docker in with the same short-lived token rather than installing
+      # gcloud's credential helper: that helper reads gcloud's own credential
+      # store, which the curl handshake above deliberately never writes to.
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ secrets.GCP_REGION }}-docker.pkg.dev --quiet
+        run: |
+          set -euo pipefail
+          printf '%s' "$CLOUDSDK_AUTH_ACCESS_TOKEN" | docker login \
+            -u oauth2accesstoken --password-stdin \
+            "https://${{ secrets.GCP_REGION }}-docker.pkg.dev"
 
       # VITE_GOOGLE_CLIENT_ID is baked into the frontend bundle at build time
       # (the multi-stage Dockerfile accepts it as ARG). It is the public Google

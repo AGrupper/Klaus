@@ -434,10 +434,27 @@ def test_deploy_still_uses_workload_identity_federation():
     """Infrastructure hygiene must not regress keyless GitHub deployment."""
     workflow = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
 
+    # These assert the *property* — keyless, federated, repo-scoped — not the
+    # mechanism. The workflow used to reach it via google-github-actions/auth;
+    # it now performs the same handshake with curl, because downloading that
+    # action from GitHub's CDN killed three deploys in an hour on 2026-08-17.
+    # Pinning the old action name here would have failed a change that kept
+    # every guarantee this test exists to protect.
     assert "id-token: write" in workflow
-    assert "google-github-actions/auth@v2" in workflow
-    assert "workload_identity_provider:" in workflow
+    assert "ACTIONS_ID_TOKEN_REQUEST_TOKEN" in workflow, (
+        "the GitHub OIDC token is how this deploy stays keyless"
+    )
+    assert "sts.googleapis.com/v1/token" in workflow, (
+        "credentials must still come from an STS token exchange"
+    )
+    assert "secrets.GCP_WORKLOAD_IDENTITY_PROVIDER" in workflow
+    assert "secrets.GCP_DEPLOYER_SA" in workflow
+
+    # No long-lived credential may ever appear: not a service-account JSON key,
+    # not a path to one, not an inline private key.
     assert "GOOGLE_APPLICATION_CREDENTIALS=" not in workflow
+    assert "credentials_json" not in workflow
+    assert "private_key" not in workflow
     assert (
         "GEMINI_EMBEDDING_API_KEY=klaus-gemini-embedding-key:latest" in workflow
     )

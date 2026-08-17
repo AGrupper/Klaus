@@ -34,6 +34,11 @@ class Signal:
 
 # Only retained, scheduler-driven surfaces are monitored.  Triggered routines
 # are represented by their routine-run state rather than old occasion crons.
+# `healthkit-sync` is deliberately absent: it is pushed from an iOS Shortcut
+# that fires when Amit closes a food-tracking app, and he stopped tracking food
+# in July 2026. A staleness alarm on a surface nobody feeds is a permanent
+# false alarm, and a monitor that always cries wolf trains you to ignore the
+# ones that matter. Restore the entry if food logging ever resumes.
 _CRON_MAX_STALENESS_HOURS = {
     "deterministic-alerts": 1,
     "heartbeat": 2,
@@ -41,7 +46,6 @@ _CRON_MAX_STALENESS_HOURS = {
     "morning-backstop": 26,
     "weekly-training-review": 170,
     "things-sync": 26,
-    "healthkit-sync": 48,
     "strength-sync": 26,
     "run-sync": 26,
     "biometric-sync": 26,
