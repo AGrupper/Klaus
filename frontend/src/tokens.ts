@@ -1,55 +1,106 @@
 /**
- * Design tokens for Klaus Hub — single source of truth for the dark theme.
+ * Design tokens for the Paper Hub — the Native skin, Amit's palette.
  *
- * These values are locked by the Phase 26 UI-SPEC and must not be changed
- * without a corresponding UI-SPEC revision.
+ * Two layers:
+ *  1. CSS custom properties on :root (declared in index.css, defaults below).
+ *     Components reference them via `var(--...)` so the Customize sheet can
+ *     re-theme the whole app at runtime with setProperty — no re-render pass.
+ *  2. These TS exports for the few places that need a literal (canvas, SVG
+ *     attrs, meta tags) or the default values to seed the sheet.
  *
- * Color roles (from UI-SPEC § Color):
- *  - dominant (60%): page background, sidebar, main surface
- *  - secondary (30%): cards, chat panel, bottom tab bar
- *  - accent (10%): unread badge, active tab/sidebar icon, send button, now-line, install CTA
- *  - destructive: sign-out-everywhere CTA, send-error state
- *  - textPrimary: all body copy and headings on dark surfaces
- *  - textSecondary: timestamps, metadata, dimmed past timeline items
- *  - border: dividers, card borders, separator lines
- *  - success: message "sent" checkmark, "connected" indicator
- *  - offline: 4px top border strip on offline banner only
- *  - skeleton: animated shimmer background for in-flight API data
- *
- * Typography (from UI-SPEC § Typography):
- *  Exactly 2 weights: 400 (regular) and 600 (semibold). No 500.
+ * Dynamic tokens (accent / flame / fonts) are user settings persisted by
+ * PATCH /api/settings; applyAppearance() is the single writer of the vars.
  */
 
 // --------------------------------------------------------------------------- //
-// Colors                                                                       //
+// Static palette (Native skin)                                                //
 // --------------------------------------------------------------------------- //
 
-export const dominant = '#0A0A0A'
-export const secondary = '#1A1A1A'
-export const accent = '#6366F1'       // indigo-500 — reserved uses only (see above)
-export const destructive = '#EF4444' // red-500
-export const textPrimary = '#F9FAFB'
-export const textSecondary = '#9CA3AF'
-export const border = '#2A2A2A'
-export const success = '#22C55E'     // green-500
-export const offline = '#F59E0B'     // amber-500 — top border strip only
-export const skeleton = '#1F1F1F'    // animated shimmer background
+export const ground = '#F2F2F6'   // iOS grouped-list background
+export const surface = '#FFFFFF'  // cards / grouped rows
+export const ink = '#1C1C1E'      // primary text
+export const muted = '#85858B'    // secondary text
+export const faint = '#AEAEB4'    // tertiary / disabled
+export const sep = '#E5E5EA'      // hairline separators
+export const good = '#2E7D4F'     // success (send/connected/undo)
+export const goodSoft = '#E7F2EB'
+export const destructive = '#C0392B'
+
+// Defaults for the dynamic tokens — Amit's picks from the mockup gate.
+export const defaultAccent = '#1C2540'  // midnight
+export const defaultFlame = '#B02A2A'   // dark red
+
+export const radius = 12
 
 // --------------------------------------------------------------------------- //
-// Typography                                                                   //
+// Fonts — all four ship with iOS/macOS; zero downloads (Customize sheet)      //
 // --------------------------------------------------------------------------- //
 
-/** System font stack — no web font download. */
-export const fontFamily = 'system-ui, -apple-system, "Segoe UI", sans-serif'
+export type FontChoice = 'default' | 'serif' | 'rounded' | 'mono'
 
-/** Exactly 2 weights per UI-SPEC. */
-export const fontWeightRegular = 400
-export const fontWeightSemibold = 600
+export const FONT_STACKS: Record<FontChoice, { ui: string; display: string }> = {
+  default: {
+    ui: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
+    display: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif',
+  },
+  serif: {
+    ui: 'ui-serif, "New York", Georgia, serif',
+    display: 'ui-serif, "New York", Georgia, serif',
+  },
+  rounded: {
+    ui: 'ui-rounded, -apple-system, BlinkMacSystemFont, sans-serif',
+    display: 'ui-rounded, -apple-system, BlinkMacSystemFont, sans-serif',
+  },
+  mono: {
+    ui: 'ui-monospace, "SF Mono", Menlo, monospace',
+    display: 'ui-monospace, "SF Mono", Menlo, monospace',
+  },
+}
 
-/** Type scale. */
-export const typography = {
-  body:    { fontSize: '16px', fontWeight: fontWeightRegular,  lineHeight: 1.5  },
-  label:   { fontSize: '13px', fontWeight: fontWeightRegular,  lineHeight: 1.4  },
-  heading: { fontSize: '20px', fontWeight: fontWeightSemibold, lineHeight: 1.2  },
-  display: { fontSize: '28px', fontWeight: fontWeightSemibold, lineHeight: 1.15 },
-} as const
+// --------------------------------------------------------------------------- //
+// Appearance application — single writer of the dynamic CSS vars              //
+// --------------------------------------------------------------------------- //
+
+export interface Appearance {
+  accent: string
+  flame: string
+  font: FontChoice
+}
+
+export const defaultAppearance: Appearance = {
+  accent: defaultAccent,
+  flame: defaultFlame,
+  font: 'default',
+}
+
+/** Relative luminance 0..1 — decides readable text color over an accent. */
+export function luminance(hex: string): number {
+  const n = parseInt(hex.slice(1), 16)
+  const r = (n >> 16) & 255
+  const g = (n >> 8) & 255
+  const b = n & 255
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
+}
+
+/** Return a normalized "#RRGGBB" or null if the input is not a valid hex. */
+export function normalizeHex(value: string): string | null {
+  const m = value.trim().replace(/^#/, '')
+  return /^[0-9a-fA-F]{6}$/.test(m) ? `#${m.toUpperCase()}` : null
+}
+
+/**
+ * Apply an appearance to the document. Idempotent; safe to call on every
+ * settings load and on every Customize-sheet interaction (live preview).
+ */
+export function applyAppearance(appearance: Appearance): void {
+  const root = document.documentElement.style
+  const accent = normalizeHex(appearance.accent) ?? defaultAccent
+  const flame = normalizeHex(appearance.flame) ?? defaultFlame
+  const fonts = FONT_STACKS[appearance.font] ?? FONT_STACKS.default
+  root.setProperty('--accent', accent)
+  root.setProperty('--accent-ink', luminance(accent) > 0.62 ? ink : '#FFFFFF')
+  root.setProperty('--flame', flame)
+  root.setProperty('--flame-soft', `color-mix(in srgb, ${flame} 12%, white)`)
+  root.setProperty('--font-ui', fonts.ui)
+  root.setProperty('--font-display', fonts.display)
+}

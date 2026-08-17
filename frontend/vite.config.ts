@@ -34,8 +34,8 @@ export default defineConfig({
         name: 'Klaus',
         short_name: 'Klaus',
         description: 'Your personal AI agent',
-        theme_color: '#000000',
-        background_color: '#000000',
+        theme_color: '#F2F2F6',
+        background_color: '#F2F2F6',
         display: 'standalone',
         start_url: '/',
         icons: [

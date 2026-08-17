@@ -45,8 +45,8 @@ export function InstallBanner() {
         left: 0,
         right: 0,
         zIndex: 40,
-        backgroundColor: '#1A1A1A',
-        borderTop: '1px solid #2A2A2A',
+        backgroundColor: 'var(--surface)',
+        borderTop: '1px solid var(--sep)',
         // On phone: add bottom padding to sit above the BottomTabs (64px) and safe-area inset
         paddingBottom: 'calc(64px + env(safe-area-inset-bottom, 0px))',
         padding: '16px 16px calc(64px + env(safe-area-inset-bottom, 0px))',
@@ -59,7 +59,7 @@ export function InstallBanner() {
             style={{
               fontSize: '16px',
               fontWeight: 600,
-              color: '#F9FAFB',
+              color: 'var(--ink)',
               lineHeight: 1.2,
               margin: '0 0 6px',
             }}
@@ -70,7 +70,7 @@ export function InstallBanner() {
             style={{
               fontSize: '13px',
               fontWeight: 400,
-              color: '#9CA3AF',
+              color: 'var(--muted)',
               lineHeight: 1.4,
               margin: '0 0 12px',
             }}
@@ -84,7 +84,7 @@ export function InstallBanner() {
               style={{
                 fontSize: '13px',
                 fontWeight: 400,
-                color: '#9CA3AF',
+                color: 'var(--muted)',
                 lineHeight: 1.4,
                 margin: '0 0 12px',
               }}
@@ -102,8 +102,8 @@ export function InstallBanner() {
             type="button"
             onClick={() => setExpanded((prev) => !prev)}
             style={{
-              backgroundColor: '#6366F1',
-              color: '#F9FAFB',
+              backgroundColor: 'var(--accent)',
+              color: 'var(--accent-ink)',
               fontSize: '13px',
               fontWeight: 600,
               lineHeight: 1.4,
@@ -126,7 +126,7 @@ export function InstallBanner() {
           style={{
             background: 'none',
             border: 'none',
-            color: '#9CA3AF',
+            color: 'var(--muted)',
             cursor: 'pointer',
             padding: '4px',
             minWidth: '44px',

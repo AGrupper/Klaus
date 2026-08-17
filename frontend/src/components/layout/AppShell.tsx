@@ -1,94 +1,101 @@
 /**
- * AppShell.tsx — Root responsive layout.
+ * AppShell.tsx — root layout for the Paper Hub.
  *
- * Desktop (md: >= 768px): horizontal flex row
- *   [Sidebar 64px] | [main flex-1 min-w-0] | [GlanceRail 280px] | [Claude launcher]
+ * One column, phone-first: Header (date · desktop tabs · gear · bell) over a
+ * scrolling main region, with the phone TabBar fixed at the bottom. Desktop
+ * is the same screens centered in a 560px column (tabs move into the header).
  *
- * Phone (< md): vertical column
- *   [full-width content area] + [BottomTabs fixed 64px at bottom]
+ * The two global sheets (Bell, Customize) mount here so they overlay any
+ * route; their open state is local to the shell, and the bell's unread dot
+ * clears when the sheet opens (markSeen).
  *
- * Children are rendered inside the main content column via React children prop.
- * The active route content is rendered as children (App.tsx passes <Routes>).
- *
- * Breakpoint: Tailwind md (768px). No intermediate breakpoints.
- *
- * Bounded-height root (UAT gap-closure, 2026-07):
- *   The root was previously `minHeight: 100dvh`. A *min*-height lets the
- *   flex container grow past the viewport to fit its content, which means
- *   `<main>`'s `overflow-y-auto` never becomes the scrolling element for
- *   tall content — the container itself grows instead and the document/body
- *   scrolls. Child pages rely on `height: 100%` through this chain to keep
- *   their own scroll regions bounded.
- *   `height: 100dvh` is a definite viewport-relative value (not a
- *   percentage), so it does not depend on html/body/#root having an
- *   explicit height — it bounds the root outright, `<main>` becomes a real
- *   scroll container and keeps child layouts bounded.
+ * Bounded-height root: `height: 100dvh` (not min-height) so <main> stays the
+ * real scroll container (UAT gap-closure lesson, Phase 26).
  */
-import type { ReactNode } from 'react'
-import { Sidebar } from './Sidebar'
-import { BottomTabs } from './BottomTabs'
-import { GlanceRail } from './GlanceRail'
-import { ClaudeLaunchPanel } from './ClaudeLaunchPanel'
+import { useState, type ReactNode } from 'react'
+import { Header } from './Header'
+import { TabBar } from './TabBar'
+import { BellSheet } from '../bell/BellSheet'
+import { CustomizeSheet } from '../customize/CustomizeSheet'
 import { OfflineIndicator } from '../shared/OfflineIndicator'
 import { InstallBanner } from '../shared/InstallBanner'
 import { UpdatePrompt } from '../shared/UpdatePrompt'
-import { UndoToast } from '../tasks/UndoToast'
+import { UndoToast } from '../shared/UndoToast'
+import { useNotifications } from '../../hooks/useNotifications'
+import { useSettings } from '../../hooks/useSettings'
 
 interface AppShellProps {
   children: ReactNode
 }
 
 export function AppShell({ children }: AppShellProps) {
+  const [bellOpen, setBellOpen] = useState(false)
+  const [customizeOpen, setCustomizeOpen] = useState(false)
+  const notifications = useNotifications()
+
+  // Load once at the shell so the account theme applies before any page needs it.
+  useSettings()
+
+  function openBell() {
+    setBellOpen(true)
+    notifications.markSeen()
+  }
+
   return (
-    /*
-     * Outer wrapper: full screen, no scroll on the root element.
-     * Desktop: flex row. Phone: flex column.
-     */
     <div
-      className="flex flex-col md:flex-row"
-      style={{ height: '100dvh', backgroundColor: '#0A0A0A' }}
+      style={{
+        height: '100dvh',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--ground)',
+      }}
     >
-      {/* Fixed offline indicator — appears at the top of the viewport when offline (HUB-03) */}
       <OfflineIndicator />
-
-      {/* "New version available → Refresh" prompt when a new deploy is detected */}
       <UpdatePrompt />
-
-      {/* Fixed iOS install banner — appears at the bottom when on iOS, not standalone, not dismissed (HUB-02 / D-12) */}
       <InstallBanner />
 
-      {/* Desktop only sidebar — 64px wide, full height */}
-      <Sidebar />
-
-      {/*
-       * Main content area.
-       * Desktop: flex-1 with min-w-0 to prevent content overflow past siblings.
-       * Phone: flex-1 to fill available height above the bottom tab bar.
-       */}
-      <main
-        className="hub-main flex-1 min-w-0 overflow-y-auto"
-        style={{ display: 'flex', flexDirection: 'column' }}
+      {/* Centered column — full width on phone, 560px on desktop */}
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          width: '100%',
+          maxWidth: '560px',
+          margin: '0 auto',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
       >
-        {children}
-      </main>
+        <Header
+          unread={notifications.unread}
+          onOpenBell={openBell}
+          onOpenCustomize={() => setCustomizeOpen(true)}
+        />
+        <main
+          className="hub-main"
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          {children}
+        </main>
+      </div>
 
-      {/* Desktop only glance rail — 280px right column */}
-      <GlanceRail />
-
-      {/* Desktop only Claude Project launcher — no embedded API-backed chat */}
-      <ClaudeLaunchPanel />
-
-      {/* Phone only bottom tab bar — fixed 64px, shown above safe-area inset */}
-      <BottomTabs />
-
-      {/*
-       * Global undo toast — mounted here (not inside any page) so it survives
-       * across routes. Deleting a habit on /habits and completing/deleting a
-       * task on /tasks both drive the same zustand undoStore; the toast must
-       * exist regardless of the active route (it was previously rendered only
-       * inside TasksPage, so habit deletes on /habits produced no toast).
-       */}
+      <TabBar />
       <UndoToast />
+
+      <BellSheet
+        open={bellOpen}
+        onClose={() => setBellOpen(false)}
+        items={notifications.items}
+        loading={notifications.isLoading}
+      />
+      <CustomizeSheet open={customizeOpen} onClose={() => setCustomizeOpen(false)} />
     </div>
   )
 }

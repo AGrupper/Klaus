@@ -30,7 +30,7 @@ export function Skeleton({
       role="status"
       aria-label={ariaLabel}
       className={`animate-pulse rounded ${className}`}
-      style={{ backgroundColor: '#1F1F1F' }}
+      style={{ backgroundColor: 'var(--sep)' }}
     >
       <span className="sr-only">{ariaLabel}</span>
     </div>
