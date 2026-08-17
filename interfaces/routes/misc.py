@@ -10,10 +10,12 @@ import asyncio
 import logging
 import os
 from datetime import date as _date_cls, datetime, timedelta
+from typing import Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from core.hub.reviews import _review_for_client
 from interfaces.flags import (
@@ -48,7 +50,58 @@ async def api_get_settings(
     settings = _jsonsafe_doc(
         await loop.run_in_executor(None, _get_hub_settings_store().get)
     )
-    return JSONResponse(content={"push_enabled_at": settings.get("push_enabled_at")})
+    return JSONResponse(content={
+        "push_enabled_at": settings.get("push_enabled_at"),
+        "appearance": settings.get("appearance"),
+        "home_sections": settings.get("home_sections"),
+    })
+
+
+class AppearanceInput(BaseModel):
+    """Customize-sheet appearance: hex colors + one of four native fonts."""
+
+    accent: str = Field(..., pattern=r"^#[0-9A-Fa-f]{6}$")
+    flame: str = Field(..., pattern=r"^#[0-9A-Fa-f]{6}$")
+    font: Literal["default", "serif", "rounded", "mono"] = "default"
+
+
+class SettingsPatchInput(BaseModel):
+    """PATCH /api/settings body — each section optional, replaced whole.
+
+    ``home_sections`` keys are constrained to the known module names so a
+    typo can never grow the settings doc unbounded.
+    """
+
+    appearance: AppearanceInput | None = None
+    home_sections: dict[Literal["leaveby", "stats", "corner", "portfolio"], bool] | None = None
+
+
+@router.patch("/api/settings")
+async def api_patch_settings(
+    body: SettingsPatchInput,
+    _email: str = Depends(require_hub_session),
+) -> JSONResponse:
+    """Persist Customize-sheet choices account-wide (Paper Hub).
+
+    Sections arrive whole (the sheet always sends its full state), so the
+    store's shallow merge cannot half-update a nested object. Returns the
+    merged settings in the same shape as GET.
+    """
+    from memory.firestore_db import _jsonsafe_doc  # lazy import
+
+    patch = body.model_dump(exclude_none=True)
+    if not patch:
+        raise HTTPException(status_code=400, detail={"error": "empty patch"})
+
+    store = _get_hub_settings_store()
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, store.set, patch)
+    settings = _jsonsafe_doc(await loop.run_in_executor(None, store.get))
+    return JSONResponse(content={
+        "push_enabled_at": settings.get("push_enabled_at"),
+        "appearance": settings.get("appearance"),
+        "home_sections": settings.get("home_sections"),
+    })
 
 
 @router.post("/api/routines/{routine}/shadow")

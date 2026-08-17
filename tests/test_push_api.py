@@ -334,17 +334,35 @@ class TestSettingsEndpoint:
                     ws.app.dependency_overrides.clear()
 
     def test_get_settings_filters_retired_fields(self):
+        """Retired fields stay filtered; the response is the fixed allowlist.
+
+        Paper Hub extended the shape with appearance/home_sections, but the
+        original invariant holds: anything else in the stored doc (e.g. the
+        retired telegram_mirror_enabled) never reaches the client.
+        """
         mock_settings_store = MagicMock()
         mock_settings_store.get.return_value = {
             "telegram_mirror_enabled": True,
             "push_enabled_at": "2026-07-01T00:00:00+00:00",
+            "appearance": {"accent": "#1C2540", "flame": "#B02A2A", "font": "default"},
+            "home_sections": {"leaveby": True, "stats": True,
+                              "corner": True, "portfolio": False},
         }
         resp = self._call("get", mock_settings_store)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"push_enabled_at": "2026-07-01T00:00:00+00:00"}
+        body = resp.json()
+        assert set(body.keys()) == {"push_enabled_at", "appearance", "home_sections"}
+        assert body["push_enabled_at"] == "2026-07-01T00:00:00+00:00"
+        assert "telegram_mirror_enabled" not in body
 
-    def test_patch_settings_is_not_registered(self):
+    def test_patch_settings_writes_only_customization_sections(self):
+        """PATCH exists (Paper Hub Customize sheet) but cannot write anything
+        outside appearance/home_sections — a push_enabled_at write attempt is
+        ignored by the model and, carrying nothing else, rejected as empty.
+        This preserves the old test's guarantee that retained push state is
+        never client-writable.
+        """
         mock_settings_store = MagicMock()
         resp = self._call("patch", mock_settings_store, json={"push_enabled_at": None})
-        assert resp.status_code == 405
+        assert resp.status_code == 400
         mock_settings_store.set.assert_not_called()

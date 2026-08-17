@@ -92,6 +92,8 @@ from interfaces.routes import health as health_routes
 from interfaces.routes import hub_health as hub_health_routes
 from interfaces.routes import hub_today as hub_today_routes
 from interfaces.routes import misc as misc_routes
+from interfaces.routes import notifications as notifications_routes
+from interfaces.routes import routines_hub as routines_hub_routes
 from interfaces.routes import sync as sync_routes
 from interfaces.routes import triggers as trigger_routes
 from interfaces.routes import habits as habits_routes
@@ -326,6 +328,8 @@ app.include_router(retired_routes.router)
 app.include_router(hub_today_routes.router)
 app.include_router(hub_health_routes.router)
 app.include_router(misc_routes.router)
+app.include_router(notifications_routes.router)
+app.include_router(routines_hub_routes.router)
 app.include_router(health_routes.router)
 app.include_router(trigger_routes.router)
 app.include_router(cron_routes.router)

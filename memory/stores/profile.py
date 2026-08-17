@@ -375,6 +375,19 @@ class HubSettingsStore:
 
     _DEFAULTS: dict = {
         "push_enabled_at": None,
+        # Paper Hub personalization — written whole by PATCH /api/settings, so
+        # the shallow {**defaults, **stored} merge in get() is safe.
+        "appearance": {
+            "accent": "#1C2540",   # midnight — Amit's accent
+            "flame": "#B02A2A",    # dark red — streaks and urgency
+            "font": "default",     # default | serif | rounded | mono
+        },
+        "home_sections": {
+            "leaveby": True,
+            "stats": True,
+            "corner": True,
+            "portfolio": False,    # survives as an off-by-default toggle
+        },
     }
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:

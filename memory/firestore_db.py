@@ -90,7 +90,9 @@ from memory.stores.tasks import (  # noqa: F401
 
 from memory.stores.habits import (  # noqa: F401
     HabitStore,
+    RoutineStore,
     _is_scheduled,
+    compute_routine_streak,
     compute_streak_and_grid,
 )
 

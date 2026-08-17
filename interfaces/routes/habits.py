@@ -41,6 +41,8 @@ class CreateHabitInput(BaseModel):
     dose: str | None = Field(None, max_length=200)
     slot: Literal["Morning", "Noon", "Evening", "Bedtime"] = "Morning"
     days: str | list[int] = "daily"  # "daily" | weekday ints (Mon=0), D-04
+    # Routine membership (Paper Hub): id of a routines/{id} doc, or None.
+    routine_id: str | None = Field(None, max_length=64)
 
 
 class EditHabitInput(BaseModel):
@@ -57,6 +59,9 @@ class EditHabitInput(BaseModel):
     dose: str | None = Field(None, max_length=200)
     slot: Literal["Morning", "Noon", "Evening", "Bedtime"] | None = None
     days: str | list[int] | None = None
+    # Routine membership (Paper Hub): set to move, None/absent to leave as-is;
+    # moving a habit between routines never touches its completion history.
+    routine_id: str | None = Field(None, max_length=64)
     # Explicit effective_from for a schedule revision (D-19):
     # must be >= today_iso or the route returns 400 (T-28-schedule).
     effective_from: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
