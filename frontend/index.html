@@ -5,7 +5,12 @@
     <!-- apple-touch-icon: 180×180 required for iOS PWA home screen icon -->
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <link rel="icon" type="image/png" sizes="32x32" href="/icon-192.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- maximum-scale/user-scalable lock out pinch- and double-tap zoom (Amit's
+         request); viewport-fit=cover lets the safe-area insets work in the PWA. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="theme-color" content="#F2F2F6" />
     <meta name="description" content="Your personal AI agent" />
     <title>Klaus</title>

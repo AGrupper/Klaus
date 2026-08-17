@@ -1,10 +1,10 @@
 /**
  * CustomizeSheet.tsx — self-serve personalization.
  *
- *  - Accent + flame: a fixed swatch grid of Google Calendar's event colours
- *    (Amit's call — "use the same colours as Google Calendar and just leave
- *    it at that"). No hex field, no eyedropper: a closed set can't produce an
- *    unreadable theme, and the colours are already familiar.
+ *  - Accent + flame: fixed swatch grids of Klaus's own deep palettes. No hex
+ *    field, no eyedropper — a closed set can't produce an unreadable theme.
+ *    (Google Calendar's colours live on the routines, where variety helps;
+ *    Amit compared both and kept these for the app chrome.)
  *  - Font: Notion-style Ag cards — SF / New York / SF Rounded / SF Mono
  *    (all native faces, zero downloads).
  *  - Home sections: iOS-style toggles for leave-by, numbers, corner, portfolio.
@@ -69,7 +69,12 @@ function SwatchGrid({ options, value, onChange, ariaLabel }: SwatchGridProps) {
     <div
       role="radiogroup"
       aria-label={ariaLabel}
-      style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: '12px' }}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: `repeat(${Math.min(options.length, 6)}, 1fr)`,
+        gap: '12px',
+        maxWidth: options.length <= 4 ? '260px' : undefined,
+      }}
     >
       {options.map(({ name, hex }) => {
         const selected = value.toUpperCase() === hex.toUpperCase()

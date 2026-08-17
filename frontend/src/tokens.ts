@@ -54,16 +54,23 @@ export const CALENDAR_COLORS: Array<{ name: string; hex: string }> = [
   { name: 'Graphite', hex: '#616161' },
 ]
 
-/** Accent options: the calendar palette plus Klaus's own midnight. */
+/**
+ * Accent and flame keep Klaus's own deep, low-chroma sets rather than the
+ * calendar palette — Amit preferred these once he saw both. The calendar
+ * colours stay in use for per-routine identity, where variety is the point.
+ */
 export const ACCENT_COLORS: Array<{ name: string; hex: string }> = [
   { name: 'Midnight', hex: defaultAccent },
-  ...CALENDAR_COLORS,
+  { name: 'Black', hex: '#1C1C1E' },
+  { name: 'Deep teal', hex: '#1F4E63' },
+  { name: 'Forest', hex: '#20563A' },
 ]
 
-/** Flame options: the calendar palette plus Klaus's own dark red. */
 export const FLAME_COLORS: Array<{ name: string; hex: string }> = [
-  { name: 'Ember', hex: defaultFlame },
-  ...CALENDAR_COLORS,
+  { name: 'Dark red', hex: defaultFlame },
+  { name: 'Wine', hex: '#8F2D3C' },
+  { name: 'Ember', hex: '#C2410C' },
+  { name: 'Bronze', hex: '#B0762A' },
 ]
 
 export const radius = 12

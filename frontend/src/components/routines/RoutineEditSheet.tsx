@@ -243,16 +243,20 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
             flexDirection: 'column',
             gap: '10px',
             marginTop: '4px',
+            maxWidth: '100%',
+            minWidth: 0,
           }}
         >
-          <span style={{ fontSize: '14px', color: 'var(--ink)', lineHeight: 1.5 }}>
+          <span style={{ fontSize: '14px', color: 'var(--ink)', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
             Delete “{routine?.name}”
             {itemCount > 0 ? ` and its ${itemCount} item${itemCount === 1 ? '' : 's'}?` : '?'}
           </span>
           <button
             onClick={() => handleDelete(true)}
+            className="press"
             style={{
               minHeight: '46px',
+              padding: '10px 12px',
               border: 'none',
               borderRadius: '12px',
               background: 'var(--destructive)',
@@ -260,6 +264,8 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
               fontSize: '15px',
               fontWeight: 600,
               cursor: 'pointer',
+              whiteSpace: 'normal',
+              lineHeight: 1.3,
             }}
           >
             {itemCount > 0 ? 'Delete routine and items' : 'Delete routine'}
@@ -267,8 +273,10 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
           {itemCount > 0 && (
             <button
               onClick={() => handleDelete(false)}
+              className="press"
               style={{
                 minHeight: '46px',
+                padding: '10px 12px',
                 border: 'none',
                 borderRadius: '12px',
                 background: 'var(--ground)',
@@ -276,6 +284,8 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
                 fontSize: '15px',
                 fontWeight: 600,
                 cursor: 'pointer',
+                whiteSpace: 'normal',
+                lineHeight: 1.3,
               }}
             >
               Keep the items, delete only the routine

@@ -47,6 +47,25 @@
 body {
   min-height: 100vh;
   background-color: var(--ground);
+  /* Vertical only: no sideways drift, no pinch zoom, no double-tap zoom.
+     `pan-y` still allows normal scrolling and the sheets' own drag. */
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-text-size-adjust: 100%;
+}
+
+html {
+  overflow-x: hidden;
+  /* Keep the page from rubber-banding sideways on iOS. */
+  overscroll-behavior-x: none;
+}
+
+/* Nothing may push the layout wider than the screen — a single overflowing
+   row (a long button label, a wide sheet) used to make the whole app slide
+   left and right. */
+#root {
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 button {

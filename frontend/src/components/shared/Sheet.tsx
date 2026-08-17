@@ -189,8 +189,10 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
             flex: 1,
             minHeight: 0,
             overflowY: 'auto',
+            overflowX: 'hidden',
             WebkitOverflowScrolling: 'touch',
             overscrollBehavior: 'contain',
+            touchAction: 'pan-y',
             padding: '0 20px',
             // Clear the fixed TabBar (60px) and the home indicator so the
             // final button in a form is never trapped behind them.
