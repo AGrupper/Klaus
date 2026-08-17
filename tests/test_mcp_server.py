@@ -643,7 +643,9 @@ def test_registered_publish_review_structured_output_serializes_atomic_run(
         "transactional",
         transactional_with_retry,
     )
-    monkeypatch.setattr(core.push_sender, "send_push_to_all", lambda *_args: {"sent": 1})
+    monkeypatch.setattr(
+        core.push_sender, "send_push_to_all", lambda *_args, **_kw: {"sent": 1}
+    )
     memory.firestore_db.RoutineRunStore("test-project").start(
         routine="morning",
         target_date="2026-08-11",

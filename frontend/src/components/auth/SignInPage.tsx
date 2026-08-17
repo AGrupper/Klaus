@@ -142,7 +142,7 @@ export function SignInPage() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#0A0A0A',
+        backgroundColor: 'var(--ground)',
         padding: '16px',
       }}
     >
@@ -152,7 +152,7 @@ export function SignInPage() {
           fontSize: '28px',
           fontWeight: 600,
           lineHeight: 1.15,
-          color: '#F9FAFB',
+          color: 'var(--ink)',
           margin: 0,
           marginBottom: '8px',
           letterSpacing: '-0.01em',
@@ -168,7 +168,7 @@ export function SignInPage() {
           fontSize: '16px',
           fontWeight: 400,
           lineHeight: 1.5,
-          color: '#9CA3AF',
+          color: 'var(--muted)',
           margin: 0,
           marginBottom: '40px',
           fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -190,7 +190,7 @@ export function SignInPage() {
           style={{
             marginTop: '16px',
             fontSize: '13px',
-            color: '#9CA3AF',
+            color: 'var(--muted)',
             fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
           }}
         >

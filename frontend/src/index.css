@@ -1,10 +1,37 @@
 @import "tailwindcss";
 
+/* ==========================================================================
+   Paper Hub — Native skin. Static palette lives here; the four dynamic
+   tokens (--accent/--accent-ink/--flame/--flame-soft + fonts) get their
+   runtime values from applyAppearance() in tokens.ts. The declarations
+   below are the pre-JS defaults so first paint is already correct.
+   ========================================================================== */
+
 :root {
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --ground: #F2F2F6;
+  --surface: #FFFFFF;
+  --ink: #1C1C1E;
+  --muted: #85858B;
+  --faint: #AEAEB4;
+  --sep: #E5E5EA;
+  --good: #2E7D4F;
+  --good-soft: #E7F2EB;
+  --destructive: #C0392B;
+
+  /* Dynamic (Customize sheet) — defaults are Amit's mockup picks */
+  --accent: #1C2540;
+  --accent-ink: #FFFFFF;
+  --flame: #B02A2A;
+  --flame-soft: #F7E9E9;
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+
+  --r: 12px;
+
+  font-family: var(--font-ui);
   font-size: 16px;
-  color: #F9FAFB;
-  background-color: #0A0A0A;
+  color: var(--ink);
+  background-color: var(--ground);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -19,22 +46,39 @@
 
 body {
   min-height: 100vh;
-  background-color: #0A0A0A;
+  background-color: var(--ground);
 }
 
-/* Shared spinner keyframes — defined once here instead of injected per
-   component/message (IN-02). Used by the loading spinner and chat send state. */
+button {
+  font-family: inherit;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Shared spinner keyframes (loading screen, buttons). */
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
 }
 
-/* Phone: the bottom tab bar is position:fixed (64px + safe-area), so the main
-   content must reserve that space or the chat input and the last timeline rows
-   render hidden behind it. Desktop (>=768px) has no bottom bar — reset to 0. */
+/* Flame pop when a routine's ring closes. */
+@keyframes flamepop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.3); }
+  100% { transform: scale(1); }
+}
+
+/* Phone: the bottom tab bar is position:fixed (60px + safe-area), so main
+   content reserves that space. Desktop (>=768px) moves tabs into the header —
+   reset to 0. (Class-driven, never inline display — Pitfall 2.) */
 .hub-main {
-  padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(60px + env(safe-area-inset-bottom, 0px));
 }
 @media (min-width: 768px) {
   .hub-main {
@@ -42,56 +86,11 @@ body {
   }
 }
 
-/* Syntax-highlight token colors for chat code blocks (Workstream D).
-   rehype-highlight emits hljs-* token spans; the hub is dark-themed, so this
-   is a compact One-Dark-ish palette rather than a full hljs theme import. */
-.hljs-comment,
-.hljs-quote {
-  color: #7f848e;
-  font-style: italic;
-}
-.hljs-keyword,
-.hljs-selector-tag,
-.hljs-tag {
-  color: #c678dd;
-}
-.hljs-string,
-.hljs-addition,
-.hljs-regexp {
-  color: #98c379;
-}
-.hljs-number,
-.hljs-literal,
-.hljs-symbol,
-.hljs-bullet,
-.hljs-meta {
-  color: #d19a66;
-}
-.hljs-title,
-.hljs-title.function_,
-.hljs-section,
-.hljs-name {
-  color: #61afef;
-}
-.hljs-title.class_,
-.hljs-type,
-.hljs-built_in {
-  color: #e5c07b;
-}
-.hljs-attr,
-.hljs-attribute,
-.hljs-variable,
-.hljs-template-variable,
-.hljs-selector-class,
-.hljs-selector-id {
-  color: #e06c75;
-}
-.hljs-deletion {
-  color: #e06c75;
-}
-.hljs-emphasis {
-  font-style: italic;
-}
-.hljs-strong {
-  font-weight: 600;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

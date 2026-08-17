@@ -140,11 +140,34 @@ def _safe_destination(value: object) -> str:
     return value
 
 
+_EXTERNAL_PUSH_HOSTS = {"claude.ai", "www.claude.ai"}
+
+
+def _safe_external_url(value: object) -> str | None:
+    """Return an https claude.ai URL, or None. The ONLY external push target.
+
+    A push payload is attacker-influenceable only via review text paths that
+    are already validated upstream, but the allowlist keeps a notification
+    tap from ever opening an arbitrary site even if that changes.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return None
+    if parsed.scheme != "https" or parsed.hostname not in _EXTERNAL_PUSH_HOSTS:
+        return None
+    return value
+
+
 def send_push_to_all(
     text: str,
     message_class: str = "default",
     destination: str = "/",
     title: str = "Klaus",
+    external_url: str | None = None,
+    tag: str | None = None,
 ) -> dict:
     """Fan out one push message to every stored subscription.
 
@@ -156,6 +179,12 @@ def send_push_to_all(
         message_class: Selects the TTL from CLASS_TTL (D-07).
         destination: Same-origin absolute Hub path to open from the push.
         title: User-visible notification title.
+        external_url: Optional https claude.ai URL; when present a tap opens
+            it directly (review → "continue in Claude"). Anything failing the
+            allowlist is dropped, never substituted.
+        tag: Optional stable notification tag (review/topic id) so the Hub
+            can dismiss the delivered notification when the item is read
+            in-app. None keeps today's untagged behavior.
 
     Returns:
         {"sent": int, "failed": int, "removed": int}
@@ -171,6 +200,8 @@ def send_push_to_all(
         # regardless. Canonical reviews remain available in the Hub.
         "body": text[:1000],
         "url": _safe_destination(destination),
+        "external_url": _safe_external_url(external_url),
+        "tag": tag if isinstance(tag, str) and 0 < len(tag) <= 128 else None,
         "class": message_class,
     })
     ttl = CLASS_TTL.get(message_class, CLASS_TTL["default"])

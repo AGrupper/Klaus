@@ -1,26 +1,22 @@
 /**
- * App.tsx — Route guard + top-level routing.
+ * App.tsx — route guard + top-level routing (Paper Hub).
  *
- * On mount: calls fetchMe() via useQuery to check the session cookie.
- *   - Loading  → minimal centered spinner on #0A0A0A
- *   - 401/err  → SignInPage (from 26-03)
- *   - Success  → sets zustand auth store + renders AppShell with nested routes
+ * On mount: fetchMe() checks the session cookie.
+ *   - Loading  → centered spinner on the paper ground
+ *   - 401/err  → SignInPage
+ *   - Success  → AppShell with the three routes
  *
  * Routes:
- *   /         → Today timeline (real content: 26-07)
- *   /tasks    → TasksPage (real content: 27-05)
- *   /klaus    → Ask Claude launch surface
- *   /habits   → HabitsPage (real content: 28-04)
- *   /health   → HealthPage (Training / Nutrition / Sleep sub-tabs)
- *   /settings → SettingsPage (Web Push controls)
+ *   /          → HomePage (day glance, Talk to Klaus, timeline)
+ *   /routines  → RoutinesPage (ring cards + flames)
+ *   /settings  → SettingsPage (push, system, sign-out)
  *
- * SW → router bridge (D-12, Phase 29): a `navigator.serviceWorker` 'message'
- * listener calls `navigate(event.data.path ?? '/')` on `{type:'NAVIGATE'}` —
- * a notification tap always opens Today, never chat (sw.ts posts this on
- * notificationclick).
+ * SW → router bridge (D-12, Phase 29): notificationclick posts
+ * {type:'NAVIGATE', path} — a notification tap opens Today; the bell in the
+ * header is the hop to the item itself.
  *
- * Security note: this route guard is a UX gate only. Every /api/* route
- * enforces require_hub_session server-side (26-03). A bypassed guard returns 401.
+ * Security note: this guard is a UX gate only — every /api/* route enforces
+ * require_hub_session server-side. A bypassed guard returns 401s.
  */
 import { useEffect } from 'react'
 import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
@@ -29,56 +25,16 @@ import { fetchMe } from './api/auth'
 import { useAuthStore } from './store/auth'
 import { SignInPage } from './components/auth/SignInPage'
 import { AppShell } from './components/layout/AppShell'
-import { TimelineDay } from './components/timeline/TimelineDay'
-import { AskClaudePage } from './components/claude/AskClaudePage'
-import { ReviewDetailPage } from './components/claude/ReviewDetailPage'
-import { dominant } from './tokens'
-import { TasksPage as TasksPageComponent } from './components/tasks/TasksPage'
-import { HabitsPage as HabitsPageComponent } from './components/habits/HabitsPage'
-import { HealthPage as HealthPageComponent } from './components/health/HealthPage'
-import { SettingsPage as SettingsPageComponent } from './components/settings/SettingsPage'
-import { PushEnableBanner } from './components/shared/PushEnableBanner'
-
-function TodayPage() {
-  return (
-    <>
-      <TimelineDay />
-      {/* First-run push enable banner (D-16) / re-enable notice (D-19) */}
-      <PushEnableBanner />
-    </>
-  )
-}
-
-function TasksPage() {
-  return <TasksPageComponent />
-}
-
-function KlausPage() {
-  return <AskClaudePage />
-}
-
-function HabitsPage() {
-  return <HabitsPageComponent />
-}
-
-function HealthPage() {
-  return <HealthPageComponent />
-}
-
-function SettingsPage() {
-  return <SettingsPageComponent />
-}
-
-// ---------------------------------------------------------------------------
-// Minimal spinner shown while the session check is in-flight
-// ---------------------------------------------------------------------------
+import { HomePage } from './components/home/HomePage'
+import { RoutinesPage } from './components/routines/RoutinesPage'
+import { SettingsPage } from './components/settings/SettingsPage'
 
 function LoadingScreen() {
   return (
     <div
       style={{
         minHeight: '100dvh',
-        backgroundColor: dominant,
+        backgroundColor: 'var(--ground)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -89,8 +45,8 @@ function LoadingScreen() {
         style={{
           width: '32px',
           height: '32px',
-          border: '3px solid #2A2A2A',
-          borderTopColor: '#6366F1',
+          border: '3px solid var(--sep)',
+          borderTopColor: 'var(--accent)',
           borderRadius: '50%',
           animation: 'spin 0.75s linear infinite',
         }}
@@ -98,10 +54,6 @@ function LoadingScreen() {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Root component
-// ---------------------------------------------------------------------------
 
 export default function App() {
   const setSignedIn = useAuthStore((s) => s.setSignedIn)
@@ -115,7 +67,6 @@ export default function App() {
     staleTime: Infinity, // session doesn't change mid-session
   })
 
-  // Sync the zustand store when auth check resolves
   useEffect(() => {
     if (data?.email) {
       setSignedIn(data.email)
@@ -128,9 +79,8 @@ export default function App() {
     }
   }, [isError, signOut])
 
-  // SW → router bridge (D-12): notificationclick posts {type:'NAVIGATE', path}
-  // — a tap always opens Today, never chat. Guarded: serviceWorker may be
-  // undefined (unsupported browser, non-secure context) or absent in jsdom.
+  // SW → router bridge (D-12). Guarded: serviceWorker may be undefined
+  // (unsupported browser, non-secure context) or absent in jsdom.
   useEffect(() => {
     if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return
     const handleMessage = (event: MessageEvent) => {
@@ -154,14 +104,10 @@ export default function App() {
   return (
     <AppShell>
       <Routes>
-        <Route path="/" element={<TodayPage />} />
-        <Route path="/tasks" element={<TasksPage />} />
-        <Route path="/klaus/reviews/:routine/:targetDate" element={<ReviewDetailPage />} />
-        <Route path="/klaus" element={<KlausPage />} />
-        <Route path="/habits" element={<HabitsPage />} />
-        <Route path="/health" element={<HealthPage />} />
+        <Route path="/" element={<HomePage />} />
+        <Route path="/routines" element={<RoutinesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
-        {/* Catch-all: redirect unknown paths to Today */}
+        {/* Old bookmarked paths (tasks/health/klaus) land on Today */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

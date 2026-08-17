@@ -231,13 +231,21 @@ class SubscriptionRoutineCoordinator:
                 "correlation_id": correlation_id,
             }
         review = publication["review"]
-        delivery = await asyncio.to_thread(
-            self._push_sender,
-            review["review_text"],
-            "briefing",
-            routine_review_path(run["routine"], run["target_date"]),
-            routine_review_title(run["routine"]),
-        )
+
+        def _send_fallback_push() -> dict:
+            # kwargs mirror the live publish path (interfaces/mcp/runtime.py):
+            # a session URL is usually absent on a fallback review, so the tap
+            # lands in the Hub; the tag still lets the bell dismiss it.
+            return self._push_sender(
+                review["review_text"],
+                "briefing",
+                routine_review_path(run["routine"], run["target_date"]),
+                routine_review_title(run["routine"]),
+                external_url=review.get("claude_session_url"),
+                tag=f"review:{run['routine']}:{run['target_date']}",
+            )
+
+        delivery = await asyncio.to_thread(_send_fallback_push)
         return {**transitioned, "review": review, "delivery": delivery}
 
 

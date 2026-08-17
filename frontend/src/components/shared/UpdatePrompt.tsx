@@ -44,23 +44,23 @@ export function UpdatePrompt() {
         alignItems: 'center',
         gap: '12px',
         maxWidth: 'calc(100vw - 32px)',
-        backgroundColor: '#1A1A1A',
-        border: '1px solid #2A2A2A',
+        backgroundColor: 'var(--surface)',
+        border: '1px solid var(--sep)',
         borderRadius: '12px',
         padding: '10px 12px 10px 16px',
         boxShadow: '0 8px 24px rgba(0, 0, 0, 0.5)',
         fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
       }}
     >
-      <span style={{ fontSize: '14px', color: '#F9FAFB', whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: '14px', color: 'var(--ink)', whiteSpace: 'nowrap' }}>
         New version available
       </span>
       <button
         onClick={() => updateServiceWorker(true)}
         style={{
           flexShrink: 0,
-          backgroundColor: '#6366F1',
-          color: '#FFFFFF',
+          backgroundColor: 'var(--accent)',
+          color: 'var(--accent-ink)',
           border: 'none',
           borderRadius: '8px',
           padding: '8px 14px',
@@ -79,7 +79,7 @@ export function UpdatePrompt() {
           flexShrink: 0,
           background: 'none',
           border: 'none',
-          color: '#9CA3AF',
+          color: 'var(--muted)',
           fontSize: '14px',
           cursor: 'pointer',
           padding: '8px',

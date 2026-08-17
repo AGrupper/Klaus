@@ -1,86 +1,64 @@
 /**
- * Sanity test for tokens.ts — verifies the locked palette values from UI-SPEC.
- *
- * If these assertions fail, the UI-SPEC was violated. Change the tokens.ts
- * values ONLY if the UI-SPEC is revised.
+ * tokens.test.ts — the runtime theme engine behind the Customize sheet.
  */
-import { describe, it, expect } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
-  accent,
-  dominant,
-  secondary,
-  destructive,
-  textPrimary,
-  textSecondary,
-  border,
-  success,
-  offline,
-  skeleton,
-  fontWeightRegular,
-  fontWeightSemibold,
-  typography,
+  applyAppearance,
+  defaultAccent,
+  FONT_STACKS,
+  luminance,
+  normalizeHex,
 } from './tokens'
 
-describe('tokens', () => {
-  it('accent is #6366F1 (indigo-500 per UI-SPEC)', () => {
-    expect(accent).toBe('#6366F1')
+describe('normalizeHex', () => {
+  it('accepts 6-digit hex with or without #, uppercasing', () => {
+    expect(normalizeHex('#1c2540')).toBe('#1C2540')
+    expect(normalizeHex('b02a2a')).toBe('#B02A2A')
+    expect(normalizeHex('  #B02A2A ')).toBe('#B02A2A')
   })
 
-  it('dominant background is #0A0A0A', () => {
-    expect(dominant).toBe('#0A0A0A')
+  it('rejects short, long, and non-hex input', () => {
+    expect(normalizeHex('#fff')).toBeNull()
+    expect(normalizeHex('1C25401')).toBeNull()
+    expect(normalizeHex('zzzzzz')).toBeNull()
+    expect(normalizeHex('')).toBeNull()
+  })
+})
+
+describe('luminance', () => {
+  it('is low for dark colors and high for light ones', () => {
+    expect(luminance('#000000')).toBe(0)
+    expect(luminance('#FFFFFF')).toBeCloseTo(1)
+    expect(luminance('#1C2540')).toBeLessThan(0.3)
+    expect(luminance('#F2F2F6')).toBeGreaterThan(0.9)
+  })
+})
+
+describe('applyAppearance', () => {
+  const root = () => document.documentElement.style
+
+  it('sets accent, flame, and font vars', () => {
+    applyAppearance({ accent: '#20563A', flame: '#C2410C', font: 'serif' })
+    expect(root().getPropertyValue('--accent')).toBe('#20563A')
+    expect(root().getPropertyValue('--flame')).toBe('#C2410C')
+    expect(root().getPropertyValue('--flame-soft')).toContain('#C2410C')
+    expect(root().getPropertyValue('--font-display')).toBe(FONT_STACKS.serif.display)
   })
 
-  it('secondary surface is #1A1A1A', () => {
-    expect(secondary).toBe('#1A1A1A')
+  it('flips button text to ink over a light accent', () => {
+    applyAppearance({ accent: '#F5E9C8', flame: '#B02A2A', font: 'default' })
+    expect(root().getPropertyValue('--accent-ink')).toBe('#1C1C1E')
+    applyAppearance({ accent: '#1C2540', flame: '#B02A2A', font: 'default' })
+    expect(root().getPropertyValue('--accent-ink')).toBe('#FFFFFF')
   })
 
-  it('destructive is #EF4444 (red-500)', () => {
-    expect(destructive).toBe('#EF4444')
-  })
-
-  it('textPrimary is #F9FAFB', () => {
-    expect(textPrimary).toBe('#F9FAFB')
-  })
-
-  it('textSecondary is #9CA3AF', () => {
-    expect(textSecondary).toBe('#9CA3AF')
-  })
-
-  it('border is #2A2A2A', () => {
-    expect(border).toBe('#2A2A2A')
-  })
-
-  it('success is #22C55E (green-500)', () => {
-    expect(success).toBe('#22C55E')
-  })
-
-  it('offline is #F59E0B (amber-500)', () => {
-    expect(offline).toBe('#F59E0B')
-  })
-
-  it('skeleton shimmer is #1F1F1F', () => {
-    expect(skeleton).toBe('#1F1F1F')
-  })
-
-  it('exactly 2 font weights: 400 and 600 (no 500)', () => {
-    expect(fontWeightRegular).toBe(400)
-    expect(fontWeightSemibold).toBe(600)
-  })
-
-  it('typography scale has the 4 required roles', () => {
-    expect(typography.body.fontSize).toBe('16px')
-    expect(typography.label.fontSize).toBe('13px')
-    expect(typography.heading.fontSize).toBe('20px')
-    expect(typography.display.fontSize).toBe('28px')
-  })
-
-  it('heading and display use semibold weight', () => {
-    expect(typography.heading.fontWeight).toBe(600)
-    expect(typography.display.fontWeight).toBe(600)
-  })
-
-  it('body and label use regular weight', () => {
-    expect(typography.body.fontWeight).toBe(400)
-    expect(typography.label.fontWeight).toBe(400)
+  it('falls back to defaults on invalid hex or font', () => {
+    applyAppearance({
+      accent: 'not-a-color',
+      flame: '#B02A2A',
+      font: 'comic' as never,
+    })
+    expect(root().getPropertyValue('--accent')).toBe(defaultAccent)
+    expect(root().getPropertyValue('--font-ui')).toBe(FONT_STACKS.default.ui)
   })
 })

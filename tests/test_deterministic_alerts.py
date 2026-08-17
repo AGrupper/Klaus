@@ -100,7 +100,7 @@ def test_runner_deduplicates_topics_and_marks_followup_after_success():
             ],
             infrastructure_loader=lambda: [],
             prior_topics_loader=lambda _day: ["followup:f2"],
-            push_sender=lambda text, kind: sent.append((text, kind)) or {"sent": 1},
+            push_sender=lambda text, kind, *_args: sent.append((text, kind)) or {"sent": 1},
             outreach_logger=lambda day, entry: logged.append((day, entry)),
             followup_marker=lambda followup_id: marked.append(followup_id),
         )
@@ -109,6 +109,39 @@ def test_runner_deduplicates_topics_and_marks_followup_after_success():
     assert result["sent"] == 1
     assert marked == ["f1"]
     assert len(logged) == 1
+
+
+def test_alert_push_carries_topic_key_as_tag():
+    """The push tag must equal topic_key so reading in the Hub's bell can
+    dismiss the delivered lock-screen notification (Paper Hub)."""
+    import asyncio
+
+    from core.routines.alerts import run_rule_evaluator
+
+    calls = []
+    asyncio.run(
+        run_rule_evaluator(
+            now=datetime(2026, 8, 8, 14, 0, tzinfo=TZ),
+            snapshot_loader=lambda: {
+                "tasks": [],
+                "habits_pending": [],
+                "today": {"calendar": {"timed": []}},
+            },
+            due_followups_loader=lambda _now: [
+                {"id": "f1", "note": "Call", "due_at": "2026-08-08T14:00:00+03:00"},
+            ],
+            infrastructure_loader=lambda: [],
+            prior_topics_loader=lambda _day: [],
+            push_sender=lambda *args: calls.append(args) or {"sent": 1},
+            outreach_logger=lambda _day, _entry: None,
+            followup_marker=lambda _followup_id: None,
+        )
+    )
+
+    assert len(calls) == 1
+    # (text, message_class, destination, title, external_url, tag)
+    assert calls[0][5] == "followup:f1"
+    assert calls[0][4] is None  # alerts never carry an external URL
 
 
 def test_subscription_heartbeat_collects_retained_infrastructure_checkers():

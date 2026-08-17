@@ -38,6 +38,8 @@ export interface Habit {
   type: HabitType
   dose: string | null
   slot: HabitSlot
+  /** Routine membership (Paper Hub) — null/absent = Unassigned group. */
+  routine_id?: string | null
   schedule_history: ScheduleRevision[]
   status: 'active' | 'completing'
   created_at: string           // ISO timestamp
@@ -73,6 +75,7 @@ export interface CreateHabitInput {
   dose?: string | null
   slot?: HabitSlot
   days?: 'daily' | number[]
+  routine_id?: string | null
 }
 
 /** Input for editing an existing habit. Schedule changes append a revision. */
@@ -82,6 +85,7 @@ export interface EditHabitInput {
   dose?: string | null
   slot?: HabitSlot
   days?: 'daily' | number[]
+  routine_id?: string | null
   /** Forward-only schedule gate (D-19): server rejects past effective_from values. */
   effective_from?: string
 }

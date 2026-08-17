@@ -207,7 +207,15 @@ async def run_rule_evaluator(
         if alert["topic_key"] in seen:
             continue
         delivery = await _resolve(
-            push_sender, alert["text"], alert.get("message_class") or "alert"
+            push_sender,
+            alert["text"],
+            alert.get("message_class") or "alert",
+            "/",
+            "Klaus",
+            None,
+            # Tag = topic_key, the same id /api/notifications reports as
+            # push_tag — reading the alert in the bell clears the lock screen.
+            alert["topic_key"],
         )
         if not isinstance(delivery, dict) or int(delivery.get("sent") or 0) < 1:
             continue

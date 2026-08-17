@@ -1,130 +1,169 @@
 /**
- * SettingsPage.tsx — Minimal /settings skeleton (D-15).
- *
- * Provides the retained Web Push control. usePush().enablePush is wired to a
- * real button click (the only gesture-driven path to the iOS permission
- * prompt, T-29-21), with re-enable and subscribed states.
- *
- * Deliberately kept a skeleton — no sign-out/preferences/app-version here.
- * Sign-out already lives in Sidebar; this page grows in later phases
- * (RESEARCH.md "Settings page growth" note).
+ * SettingsPage.tsx — /settings: push notifications, connection status,
+ * sign-out. Appearance/module choices live in the Customize sheet (gear),
+ * not here — this page holds the plumbing.
  */
 import { useQuery } from '@tanstack/react-query'
+import { fetchAgentStatus } from '../../api/agent'
+import { logout, revokeAll } from '../../api/auth'
 import { usePush } from '../../hooks/usePush'
-import { fetchSettings } from '../../api/settings'
-import {
-  dominant,
-  accent,
-  textPrimary,
-  textSecondary,
-  typography,
-  fontFamily,
-} from '../../tokens'
+import { useAuthStore } from '../../store/auth'
+
+function Section({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <section style={{ margin: '4px 20px 18px' }}>
+      <div
+        style={{
+          fontFamily: 'var(--font-display)',
+          fontSize: '18px',
+          fontWeight: 700,
+          letterSpacing: '-0.02em',
+          marginBottom: '8px',
+          color: 'var(--ink)',
+        }}
+      >
+        {label}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Group({ children }: { children: React.ReactNode }) {
+  return <div style={{ background: 'var(--surface)', borderRadius: 'var(--r)' }}>{children}</div>
+}
+
+const rowText: React.CSSProperties = {
+  fontSize: '13.5px',
+  lineHeight: 1.5,
+  color: 'var(--muted)',
+}
 
 export function SettingsPage() {
   const { permission, enablePush, needsReenable, neverAsked, isSubscribed } = usePush()
-  useQuery({
-    queryKey: ['settings'],
-    queryFn: fetchSettings,
+  const email = useAuthStore((s) => s.email)
+  const storeSignOut = useAuthStore((s) => s.signOut)
+  const { data: agentStatus } = useQuery({
+    queryKey: ['agent', 'status'],
+    queryFn: fetchAgentStatus,
+    staleTime: 10 * 60_000,
   })
 
+  async function handleSignOut(everywhere: boolean) {
+    try {
+      await (everywhere ? revokeAll() : logout())
+    } finally {
+      storeSignOut()
+      window.location.reload()
+    }
+  }
+
   return (
-    <div
-      style={{
-        padding: '24px 16px 40px',
-        maxWidth: '480px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '32px',
-        fontFamily,
-        backgroundColor: dominant,
-        minHeight: '100%',
-      }}
-    >
+    <div style={{ paddingBottom: '24px' }}>
       <h1
         style={{
-          margin: 0,
-          fontSize: typography.heading.fontSize,
-          fontWeight: typography.heading.fontWeight,
-          lineHeight: typography.heading.lineHeight,
-          color: textPrimary,
+          fontFamily: 'var(--font-display)',
+          fontWeight: 700,
+          letterSpacing: '-0.02em',
+          fontSize: '28px',
+          lineHeight: 1.12,
+          margin: '12px 20px 18px',
+          color: 'var(--ink)',
         }}
       >
         Settings
       </h1>
 
-      {/* Push notifications section */}
-      <section aria-labelledby="settings-push-heading">
-        <h2
-          id="settings-push-heading"
-          style={{
-            margin: '0 0 8px',
-            fontSize: typography.body.fontSize,
-            fontWeight: typography.heading.fontWeight,
-            lineHeight: typography.body.lineHeight,
-            color: textPrimary,
-          }}
-        >
-          Push notifications
-        </h2>
+      <Section label="Push notifications">
+        <Group>
+          <div style={{ padding: '12px 14px' }}>
+            {permission === 'unsupported' ? (
+              <p style={rowText}>Push isn&rsquo;t supported on this device or browser.</p>
+            ) : needsReenable ? (
+              <p style={rowText}>
+                Push was turned off in iOS Settings. Re-enable it: Settings &rarr; Notifications
+                &rarr; Klaus &rarr; Allow Notifications.
+              </p>
+            ) : isSubscribed ? (
+              <p style={rowText}>Push is enabled on this device.</p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => void enablePush()}
+                style={{
+                  minHeight: '44px',
+                  padding: '0 16px',
+                  backgroundColor: 'var(--accent)',
+                  color: 'var(--accent-ink)',
+                  border: 'none',
+                  borderRadius: '10px',
+                  fontSize: '15px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                {neverAsked ? 'Enable push' : 'Enable push notifications'}
+              </button>
+            )}
+          </div>
+        </Group>
+      </Section>
 
-        {permission === 'unsupported' ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: typography.label.fontSize,
-              lineHeight: typography.label.lineHeight,
-              color: textSecondary,
-            }}
-          >
-            Push isn&rsquo;t supported on this device or browser.
-          </p>
-        ) : needsReenable ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <p
-              style={{
-                margin: 0,
-                fontSize: typography.label.fontSize,
-                lineHeight: typography.label.lineHeight,
-                color: textSecondary,
-              }}
-            >
-              Push was turned off in iOS Settings. Re-enable it: Settings &rarr;
-              Notifications &rarr; Klaus &rarr; Allow Notifications.
+      <Section label="Klaus connection">
+        <Group>
+          <div style={{ padding: '12px 14px' }}>
+            <p style={rowText}>
+              {agentStatus
+                ? agentStatus.capability_gate.passed
+                  ? `Connector ready · skill ${agentStatus.expected_skill_version}`
+                  : 'Configured · capability proof pending'
+                : 'Checking the Claude connection…'}
             </p>
           </div>
-        ) : isSubscribed ? (
-          <p
-            style={{
-              margin: 0,
-              fontSize: typography.label.fontSize,
-              lineHeight: typography.label.lineHeight,
-              color: textSecondary,
-            }}
-          >
-            Push is enabled on this device.
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={() => void enablePush()}
-            style={{
-              minHeight: '44px',
-              padding: '0 16px',
-              backgroundColor: accent,
-              color: textPrimary,
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: typography.body.fontSize,
-              fontWeight: typography.heading.fontWeight,
-              cursor: 'pointer',
-            }}
-          >
-            {neverAsked ? 'Enable push' : 'Enable push notifications'}
-          </button>
-        )}
-      </section>
+        </Group>
+      </Section>
 
+      <Section label="Account">
+        <Group>
+          <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <p style={rowText}>{email ?? ''}</p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                onClick={() => void handleSignOut(false)}
+                style={{
+                  minHeight: '40px',
+                  padding: '0 14px',
+                  border: 'none',
+                  borderRadius: '10px',
+                  background: 'var(--ground)',
+                  color: 'var(--ink)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Sign out
+              </button>
+              <button
+                onClick={() => void handleSignOut(true)}
+                style={{
+                  minHeight: '40px',
+                  padding: '0 14px',
+                  border: 'none',
+                  borderRadius: '10px',
+                  background: 'var(--ground)',
+                  color: 'var(--destructive)',
+                  fontSize: '14px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Sign out everywhere
+              </button>
+            </div>
+          </div>
+        </Group>
+      </Section>
     </div>
   )
 }

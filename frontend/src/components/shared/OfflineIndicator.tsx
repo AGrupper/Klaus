@@ -29,7 +29,7 @@ export function OfflineIndicator() {
         right: 0,
         zIndex: 50,
         borderTop: '4px solid #F59E0B',
-        backgroundColor: '#1A1A1A',
+        backgroundColor: 'var(--surface)',
         padding: '6px 16px 8px',
         textAlign: 'center',
       }}

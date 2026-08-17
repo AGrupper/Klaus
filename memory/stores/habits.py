@@ -127,6 +127,169 @@ def compute_streak_and_grid(
     return {"streak": streak, "grid": grid}
 
 
+def compute_routine_streak(
+    member_habits: list[dict],
+    completions_by_habit: dict,     # {habit_id: {"YYYY-MM-DD": doc}}
+    today: "date",
+    window_days: int = 365,
+) -> dict:
+    """Pure function — no Firestore calls.
+
+    A routine's streak counts consecutive days on which EVERY member habit
+    scheduled that day was completed. Mirrors ``compute_streak_and_grid``
+    semantics (D-10/D-11/D-12) at the routine level:
+
+    - day with no scheduled members            → neutral (skip)
+    - all scheduled members completed          → +1 to streak
+    - today/yesterday with any member missing  → pending (neutral, backfill window)
+    - older day with any member missing        → missed (break)
+
+    Returns ``{"streak": int, "done_today": bool, "scheduled_today": int,
+    "completed_today": int}``. ``done_today`` is False when nothing is
+    scheduled today — an empty day earns no flame pop.
+    """
+    from datetime import timedelta, date as _date
+
+    if isinstance(today, str):
+        today = _date.fromisoformat(today)
+    yesterday = today - timedelta(days=1)
+
+    def day_state(d: "_date") -> tuple[str, int, int]:
+        """Return (state, scheduled_count, completed_count) for one day."""
+        d_iso = d.isoformat()
+        scheduled = [
+            h for h in member_habits
+            if _is_scheduled(d, h.get("schedule_history", []))
+        ]
+        if not scheduled:
+            return ("not-scheduled", 0, 0)
+        completed = sum(
+            1 for h in scheduled
+            if d_iso in completions_by_habit.get(h.get("id", ""), {})
+        )
+        if completed == len(scheduled):
+            return ("done", len(scheduled), completed)
+        if d in (today, yesterday):
+            return ("pending", len(scheduled), completed)
+        return ("missed", len(scheduled), completed)
+
+    today_state, scheduled_today, completed_today = day_state(today)
+
+    streak = 0
+    for offset in range(window_days):
+        state, _, _ = day_state(today - timedelta(days=offset)) if offset else (
+            today_state, scheduled_today, completed_today
+        )
+        if state == "done":
+            streak += 1
+        elif state == "missed":
+            break
+        # "pending" / "not-scheduled" are neutral — skip without breaking
+
+    return {
+        "streak": streak,
+        "done_today": today_state == "done",
+        "scheduled_today": scheduled_today,
+        "completed_today": completed_today,
+    }
+
+
+class RoutineStore:
+    """Named routine groups that habits belong to (Paper Hub revamp).
+
+    Collection: ``routines/{routine_id}`` —
+        ``{id, name, emoji, order, created_at}`` (+ ``updated_at`` sentinel,
+        stripped by ``_jsonsafe_doc`` on reads).
+
+    Membership lives on the habit (``habits/{id}.routine_id``), not here, so
+    deleting a routine can never orphan completion history — habits are
+    detached (``routine_id=None``) and keep every record (H-28-IV inheritance).
+
+    Read discipline: ``list_all`` / ``get`` never raise — [] / None on error.
+    Write discipline: ``create`` / ``update`` / ``delete`` re-raise after
+    logger.error, matching :class:`HabitStore`.
+    """
+
+    _COLLECTION = "routines"
+
+    def __init__(self, project_id: str, database: str = "(default)") -> None:
+        self._client = base._make_firestore_client(project_id, database)
+        self._col = self._client.collection(self._COLLECTION)
+
+    def create(self, routine: dict) -> dict:
+        """Create a routine. Accepts ``name`` (required), ``emoji``, ``order``."""
+        import uuid
+        from datetime import datetime, timezone
+
+        routine_id = routine.get("id") or uuid.uuid4().hex
+        payload = {
+            "emoji": None,
+            "order": 0,
+            **{k: v for k, v in routine.items() if k != "id"},
+            "id": routine_id,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": firestore.SERVER_TIMESTAMP,
+        }
+        try:
+            self._col.document(routine_id).set(payload)
+        except Exception:
+            logger.error("RoutineStore.create failed (name=%r)", routine.get("name"), exc_info=True)
+            raise
+        return {k: v for k, v in payload.items() if k != "updated_at"}
+
+    def get(self, routine_id: str) -> dict | None:
+        """Return the routine doc, or None. Never raises."""
+        try:
+            snap = self._col.document(routine_id).get()
+            if not snap.exists:
+                return None
+            return _jsonsafe_doc(snap.to_dict() or {})
+        except Exception:
+            logger.warning("RoutineStore.get(%r) failed", routine_id, exc_info=True)
+            return None
+
+    def list_all(self) -> list[dict]:
+        """Return every routine sorted by ``order`` then name. Never raises."""
+        try:
+            routines = [_jsonsafe_doc(snap.to_dict() or {}) for snap in self._col.stream()]
+            routines.sort(key=lambda r: (r.get("order", 0), str(r.get("name", ""))))
+            return routines
+        except Exception:
+            logger.warning("RoutineStore.list_all failed", exc_info=True)
+            return []
+
+    def update(self, routine_id: str, fields: dict) -> dict | None:
+        """PATCH ``name`` / ``emoji`` / ``order`` onto the routine. Re-raises."""
+        try:
+            self._col.document(routine_id).update({
+                **fields,
+                "updated_at": firestore.SERVER_TIMESTAMP,
+            })
+        except Exception:
+            logger.error("RoutineStore.update(%r) failed", routine_id, exc_info=True)
+            raise
+        return self.get(routine_id)
+
+    def delete(self, routine_id: str, habit_store: "HabitStore") -> int:
+        """Delete the routine and detach (never delete) its member habits.
+
+        Members get ``routine_id=None`` and surface in the Hub's Unassigned
+        group — completion history is untouched (preserve-history invariant).
+        Returns the number of detached habits. Re-raises on failure.
+        """
+        try:
+            detached = 0
+            for habit in habit_store.list_active():
+                if habit.get("routine_id") == routine_id:
+                    habit_store.update(habit["id"], {"routine_id": None})
+                    detached += 1
+            self._col.document(routine_id).delete()
+            return detached
+        except Exception:
+            logger.error("RoutineStore.delete(%r) failed", routine_id, exc_info=True)
+            raise
+
+
 class HabitStore:
     """Native habit/supplement store (Phase 28 — HABIT-01).
 
@@ -430,6 +593,33 @@ class HabitStore:
         except Exception:
             logger.warning(
                 "HabitStore.get_completions_for_date(%r) failed", date_str, exc_info=True
+            )
+            return {}
+
+    def get_all_completions(self) -> dict:
+        """Return ``{habit_id: {"YYYY-MM-DD": completion_doc}}`` for every habit.
+
+        One collection-group stream over ``records`` instead of a per-habit
+        query — used by the routines feed, where per-habit queries would
+        multiply. Requires the same ``records.habit_id`` COLLECTION_GROUP
+        index as :meth:`get_history` (DEPLOYMENT.md §21).
+
+        Never raises — returns {} on any Firestore error (and logs loudly,
+        because an empty result zeroes every routine streak at once).
+        """
+        try:
+            grouped: dict = {}
+            for snap in self._client.collection_group("records").stream():
+                d = _jsonsafe_doc(snap.to_dict() or {})
+                habit_id = d.get("habit_id")
+                date_key = d.get("date")
+                if habit_id and date_key:
+                    grouped.setdefault(habit_id, {})[date_key] = d
+            return grouped
+        except Exception:
+            logger.error(
+                "HabitStore.get_all_completions failed — every routine streak "
+                "will read as 0 until fixed.", exc_info=True,
             )
             return {}
 

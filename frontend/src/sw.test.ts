@@ -29,6 +29,7 @@ describe('sw.ts', () => {
   let skipWaiting: ReturnType<typeof vi.fn>
   let matchAll: ReturnType<typeof vi.fn>
   let openWindow: ReturnType<typeof vi.fn>
+  let getNotifications: ReturnType<typeof vi.fn>
 
   beforeEach(async () => {
     vi.resetModules()
@@ -37,6 +38,7 @@ describe('sw.ts', () => {
     skipWaiting = vi.fn()
     matchAll = vi.fn().mockResolvedValue([])
     openWindow = vi.fn().mockResolvedValue(undefined)
+    getNotifications = vi.fn().mockResolvedValue([])
 
     // Precache manifest is normally injected at build time by injectManifest;
     // stub it as empty so precacheAndRoute() doesn't need a real array.
@@ -59,7 +61,7 @@ describe('sw.ts', () => {
       writable: true,
     })
     Object.defineProperty(globalThis, 'registration', {
-      value: { showNotification },
+      value: { showNotification, getNotifications },
       configurable: true,
       writable: true,
     })
@@ -98,10 +100,10 @@ describe('sw.ts', () => {
       'Klaus',
       expect.objectContaining({
         body: 'Hello Sir',
-        data: { url: '/' },
+        data: { url: '/', external_url: null },
       }),
     )
-    // No tag — every push message gets its own notification (D-12).
+    // Untagged payload → untagged notification (D-12 default).
     const [, options] = showNotification.mock.calls[0] as [string, { tag?: string }]
     expect(options.tag).toBeUndefined()
   })
@@ -179,5 +181,101 @@ describe('sw.ts', () => {
     await Promise.all(waitUntilPromises)
 
     expect(openWindow).toHaveBeenCalledWith(reviewPath)
+  })
+
+  // ── Paper Hub additions ──────────────────────────────────────────────
+
+  it('push handler applies a payload tag so the Hub can dismiss it later', async () => {
+    const pushListener = getListener(listeners, 'push')
+    const waitUntilPromises: Promise<unknown>[] = []
+    pushListener({
+      data: {
+        json: () => ({
+          title: 'Klaus Nightly Review',
+          body: 'Protein landed at 158 g.',
+          url: '/',
+          external_url: 'https://claude.ai/chat/abc',
+          tag: 'review:nightly:2026-08-17',
+        }),
+      },
+      waitUntil: (p: Promise<unknown>) => {
+        waitUntilPromises.push(p)
+      },
+    })
+    await Promise.all(waitUntilPromises)
+
+    const [, options] = showNotification.mock.calls[0] as [
+      string,
+      { tag?: string; data: { external_url: string | null } },
+    ]
+    expect(options.tag).toBe('review:nightly:2026-08-17')
+    expect(options.data.external_url).toBe('https://claude.ai/chat/abc')
+  })
+
+  it('notificationclick opens the claude.ai session directly when present', async () => {
+    const postMessage = vi.fn()
+    const focus = vi.fn().mockResolvedValue(undefined)
+    matchAll.mockResolvedValueOnce([{ focus, postMessage }])
+    const notificationClickListener = getListener(listeners, 'notificationclick')
+    const waitUntilPromises: Promise<unknown>[] = []
+
+    notificationClickListener({
+      notification: {
+        close: vi.fn(),
+        data: { url: '/', external_url: 'https://claude.ai/chat/abc-123' },
+      },
+      waitUntil: (p: Promise<unknown>) => {
+        waitUntilPromises.push(p)
+      },
+    })
+    await Promise.all(waitUntilPromises)
+
+    expect(openWindow).toHaveBeenCalledWith('https://claude.ai/chat/abc-123')
+    expect(postMessage).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    'https://evil.example/steal',
+    'http://claude.ai/chat/abc',
+    'https://claude.ai.evil.example/x',
+    'javascript:alert(1)',
+  ])('notificationclick ignores a hostile external_url %j', async (external) => {
+    const postMessage = vi.fn()
+    const focus = vi.fn().mockResolvedValue(undefined)
+    matchAll.mockResolvedValueOnce([{ focus, postMessage }])
+    const notificationClickListener = getListener(listeners, 'notificationclick')
+    const waitUntilPromises: Promise<unknown>[] = []
+
+    notificationClickListener({
+      notification: { close: vi.fn(), data: { url: '/', external_url: external } },
+      waitUntil: (p: Promise<unknown>) => {
+        waitUntilPromises.push(p)
+      },
+    })
+    await Promise.all(waitUntilPromises)
+
+    // Falls through to the in-app path — never opens the hostile URL.
+    expect(openWindow).not.toHaveBeenCalled()
+    expect(postMessage).toHaveBeenCalledWith({ type: 'NAVIGATE', path: '/' })
+  })
+
+  it('DISMISS_NOTIFICATIONS closes only the named tags, or all when omitted', async () => {
+    const closeA = vi.fn()
+    const closeB = vi.fn()
+    const closeUntagged = vi.fn()
+    getNotifications.mockResolvedValue([
+      { tag: 'review:nightly:2026-08-17', close: closeA },
+      { tag: 'followup:f1', close: closeB },
+      { tag: '', close: closeUntagged },
+    ])
+    const messageListener = getListener(listeners, 'message')
+
+    messageListener({ data: { type: 'DISMISS_NOTIFICATIONS', tags: ['followup:f1'] } })
+    await vi.waitFor(() => expect(closeB).toHaveBeenCalledTimes(1))
+    expect(closeA).not.toHaveBeenCalled()
+
+    messageListener({ data: { type: 'DISMISS_NOTIFICATIONS' } })
+    await vi.waitFor(() => expect(closeA).toHaveBeenCalledTimes(1))
+    expect(closeUntagged).toHaveBeenCalledTimes(1)
   })
 })
