@@ -205,7 +205,7 @@ self.addEventListener('push', (event) => {
       }
       await self.registration.showNotification(data.title ?? 'Klaus', {
         body: data.body ?? 'New message from Klaus',
-        icon: '/icon-192.png',
+        icon: '/icon-192-v2.png',
         data: { url: data.url ?? '/', external_url: data.external_url ?? null },
         // Per-item tags are unique (review:<routine>:<date>, topic keys), so
         // D-12's one-notification-per-message still holds; the tag exists so
