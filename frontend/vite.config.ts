@@ -5,10 +5,12 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
 
 // https://vite.dev/config/
-// Stamped into the bundle so the Settings page can show which build is
-// actually running — during UAT we could not tell a live fix from a cached
-// service-worker bundle without it.
-const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
+// Stamped into the bundle so the app can show which build is actually
+// running — during UAT we could not tell a live fix from a cached
+// service-worker bundle without it. Stored as a full ISO instant and
+// formatted in the reader's own time zone at render time; a UTC string meant
+// Amit had to do the arithmetic himself.
+const BUILD_ID = new Date().toISOString()
 
 export default defineConfig({
   define: {

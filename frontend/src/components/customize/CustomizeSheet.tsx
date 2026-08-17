@@ -27,6 +27,18 @@ import type { HomeSections } from '../../api/settings'
 import { Sheet } from '../shared/Sheet'
 import { tapFeedback } from '../../utils/haptics'
 
+/** Render the build instant in the reader's own time zone, not UTC. */
+function formatBuildTime(iso: string): string {
+  const parsed = new Date(iso)
+  if (Number.isNaN(parsed.getTime())) return iso
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed)
+}
+
 const FONT_OPTIONS: Array<{ id: FontChoice; label: string }> = [
   { id: 'default', label: 'Default' },
   { id: 'serif', label: 'Serif' },
@@ -276,7 +288,7 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
         Routines and their items are edited on the Routines tab.
       </p>
       <p style={{ fontSize: '12px', color: 'var(--faint)', lineHeight: 1.5, margin: '2px 2px 10px' }}>
-        Build {__BUILD_ID__} UTC ·{' '}
+        Built {formatBuildTime(__BUILD_ID__)} ·{' '}
         <button
           onClick={() => {
             handleClose()

@@ -127,9 +127,15 @@ export function SettingsPage() {
         <Group>
           <div style={{ padding: '12px 14px' }}>
             <p style={rowText}>
-              Running build <strong style={{ color: 'var(--ink)' }}>{__BUILD_ID__}</strong> (UTC).
-              If this is older than a fix you are expecting, the app is still
-              serving a cached version — close it fully and reopen.
+              Built{' '}
+              <strong style={{ color: 'var(--ink)' }}>
+                {new Intl.DateTimeFormat(undefined, {
+                  dateStyle: 'medium',
+                  timeStyle: 'short',
+                }).format(new Date(__BUILD_ID__))}
+              </strong>{' '}
+              (your time). If this is older than a fix you are expecting, the
+              app is still serving a cached version — close it fully and reopen.
             </p>
           </div>
         </Group>
