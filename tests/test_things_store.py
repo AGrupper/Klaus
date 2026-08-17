@@ -12,6 +12,7 @@ No network, no Firestore — things_tool and the Firestore handle are both patch
 """
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -39,6 +40,21 @@ def _payload(**overrides) -> dict:
     }
     base.update(overrides)
     return base
+
+
+def _expire_freshness() -> None:
+    """Age the process cache past its TTL so the next read re-checks Things.
+
+    Setting `checked_at = 0.0` looks like "long ago" but is not: freshness is
+    measured with `time.monotonic()`, which is seconds since boot. On a fresh
+    CI container that is a small number, so `now - 0.0` can be *less* than the
+    60s TTL and the cache reads as fresh — these tests then silently assert
+    against a refresh that never happened. It passed on a developer machine
+    with days of uptime and failed on a young runner.
+    """
+    store_mod._cache["checked_at"] = (
+        time.monotonic() - store_mod._freshness_ttl() - 1
+    )
 
 
 def _store(sidecar: dict | None = None) -> ThingsTaskStore:
@@ -301,7 +317,7 @@ def test_reads_raise_when_things_is_down_instead_of_serving_the_mirror(failure):
     with _patch_things({"t1": _payload(tt="cached")}):
         store.list()                                   # warm the cache
 
-    store_mod._cache["checked_at"] = 0.0               # force a refresh attempt
+    _expire_freshness()
     with patch.object(store_mod.things, "fetch_history_key", side_effect=failure):
         with pytest.raises(type(failure)):
             store.list()
@@ -327,7 +343,7 @@ def test_staleness_clears_after_a_successful_refresh():
             store.list()
     assert store_mod._cache["stale_reason"] is not None
 
-    store_mod._cache["checked_at"] = 0.0
+    _expire_freshness()
     with _patch_things({"t1": _payload()}):
         store.list()
     assert store_mod._cache["stale_reason"] is None
@@ -353,7 +369,7 @@ def test_unchanged_head_skips_the_delta_pull():
         store = _store()
         store.list()
         assert patched["replay_journal"].call_count == 1   # initial full replay
-        store_mod._cache["checked_at"] = 0.0
+        _expire_freshness()
         store.list()
         assert patched["replay_journal"].call_count == 1, "head unchanged — no pull"
 
@@ -365,7 +381,7 @@ def test_advanced_head_triggers_delta_from_cursor():
         store.list()
         patched["fetch_history_key"].return_value = {
             "history-key": "hk", "latest-server-index": 9}
-        store_mod._cache["checked_at"] = 0.0
+        _expire_freshness()
         store.list()
 
     assert patched["replay_journal"].call_count == 2
