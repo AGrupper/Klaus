@@ -9,10 +9,20 @@
  *    the first tap on controls inside the sheet
  *  - no autoFocus on phones (callers own their focus behavior)
  *
+ * Two fixes from Amit's 2026-08-17 phone UAT:
+ *  - The body is now a real flex-min-height:0 scroll region and reserves the
+ *    tab bar + home indicator at its foot, so a tall form's Save button is
+ *    always reachable (it was rendering under the tab bar before).
+ *  - The grab handle drags: touch/pointer down on the header pulls the sheet
+ *    with your finger and releases into a dismiss past ~90px or a snap back.
+ *
  * Purely presentational: open/close state lives with the caller.
  */
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useVisualViewport } from '../../hooks/useVisualViewport'
+
+/** Drag distance past which the release dismisses instead of snapping back. */
+const DISMISS_THRESHOLD_PX = 90
 
 interface SheetProps {
   open: boolean
@@ -26,6 +36,8 @@ interface SheetProps {
 
 export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: SheetProps) {
   const { keyboardInset } = useVisualViewport()
+  const [dragOffset, setDragOffset] = useState(0)
+  const dragStartY = useRef<number | null>(null)
 
   // Body scroll-lock while open (iOS rubber-band scrolling leaks through
   // the scrim otherwise). Restored on close/unmount.
@@ -37,6 +49,32 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
       document.body.style.overflow = previous
     }
   }, [open])
+
+  // Reset any residual drag whenever the sheet reopens.
+  useEffect(() => {
+    if (open) setDragOffset(0)
+  }, [open])
+
+  function handlePointerDown(event: React.PointerEvent) {
+    dragStartY.current = event.clientY
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }
+
+  function handlePointerMove(event: React.PointerEvent) {
+    if (dragStartY.current === null) return
+    // Downward only — an upward pull shouldn't lift the sheet off its anchor.
+    setDragOffset(Math.max(0, event.clientY - dragStartY.current))
+  }
+
+  function handlePointerEnd() {
+    if (dragStartY.current === null) return
+    const travelled = dragOffset
+    dragStartY.current = null
+    setDragOffset(0)
+    if (travelled > DISMISS_THRESHOLD_PX) onClose()
+  }
+
+  const dragging = dragStartY.current !== null
 
   return (
     <>
@@ -71,72 +109,92 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
           background: 'var(--ground)',
           borderRadius: '20px 20px 0 0',
           boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',
-          transform: open ? 'translateY(0)' : 'translateY(105%)',
-          transition: 'transform 0.32s cubic-bezier(0.3,0.9,0.3,1)',
-          maxHeight: '85dvh',
+          transform: open ? `translateY(${dragOffset}px)` : 'translateY(105%)',
+          transition: dragging
+            ? 'none'
+            : 'transform 0.32s cubic-bezier(0.3,0.9,0.3,1)',
+          // Cap the sheet, then let the body scroll inside it.
+          maxHeight: '88dvh',
           display: 'flex',
           flexDirection: 'column',
+          minHeight: 0,
         }}
       >
-        {/* Grab handle */}
+        {/* Drag zone: handle + header. touchAction none so the browser doesn't
+            claim the gesture for scrolling before we see it. */}
         <div
-          style={{
-            width: '36px',
-            height: '4px',
-            borderRadius: '2px',
-            background: 'var(--faint)',
-            opacity: 0.5,
-            margin: '10px auto 4px',
-            flexShrink: 0,
-          }}
-        />
-        {/* Header */}
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'baseline',
-            gap: '8px',
-            padding: '6px 20px 10px',
-            flexShrink: 0,
-          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerEnd}
+          onPointerCancel={handlePointerEnd}
+          style={{ flexShrink: 0, touchAction: 'none', cursor: 'grab' }}
         >
-          <span
+          <div
             style={{
-              fontFamily: 'var(--font-display)',
-              fontWeight: 700,
-              letterSpacing: '-0.02em',
-              fontSize: '21px',
-              color: 'var(--ink)',
+              width: '36px',
+              height: '5px',
+              borderRadius: '3px',
+              background: 'var(--faint)',
+              opacity: 0.6,
+              margin: '10px auto 4px',
+            }}
+            aria-hidden="true"
+          />
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: '8px',
+              padding: '6px 20px 10px',
             }}
           >
-            {title}
-          </span>
-          {subtitle && (
-            <span style={{ fontSize: '12.5px', color: 'var(--muted)' }}>{subtitle}</span>
-          )}
-          <button
-            onClick={onClose}
-            onMouseDown={(e) => e.preventDefault()}
-            style={{
-              marginLeft: 'auto',
-              border: 'none',
-              background: 'none',
-              color: 'var(--accent)',
-              fontSize: '14px',
-              fontWeight: 600,
-              padding: '4px 0',
-              cursor: 'pointer',
-            }}
-          >
-            Done
-          </button>
+            <span
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                letterSpacing: '-0.02em',
+                fontSize: '21px',
+                color: 'var(--ink)',
+              }}
+            >
+              {title}
+            </span>
+            {subtitle && (
+              <span style={{ fontSize: '12.5px', color: 'var(--muted)' }}>{subtitle}</span>
+            )}
+            <button
+              onClick={onClose}
+              onPointerDown={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.preventDefault()}
+              style={{
+                marginLeft: 'auto',
+                border: 'none',
+                background: 'none',
+                color: 'var(--accent)',
+                fontSize: '14px',
+                fontWeight: 600,
+                padding: '4px 0',
+                cursor: 'pointer',
+              }}
+            >
+              Done
+            </button>
+          </div>
         </div>
-        {/* Body */}
+        {/* Body — the scroll region. min-height:0 is what actually lets it
+            shrink inside the flex column; without it the content pushes the
+            sheet past its max-height and the last controls are unreachable. */}
         <div
           style={{
+            flex: 1,
+            minHeight: 0,
             overflowY: 'auto',
             WebkitOverflowScrolling: 'touch',
-            padding: '0 20px calc(20px + env(safe-area-inset-bottom, 0px))',
+            overscrollBehavior: 'contain',
+            padding: '0 20px',
+            // Clear the fixed TabBar (60px) and the home indicator so the
+            // final button in a form is never trapped behind them.
+            paddingBottom: 'calc(76px + env(safe-area-inset-bottom, 0px))',
           }}
         >
           {children}

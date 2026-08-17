@@ -3,14 +3,23 @@
  *
  * On every successful load, applyAppearance() pushes accent/flame/font into
  * the CSS custom properties, so the theme follows the account across devices.
- * useUpdateSettings PATCHes a section whole (the sheet always sends full
- * state) with an optimistic cache update — the sheet already previews live
- * via applyAppearance, so the network write is fire-and-confirm.
+ *
+ * Write path (fixed after Amit's 2026-08-17 UAT: "I choose a colour, exit,
+ * and it kept the one I picked earlier"). A native colour input emits a
+ * change per drag frame, so the old code fired a PATCH per event and the
+ * responses raced — an early value could land last and win. Now:
+ *   - the CSS variables update instantly (preview never lags the finger),
+ *   - the network write is debounced to the last value,
+ *   - each write carries a sequence number and a stale response is ignored,
+ *     so the newest choice always wins the cache.
  */
-import { useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchSettings, patchSettings, type HubSettings } from '../api/settings'
 import { applyAppearance, defaultAppearance } from '../tokens'
+
+/** Trailing debounce for appearance writes — long enough to swallow a drag. */
+const WRITE_DEBOUNCE_MS = 350
 
 export const defaultHomeSections = {
   leaveby: true,
@@ -41,23 +50,67 @@ export function useSettings() {
 
 export function useUpdateSettings() {
   const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: patchSettings,
-    onMutate: async (patch) => {
+  // Monotonic id per issued write; responses older than `latest` are dropped.
+  const issued = useRef(0)
+  const latest = useRef(0)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const queued = useRef<Partial<Pick<HubSettings, 'appearance' | 'home_sections'>> | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: async (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections'>>) => {
+      const sequence = ++issued.current
+      const settings = await patchSettings(patch)
+      return { settings, sequence }
+    },
+    onSuccess: ({ settings, sequence }) => {
+      if (sequence < latest.current) return // a newer write already landed
+      latest.current = sequence
+      queryClient.setQueryData(['settings'], settings)
+    },
+    onError: () => {
+      // Re-read the server's truth rather than guessing which write survived.
+      void queryClient.invalidateQueries({ queryKey: ['settings'] })
+    },
+  })
+
+  const flush = useCallback(() => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      timer.current = null
+    }
+    const patch = queued.current
+    queued.current = null
+    if (patch) mutation.mutate(patch)
+  }, [mutation])
+
+  /**
+   * Update the local cache immediately, then write once the value settles.
+   * Callers that also want a live CSS preview call applyAppearance themselves
+   * (the sheet does) — this keeps the query cache and the network in step.
+   */
+  const save = useCallback(
+    (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections'>>) => {
       const previous = queryClient.getQueryData<HubSettings>(['settings'])
       if (previous) {
         queryClient.setQueryData<HubSettings>(['settings'], { ...previous, ...patch })
       }
-      return { previous }
+      queued.current = { ...(queued.current ?? {}), ...patch }
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(flush, WRITE_DEBOUNCE_MS)
     },
-    onError: (_err, _patch, context) => {
-      if (context?.previous) {
-        queryClient.setQueryData(['settings'], context.previous)
-        applyAppearance(context.previous.appearance)
-      }
-    },
-    onSuccess: (settings) => {
-      queryClient.setQueryData(['settings'], settings)
-    },
-  })
+    [flush, queryClient],
+  )
+
+  // Never lose a pending write because the sheet closed or the app unmounted.
+  useEffect(() => () => {
+    if (timer.current) {
+      clearTimeout(timer.current)
+      const patch = queued.current
+      queued.current = null
+      if (patch) mutation.mutate(patch)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  return { save, flush, isPending: mutation.isPending }
 }

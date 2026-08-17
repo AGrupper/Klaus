@@ -80,5 +80,9 @@ export function useEditRoutine() {
 
 export function useDeleteRoutine() {
   const queryClient = useQueryClient()
-  return useMutation({ mutationFn: deleteRoutine, onSettled: invalidator(queryClient) })
+  return useMutation({
+    mutationFn: ({ id, withItems }: { id: string; withItems: boolean }) =>
+      deleteRoutine(id, withItems),
+    onSettled: invalidator(queryClient),
+  })
 }

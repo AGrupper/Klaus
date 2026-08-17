@@ -45,6 +45,12 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
   const total = scheduled.length
   const done = routine.completed_today
   const offset = total > 0 ? RING_CIRCUMFERENCE * (1 - done / total) : RING_CIRCUMFERENCE
+  // A routine's own colour drives its ring, checkboxes and flame; without one
+  // it inherits the account's flame colour from the Customize sheet.
+  const tint = routine.color ?? 'var(--flame)'
+  const tintSoft = routine.color
+    ? `color-mix(in srgb, ${routine.color} 12%, white)`
+    : 'var(--flame-soft)'
 
   return (
     <div
@@ -66,7 +72,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
           r={RING_RADIUS}
           fill="none"
           strokeWidth="7"
-          stroke="var(--flame)"
+          stroke={tint}
           strokeLinecap="round"
           strokeDasharray={RING_CIRCUMFERENCE}
           strokeDashoffset={offset}
@@ -87,7 +93,7 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
       </svg>
 
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '7px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginBottom: '7px' }}>
           <span
             style={{
               fontFamily: 'var(--font-display)',
@@ -95,9 +101,10 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
               letterSpacing: '-0.02em',
               fontSize: '17px',
               color: 'var(--ink)',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
+              minWidth: 0,
+              // Wrap rather than clip — "Morning routine" was rendering as
+              // "Morning routi…" on a phone (Amit's UAT).
+              overflowWrap: 'anywhere',
             }}
           >
             {routine.emoji ? `${routine.emoji} ` : ''}
@@ -123,11 +130,12 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
             className={pop ? 'flame-pop' : undefined}
             style={{
               marginLeft: 'auto',
+              flexShrink: 0,
               display: 'inline-flex',
               alignItems: 'center',
               gap: '4px',
-              background: 'var(--flame-soft)',
-              color: 'var(--flame)',
+              background: tintSoft,
+              color: tint,
               borderRadius: '999px',
               padding: '3px 9px',
               fontSize: '12.5px',
@@ -160,8 +168,8 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
                     height: '21px',
                     borderRadius: '50%',
                     flexShrink: 0,
-                    border: `1.5px solid ${habit.done_today ? 'var(--flame)' : 'var(--faint)'}`,
-                    background: habit.done_today ? 'var(--flame)' : 'transparent',
+                    border: `1.5px solid ${habit.done_today ? tint : 'var(--faint)'}`,
+                    background: habit.done_today ? tint : 'transparent',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',

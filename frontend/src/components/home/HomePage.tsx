@@ -257,86 +257,146 @@ function Timeline({ today }: { today: TodayData }) {
   const { data: routines = [] } = useRoutines()
   const now = new Date()
 
-  const mealsCount = today.meals.length
   const totals = today.nutrition_totals
-  const pendingRoutines = routines.filter(
-    (r) => r.scheduled_today > 0 && !r.done_today,
-  )
+  const mealsCount = today.meals.length
+
+  /**
+   * Every row carries a sort key in minutes-from-midnight so the day reads in
+   * real order. Routines sort by their anchor_time — that's what puts the
+   * morning routine above a 10:00 meeting instead of at the bottom of the day
+   * (Amit's UAT: "the morning routine should be the first thing in the day").
+   * Rows with no natural time (all-day events, meal totals) get sentinels that
+   * pin them to the top and bottom respectively.
+   */
+  const TOP = -1
+  const BOTTOM = 24 * 60 + 1
+
+  function minutesOf(iso: string): number {
+    const parsed = new Date(iso)
+    if (Number.isNaN(parsed.getTime())) return BOTTOM
+    const hhmm = new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jerusalem',
+    }).format(parsed)
+    const [h, m] = hhmm.split(':').map(Number)
+    return h * 60 + m
+  }
+
+  function minutesOfClock(hhmm: string): number {
+    const [h, m] = hhmm.split(':').map(Number)
+    return Number.isNaN(h) || Number.isNaN(m) ? BOTTOM : h * 60 + m
+  }
+
+  type Row = {
+    key: string
+    sort: number
+    time: string
+    dot: string
+    title: string
+    sub: string | null
+    dimmed?: boolean
+    onClick?: () => void
+  }
+
+  const rows: Row[] = []
+
+  for (const title of today.calendar.all_day) {
+    rows.push({ key: `allday-${title}`, sort: TOP, time: 'All day', dot: 'var(--faint)', title, sub: null })
+  }
+
+  for (const event of today.calendar.timed) {
+    const past = new Date(event.end).getTime() < now.getTime()
+    rows.push({
+      key: event.id,
+      sort: minutesOf(event.start),
+      time: timeOf(event.start),
+      dot: past ? 'var(--faint)' : 'var(--accent)',
+      title: event.title,
+      sub: event.leave_by ? `leave by ${timeOf(event.leave_by)}` : (event.location ?? null),
+      dimmed: past,
+    })
+  }
+
+  // Training: the calendar already names today's session, so this row exists
+  // only to say where you are in the block. Amit doesn't want the block's
+  // name ("What is Deep Waters Peak Engine?") — just the week count, and only
+  // when a block is actually running.
+  const weekLabel = today.training?.block_context?.match(/Week\s+\d+\s+of\s+\d+/i)?.[0]
+  if (weekLabel) {
+    rows.push({
+      key: 'training',
+      sort: BOTTOM - 1,
+      time: 'Block',
+      dot: 'var(--flame)',
+      title: weekLabel,
+      sub: null,
+    })
+  }
+
+  for (const routine of routines) {
+    if (routine.scheduled_today === 0) continue
+    const anchor = routine.anchor_time
+    rows.push({
+      key: `routine-${routine.id ?? 'unassigned'}`,
+      sort: anchor ? minutesOfClock(anchor) : BOTTOM,
+      time: anchor ?? '',
+      dot: routine.color ?? 'var(--flame)',
+      title: `${routine.emoji ? `${routine.emoji} ` : ''}${routine.name}`,
+      sub: `${routine.completed_today}/${routine.scheduled_today} done · 🔥 ${routine.streak}`,
+      dimmed: routine.done_today,
+      onClick: () => navigate('/routines'),
+    })
+  }
+
+  if (mealsCount > 0) {
+    rows.push({
+      key: 'meals',
+      sort: BOTTOM,
+      time: 'Meals',
+      dot: 'var(--good)',
+      title: `${mealsCount} logged · ${Math.round(totals.kcal)} kcal`,
+      sub: `${Math.round(totals.protein_g)}g protein · ${Math.round(totals.fiber_g)}g fiber`,
+    })
+  }
+
+  rows.sort((a, b) => a.sort - b.sort)
 
   return (
     <Section label="Today">
       <Group>
-        {today.calendar.all_day.map((title, index) => (
-          <Row key={`allday-${title}`} first={index === 0} time="All day" dot="var(--faint)" title={title} sub={null} />
-        ))}
-        {today.calendar.timed.map((event, index) => {
-          const past = new Date(event.end).getTime() < now.getTime()
-          return (
+        {rows.length === 0 && (
+          <div style={{ padding: '14px', fontSize: '14px', color: 'var(--muted)' }}>
+            A clear day, Sir. Nothing scheduled.
+          </div>
+        )}
+        {rows.map((row, index) => {
+          const rendered = (
             <Row
-              key={event.id}
-              first={today.calendar.all_day.length === 0 && index === 0}
-              time={timeOf(event.start)}
-              dot={past ? 'var(--faint)' : 'var(--accent)'}
-              title={event.title}
-              sub={event.leave_by ? `leave by ${timeOf(event.leave_by)}` : (event.location ?? null)}
-              dimmed={past}
+              time={row.time}
+              dot={row.dot}
+              title={row.title}
+              sub={row.sub}
+              dimmed={row.dimmed}
+              first={index === 0}
             />
           )
+          return row.onClick ? (
+            <button
+              key={row.key}
+              onClick={row.onClick}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                border: 'none', background: 'none', padding: 0, cursor: 'pointer',
+              }}
+            >
+              {rendered}
+            </button>
+          ) : (
+            <div key={row.key}>{rendered}</div>
+          )
         })}
-        {today.training && (
-          <Row time="Train" dot="var(--flame)" title={today.training.item} sub={today.training.block_context} />
-        )}
-        {mealsCount > 0 && (
-          <Row
-            time="Meals"
-            dot="var(--good)"
-            title={`${mealsCount} logged · ${Math.round(totals.kcal)} kcal`}
-            sub={`${Math.round(totals.protein_g)}g protein · ${Math.round(totals.fiber_g)}g fiber`}
-          />
-        )}
-        {pendingRoutines.map((routine) => (
-          <button
-            key={routine.id ?? 'unassigned'}
-            onClick={() => navigate('/routines')}
-            style={{
-              display: 'flex',
-              width: '100%',
-              textAlign: 'left',
-              border: 'none',
-              background: 'none',
-              padding: 0,
-              cursor: 'pointer',
-            }}
-          >
-            <span style={{ flex: 1 }}>
-              <Row
-                time=""
-                dot="var(--flame)"
-                title={routine.name}
-                sub={`${routine.completed_today}/${routine.scheduled_today} done · 🔥 ${routine.streak}`}
-              />
-            </span>
-          </button>
-        ))}
-        {today.calendar.all_day.length === 0 &&
-          today.calendar.timed.length === 0 &&
-          !today.training &&
-          mealsCount === 0 &&
-          pendingRoutines.length === 0 && (
-            <div style={{ padding: '14px', fontSize: '14px', color: 'var(--muted)' }}>
-              A clear day, Sir. Nothing scheduled.
-            </div>
-          )}
       </Group>
       {today.coach_note && (
-        <p
-          style={{
-            margin: '10px 2px 0',
-            fontSize: '13.5px',
-            lineHeight: 1.5,
-            color: 'var(--muted)',
-          }}
-        >
+        <p style={{ margin: '10px 2px 0', fontSize: '13.5px', lineHeight: 1.5, color: 'var(--muted)' }}>
           {today.coach_note}
         </p>
       )}
@@ -483,8 +543,23 @@ function PortfolioCard() {
   const snapshots = data?.snapshots ?? []
   const latest = snapshots[0]?.total_ils
   const previous = snapshots[1]?.total_ils
-  if (latest == null) return null
-  const change = previous != null && previous > 0 ? ((latest - previous) / previous) * 100 : null
+  const change = latest != null && previous != null && previous > 0
+    ? ((latest - previous) / previous) * 100
+    : null
+
+  // Klaus publishes a snapshot every week whether or not the research step
+  // produced quotes, so a zero total means "no valuation yet", not ₪0.
+  if (latest == null || latest === 0) {
+    return (
+      <Section label="Portfolio">
+        <Group>
+          <div style={{ padding: '12px 14px', fontSize: '13.5px', color: 'var(--muted)' }}>
+            No valuation yet — Klaus records one with the weekly review.
+          </div>
+        </Group>
+      </Section>
+    )
+  }
 
   return (
     <Section label="Portfolio">

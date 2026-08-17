@@ -27,9 +27,13 @@ _SLOT_TO_ROUTINE = {
     "Evening": "Nightly routine",
     "Bedtime": "Nightly routine",
 }
+# anchor_time places each routine in the Today timeline (morning above the
+# day's first meeting, nightly at the end) instead of collecting at the bottom.
 _ROUTINE_SEEDS = [
-    {"name": "Morning routine", "emoji": "☀️", "order": 0},
-    {"name": "Nightly routine", "emoji": "🌙", "order": 1},
+    {"name": "Morning routine", "emoji": "☀️", "order": 0,
+     "anchor_time": "07:00", "color": "#B0762A"},
+    {"name": "Nightly routine", "emoji": "🌙", "order": 1,
+     "anchor_time": "21:30", "color": "#4C4C8F"},
 ]
 
 

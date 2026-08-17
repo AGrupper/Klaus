@@ -17,7 +17,7 @@ import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -28,12 +28,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_TIME_PATTERN = r"^([01]\d|2[0-3]):[0-5]\d$"
+_HEX_PATTERN = r"^#[0-9A-Fa-f]{6}$"
+
+
 class CreateRoutineInput(BaseModel):
-    """POST /api/routines body — name required, emoji/order optional."""
+    """POST /api/routines body — name required, the rest optional.
+
+    ``anchor_time`` ("HH:MM") places the routine in the Today timeline;
+    ``color`` ("#RRGGBB") overrides the global flame colour for this routine.
+    """
 
     name: str = Field(..., min_length=1, max_length=200)
     emoji: str | None = Field(None, max_length=8)
     order: int = Field(0, ge=0, le=999)
+    anchor_time: str | None = Field(None, pattern=_TIME_PATTERN)
+    color: str | None = Field(None, pattern=_HEX_PATTERN)
 
 
 class EditRoutineInput(BaseModel):
@@ -42,6 +52,8 @@ class EditRoutineInput(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     emoji: str | None = Field(None, max_length=8)
     order: int | None = Field(None, ge=0, le=999)
+    anchor_time: str | None = Field(None, pattern=_TIME_PATTERN)
+    color: str | None = Field(None, pattern=_HEX_PATTERN)
 
 
 def _stores():
@@ -171,19 +183,40 @@ async def api_update_routine(
 @router.post("/api/routines/{routine_id}/delete")
 async def api_delete_routine(
     routine_id: str,
+    with_items: bool = Query(default=False),
     _email: str = Depends(require_hub_session),
 ) -> JSONResponse:
-    """Delete a routine, detaching (never deleting) its member habits.
+    """Delete a routine; ``with_items`` decides what happens to its habits.
 
-    Members drop to the Unassigned group with all history intact — the
-    preserve-history invariant applies to habit completions like everything
-    else. POST rather than DELETE to match the habits surface's verb style.
+    Default (``with_items=false``) detaches members to the Unassigned group
+    with all history intact. ``with_items=true`` soft-deletes each member
+    first, so the Hub's undo toast can restore them and the two-stage delete
+    gate (D-20) still governs the permanent removal.
+
+    POST rather than DELETE to match the habits surface's verb style.
     """
     routine_store, habit_store = _stores()
     loop = asyncio.get_running_loop()
     if await loop.run_in_executor(None, routine_store.get, routine_id) is None:
         raise HTTPException(status_code=404, detail={"error": "routine not found"})
+
+    removed_ids: list[str] = []
+    if with_items:
+        def soft_delete_members() -> list[str]:
+            ids = []
+            for habit in habit_store.list_active():
+                if habit.get("routine_id") == routine_id:
+                    habit_store.soft_delete(habit["id"])
+                    ids.append(habit["id"])
+            return ids
+
+        removed_ids = await loop.run_in_executor(None, soft_delete_members)
+
     detached = await loop.run_in_executor(
         None, routine_store.delete, routine_id, habit_store
     )
-    return JSONResponse(content={"ok": True, "detached_habits": detached})
+    return JSONResponse(content={
+        "ok": True,
+        "detached_habits": detached,
+        "removed_habit_ids": removed_ids,
+    })

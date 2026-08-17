@@ -209,20 +209,26 @@ interface CustomizeSheetProps {
 
 export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
   const { appearance, homeSections } = useSettings()
-  const update = useUpdateSettings()
+  const { save, flush } = useUpdateSettings()
 
   function setAppearance(next: Appearance) {
-    applyAppearance(next) // live preview, instant
-    update.mutate({ appearance: next })
+    applyAppearance(next)   // live preview, instant
+    save({ appearance: next })  // debounced write, last value wins
   }
 
   function toggleSection(id: keyof HomeSections) {
     const next = { ...defaultHomeSections, ...homeSections, [id]: !homeSections[id] }
-    update.mutate({ home_sections: next })
+    save({ home_sections: next })
+  }
+
+  // Closing the sheet commits any value still inside the debounce window.
+  function handleClose() {
+    flush()
+    onClose()
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Customize">
+    <Sheet open={open} onClose={handleClose} title="Customize">
       <Label>Accent</Label>
       <ColorRow
         presets={ACCENT_PRESETS}

@@ -25,6 +25,10 @@ export interface Routine {
   name: string
   emoji: string | null
   order: number
+  /** "HH:MM" — where this routine sits in the Today timeline, or null. */
+  anchor_time: string | null
+  /** "#RRGGBB" overriding the global flame colour, or null. */
+  color: string | null
   streak: number
   done_today: boolean
   scheduled_today: number
@@ -41,6 +45,8 @@ export interface CreateRoutineInput {
   name: string
   emoji?: string | null
   order?: number
+  anchor_time?: string | null
+  color?: string | null
 }
 
 export async function createRoutine(input: CreateRoutineInput): Promise<Routine> {
@@ -60,6 +66,17 @@ export async function editRoutine(
   })
 }
 
-export async function deleteRoutine(id: string): Promise<void> {
-  await apiFetch<{ ok: boolean }>(`/api/routines/${id}/delete`, { method: 'POST' })
+/**
+ * Delete a routine. `withItems` decides its habits' fate: false (default)
+ * detaches them to Unassigned with history intact, true soft-deletes them so
+ * the undo toast can bring them back.
+ */
+export async function deleteRoutine(
+  id: string,
+  withItems = false,
+): Promise<{ removed_habit_ids: string[] }> {
+  return apiFetch<{ ok: boolean; removed_habit_ids: string[] }>(
+    `/api/routines/${id}/delete?with_items=${withItems}`,
+    { method: 'POST' },
+  )
 }

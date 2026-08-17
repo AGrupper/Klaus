@@ -198,8 +198,14 @@ class RoutineStore:
     """Named routine groups that habits belong to (Paper Hub revamp).
 
     Collection: ``routines/{routine_id}`` —
-        ``{id, name, emoji, order, created_at}`` (+ ``updated_at`` sentinel,
-        stripped by ``_jsonsafe_doc`` on reads).
+        ``{id, name, emoji, order, anchor_time, color, created_at}``
+        (+ ``updated_at`` sentinel, stripped by ``_jsonsafe_doc`` on reads).
+
+    ``anchor_time`` is an "HH:MM" wall-clock hint (or None) that places the
+    routine in the Today timeline — a morning routine sorts above a 10:00
+    meeting instead of collecting at the bottom of the day. ``color`` is an
+    optional "#RRGGBB" that overrides the global flame colour for this
+    routine's ring and streak badge.
 
     Membership lives on the habit (``habits/{id}.routine_id``), not here, so
     deleting a routine can never orphan completion history — habits are
@@ -225,6 +231,8 @@ class RoutineStore:
         payload = {
             "emoji": None,
             "order": 0,
+            "anchor_time": None,
+            "color": None,
             **{k: v for k, v in routine.items() if k != "id"},
             "id": routine_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
