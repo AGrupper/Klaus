@@ -69,7 +69,7 @@ async def api_notifications(
     ``claude_session_url`` (client falls back to the Project URL when a
     fallback review has none), alerts/actions open the relevant Hub spot.
     """
-    from core.hub.actions import humanize_action
+    from core.hub.actions import dedupe_actions, humanize_action
     from core.hub.reviews import _review_for_client
     from memory.firestore_db import (  # lazy import
         ActionLogStore,
@@ -126,7 +126,10 @@ async def api_notifications(
             "push_tag": f"review:{routine}:{target_date}",
         })
 
-    for entry in actions:
+    # dedupe_actions collapses the two audit rows D-25 deliberately writes for
+    # one physical write. The rows themselves stay untouched in Firestore and
+    # unmerged on GET /api/activity — this is a rendering decision only.
+    for entry in dedupe_actions(actions):
         # humanize_action returns None for entries the bell suppresses
         # (publish_review duplicates the review item itself).
         title = humanize_action(entry)

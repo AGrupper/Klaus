@@ -7,9 +7,11 @@ but an opaque id.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from core.hub.actions import humanize_action
+from core.hub.actions import dedupe_actions, humanize_action
 
 
 def test_publish_review_is_suppressed():
@@ -78,3 +80,110 @@ def test_missing_action_never_raises():
 def test_multiline_content_is_flattened_to_one_line():
     entry = {"action": "remember", "detail": {"content": "IBI SMART\n  portfolio\ttool"}}
     assert humanize_action(entry) == "Remembered something — IBI SMART portfolio tool"
+
+
+# --- dedupe_actions: one bell row per physical write ------------------------
+#
+# The pairs below are copied from action_log/2026-08-10 and 2026-08-09, where
+# the retired Klaus calendar tool and the MCP gateway each audited the same
+# event create a fraction of a second apart.
+
+def _legacy_create(summary, start, at, entry_id):
+    return {"id": entry_id, "action": "calendar_create", "occasion": "chat",
+            "detail": f"{summary}, {start}", "at": at}
+
+
+def _mcp_create(summary, start, at, entry_id):
+    return {"id": entry_id, "action": "create_calendar_event", "occasion": "interactive",
+            "detail": json.dumps({"summary": summary, "start_iso": start,
+                                  "end_iso": start, "is_workout": True}, sort_keys=True),
+            "at": at}
+
+
+def test_retired_and_mcp_rows_for_one_event_collapse_to_one():
+    entries = [
+        _legacy_create("Easy Run + Strides", "2026-08-11T08:00:00+03:00",
+                       "2026-08-10T21:27:39.551524+03:00", "60121270c32f403b9399e6914bbfc0cb"),
+        _mcp_create("Easy Run + Strides", "2026-08-11T08:00:00+03:00",
+                    "2026-08-10T21:27:39.812352+03:00", "easy-run-strides-2026-08-11-0800"),
+    ]
+    kept = dedupe_actions(entries)
+    assert len(kept) == 1
+    # The MCP row survives: it names the event without trailing a raw ISO stamp.
+    assert humanize_action(kept[0]) == "Added a calendar event — Easy Run + Strides"
+
+
+def test_two_different_events_seconds_apart_both_survive():
+    """The 2026-08-09 race pair: 7s apart, four rows, two real events."""
+    entries = [
+        _legacy_create("Run With Moshe 5K", "2026-10-09T00:00:00+03:00",
+                       "2026-08-09T15:52:04.381051+03:00", "b04fa7a97b2e430ea542048b50ec48da"),
+        _mcp_create("Run With Moshe 5K", "2026-10-09T00:00:00+03:00",
+                    "2026-08-09T15:52:04.542929+03:00", "race-run-with-moshe-5k-2026-10-09"),
+        _legacy_create("Night Run TLV 15K", "2026-10-28T00:00:00+03:00",
+                       "2026-08-09T15:52:11.236505+03:00", "7382246ea1e54a6aa62eafdef79ba9e3"),
+        _mcp_create("Night Run TLV 15K", "2026-10-28T00:00:00+03:00",
+                    "2026-08-09T15:52:11.364178+03:00", "race-night-run-tlv-15k-2026-10-28"),
+    ]
+    kept = dedupe_actions(entries)
+    assert [humanize_action(entry) for entry in kept] == [
+        "Added a calendar event — Run With Moshe 5K",
+        "Added a calendar event — Night Run TLV 15K",
+    ]
+
+
+def test_replayed_audit_under_the_same_id_collapses():
+    """The idempotency gateway re-audits on replay so a crash can't lose it."""
+    entries = [
+        {"id": "task-organize-email-inbox-2026-08-14-r2", "action": "task_create",
+         "detail": '{"title": "Organize entire email inbox"}',
+         "at": "2026-08-14T14:59:07.425550+03:00"},
+        {"id": "task-organize-email-inbox-2026-08-14-r2", "action": "task_create",
+         "detail": '{"title": "Organize entire email inbox"}',
+         "at": "2026-08-14T14:59:41.882110+03:00"},
+    ]
+    assert len(dedupe_actions(entries)) == 1
+
+
+def test_the_same_event_recreated_days_later_shows_twice():
+    entries = [
+        _mcp_create("Upper Body Day", "2026-08-08T13:00:00+03:00",
+                    "2026-08-08T12:39:11.218107+03:00", "upper-body-2026-08-08"),
+        _mcp_create("Upper Body Day", "2026-08-08T13:00:00+03:00",
+                    "2026-08-15T09:02:00.000000+03:00", "upper-body-2026-08-08-redo"),
+    ]
+    assert len(dedupe_actions(entries)) == 2
+
+
+def test_a_lone_retired_row_still_renders():
+    """08-06 and 08-08 have calendar_create with no MCP twin — keep them."""
+    entry = _legacy_create("Easy Run", "2026-08-06T19:30:00+03:00",
+                           "2026-08-06T11:34:50.599634+03:00", "9f1e3abc50e843bfaedeb519c5dae63e")
+    kept = dedupe_actions([entry])
+    assert len(kept) == 1
+    assert humanize_action(kept[0]) == (
+        "Added a calendar event — Easy Run, 2026-08-06T19:30:00+03:00"
+    )
+
+
+def test_unreadable_timestamps_keep_both_rows():
+    """Ambiguity resolves toward showing too much, never toward losing a record."""
+    entries = [
+        _legacy_create("Easy Run", "2026-08-11T08:00:00+03:00", "", "a"),
+        _mcp_create("Easy Run", "2026-08-11T08:00:00+03:00", "not-a-timestamp", "b"),
+    ]
+    assert len(dedupe_actions(entries)) == 2
+
+
+def test_non_calendar_actions_are_never_paired():
+    entries = [
+        {"id": "x1", "action": "remember", "detail": '{"content": "same note"}',
+         "at": "2026-08-14T19:04:52.613143+03:00"},
+        {"id": "x2", "action": "remember", "detail": '{"content": "same note"}',
+         "at": "2026-08-14T19:04:53.100000+03:00"},
+    ]
+    assert len(dedupe_actions(entries)) == 2
+
+
+def test_dedupe_of_nothing_is_nothing():
+    assert dedupe_actions([]) == []
