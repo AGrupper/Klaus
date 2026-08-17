@@ -347,11 +347,14 @@ class TestSettingsEndpoint:
             "appearance": {"accent": "#1C2540", "flame": "#B02A2A", "font": "default"},
             "home_sections": {"leaveby": True, "stats": True,
                               "corner": True, "portfolio": False},
+            "bell_last_seen": "2026-08-17T16:00:00+03:00",
         }
         resp = self._call("get", mock_settings_store)
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        assert set(body.keys()) == {"push_enabled_at", "appearance", "home_sections"}
+        assert set(body.keys()) == {
+            "push_enabled_at", "appearance", "home_sections", "bell_last_seen",
+        }
         assert body["push_enabled_at"] == "2026-07-01T00:00:00+00:00"
         assert "telegram_mirror_enabled" not in body
 

@@ -123,6 +123,18 @@ export function SettingsPage() {
         </Group>
       </Section>
 
+      <Section label="Build">
+        <Group>
+          <div style={{ padding: '12px 14px' }}>
+            <p style={rowText}>
+              Running build <strong style={{ color: 'var(--ink)' }}>{__BUILD_ID__}</strong> (UTC).
+              If this is older than a fix you are expecting, the app is still
+              serving a cached version — close it fully and reopen.
+            </p>
+          </div>
+        </Group>
+      </Section>
+
       <Section label="Account">
         <Group>
           <div style={{ padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>

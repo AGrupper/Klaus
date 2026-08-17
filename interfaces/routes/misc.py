@@ -54,6 +54,7 @@ async def api_get_settings(
         "push_enabled_at": settings.get("push_enabled_at"),
         "appearance": settings.get("appearance"),
         "home_sections": settings.get("home_sections"),
+        "bell_last_seen": settings.get("bell_last_seen"),
     })
 
 
@@ -74,6 +75,9 @@ class SettingsPatchInput(BaseModel):
 
     appearance: AppearanceInput | None = None
     home_sections: dict[Literal["leaveby", "stats", "corner", "portfolio"], bool] | None = None
+    # ISO timestamp of the newest bell item the user has seen. Account-level
+    # so "mark all read" on the phone also clears the dot on the Mac.
+    bell_last_seen: str | None = Field(None, max_length=64)
 
 
 @router.patch("/api/settings")
@@ -101,6 +105,7 @@ async def api_patch_settings(
         "push_enabled_at": settings.get("push_enabled_at"),
         "appearance": settings.get("appearance"),
         "home_sections": settings.get("home_sections"),
+        "bell_last_seen": settings.get("bell_last_seen"),
     })
 
 

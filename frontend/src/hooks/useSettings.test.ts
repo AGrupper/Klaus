@@ -22,6 +22,7 @@ function settingsWith(accent: string): settingsApi.HubSettings {
     push_enabled_at: null,
     appearance: { ...APPEARANCE, accent },
     home_sections: { leaveby: true, stats: true, corner: true, portfolio: false },
+    bell_last_seen: null,
   }
 }
 

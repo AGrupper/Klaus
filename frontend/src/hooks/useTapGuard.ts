@@ -17,11 +17,18 @@
  * few pixels and was never cancelled. Mouse and keyboard input still go
  * through `click`, because such devices never set the touch flag.
  *
+ * A third leak survived even that: if the browser never routes the gesture
+ * through the button at all and simply emits a stray click, there is nothing
+ * local to inspect. So the final authority is `recentlyScrolled()` — a global
+ * latch fed by scroll/touchmove anywhere in the app. Any activation landing
+ * within ~450ms of page movement is spill-over, whatever its shape.
+ *
  * Usage:
  *   const guard = useTapGuard(onPress)
  *   <button {...guard}>…</button>
  */
 import { useCallback, useRef } from 'react'
+import { recentlyScrolled } from '../utils/scrollLatch'
 
 /** Finger travel beyond this is a scroll gesture, not a tap. */
 const MOVE_TOLERANCE_PX = 10
@@ -85,6 +92,9 @@ export function useTapGuard(onPress: () => void) {
         return
       }
 
+      // Final gate: the page must have been still.
+      if (recentlyScrolled()) return
+
       if (event.cancelable) event.preventDefault()
       onPress()
     },
@@ -95,6 +105,8 @@ export function useTapGuard(onPress: () => void) {
     // On a touch device the decision was already made in touchend; a click
     // arriving here is the synthetic one iOS emits after any gesture.
     if (sawTouch) return
+    // Desktop still needs the latch: a trackpad flick can land a click too.
+    if (recentlyScrolled()) return
     onPress()
   }, [onPress])
 

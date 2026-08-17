@@ -12,6 +12,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useTapGuard, __resetTapGuardForTests } from './useTapGuard'
+import { __setLastMovementForTests } from '../utils/scrollLatch'
 
 type Handlers = ReturnType<typeof useTapGuard>
 
@@ -27,6 +28,7 @@ const endAt = (x: number, y: number) =>
 
 beforeEach(() => {
   __resetTapGuardForTests()
+  __setLastMovementForTests(0) // page is still unless a test says otherwise
 })
 
 function tap(h: Handlers, from: [number, number], to: [number, number]) {
@@ -116,6 +118,14 @@ describe('useTapGuard', () => {
     act(() => {
       result.current.onClick()
     })
+    expect(onPress).not.toHaveBeenCalled()
+  })
+
+  it('ignores a tap that lands right after the page scrolled — the leak that survived three fixes', () => {
+    const onPress = vi.fn()
+    const { result } = renderHook(() => useTapGuard(onPress))
+    __setLastMovementForTests(Date.now())
+    tap(result.current, [100, 40], [100, 40]) // looks stationary, but the page just moved
     expect(onPress).not.toHaveBeenCalled()
   })
 

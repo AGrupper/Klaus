@@ -22,6 +22,9 @@ export interface HubSettings {
   push_enabled_at: string | null
   appearance: Appearance
   home_sections: HomeSections
+  /** Newest bell item the user has seen — account-level, so "mark all read"
+   *  on the phone also clears the dot on the Mac. */
+  bell_last_seen: string | null
 }
 
 export async function fetchSettings(): Promise<HubSettings> {
@@ -29,7 +32,7 @@ export async function fetchSettings(): Promise<HubSettings> {
 }
 
 export async function patchSettings(
-  patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections'>>,
+  patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>>,
 ): Promise<HubSettings> {
   return apiFetch<HubSettings>('/api/settings', {
     method: 'PATCH',

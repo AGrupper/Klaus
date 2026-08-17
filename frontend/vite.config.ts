@@ -5,7 +5,15 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'node:path'
 
 // https://vite.dev/config/
+// Stamped into the bundle so the Settings page can show which build is
+// actually running — during UAT we could not tell a live fix from a cached
+// service-worker bundle without it.
+const BUILD_ID = new Date().toISOString().slice(0, 16).replace('T', ' ')
+
 export default defineConfig({
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID),
+  },
   plugins: [
     react(),
     tailwindcss(),

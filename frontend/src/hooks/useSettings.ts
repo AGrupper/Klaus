@@ -54,10 +54,14 @@ export function useUpdateSettings() {
   const issued = useRef(0)
   const latest = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const queued = useRef<Partial<Pick<HubSettings, 'appearance' | 'home_sections'>> | null>(null)
+  const queued = useRef<
+    Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>> | null
+  >(null)
 
   const mutation = useMutation({
-    mutationFn: async (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections'>>) => {
+    mutationFn: async (
+      patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>>,
+    ) => {
       const sequence = ++issued.current
       const settings = await patchSettings(patch)
       return { settings, sequence }
@@ -89,7 +93,7 @@ export function useUpdateSettings() {
    * (the sheet does) — this keeps the query cache and the network in step.
    */
   const save = useCallback(
-    (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections'>>) => {
+    (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>>) => {
       const previous = queryClient.getQueryData<HubSettings>(['settings'])
       if (previous) {
         queryClient.setQueryData<HubSettings>(['settings'], { ...previous, ...patch })

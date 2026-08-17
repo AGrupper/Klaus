@@ -388,6 +388,9 @@ class HubSettingsStore:
             "corner": True,
             "portfolio": False,    # survives as an off-by-default toggle
         },
+        # Bell read-cursor. Account-level, not per-device: marking everything
+        # read on the phone must clear the dot on the Mac too.
+        "bell_last_seen": None,
     }
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:
