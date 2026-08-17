@@ -1,23 +1,21 @@
 /**
- * useTapGuard — ignore "taps" that were really a scroll gesture.
+ * useTapGuard — only a deliberate, stationary tap may fire an action.
  *
- * iOS fires a click on release even when the finger travelled, so pulling the
- * page down with a thumb resting on a header button opened that button's
- * sheet (Amit's UAT: "every time I pull down it tries to open the
- * customization tab").
+ * The bug (Amit's UAT, twice): pulling the page down with a thumb on a header
+ * button opened that button's sheet. iOS still emits a `click` on release
+ * after a drag, and two earlier attempts at *detecting* the drag both leaked:
  *
- * The first attempt watched pointer events alone and still let it through:
- * when iOS hands a gesture to the scroller it stops sending pointermove and
- * fires pointercancel instead, so nothing ever marked the gesture as moved.
- * This version watches three signals:
+ *   - watching `pointermove` failed because iOS stops sending pointer moves
+ *     once the scroller claims the gesture,
+ *   - watching `touchmove` failed because a claimed gesture can end in
+ *     `touchcancel` with no move ever reported — leaving the fallback click
+ *     path to fire the action.
  *
- *   1. touchmove — the reliable one on iOS; touch events keep targeting the
- *      original element for the whole gesture,
- *   2. pointercancel — iOS's "the scroller has taken over" signal,
- *   3. pointermove — desktop/pen, where touch events never fire.
- *
- * A clean tap is handled in touchend (with preventDefault so the synthetic
- * click can't fire it twice); mouse input still goes through onClick.
+ * So this no longer tries to classify the gesture from movement alone. On any
+ * device that has produced a touch, `click` is permanently distrusted and the
+ * ONLY thing that fires the action is a `touchend` that both stayed within a
+ * few pixels and was never cancelled. Mouse and keyboard input still go
+ * through `click`, because such devices never set the touch flag.
  *
  * Usage:
  *   const guard = useTapGuard(onPress)
@@ -27,89 +25,76 @@ import { useCallback, useRef } from 'react'
 
 /** Finger travel beyond this is a scroll gesture, not a tap. */
 const MOVE_TOLERANCE_PX = 10
-/** How long a touch-handled press suppresses the trailing synthetic click. */
-const CLICK_SUPPRESS_MS = 500
+
+/**
+ * Set the first time any touch is seen anywhere in the app. Module-level on
+ * purpose: once we know this is a touch device, every guarded button should
+ * distrust synthetic clicks, including ones mounted later.
+ */
+let sawTouch = false
 
 export function useTapGuard(onPress: () => void) {
   const start = useRef<{ x: number; y: number } | null>(null)
-  const moved = useRef(false)
-  const handledByTouch = useRef(false)
+  const disqualified = useRef(false)
 
-  const begin = useCallback((x: number, y: number) => {
-    start.current = { x, y }
-    moved.current = false
+  const onTouchStart = useCallback((event: React.TouchEvent) => {
+    sawTouch = true
+    const touch = event.touches[0]
+    start.current = touch ? { x: touch.clientX, y: touch.clientY } : null
+    disqualified.current = false
   }, [])
 
-  const track = useCallback((x: number, y: number) => {
-    if (!start.current) return
+  const onTouchMove = useCallback((event: React.TouchEvent) => {
+    const touch = event.touches[0]
+    if (!touch || !start.current) return
     if (
-      Math.abs(x - start.current.x) > MOVE_TOLERANCE_PX ||
-      Math.abs(y - start.current.y) > MOVE_TOLERANCE_PX
+      Math.abs(touch.clientX - start.current.x) > MOVE_TOLERANCE_PX ||
+      Math.abs(touch.clientY - start.current.y) > MOVE_TOLERANCE_PX
     ) {
-      moved.current = true
+      disqualified.current = true
     }
   }, [])
 
-  const onTouchStart = useCallback(
-    (event: React.TouchEvent) => {
-      const touch = event.touches[0]
-      if (touch) begin(touch.clientX, touch.clientY)
-    },
-    [begin],
-  )
+  /** The system took the gesture (scroll, swipe-back, notification pull). */
+  const onTouchCancel = useCallback(() => {
+    disqualified.current = true
+    start.current = null
+  }, [])
 
-  const onTouchMove = useCallback(
-    (event: React.TouchEvent) => {
-      const touch = event.touches[0]
-      if (touch) track(touch.clientX, touch.clientY)
-    },
-    [track],
-  )
+  /** Belt and braces: a pointer cancel means the same thing. */
+  const onPointerCancel = useCallback(() => {
+    disqualified.current = true
+  }, [])
 
   const onTouchEnd = useCallback(
     (event: React.TouchEvent) => {
-      handledByTouch.current = true
-      window.setTimeout(() => {
-        handledByTouch.current = false
-      }, CLICK_SUPPRESS_MS)
-      if (moved.current) {
-        moved.current = false
+      const began = start.current
+      const wasDisqualified = disqualified.current
+      start.current = null
+      disqualified.current = false
+      if (!began || wasDisqualified) return
+
+      // Release point must also be near the start — touchmove can be starved
+      // on a fast flick, so check the final position directly.
+      const touch = event.changedTouches?.[0]
+      if (
+        touch &&
+        (Math.abs(touch.clientX - began.x) > MOVE_TOLERANCE_PX ||
+          Math.abs(touch.clientY - began.y) > MOVE_TOLERANCE_PX)
+      ) {
         return
       }
-      // Consume the gesture here so the trailing synthetic click is a no-op.
+
       if (event.cancelable) event.preventDefault()
       onPress()
     },
     [onPress],
   )
 
-  const onPointerDown = useCallback(
-    (event: React.PointerEvent) => {
-      if (event.pointerType === 'touch') return // touch handlers own this
-      begin(event.clientX, event.clientY)
-    },
-    [begin],
-  )
-
-  const onPointerMove = useCallback(
-    (event: React.PointerEvent) => {
-      if (event.pointerType === 'touch') return
-      track(event.clientX, event.clientY)
-    },
-    [track],
-  )
-
-  /** iOS fires this the moment the scroller claims the gesture. */
-  const onPointerCancel = useCallback(() => {
-    moved.current = true
-  }, [])
-
   const onClick = useCallback(() => {
-    if (handledByTouch.current) return // already handled in touchend
-    if (moved.current) {
-      moved.current = false
-      return
-    }
+    // On a touch device the decision was already made in touchend; a click
+    // arriving here is the synthetic one iOS emits after any gesture.
+    if (sawTouch) return
     onPress()
   }, [onPress])
 
@@ -117,9 +102,13 @@ export function useTapGuard(onPress: () => void) {
     onTouchStart,
     onTouchMove,
     onTouchEnd,
-    onPointerDown,
-    onPointerMove,
+    onTouchCancel,
     onPointerCancel,
     onClick,
   }
+}
+
+/** Test-only: reset the module-level touch-device latch. */
+export function __resetTapGuardForTests(): void {
+  sawTouch = false
 }

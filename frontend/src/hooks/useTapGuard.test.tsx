@@ -1,46 +1,40 @@
 /**
  * useTapGuard — the pull-to-refresh bug from Amit's UAT: dragging the page
- * down with a thumb on a header button still fired that button's click, so
- * every pull opened the Customize sheet.
+ * down with a thumb on a header button fired that button, opening Customize.
+ *
+ * Two earlier fixes leaked, so the contract is now strict: once any touch is
+ * seen, ONLY a clean touchend fires the action; synthetic clicks never do.
+ * These cases cover each way iOS can end a claimed gesture.
  *
  * Driven through the hook's handlers rather than fireEvent: jsdom has no
- * PointerEvent or TouchEvent, so synthesised events arrive without
- * coordinates and every gesture would look stationary.
+ * TouchEvent or PointerEvent, so synthesised events carry no coordinates.
  */
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
-import { useTapGuard } from './useTapGuard'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useTapGuard, __resetTapGuardForTests } from './useTapGuard'
 
 type Handlers = ReturnType<typeof useTapGuard>
 
-function touch(x: number, y: number) {
-  return { touches: [{ clientX: x, clientY: y }] } as unknown as React.TouchEvent
-}
+const touchAt = (x: number, y: number) =>
+  ({ touches: [{ clientX: x, clientY: y }] }) as unknown as React.TouchEvent
 
-function touchEnd() {
-  return { cancelable: true, preventDefault: vi.fn() } as unknown as React.TouchEvent
-}
+const endAt = (x: number, y: number) =>
+  ({
+    changedTouches: [{ clientX: x, clientY: y }],
+    cancelable: true,
+    preventDefault: vi.fn(),
+  }) as unknown as React.TouchEvent
 
-/** A finger gesture: down → move → up, then iOS's trailing synthetic click. */
-function fingerGesture(h: Handlers, from: [number, number], to: [number, number]) {
+beforeEach(() => {
+  __resetTapGuardForTests()
+})
+
+function tap(h: Handlers, from: [number, number], to: [number, number]) {
   act(() => {
-    h.onTouchStart(touch(from[0], from[1]))
-    h.onTouchMove(touch(to[0], to[1]))
-    h.onTouchEnd(touchEnd())
-    h.onClick()
-  })
-}
-
-/** A mouse gesture — no touch events fire at all. */
-function mouseGesture(h: Handlers, from: [number, number], to: [number, number]) {
-  act(() => {
-    h.onPointerDown({
-      pointerType: 'mouse', clientX: from[0], clientY: from[1],
-    } as React.PointerEvent)
-    h.onPointerMove({
-      pointerType: 'mouse', clientX: to[0], clientY: to[1],
-    } as React.PointerEvent)
-    h.onClick()
+    h.onTouchStart(touchAt(from[0], from[1]))
+    h.onTouchMove(touchAt(to[0], to[1]))
+    h.onTouchEnd(endAt(to[0], to[1]))
+    h.onClick() // iOS emits this afterwards regardless
   })
 }
 
@@ -48,58 +42,89 @@ describe('useTapGuard', () => {
   it('fires once on a stationary tap', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
-    fingerGesture(result.current, [100, 40], [100, 40])
+    tap(result.current, [100, 40], [100, 40])
     expect(onPress).toHaveBeenCalledTimes(1)
   })
 
   it('tolerates a few pixels of finger wobble', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
-    fingerGesture(result.current, [100, 40], [104, 46])
+    tap(result.current, [100, 40], [104, 46])
     expect(onPress).toHaveBeenCalledTimes(1)
   })
 
-  it('swallows the gesture when the finger dragged down (pull-to-refresh)', () => {
+  it('ignores a drag reported through touchmove', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
-    fingerGesture(result.current, [100, 40], [104, 190])
+    tap(result.current, [100, 40], [104, 190])
     expect(onPress).not.toHaveBeenCalled()
   })
 
-  it('swallows a horizontal swipe too', () => {
-    const onPress = vi.fn()
-    const { result } = renderHook(() => useTapGuard(onPress))
-    fingerGesture(result.current, [100, 40], [260, 44])
-    expect(onPress).not.toHaveBeenCalled()
-  })
-
-  it('treats pointercancel as a scroll — iOS stops sending moves once the scroller takes over', () => {
+  it('ignores a flick where touchmove never fired — the release point decides', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
     act(() => {
-      result.current.onTouchStart(touch(100, 40))
-      result.current.onPointerCancel()
-      result.current.onTouchEnd(touchEnd())
+      result.current.onTouchStart(touchAt(100, 40))
+      result.current.onTouchEnd(endAt(100, 260)) // no move event at all
       result.current.onClick()
     })
     expect(onPress).not.toHaveBeenCalled()
   })
 
-  it('recovers: a drag then a clean tap still fires once', () => {
+  it('ignores a gesture the system cancelled — the case that kept leaking', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
-    fingerGesture(result.current, [100, 40], [100, 200])
+    act(() => {
+      result.current.onTouchStart(touchAt(100, 40))
+      result.current.onTouchCancel()
+      result.current.onClick() // no touchend at all — only the synthetic click
+    })
     expect(onPress).not.toHaveBeenCalled()
-    fingerGesture(result.current, [100, 40], [100, 41])
+  })
+
+  it('ignores a pointercancel gesture too', () => {
+    const onPress = vi.fn()
+    const { result } = renderHook(() => useTapGuard(onPress))
+    act(() => {
+      result.current.onTouchStart(touchAt(100, 40))
+      result.current.onPointerCancel()
+      result.current.onTouchEnd(endAt(100, 42))
+      result.current.onClick()
+    })
+    expect(onPress).not.toHaveBeenCalled()
+  })
+
+  it('recovers: a cancelled gesture then a clean tap still fires once', () => {
+    const onPress = vi.fn()
+    const { result } = renderHook(() => useTapGuard(onPress))
+    act(() => {
+      result.current.onTouchStart(touchAt(100, 40))
+      result.current.onTouchCancel()
+      result.current.onClick()
+    })
+    expect(onPress).not.toHaveBeenCalled()
+    tap(result.current, [100, 40], [100, 41])
     expect(onPress).toHaveBeenCalledTimes(1)
+  })
+
+  it('a bare click on a touch device never fires the action', () => {
+    const onPress = vi.fn()
+    const { result } = renderHook(() => useTapGuard(onPress))
+    // Establish the device as touch-capable, then send a lone click.
+    tap(result.current, [10, 10], [10, 10])
+    onPress.mockClear()
+    act(() => {
+      result.current.onClick()
+    })
+    expect(onPress).not.toHaveBeenCalled()
   })
 
   it('still works for mouse input, where touch events never fire', () => {
     const onPress = vi.fn()
     const { result } = renderHook(() => useTapGuard(onPress))
-    mouseGesture(result.current, [100, 40], [101, 41])
+    act(() => {
+      result.current.onClick()
+    })
     expect(onPress).toHaveBeenCalledTimes(1)
-    mouseGesture(result.current, [100, 40], [100, 300])
-    expect(onPress).toHaveBeenCalledTimes(1) // the drag was ignored
   })
 })

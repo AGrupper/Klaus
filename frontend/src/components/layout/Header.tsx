@@ -46,6 +46,11 @@ function HeaderButton({
       aria-label={label}
       className="press"
       style={{
+        // The header does not scroll, so a touch starting here has nothing to
+        // pan. `none` stops the browser handing the gesture to a scroller at
+        // all — which is what produced the cancelled-gesture click that kept
+        // opening Customize on every pull-down.
+        touchAction: 'none',
         position: 'relative',
         width: '38px',
         height: '38px',
