@@ -117,7 +117,7 @@ class SubscriptionRoutineCoordinator:
             "trigger": trigger,
             "model": _MODELS[routine],
             "mcp_url": f"{self._public_url}/mcp/routine",
-            "skill_version": "7.5.0",
+            "skill_version": "7.6.0",
             "delivery_mode": delivery_mode,
         }
         try:

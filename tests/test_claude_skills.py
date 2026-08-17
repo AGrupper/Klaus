@@ -153,7 +153,7 @@ def test_skill_version_is_consistent_everywhere():
     """
     from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.5.0"
+    assert EXPECTED_SKILL_VERSION == "7.6.0"
     assert f'"skill_version": "{EXPECTED_SKILL_VERSION}"' in (
         ROOT / "core" / "routines" / "subscription.py"
     ).read_text()

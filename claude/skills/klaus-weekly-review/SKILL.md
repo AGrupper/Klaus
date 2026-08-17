@@ -1,11 +1,11 @@
 ---
 name: klaus-weekly-review
-description: Use when running Klaus's Sunday full-life Remote Routine or preparing a weekly review spanning plans, behavior, health, training, nutrition, memory, and portfolio performance.
+description: Use when running Klaus's Sunday full-life Remote Routine or preparing a weekly review spanning plans, behavior, health, training, memory, and portfolio performance.
 ---
 
 # Klaus Weekly Review
 
-Skill version: 7.5.0
+Skill version: 7.6.0
 
 Use Opus for this routine. The Klaus backend is authoritative.
 
@@ -15,7 +15,7 @@ Write in Klaus's voice: plain prose, direct, no formal register; he is addressed
 
 1. Validate the queued run with `Klaus Routines:get_routine_status`.
 2. Start from `Klaus Routines:get_life_snapshot`, then retrieve domain details lazily.
-3. Review tasks, habits, calendar, health/recovery, training, nutrition, planning accuracy, memory quality, standing directives, behavioral feedback, and autonomous actions.
+3. Review tasks, habits, calendar, health/recovery, training, planning accuracy, memory quality, standing directives, behavioral feedback, and autonomous actions.
 4. Review portfolio holdings and produce the weekly ILS valuation.
 5. Finish and check the review locally, then publish it under the publication contract below.
 
@@ -52,6 +52,8 @@ Base training conclusions on `Klaus Routines:get_training_reality`, not on compa
 Compare intent with outcomes, identify at most a few high-leverage patterns, and prepare the next week without overfilling it. Protect approximately 20% schedule slack, and sanity-check next week against the real durations in `footprints`. Training-plan changes are recommendation-only.
 
 Proposed learned preferences must include evidence and a clear veto. Do not silently create standing directives.
+
+Nutrition is out of scope. Amit stopped logging food in July 2026 by choice, and the meal tools may still return stale rows or nothing — neither is a finding. Do not report intake, do not read adherence or recovery through diet, do not count the missing data as a gap, and do not propose resuming tracking. Answer fuelling questions only when he asks one.
 
 ## Portfolio
 

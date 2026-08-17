@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's morning Remote Routine, incl
 
 # Klaus Morning Review
 
-Skill version: 7.5.0
+Skill version: 7.6.0
 
 Run only for a Klaus morning routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
@@ -49,7 +49,9 @@ property Klaus used to stamp:
 
 Preserve the existing plan unless sleep or recovery, weather, urgency, a hard deadline, travel, or calendar reality materially changed. Do not create churn for cosmetic optimization.
 
-Prioritize a small number of useful decisions. Cover recovery, calendar, hard deadlines, task focus, habits, nutrition or training context, and weather or travel only when they affect the day. Give a short rationale for every change.
+Prioritize a small number of useful decisions. Cover recovery, calendar, hard deadlines, task focus, habits, training context, and weather or travel only when they affect the day. Give a short rationale for every change.
+
+Amit does not log food and has not since July 2026 — a settled choice, not a lapse. Leave nutrition out of the morning read entirely: no intake, no reminder to log, no flagging the absence.
 
 When you reshape the day, check it against the real durations in the profile's `footprints` section — a day that only fits on paper is the most common way a morning plan fails. Protect approximately 20% of the day's usable time as slack rather than filling every opening. Recurring fixtures live in the calendar and training plan; read them there rather than assuming a weekly template.
 
