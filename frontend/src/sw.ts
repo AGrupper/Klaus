@@ -132,9 +132,30 @@ type NavigatorWithBadging = Navigator & {
 // useRegisterSW's updateServiceWorker(true) posts {type:'SKIP_WAITING'} to the
 // waiting SW — this listener is what keeps the existing UpdatePrompt working.
 self.addEventListener('message', (event) => {
-  const message = event.data as { type?: string; count?: number } | undefined
+  const message = event.data as
+    | { type?: string; count?: number; tags?: unknown }
+    | undefined
   if (message?.type === 'SKIP_WAITING') {
     self.skipWaiting()
+    return
+  }
+  // Read in-app → clear the matching notification from the lock screen.
+  // {type:'DISMISS_NOTIFICATIONS', tags?: string[]} — omit `tags` to clear all
+  // (the bell's "Mark all read"); pass tags to clear specific items.
+  if (message?.type === 'DISMISS_NOTIFICATIONS') {
+    const tags = Array.isArray(message.tags) ? message.tags : null
+    void (async () => {
+      try {
+        const shown = await self.registration.getNotifications()
+        for (const notification of shown) {
+          if (!tags || (notification.tag && tags.includes(notification.tag))) {
+            notification.close()
+          }
+        }
+      } catch (err) {
+        console.error('[sw] notification dismissal failed', err)
+      }
+    })()
     return
   }
   if (message?.type === 'RESET_BADGE' && typeof message.count === 'number') {
@@ -157,11 +178,18 @@ self.addEventListener('message', (event) => {
 
 // ── 5. Push (PUSH-02) — ALWAYS show a notification (iOS 3-strikes) ──
 self.addEventListener('push', (event) => {
+  type PushPayload = {
+    title?: string
+    body?: string
+    url?: string
+    external_url?: string | null
+    tag?: string | null
+  }
   const data = (() => {
     try {
-      return (event.data?.json() ?? {}) as { title?: string; body?: string; url?: string }
+      return (event.data?.json() ?? {}) as PushPayload
     } catch {
-      return {} as { title?: string; body?: string; url?: string }
+      return {} as PushPayload
     }
   })()
   event.waitUntil(
@@ -178,8 +206,11 @@ self.addEventListener('push', (event) => {
       await self.registration.showNotification(data.title ?? 'Klaus', {
         body: data.body ?? 'New message from Klaus',
         icon: '/icon-192.png',
-        data: { url: data.url ?? '/' },
-        // NO tag (D-12: each message gets its own notification)
+        data: { url: data.url ?? '/', external_url: data.external_url ?? null },
+        // Per-item tags are unique (review:<routine>:<date>, topic keys), so
+        // D-12's one-notification-per-message still holds; the tag exists so
+        // the Hub can dismiss a delivered notification once it's read in-app.
+        ...(typeof data.tag === 'string' && data.tag ? { tag: data.tag } : {}),
       })
     })(),
   )
@@ -203,11 +234,35 @@ function safeNotificationPath(value: unknown): string {
   }
 }
 
-// ── 6. Tap → the validated notification destination (D-12) ──
+/**
+ * External push targets: https claude.ai only (mirrors the server-side
+ * allowlist in core/push_sender.py — validated again here so a forged
+ * payload can never turn a notification tap into an open-redirect).
+ */
+function safeExternalUrl(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  try {
+    const parsed = new URL(value)
+    if (parsed.protocol !== 'https:') return null
+    if (parsed.hostname !== 'claude.ai' && parsed.hostname !== 'www.claude.ai') return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+// ── 6. Tap → claude.ai deep link (reviews) or the validated Hub path ──
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   event.waitUntil(
     (async () => {
+      // Review pushes carry the exact Claude session URL — a lock-screen tap
+      // behaves like tapping the item in the bell: straight to Claude.
+      const external = safeExternalUrl(event.notification.data?.external_url)
+      if (external) {
+        await self.clients.openWindow(external)
+        return
+      }
       const path = safeNotificationPath(event.notification.data?.url)
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       const client = clientList[0]

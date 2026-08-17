@@ -21,6 +21,9 @@ export interface BellItem {
   claude_session_url: string | null
   routine: 'morning' | 'nightly' | 'weekly' | null
   target_date: string | null
+  /** Tag of the push this item was delivered as — used to clear it from the
+   *  lock screen once it's read in the app. null when it never pushed. */
+  push_tag: string | null
 }
 
 export interface Followup {
@@ -68,4 +71,23 @@ export function setLastSeen(at: string): void {
 export function countUnread(items: BellItem[]): number {
   const lastSeen = getLastSeen()
   return items.filter((item) => item.at > lastSeen).length
+}
+
+// ---------------------------------------------------------------------------
+// Lock-screen dismissal
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the service worker to close delivered notifications.
+ *
+ * `tags` omitted → close everything (the bell's "Mark all read"); otherwise
+ * only the named tags. Silently no-ops where there is no active SW
+ * (desktop browser tab, jsdom, non-secure context).
+ */
+export function dismissDelivered(tags?: string[]): void {
+  if (typeof navigator === 'undefined' || !navigator.serviceWorker?.controller) return
+  navigator.serviceWorker.controller.postMessage({
+    type: 'DISMISS_NOTIFICATIONS',
+    ...(tags ? { tags } : {}),
+  })
 }

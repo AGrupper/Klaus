@@ -6,8 +6,8 @@
  * is the same screens centered in a 560px column (tabs move into the header).
  *
  * The two global sheets (Bell, Customize) mount here so they overlay any
- * route; their open state is local to the shell, and the bell's unread dot
- * clears when the sheet opens (markSeen).
+ * route; their open state is local to the shell. The unread dot clears only
+ * on an explicit "Mark all read" inside the sheet.
  *
  * Bounded-height root: `height: 100dvh` (not min-height) so <main> stays the
  * real scroll container (UAT gap-closure lesson, Phase 26).
@@ -36,9 +36,11 @@ export function AppShell({ children }: AppShellProps) {
   // Load once at the shell so the account theme applies before any page needs it.
   useSettings()
 
+  // Opening the bell deliberately does NOT clear the unread dot — "Mark all
+  // read" inside the sheet is the explicit gesture (it also clears delivered
+  // notifications from the lock screen).
   function openBell() {
     setBellOpen(true)
-    notifications.markSeen()
   }
 
   return (

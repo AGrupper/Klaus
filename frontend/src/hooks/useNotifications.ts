@@ -8,6 +8,7 @@ import { useCallback, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   countUnread,
+  dismissDelivered,
   fetchFollowups,
   fetchNotifications,
   setLastSeen,
@@ -26,6 +27,7 @@ export function useNotifications() {
   const [, setCursorBump] = useState(0)
   const unread = countUnread(items)
 
+  /** Stamp the cursor at the newest item — clears the unread dot. */
   const markSeen = useCallback(() => {
     if (items.length > 0) {
       setLastSeen(items[0].at)
@@ -33,7 +35,18 @@ export function useNotifications() {
     }
   }, [items])
 
-  return { ...query, items, unread, markSeen }
+  /** "Mark all read": clear the dot AND every delivered lock-screen push. */
+  const markAllRead = useCallback(() => {
+    markSeen()
+    dismissDelivered()
+  }, [markSeen])
+
+  /** Reading one item clears just its notification (if it pushed at all). */
+  const dismissOne = useCallback((tag: string | null) => {
+    if (tag) dismissDelivered([tag])
+  }, [])
+
+  return { ...query, items, unread, markSeen, markAllRead, dismissOne }
 }
 
 export function useFollowups() {

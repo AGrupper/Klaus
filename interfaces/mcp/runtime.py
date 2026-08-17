@@ -312,6 +312,10 @@ def build_custom_handlers() -> dict[str, Any]:
                 "briefing",
                 routine_review_path(routine, target_date),
                 routine_review_title(routine),
+                # Tap → continue the exact Claude session; tag lets the Hub
+                # dismiss the delivered notification once the review is read.
+                external_url=review.get("claude_session_url"),
+                tag=f"review:{routine}:{target_date}",
             )
         )
         return {"review": review, "run": public_routine_run(run), "delivery": delivery}

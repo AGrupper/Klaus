@@ -14,6 +14,7 @@ function item(at: string): BellItem {
     claude_session_url: null,
     routine: null,
     target_date: null,
+    push_tag: null,
   }
 }
 

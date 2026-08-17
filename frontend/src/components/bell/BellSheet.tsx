@@ -10,10 +10,11 @@
  * All content renders as plain React text — never HTML (T-28-xss).
  */
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, ArrowUpRight } from 'lucide-react'
+import { ArrowRight, ArrowUpRight, CheckCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAgentStatus } from '../../api/agent'
 import type { BellItem } from '../../api/notifications'
+import { useNotifications } from '../../hooks/useNotifications'
 import { Sheet } from '../shared/Sheet'
 
 const KIND_STYLES: Record<BellItem['type'], { label: string; bg: string; color: string }> = {
@@ -55,6 +56,7 @@ interface BellSheetProps {
 
 export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
   const navigate = useNavigate()
+  const { markAllRead, dismissOne, unread } = useNotifications()
   // Project URL fallback for fallback-published reviews without a session URL.
   const { data: agentStatus } = useQuery({
     queryKey: ['agent', 'status'],
@@ -88,6 +90,29 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
         <p style={{ color: 'var(--muted)', fontSize: '14px', padding: '12px 0' }}>
           Nothing yet — reviews and alerts will land here.
         </p>
+      )}
+      {!loading && items.length > 0 && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '2px' }}>
+          <button
+            onClick={markAllRead}
+            disabled={unread === 0}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              border: 'none',
+              background: 'none',
+              padding: '4px 0',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: unread > 0 ? 'var(--accent)' : 'var(--faint)',
+              cursor: unread > 0 ? 'pointer' : 'default',
+            }}
+          >
+            <CheckCheck size={14} strokeWidth={2.2} aria-hidden="true" />
+            Mark all read
+          </button>
+        </div>
       )}
       {groups.map((group) => (
         <div key={group.label}>
@@ -156,6 +181,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                     href={reviewUrl(item) ?? undefined}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() => dismissOne(item.push_tag)}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -174,6 +200,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                 {item.type === 'alert' && (
                   <button
                     onClick={() => {
+                      dismissOne(item.push_tag)
                       onClose()
                       navigate('/')
                     }}
@@ -198,6 +225,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                 {item.type === 'system' && (
                   <button
                     onClick={() => {
+                      dismissOne(item.push_tag)
                       onClose()
                       navigate('/settings')
                     }}

@@ -150,6 +150,51 @@ def test_payload_uses_explicit_safe_same_origin_destination():
     assert payload["url"] == "/klaus/reviews/nightly/2026-08-10"
 
 
+def test_payload_external_url_and_tag_pass_through():
+    """Reviews carry a claude.ai deep link + a dismissal tag (Paper Hub)."""
+    store = _FakeSubscriptionStore([_sub(1)])
+    p1, p2, p3 = _patched(store)
+    with p1, p2, p3 as mock_webpush:
+        push_sender.send_push_to_all(
+            "Nightly review",
+            "briefing",
+            "/",
+            "Klaus Nightly Review",
+            external_url="https://claude.ai/chat/abc-123",
+            tag="review:nightly:2026-08-17",
+        )
+
+    payload = json.loads(mock_webpush.call_args.kwargs["data"])
+    assert payload["external_url"] == "https://claude.ai/chat/abc-123"
+    assert payload["tag"] == "review:nightly:2026-08-17"
+
+
+@pytest.mark.parametrize(
+    "bad_external",
+    [
+        "https://evil.example/phish",
+        "http://claude.ai/chat/abc",          # not https
+        "https://claude.ai.evil.example/x",   # suffix spoof
+        "javascript:alert(1)",
+        "",
+        None,
+        123,
+    ],
+)
+def test_payload_external_url_rejects_non_claude_targets(bad_external):
+    """Anything off the claude.ai https allowlist is dropped, not substituted."""
+    store = _FakeSubscriptionStore([_sub(1)])
+    p1, p2, p3 = _patched(store)
+    with p1, p2, p3 as mock_webpush:
+        push_sender.send_push_to_all(
+            "Review", "briefing", "/", "Klaus", external_url=bad_external,
+        )
+
+    payload = json.loads(mock_webpush.call_args.kwargs["data"])
+    assert payload["external_url"] is None
+    assert payload["url"] == "/"
+
+
 @pytest.mark.parametrize(
     "unsafe",
     [

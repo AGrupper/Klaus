@@ -61,7 +61,9 @@ async def api_notifications(
         {"id": str, "type": "review"|"alert"|"action"|"system",
          "title": str, "body": str|None, "at": ISO str,
          "claude_session_url": str|None,      # reviews only — deep link
-         "routine": str|None, "target_date": str|None}
+         "routine": str|None, "target_date": str|None,
+         "push_tag": str|None}                # matches the delivered push's
+                                              # tag, for lock-screen dismissal
 
     Every item is tappable somewhere: reviews continue in Claude via
     ``claude_session_url`` (client falls back to the Project URL when a
@@ -118,6 +120,9 @@ async def api_notifications(
             "claude_session_url": review.get("claude_session_url"),
             "routine": routine,
             "target_date": target_date,
+            # Must match the tag core/routines + MCP publish put on the push,
+            # so reading here dismisses the lock-screen notification.
+            "push_tag": f"review:{routine}:{target_date}",
         })
 
     for entry in actions:
@@ -130,6 +135,7 @@ async def api_notifications(
             "claude_session_url": None,
             "routine": None,
             "target_date": None,
+            "push_tag": None,   # actions never push
         })
 
     for day, entry in outreach:
@@ -145,6 +151,9 @@ async def api_notifications(
             "claude_session_url": None,
             "routine": None,
             "target_date": None,
+            # Alerts push with their topic_key as the tag (deterministic
+            # alerts dedup on it), so reading clears the lock screen too.
+            "push_tag": str(entry.get("topic_key") or "") or None,
         })
 
     items.sort(key=lambda item: str(item.get("at") or ""), reverse=True)
