@@ -20,12 +20,10 @@ from interfaces.mcp.custom_schemas import custom_tool_schema
 from interfaces.mcp.oauth import KlausTokenVerifier, OAuthAuthorizationService
 
 
-EXPECTED_SKILL_VERSION = "7.4.0"
+EXPECTED_SKILL_VERSION = "7.5.0"
 
 READ_TOOLS = frozenset(
     {
-        "list_calendar_events",
-        "check_calendar_free",
         "task_list",
         "get_habit_adherence",
         "recall",
@@ -57,9 +55,6 @@ READ_TOOLS = frozenset(
 
 WRITE_TOOLS = frozenset(
     {
-        "create_calendar_event",
-        "delete_calendar_event",
-        "update_calendar_event",
         "task_create",
         "task_complete",
         "task_reschedule",
@@ -139,7 +134,6 @@ class MCPToolError(ValueError):
 
 CustomHandler = Callable[[dict[str, Any]], Any | Awaitable[Any]]
 Auditor = Callable[..., Any | Awaitable[Any]]
-CalendarOwnershipChecker = Callable[[str, str | None], bool | Awaitable[bool]]
 
 
 @lru_cache(maxsize=None)
@@ -179,7 +173,6 @@ class KlausMCPGateway:
         custom_handlers: dict[str, CustomHandler] | None = None,
         idempotency_store: Any | None = None,
         auditor: Auditor | None = None,
-        calendar_ownership_checker: CalendarOwnershipChecker | None = None,
         interactive_resource: str = "https://klaus.example.com/mcp/interactive",
         routine_resource: str = "https://klaus.example.com/mcp/routine",
         read_only: bool = False,
@@ -188,7 +181,6 @@ class KlausMCPGateway:
         self._custom_handlers = custom_handlers or {}
         self._idempotency_store = idempotency_store
         self._auditor = auditor
-        self._calendar_ownership_checker = calendar_ownership_checker
         self._resources = {
             "interactive": interactive_resource,
             "routine": routine_resource,
@@ -238,23 +230,6 @@ class KlausMCPGateway:
         if not isinstance(arguments, dict):
             raise MCPToolError("arguments must be an object")
         _validate_custom_tool_arguments(tool_name, arguments)
-        if endpoint == "routine" and tool_name in {
-            "update_calendar_event",
-            "delete_calendar_event",
-        }:
-            if self._calendar_ownership_checker is None:
-                owned = False
-            else:
-                owned = self._calendar_ownership_checker(
-                    str(arguments.get("event_id") or ""),
-                    arguments.get("calendar_id"),
-                )
-                if asyncio.iscoroutine(owned):
-                    owned = await owned
-            if not owned:
-                raise MCPToolError(
-                    "Routines cannot move or delete a user-created calendar event"
-                )
         claim = None
         if tool_name in WRITE_LIKE_TOOLS and self._idempotency_store is not None:
             claim = await asyncio.to_thread(
@@ -462,7 +437,7 @@ def _register_tool(server: MCPServer, gateway: KlausMCPGateway, endpoint: str, n
         ),
         annotations=ToolAnnotations(
             readOnlyHint=not is_write,
-            destructiveHint=name in {"delete_calendar_event", "task_delete"},
+            destructiveHint=name == "task_delete",
             idempotentHint=bool(is_write),
             openWorldHint=name == "fetch_weather",
         ),
@@ -488,7 +463,6 @@ def create_mcp_bundle(
     custom_handlers: dict[str, CustomHandler] | None = None,
     idempotency_store: Any | None = None,
     auditor: Auditor | None = None,
-    calendar_ownership_checker: CalendarOwnershipChecker | None = None,
     read_only: bool = False,
 ) -> MCPServerBundle:
     """Construct independently authenticated stateless MCP servers."""
@@ -501,7 +475,6 @@ def create_mcp_bundle(
         custom_handlers=custom_handlers,
         idempotency_store=idempotency_store,
         auditor=auditor,
-        calendar_ownership_checker=calendar_ownership_checker,
         interactive_resource=oauth_service.interactive_resource,
         routine_resource=oauth_service.routine_resource,
         read_only=read_only,

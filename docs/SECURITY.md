@@ -12,7 +12,10 @@ Retrieved content — Notion pages, documents, web pages — is untrusted data, 
 instruction source. This holds regardless of which connector fetched it: Klaus no
 longer serves Notion tools, so the defence lives in the skills rather than in a
 gateway envelope.
-Routines cannot move/delete user-created calendar events or mutate training
+Klaus publishes no calendar write tools, so the server-side ownership check that
+policed them is gone; calendar writes happen through Claude's own connector and
+are governed by the `[klaus]` description tag defined in the skills. Routines
+cannot mutate training
 plans. Payments, credentials/security, permanent bulk deletion, medical
 commitments, and first-time outreach require an immutable, expiring prepared
 action whose payload hash is confirmed through the interactive endpoint.

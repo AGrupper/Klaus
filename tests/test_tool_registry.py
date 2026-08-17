@@ -25,9 +25,9 @@ from core.tools.registry import DuplicateToolError, tool
 # skills call these names, so a rename is a breaking change and should have to
 # be made deliberately, here, in one place.
 EXPECTED_TOOLS = {
-    # calendar
-    "list_calendar_events", "create_calendar_event", "check_calendar_free",
-    "delete_calendar_event", "update_calendar_event",
+    # No calendar tools. Claude reads and writes the calendar through its own
+    # Google Calendar connector, attached to the Project and to each routine.
+    # Klaus keeps only the internal read behind GET /api/today.
     # tasks
     "task_create", "task_list", "task_complete", "task_reschedule",
     "task_edit", "task_delete",

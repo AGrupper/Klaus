@@ -6,7 +6,8 @@ authorization, data, and action boundary.
 
 ## Runtime
 
-- Calendar-only Google OAuth
+- Calendar-only Google OAuth, used for one read: the Hub's day view.
+  Claude reads and writes the calendar through its own connector.
 - Things, Garmin, Hevy, HealthKit, weather, Postgres, and Pinecone
 - Notion is reached through Claude's own connector, not through Klaus
 - Departure windows use a configured travel time, not a live traffic API

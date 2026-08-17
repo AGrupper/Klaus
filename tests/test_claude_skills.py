@@ -143,10 +143,17 @@ def test_routine_skills_forbid_live_side_effects_in_shadow_mode():
 
 
 def test_skill_version_is_consistent_everywhere():
-    """One version string, asserted in all four places it is written down."""
+    """One version string, asserted in every place it is written down.
+
+    The literal below is a deliberate tripwire: a version bump has to be a
+    conscious edit here too, so it cannot happen as a side effect. That is the
+    opposite of the pinned `7.1.0` that sat in the routines' own prompts on
+    claude.ai, went stale across three releases and silently replaced two
+    reviews with fallbacks — a literal is safe when it fails loudly and in CI.
+    """
     from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.4.0"
+    assert EXPECTED_SKILL_VERSION == "7.5.0"
     assert f'"skill_version": "{EXPECTED_SKILL_VERSION}"' in (
         ROOT / "core" / "routines" / "subscription.py"
     ).read_text()

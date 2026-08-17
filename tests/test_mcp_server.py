@@ -72,11 +72,13 @@ def test_legacy_tools_publish_their_exact_nested_argument_schemas():
         assert actual["properties"] == expected["properties"], name
         assert actual.get("required", []) == expected.get("required", []), name
 
-    calendar = tools["list_calendar_events"].parameters
-    calendar_arguments = calendar["properties"]["arguments"]
-    assert set(calendar_arguments["properties"]) == {"time_min_iso", "time_max_iso"}
-    assert set(calendar_arguments["required"]) == {"time_min_iso", "time_max_iso"}
-    assert calendar["required"] == ["arguments"]
+    # A read tool: its envelope requires only `arguments`. (A write tool would
+    # also require `idempotency_key`, which is asserted elsewhere.)
+    benchmark = tools["get_benchmark_history"].parameters
+    benchmark_arguments = benchmark["properties"]["arguments"]
+    assert "facet" in benchmark_arguments["properties"]
+    assert benchmark_arguments["required"] == ["facet"]
+    assert benchmark["required"] == ["arguments"]
 
     task_create = tools["task_create"].parameters
     task_arguments = task_create["properties"]["arguments"]
@@ -147,10 +149,6 @@ class _GatewaySideEffectRecorder:
 
     def audit(self, **entry):
         self.operations.append(("audit", entry))
-
-    def check_calendar_ownership(self, event_id, calendar_id):
-        self.operations.append(("calendar_ownership", event_id, calendar_id))
-        return True
 
 
 @pytest.mark.parametrize(
@@ -238,7 +236,6 @@ def test_custom_schema_rejects_invalid_arguments_before_any_side_effect(
         custom_handlers={tool_name: recorder.custom_handler},
         idempotency_store=recorder,
         auditor=recorder.audit,
-        calendar_ownership_checker=recorder.check_calendar_ownership,
     )
     resource = f"https://klaus.example.com/mcp/{endpoint}"
 
@@ -275,7 +272,6 @@ def test_custom_schema_error_does_not_disclose_dynamic_object_keys():
         },
         idempotency_store=recorder,
         auditor=recorder.audit,
-        calendar_ownership_checker=recorder.check_calendar_ownership,
     )
     secret_quote_key = "customer-secret-123"
     secret_value = "private-price-marker"
@@ -711,32 +707,6 @@ def test_registered_publish_review_structured_output_serializes_atomic_run(
     encoded = converted.model_dump_json()
     assert "Serializable morning review." in encoded
     assert "published_claude" in encoded
-
-
-def test_routine_cannot_move_or_delete_user_owned_calendar_event():
-    from interfaces.mcp.server import KlausMCPGateway, MCPToolError
-
-    gateway = KlausMCPGateway(
-        dispatcher=lambda _name, _args: "{}",
-        calendar_ownership_checker=lambda _event_id, _calendar_id: False,
-    )
-    routine_token = _token(
-        "klaus.read",
-        "klaus.write",
-        "klaus.memory",
-        "klaus.routine",
-        resource="https://klaus.example.com/mcp/routine",
-    )
-    with pytest.raises(MCPToolError, match="user-created"):
-        asyncio.run(
-            gateway.execute(
-                endpoint="routine",
-                tool_name="update_calendar_event",
-                arguments={"event_id": "user-event", "start_iso": "2026-08-09T10:00:00+03:00"},
-                token=routine_token,
-                idempotency_key="move-user-event",
-            )
-        )
 
 
 def test_streamable_http_protocol_rejects_unauthorized_and_initializes_with_token():

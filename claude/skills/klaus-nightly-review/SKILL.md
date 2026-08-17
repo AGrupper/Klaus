@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's nightly Remote Routine, incl
 
 # Klaus Nightly Review
 
-Skill version: 7.4.0
+Skill version: 7.5.0
 
 Run only for a Klaus nightly routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
@@ -27,6 +27,26 @@ The snapshot's `profile` block carries who Amit is — his rhythms, the real dur
 
 In `structured`, provide `reflection` with `summary`, `mood`, `current_focus`, `recent_context`, and `highlights`; provide `self_state` with `mood`, `current_focus`, and `recent_context`.
 
+## Calendar
+
+The calendar is the one domain Klaus does not own. Use **Claude's own Google
+Calendar connector** for every read and write; Klaus publishes no calendar
+tools. Klaus still reads the calendar internally to build `get_life_snapshot`,
+so the snapshot shows the same calendar — already merged across Amit's Main and
+Training calendars.
+
+Ownership is a tag, because Claude's connector cannot write the private
+property Klaus used to stamp:
+
+- Every event you create ends its `description` with a final line: `[klaus]`.
+- Only move or delete an event whose `description` contains `[klaus]`. Anything
+  untagged is Amit's own commitment — never touch it silently.
+- `update_event` **replaces** the whole description. When you edit a Klaus
+  block, re-send the description including the tag, or the block loses its
+  ownership mark and becomes untouchable next run.
+- Training sessions and their prep blocks belong on the **Training** calendar;
+  everything else goes on Main.
+
 ## Close the day
 
 Account for completed, unfinished, and newly urgent work. Anything unfinished gets a real date or is dropped, and say which — an unfinished task that silently rolls forward is exactly how his list became the capture bucket described in the profile. Repair only suitable unfinished tasks. Respect explicit times, recurrence, hard deadlines, and manual locks.
@@ -45,9 +65,9 @@ In shadow mode, write nothing: record the same plan in `partial_actions` only.
 4. **Look ahead at deadlines.** Flag anything with a `hard_deadline_at` close by and nothing scheduled to get it done. He sets almost no deadlines, so this will often be silent; say nothing rather than manufacturing urgency.
 5. **Tidy.** Use `created_at` to find what has gone stale and `bucket` to find what is still sitting unfiled in the Inbox. Surface as many as genuinely warrant it — there is no limit, and a long-overdue clear-out is welcome. Reorganize on your own initiative: filing, re-dating and re-bucketing are all reversible.
 
-Training-plan changes are recommendation-only: do not call `update_plan`. Klaus-owned calendar blocks for a session are fine and reversible.
+Training-plan changes are recommendation-only: do not call `update_plan`. Booking a `[klaus]`-tagged calendar block for a session is fine and reversible.
 
-Create, move, or remove only Klaus-owned task blocks. Never move or delete a user-created calendar event or training session. Protect approximately 20% of tomorrow's usable time as schedule slack rather than filling every opening.
+Create, move, or remove only `[klaus]`-tagged blocks. Never move or delete an untagged calendar event or training session. Protect approximately 20% of tomorrow's usable time as schedule slack rather than filling every opening.
 
 A bulk irreversible change — culling a large part of the list — is the one thing you present in full and wait for a yes on. Everything else, just do and report.
 

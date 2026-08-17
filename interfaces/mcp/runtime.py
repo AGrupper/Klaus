@@ -399,14 +399,6 @@ def audit_mcp_write(**entry) -> None:
     )
 
 
-def calendar_is_klaus_owned(event_id: str, calendar_id: str | None) -> bool:
-    from core.tools import _get_calendar_tool
-
-    if not event_id:
-        return False
-    return _get_calendar_tool().is_klaus_owned(event_id, calendar_id)
-
-
 def create_production_mcp_bundle(
     oauth_service: OAuthAuthorizationService, *, read_only: bool = False,
 ):
@@ -418,7 +410,6 @@ def create_production_mcp_bundle(
         custom_handlers=build_custom_handlers(),
         idempotency_store=ActionIdempotencyStore(*_settings()),
         auditor=audit_mcp_write,
-        calendar_ownership_checker=calendar_is_klaus_owned,
         read_only=read_only,
     )
 

@@ -54,17 +54,8 @@ from core.tools import (  # noqa: F401,E402
 from core.tools.calendar import (  # noqa: F401,E402
     _auth_manager,
     _calendar_tool,
-    _DUPLICATE_LOOKUP_MAX_RESULTS,
-    _existing_event_at,
     _get_auth_manager,
     _get_calendar_tool,
-    _handle_check_calendar_free,
-    _handle_create_calendar_event,
-    _handle_delete_calendar_event,
-    _handle_list_calendar_events,
-    _handle_update_calendar_event,
-    _record_action,
-    _training_calendar_writeback,
 )
 from core.tools.tasks import (  # noqa: F401,E402
     _get_task_store,

@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's morning Remote Routine, incl
 
 # Klaus Morning Review
 
-Skill version: 7.4.0
+Skill version: 7.5.0
 
 Run only for a Klaus morning routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
@@ -25,6 +25,26 @@ The snapshot's `profile` block carries who Amit is — his rhythms, the real dur
 
 <!-- INCLUDE: routine-contract -->
 
+## Calendar
+
+The calendar is the one domain Klaus does not own. Use **Claude's own Google
+Calendar connector** for every read and write; Klaus publishes no calendar
+tools. Klaus still reads the calendar internally to build `get_life_snapshot`,
+so the snapshot shows the same calendar — already merged across Amit's Main and
+Training calendars.
+
+Ownership is a tag, because Claude's connector cannot write the private
+property Klaus used to stamp:
+
+- Every event you create ends its `description` with a final line: `[klaus]`.
+- Only move or delete an event whose `description` contains `[klaus]`. Anything
+  untagged is Amit's own commitment — never touch it silently.
+- `update_event` **replaces** the whole description. When you edit a Klaus
+  block, re-send the description including the tag, or the block loses its
+  ownership mark and becomes untouchable next run.
+- Training sessions and their prep blocks belong on the **Training** calendar;
+  everything else goes on Main.
+
 ## Morning decisions
 
 Preserve the existing plan unless sleep or recovery, weather, urgency, a hard deadline, travel, or calendar reality materially changed. Do not create churn for cosmetic optimization.
@@ -33,6 +53,6 @@ Prioritize a small number of useful decisions. Cover recovery, calendar, hard de
 
 When you reshape the day, check it against the real durations in the profile's `footprints` section — a day that only fits on paper is the most common way a morning plan fails. Protect approximately 20% of the day's usable time as slack rather than filling every opening. Recurring fixtures live in the calendar and training plan; read them there rather than assuming a weekly template.
 
-Only create or move Klaus-owned task blocks. Never move or delete a user-created calendar event or training session. Training changes are recommendation-only.
+Only create or move `[klaus]`-tagged blocks. Never move or delete an untagged calendar event or training session. Training changes are recommendation-only.
 
 <!-- INCLUDE: safety -->
