@@ -73,6 +73,57 @@ def test_every_published_tool_is_callable():
     assert set(handlers) == published
 
 
+def test_every_handler_can_resolve_the_names_it_calls():
+    """A handler that references an undefined global is a tool that raises.
+
+    Having a handler is not the same as having a working one. `fetch_garmin_today`
+    and `fetch_weather` both shipped with their backend import stripped by an
+    unused-import cleanup, so the module imported cleanly, the catalog looked
+    complete, and the tools raised NameError the first time Claude called them —
+    found in a live routine run on 2026-08-17, not by this suite.
+
+    Resolving LOAD_GLOBAL against each handler's own globals catches that
+    statically, without importing a network client or calling anything. Handlers
+    are closures, so the real function has to be unwrapped out of __closure__ —
+    checking only the top-level object silently passes everything.
+    """
+    import builtins
+    import dis
+    import types
+
+    def unwrap(fn, depth=0):
+        found = [fn]
+        if depth > 5:
+            return found
+        for cell in (getattr(fn, "__closure__", None) or ()):
+            try:
+                value = cell.cell_contents
+            except ValueError:  # cell not yet filled
+                continue
+            if isinstance(value, types.FunctionType):
+                found += unwrap(value, depth + 1)
+        return found
+
+    builtin_names = set(dir(builtins))
+    unresolved = []
+    for name, handler in sorted(tools.registered_tools().items()):
+        for fn in unwrap(handler):
+            code = getattr(fn, "__code__", None)
+            if code is None:
+                continue
+            for instruction in dis.get_instructions(code):
+                if "LOAD_GLOBAL" not in instruction.opname:
+                    continue
+                referenced = instruction.argval
+                if referenced in fn.__globals__ or referenced in builtin_names:
+                    continue
+                unresolved.append(f"{name}: {fn.__module__} references {referenced!r}")
+
+    assert not unresolved, "tools that will raise NameError when called:\n" + "\n".join(
+        sorted(set(unresolved))
+    )
+
+
 @pytest.mark.parametrize("schema", tools.get_all_schemas(), ids=lambda s: s["name"])
 def test_schema_is_well_formed(schema):
     assert schema["description"].strip(), "a tool with no description is a tool Claude will misuse"

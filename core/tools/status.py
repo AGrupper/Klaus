@@ -11,6 +11,8 @@ import os
 from datetime import datetime, timezone
 
 from core.tools.registry import tool
+from mcp_tools.garmin_tool import fetch_garmin_today  # noqa: E402
+from mcp_tools.weather_tool import fetch_weather      # noqa: E402
 
 logger = logging.getLogger(__name__)
 
