@@ -95,11 +95,16 @@ async def api_notifications(
         ]
 
     def load_outreach() -> list[tuple[str, dict]]:
-        records = []
-        for offset in range(days):
-            day = (today - timedelta(days=offset)).isoformat()
-            records.extend((day, entry) for entry in outreach_store.get_today(day))
-        return records
+        # One batched read for the whole window. This was a per-day document read
+        # in a loop — seven sequential Firestore round trips on every bell fetch,
+        # which runs on page load and again every five minutes.
+        window = [(today - timedelta(days=offset)).isoformat() for offset in range(days)]
+        by_day = outreach_store.get_days(window)
+        return [
+            (day, entry)
+            for day in window
+            for entry in by_day.get(day, [])
+        ]
 
     reviews, actions, outreach = await asyncio.gather(
         loop.run_in_executor(None, load_reviews),

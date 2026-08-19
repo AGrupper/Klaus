@@ -118,6 +118,9 @@ async def api_auth_revoke_all(
         store.update({"session_version": new_version})
 
     await loop.run_in_executor(None, _bump_version)
+    # get_session_version() is TTL-cached per instance; without this drop, this
+    # instance would keep honouring the cookies we just revoked (D-02).
+    _hub_auth.invalidate_session_version_cache()
     # delete_cookie must be on the returned response (see api_auth_google).
     json_response = JSONResponse(content={"ok": True})
     json_response.delete_cookie(_hub_auth._COOKIE_NAME, path="/")

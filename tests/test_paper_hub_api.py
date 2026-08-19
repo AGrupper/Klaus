@@ -418,16 +418,18 @@ class TestNotificationsFeed:
                 "detail": "Filed 'call the base' to Things",
                 "at": "2026-08-17T10:41:00+03:00",
             }]
+            # get_days batches the whole window into one Firestore round trip;
+            # only today carries entries, the other days are simply absent.
             outreach_store = MagicMock()
-            outreach_store.get_today.side_effect = lambda day: (
-                [
+            outreach_store.get_days.side_effect = lambda days: {
+                date.today().isoformat(): [
                     {"topic_key": "deadline:t1", "time": "17:20",
                      "final": "Hard deadline, Sir.", "kind": "hard_deadline"},
                     {"topic_key": "automation:x", "time": "14:02",
                      "final": "Automation failure, Sir: Garmin stale.",
                      "kind": "automation_failure"},
-                ] if day == date.today().isoformat() else []
-            )
+                ],
+            }
 
             with patch.dict(os.environ, _ENV):
                 ws.app.dependency_overrides[ws.require_hub_session] = (

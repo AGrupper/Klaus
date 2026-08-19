@@ -1062,9 +1062,10 @@ def write_biometrics_to_postgres(garmin: dict) -> None:
     """Best-effort UPSERT of one day's biometrics into Postgres (GARMIN-05).
 
     Date-generic: upserts on the dict's own 'date' key, so it serves both the
-    morning briefing's today-write and the biometric-history backfill
-    (core/biometric_ingest.py). Postgres outage MUST NOT block the caller —
-    all exceptions logged + swallowed.
+    biometric-history backfill (core/ingest/biometric.py) and the Hub's
+    write-through of its live read (core/hub/today.py:_persist_garmin_snapshot),
+    which keeps today's row from waiting on the 05:30 cron. Postgres outage MUST
+    NOT block the caller — all exceptions logged + swallowed.
 
     Maps fetch_garmin_daily's snake_case dict to daily_biometrics columns:
       date, resting_hr, hrv_baseline, hrv_overnight, sleep_score,

@@ -65,6 +65,10 @@ export interface GarminStats {
   hrv: number | null          // ms
   body_battery: number | null // 0-100 score
   resting_hr: number | null   // bpm
+  // Present and true when the live Garmin call failed and these came from the
+  // stored daily_biometrics row instead. Battery is then the day's max, not the
+  // morning reading — close, but not the same measurement.
+  stored?: boolean
 }
 
 /**
@@ -90,6 +94,7 @@ export interface TodayData {
   meals: MealItem[]            // Empty → D-06 "No meals logged yet today." placeholder
   training: TrainingItem | null // null → D-06 "No training scheduled today." placeholder
   coach_note: string | null    // null → D-06 "Coach note coming after your morning briefing."
+  coach_note_at: string | null // ISO time the note was written; null when coach_note is null
   nutrition_totals: Macros     // Running day totals for glance rail (TIME-08)
 }
 

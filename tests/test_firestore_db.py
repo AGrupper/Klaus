@@ -165,6 +165,19 @@ def _make_mock_client_with_collection():
     return client, col
 
 
+def _snapshot_for(doc_id: str, data: dict | None) -> MagicMock:
+    """Build a standalone snapshot, as returned by client.get_all().
+
+    Unlike _stub_existing_doc this is not wired to a collection — batched reads
+    hand back snapshots directly, identified by their own .id.
+    """
+    snap = MagicMock()
+    snap.exists = data is not None
+    snap.id = doc_id
+    snap.to_dict.return_value = dict(data or {})
+    return snap
+
+
 def _stub_existing_doc(col: MagicMock, doc_id: str, data: dict) -> MagicMock:
     """Wire col.document(doc_id) to return a MagicMock doc_ref whose .get()
     returns a snapshot with exists=True and to_dict()->data. Returns doc_ref."""
@@ -838,6 +851,67 @@ class TestOutreachLogStore:
         with patch("memory.stores.base._make_firestore_client", return_value=client):
             store = firestore_db.OutreachLogStore("test-project")
             assert store.get_today("1999-01-01") == []
+
+    def test_get_days_batches_the_window_into_one_round_trip(self):
+        """get_days fetches several dates with a single get_all call.
+
+        The Hub bell renders a multi-day window and used to call get_today once
+        per day — seven sequential document reads on page load and again every
+        five minutes. Because doc ids ARE the dates, get_all fetches the exact set
+        in one batched RPC and needs no index.
+        """
+        client, col = _make_mock_client_with_collection()
+        dates = ["2026-08-19", "2026-08-18", "2026-08-17"]
+        client.get_all.return_value = [
+            _snapshot_for("2026-08-19", {"entries": [self._ENTRY]}),
+            _snapshot_for("2026-08-17", {"entries": [{"topic_key": "silence:pm"}]}),
+        ]
+
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            result = store.get_days(dates)
+
+        assert client.get_all.call_count == 1
+        assert result == {
+            "2026-08-19": [self._ENTRY],
+            "2026-08-17": [{"topic_key": "silence:pm"}],
+        }
+        # A date with no document is simply absent — never a fabricated empty day.
+        assert "2026-08-18" not in result
+        # One ref per distinct date, in the order given.
+        assert [c.args[0] for c in col.document.call_args_list] == dates
+
+    def test_get_days_collapses_duplicate_dates(self):
+        """A repeated date is fetched once."""
+        client, col = _make_mock_client_with_collection()
+        client.get_all.return_value = []
+
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            store.get_days(["2026-08-19", "2026-08-19", "2026-08-18"])
+
+        assert [c.args[0] for c in col.document.call_args_list] == [
+            "2026-08-19", "2026-08-18",
+        ]
+
+    def test_get_days_returns_empty_on_firestore_error(self):
+        """A batch failure degrades the bell to "no outreach", never a 500."""
+        client, _col = _make_mock_client_with_collection()
+        client.get_all.side_effect = RuntimeError("firestore unavailable")
+
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            assert store.get_days(["2026-08-19"]) == {}
+
+    def test_get_days_with_no_dates_does_not_call_firestore(self):
+        """An empty window is answered without a round trip."""
+        client, _col = _make_mock_client_with_collection()
+
+        with patch("memory.stores.base._make_firestore_client", return_value=client):
+            store = firestore_db.OutreachLogStore("test-project")
+            assert store.get_days([]) == {}
+
+        assert client.get_all.call_count == 0
 
     def test_topics_today_returns_topic_keys_in_order(self):
         """topics_today(date) returns the list of topic_keys from entries."""

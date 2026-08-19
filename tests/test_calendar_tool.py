@@ -152,3 +152,63 @@ def test_list_primary_events_passes_bounded_num_retries():
     with patch.object(m, "_get_service", return_value=service):
         m._list_primary_events("2026-07-01T00:00:00+03:00", "2026-07-02T00:00:00+03:00")
     chain.execute.assert_called_once_with(num_retries=1)
+
+
+def test_list_writable_calendars_is_cached_between_calls():
+    """The calendarList read is served from a TTL cache.
+
+    list_all_events calls this on every GET /api/today, so an uncached read added
+    a Google round trip to every Hub refresh and every ten-minute alert tick — for
+    a calendar set that changes about once a year.
+    """
+    m = _mgr()
+    service = MagicMock()
+    page = {"items": [
+        {"id": "primary", "summary": "Amit", "primary": True, "accessRole": "owner"},
+    ]}
+    service.calendarList.return_value.list.side_effect = [_chain(page)]
+
+    with patch.object(m, "_get_service", return_value=service):
+        first = m.list_writable_calendars()
+        second = m.list_writable_calendars()
+
+    assert first == second
+    assert service.calendarList.return_value.list.call_count == 1
+
+
+def test_list_writable_calendars_does_not_cache_a_failure():
+    """A transient calendarList error must self-heal on the next call.
+
+    Caching the [] would blind every downstream read — including the Hub's
+    calendar and the deterministic leave-by alerts — until the TTL expired.
+    """
+    m = _mgr()
+    service = MagicMock()
+    good = {"items": [
+        {"id": "primary", "summary": "Amit", "primary": True, "accessRole": "owner"},
+    ]}
+    service.calendarList.return_value.list.side_effect = [
+        RuntimeError("calendarList 503"),
+        _chain(good),
+    ]
+
+    with patch.object(m, "_get_service", return_value=service):
+        assert m.list_writable_calendars() == []
+        assert [c["id"] for c in m.list_writable_calendars()] == ["primary"]
+
+
+def test_cached_calendar_list_cannot_be_mutated_by_a_caller():
+    """Callers get their own copies — a mutation must not poison the cache."""
+    m = _mgr()
+    service = MagicMock()
+    page = {"items": [
+        {"id": "primary", "summary": "Amit", "primary": True, "accessRole": "owner"},
+    ]}
+    service.calendarList.return_value.list.side_effect = [_chain(page)]
+
+    with patch.object(m, "_get_service", return_value=service):
+        first = m.list_writable_calendars()
+        first[0]["id"] = "tampered"
+        second = m.list_writable_calendars()
+
+    assert second[0]["id"] == "primary"

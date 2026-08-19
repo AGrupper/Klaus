@@ -9,8 +9,10 @@
  * Pull-to-refresh: call useRefreshToday() to get a callback that invalidates
  * the ['today'] query key, triggering a background refetch.
  *
- * The server caches expensive sub-calls (Routes API, Garmin) for 30 minutes,
- * so refetch-on-focus does not exhaust upstream quotas (RESEARCH.md D-05 note).
+ * There is NO server-side cache behind this: /api/today calls Garmin, Google
+ * Calendar and the weather API live on every request (~3s). The Routes API cache
+ * this comment used to describe was removed with the Routes API itself. Garmin
+ * failures fall back to the stored daily_biometrics row rather than blanking.
  *
  * Null values in GarminStats / training / coach_note are D-06 signals:
  * "data not yet available" — NOT fetch errors. The query error path handles

@@ -460,3 +460,130 @@ def test_remote_fire_requires_a_routine_trigger_token(monkeypatch):
 
     with pytest.raises(RuntimeError, match="nightly routine trigger token is not configured"):
         fire_remote_claude_routine({"routine": "nightly"})
+
+
+def test_morning_publish_writes_the_hub_coach_note(monkeypatch):
+    """A morning publish restores config/self_state's daily_note fields.
+
+    Regression guard for the 2026-08-11 cutover to Claude Routines: the retired
+    Python cascade derived `daily_note` from the review's first line, nothing
+    replaced it, and the Hub's date gate (core/hub/today.py) therefore returned
+    None every day — the coach note card showed its placeholder for eight days
+    while morning reviews kept publishing normally.
+    """
+    import core.push_sender
+    import memory.firestore_db
+    from core.routines.subscription import SubscriptionRoutineCoordinator
+    from interfaces.mcp.runtime import build_custom_handlers
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
+    )
+
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore, "transactional", transactional_with_retry
+    )
+    monkeypatch.setattr(
+        core.push_sender, "send_push_to_all", lambda *_args, **_kw: {"sent": 1}
+    )
+
+    runs = memory.firestore_db.RoutineRunStore("test-project")
+    coordinator = SubscriptionRoutineCoordinator(
+        run_store=runs,
+        review_store=memory.firestore_db.RoutineReviewStore("test-project"),
+        remote_fire=lambda _payload: {"accepted": True},
+        enqueue_fallback=lambda _cid, _delay: True,
+        snapshot_builder=lambda: {},
+        push_sender=lambda *_args, **_kw: {"sent": 1},
+        public_url="https://klaus.example.com",
+    )
+    correlation_id = coordinator.start("morning", "2026-08-19", "wake")["correlation_id"]
+
+    build_custom_handlers()["publish_review"]({
+        "correlation_id": correlation_id,
+        "routine": "morning",
+        "target_date": "2026-08-19",
+        "text": (
+            "**Morning, Sir.** Wednesday's split stands untouched.\n"
+            "Recovery: 6.5h sleep, HRV at baseline."
+        ),
+        "structured": {"self_state": {"mood": "steady", "current_focus": "Week 9"}},
+        "action_ids": [],
+        "partial_actions": [],
+    })
+
+    state = memory.firestore_db.SelfStateStore("test-project").get()
+    assert state["daily_note"] == "Morning, Sir. Wednesday's split stands untouched."
+    assert state["daily_note_date"] == "2026-08-19"
+    assert state["daily_note_at"]  # stamped so the Hub can show when it was written
+    # The self_state the skill already sends is merged, not dropped.
+    assert state["mood"] == "steady"
+    assert state["current_focus"] == "Week 9"
+
+
+def test_nightly_publish_does_not_clobber_the_coach_note(monkeypatch):
+    """The nightly self_state write must leave the morning's note intact.
+
+    Nightly runs hours after the note is written and shares the same document;
+    overwriting daily_note_date there would blank the Hub card every evening.
+    """
+    import core.push_sender
+    import memory.firestore_db
+    from interfaces.mcp.runtime import build_custom_handlers
+    from core.routines.subscription import SubscriptionRoutineCoordinator
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
+    )
+
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore, "transactional", transactional_with_retry
+    )
+    monkeypatch.setattr(
+        core.push_sender, "send_push_to_all", lambda *_args, **_kw: {"sent": 1}
+    )
+
+    memory.firestore_db.SelfStateStore("test-project").set({
+        "daily_note": "Morning, Sir.",
+        "daily_note_date": "2026-08-19",
+    })
+
+    runs = memory.firestore_db.RoutineRunStore("test-project")
+    coordinator = SubscriptionRoutineCoordinator(
+        run_store=runs,
+        review_store=memory.firestore_db.RoutineReviewStore("test-project"),
+        remote_fire=lambda _payload: {"accepted": True},
+        enqueue_fallback=lambda _cid, _delay: True,
+        snapshot_builder=lambda: {},
+        push_sender=lambda *_args, **_kw: {"sent": 1},
+        public_url="https://klaus.example.com",
+    )
+    correlation_id = coordinator.start("nightly", "2026-08-19", "cron")["correlation_id"]
+
+    build_custom_handlers()["publish_review"]({
+        "correlation_id": correlation_id,
+        "routine": "nightly",
+        "target_date": "2026-08-19",
+        "text": "Evening, Sir.",
+        "structured": {
+            "reflection": {
+                "summary": "s", "mood": "steady", "current_focus": "f",
+                "recent_context": "c", "highlights": [],
+            },
+            "self_state": {"mood": "steady", "current_focus": "f", "recent_context": "c"},
+        },
+        "action_ids": [],
+        "partial_actions": [],
+    })
+
+    state = memory.firestore_db.SelfStateStore("test-project").get()
+    assert state["daily_note"] == "Morning, Sir."
+    assert state["daily_note_date"] == "2026-08-19"

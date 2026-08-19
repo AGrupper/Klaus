@@ -43,6 +43,35 @@ def _clear_firestore_read_cache():
 
 
 @pytest.fixture(autouse=True)
+def _clear_process_local_caches():
+    """Reset the TTL caches that live on module or class attributes.
+
+    These exist to keep GET /api/today from re-fetching things that barely change
+    (the writable-calendar list, the last good weather line, the session-version
+    counter) on every single request. They are process-global by design, which in
+    a test run means one test's value silently answering another's assertion.
+    Cleared on both sides so order can never matter.
+    """
+    def _reset() -> None:
+        cal = sys.modules.get("mcp_tools.calendar_tool")
+        if cal is not None and hasattr(cal, "GoogleCalendarManager"):
+            cal.GoogleCalendarManager._writable_calendars_cache = None
+        hub_today = sys.modules.get("core.hub.today")
+        if hub_today is not None:
+            if hasattr(hub_today, "_weather_last_good"):
+                hub_today._weather_last_good = None
+            if hasattr(hub_today, "_biometric_write_through_seen"):
+                hub_today._biometric_write_through_seen.clear()
+        auth = sys.modules.get("interfaces.hub_auth")
+        if auth is not None and hasattr(auth, "invalidate_session_version_cache"):
+            auth.invalidate_session_version_cache()
+
+    _reset()
+    yield
+    _reset()
+
+
+@pytest.fixture(autouse=True)
 def _isolate_things_cloud(monkeypatch):
     """Keep the test suite off Amit's real Things account.
 

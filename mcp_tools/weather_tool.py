@@ -6,10 +6,17 @@ Raises WeatherUnavailableError on network or parse failure.
 from __future__ import annotations
 
 import logging
+import time
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Short enough that a hung wttr.in cannot dominate GET /api/today, which fans out
+# to Garmin and Google Calendar concurrently and finishes in ~3s.
+_REQUEST_TIMEOUT_SECONDS = 4
+_MAX_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 0.5
 
 
 class WeatherUnavailableError(Exception):
@@ -33,14 +40,25 @@ def fetch_weather(location: str = "Tel Aviv") -> dict:
         WeatherUnavailableError: On HTTP error or missing data in the response.
     """
     url = f"https://wttr.in/{requests.utils.quote(location)}?format=j1"
-    try:
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-    except requests.RequestException as exc:
-        raise WeatherUnavailableError(f"wttr.in request failed: {exc}") from exc
-    except ValueError as exc:
-        raise WeatherUnavailableError(f"wttr.in returned non-JSON: {exc}") from exc
+    # wttr.in is a free service and fails often — read timeouts and 500s several
+    # times an hour in production. One retry absorbs most of it; the timeout is
+    # kept short because this call sits inside GET /api/today, where a ten-second
+    # hang would set the floor for every Hub page load.
+    last_exc: Exception | None = None
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            resp = requests.get(url, timeout=_REQUEST_TIMEOUT_SECONDS)
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except requests.RequestException as exc:
+            last_exc = WeatherUnavailableError(f"wttr.in request failed: {exc}")
+        except ValueError as exc:
+            last_exc = WeatherUnavailableError(f"wttr.in returned non-JSON: {exc}")
+        if attempt + 1 < _MAX_ATTEMPTS:
+            time.sleep(_RETRY_DELAY_SECONDS)
+    else:
+        raise last_exc  # type: ignore[misc]
 
     try:
         current_cond = data["current_condition"][0]

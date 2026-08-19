@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from interfaces.mcp.oauth import FirestoreOAuthStore, OAuthAuthorizationService
 from interfaces.mcp.server import WRITE_TOOLS, create_mcp_bundle
+
+logger = logging.getLogger(__name__)
 
 
 _RISK_CATEGORIES = frozenset(
@@ -281,6 +284,40 @@ def build_custom_handlers() -> dict[str, Any]:
         )
         run = publication["run"]
         review = publication["review"]
+        if routine == "morning":
+            # Restores the Hub's coach note, dead since the 2026-08-11 cutover to
+            # Claude Routines: the retired Python cascade wrote daily_note from the
+            # review's first line, and nothing replaced it — config/self_state kept
+            # serving an 8-day-old daily_note_date, so /api/today's date gate
+            # (core/hub/today.py) returned None every day and the card showed its
+            # "coming after your morning briefing" placeholder permanently.
+            #
+            # Derived here rather than requested from the skill so restoring it
+            # needs no skill version bump and no Claude Project re-upload.
+            #
+            # Never fatal: the review is already published atomically above and the
+            # push still has to go out. A convenience note must not take that down.
+            try:
+                from core.hub.today import derive_coach_note  # lazy import
+
+                note = derive_coach_note(text)
+                if note:
+                    morning_state = self_state if isinstance(self_state, dict) else {}
+                    SelfStateStore(*_settings()).set({
+                        **morning_state,
+                        "daily_note": note,
+                        "daily_note_date": target_date,
+                        # Date alone cannot say WHEN — the Hub shows this so the note
+                        # reads as this morning's word, not as live advice.
+                        "daily_note_at": datetime.now(timezone.utc).isoformat(),
+                        "source": "claude_subscription",
+                    })
+            except Exception:
+                logger.warning(
+                    "morning publish: coach note persistence failed for %s",
+                    target_date,
+                    exc_info=True,
+                )
         if routine == "nightly":
             JournalStore(*_settings()).set(
                 target_date,

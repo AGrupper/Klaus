@@ -46,6 +46,11 @@ _TRANSIENT_ERRORS = (HttpError, OSError)
 # was merely lost (not the request) risks a duplicate side effect.
 _READ_NUM_RETRIES = 1
 
+# How long a writable-calendar listing stays good. The set changes on the order of
+# once a year; this only has to be short enough that adding a calendar shows up
+# without a redeploy.
+_CALENDAR_LIST_TTL_SECONDS = 600  # 10 minutes
+
 _CALENDAR_TIMEZONE = "Asia/Jerusalem"
 
 
@@ -180,6 +185,10 @@ class GoogleCalendarManager:
     # own commitments rather than a feed he subscribed to.
     _WRITABLE_ACCESS_ROLES: frozenset[str] = frozenset({"owner", "writer"})
 
+    # (fetched_at_monotonic, calendars) — class-level so it is shared by every
+    # manager instance in the process, matching the shared-singleton read path.
+    _writable_calendars_cache: tuple[float, list[dict]] | None = None
+
     def list_writable_calendars(self) -> list[dict]:
         """Return the user's calendars that allow writes (owner/writer access).
 
@@ -191,7 +200,18 @@ class GoogleCalendarManager:
             A list of dicts, each with ``"id"``, ``"summary"``, ``"primary"``
             (bool), and ``"access_role"``. Returns ``[]`` on any API error;
             never raises.
+
+        Served from a short process-local TTL cache. Amit's calendar set changes
+        maybe once a year, but ``list_all_events`` calls this on every
+        ``GET /api/today`` — so an uncached read added a Google round trip to
+        every Hub refresh and every ten-minute alert tick. A failure is never
+        cached, so a transient calendarList error self-heals on the next call.
         """
+        import time as _time
+
+        cached = type(self)._writable_calendars_cache
+        if cached is not None and _time.monotonic() - cached[0] < _CALENDAR_LIST_TTL_SECONDS:
+            return [dict(entry) for entry in cached[1]]
         try:
             service = self._get_service()
             calendars: list[dict] = []
@@ -218,6 +238,7 @@ class GoogleCalendarManager:
                 page_token = result.get("nextPageToken")
                 if not page_token:
                     break
+            type(self)._writable_calendars_cache = (_time.monotonic(), [dict(c) for c in calendars])
             return calendars
         except Exception:
             logger.error("Calendar calendarList error in list_writable_calendars", exc_info=True)

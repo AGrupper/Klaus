@@ -16,11 +16,6 @@ import os
 logger = logging.getLogger(__name__)
 
 
-# Process-local TTL for Hub health aggregation. Nothing behind it is billable
-# per-call any more — the Routes API and its persisted cost ledger are gone.
-_HEALTH_CACHE_TTL_SECONDS = 1800  # 30 minutes
-
-
 def _today_calendar(today_iso: str) -> dict:
     """Fetch today's calendar events — all-day pinned + timed sorted chronologically.
 
@@ -93,15 +88,105 @@ def _today_calendar(today_iso: str) -> dict:
         return {"all_day": [], "timed": []}
 
 
+# Minimum gap between write-throughs of the same day's biometrics. Every Hub
+# refresh and every ten-minute alert tick fetches these numbers, so an ungated
+# write would open a Postgres connection per request — and a Postgres outage
+# would add its five-second connect timeout to every one of them.
+_BIOMETRIC_WRITE_THROUGH_INTERVAL_SECONDS = 900  # 15 minutes
+
+# date -> monotonic timestamp of the last write-through attempt (success or not).
+_biometric_write_through_seen: dict[str, float] = {}
+
+
+def _persist_garmin_snapshot(data: dict) -> None:
+    """Write a live Garmin read through to the daily_biometrics table.
+
+    The Hub fetches exactly the columns the 05:30 biometric cron backfills, dozens
+    of times a day, and used to discard every one. Persisting them here closes the
+    gap where a late Garmin sync leaves the row missing until the next day's cron
+    re-pull — at no extra Garmin cost, since the data is already in hand.
+
+    Bounded by an interval guard per date so the alert cadence cannot turn into a
+    write per request. The underlying writer upserts and swallows its own errors;
+    this never raises, because a history write must not break the day view.
+    """
+    import time as _time
+
+    date_iso = str(data.get("date") or "")
+    if not date_iso:
+        return
+    # Nothing to persist on a watch-off day — writing all-NULLs would mask the gap.
+    if all(
+        data.get(k) is None
+        for k in ("sleep_hours", "hrv_overnight", "resting_hr", "body_battery_morning")
+    ):
+        return
+
+    now = _time.monotonic()
+    last = _biometric_write_through_seen.get(date_iso)
+    if last is not None and now - last < _BIOMETRIC_WRITE_THROUGH_INTERVAL_SECONDS:
+        return
+    # Stamped before the attempt: a hung or failing write must not be retried on
+    # the very next request.
+    _biometric_write_through_seen[date_iso] = now
+
+    try:
+        from mcp_tools.garmin_tool import write_biometrics_to_postgres  # lazy import
+        write_biometrics_to_postgres(data)
+    except Exception:
+        logger.warning("_persist_garmin_snapshot(%r) failed", date_iso, exc_info=True)
+
+
+def _stored_garmin(today_iso: str) -> dict | None:
+    """Fall back to the biometrics already stored for today, or None.
+
+    Reached when the live Garmin call fails — rate limit, expired token, Garmin
+    outage. Without this the Hub shows "Sleep stats syncing…" all day even though
+    the 05:30 cron has the numbers, which reads as missing data rather than as a
+    transient upstream failure.
+
+    `stored: True` marks the payload so the client can say the numbers are the
+    stored ones. That flag also carries a real caveat: `body_battery_max` is the
+    day's peak, not the live read's `body_battery_morning`, so the two are close
+    but not the same measurement.
+    """
+    try:
+        from core.health_reads import fetch_biometric_range  # lazy import
+        rows = fetch_biometric_range(today_iso, today_iso)
+        if not rows:
+            return None
+        row = rows[-1]
+        stats = {
+            "sleep": row.get("sleep_duration"),
+            "hrv": row.get("hrv_overnight"),
+            "body_battery": row.get("body_battery_max"),
+            "resting_hr": row.get("resting_hr"),
+        }
+        if all(v is None for v in stats.values()):
+            return None
+        return {**stats, "stored": True}
+    except Exception:
+        logger.warning("_stored_garmin(%r) failed", today_iso, exc_info=True)
+        return None
+
+
 def _today_garmin() -> dict | None:
     """Fetch today's Garmin morning stats — sleep, HRV, body battery, resting HR.
 
-    TIME-02 stats half. Returns None when Garmin has not yet synced (D-06:
+    TIME-02 stats half. Falls back to the stored daily_biometrics row when the
+    live call fails, and returns None only when neither source has anything (D-06:
     client shows "Sleep stats syncing…").
     """
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo as _ZI
+
+    today_iso = _dt.now(_ZI("Asia/Jerusalem")).date().isoformat()
     try:
         from mcp_tools.garmin_tool import fetch_garmin_today  # lazy import
         data = fetch_garmin_today()
+        # Persist the FULL dict — the narrowed four fields below drop sleep_score,
+        # hrv_baseline, training_readiness and vo2_max, which the table wants.
+        _persist_garmin_snapshot(data)
         # Field names match the frontend GarminStats contract
         # (frontend/src/api/today.ts): sleep (hours), hrv (ms), body_battery, resting_hr.
         return {
@@ -111,15 +196,27 @@ def _today_garmin() -> dict | None:
             "resting_hr": data.get("resting_hr"),
         }
     except Exception:
-        logger.warning("_today_garmin() failed — Garmin may not have synced yet", exc_info=True)
-        return None
+        logger.warning("_today_garmin() failed — falling back to stored biometrics", exc_info=True)
+        return _stored_garmin(today_iso)
+
+
+# Last successful weather line, with the monotonic time it was fetched. wttr.in is
+# a free service that fails several times an hour, and its failures used to render
+# as a bare "—" with no way to tell an outage from a quiet sky.
+_WEATHER_CACHE_TTL_SECONDS = 3600  # an hour-old reading still beats nothing
+_weather_last_good: tuple[float, str] | None = None
 
 
 def _today_weather() -> str | None:
     """Fetch a one-line weather summary string for Tel Aviv.
 
-    TIME-02 weather half. Returns None on any error — client can show "—".
+    TIME-02 weather half. Falls back to the last successful reading (up to an hour
+    old) when wttr.in fails, and returns None only when there is nothing cached —
+    client can show "—".
     """
+    global _weather_last_good
+    import time as _time
+
     try:
         from mcp_tools.weather_tool import fetch_weather  # lazy import
         data = fetch_weather("Tel Aviv")
@@ -139,9 +236,16 @@ def _today_weather() -> str | None:
             parts.append(f"H {high}°/L {low}°")
         if rain:
             parts.append(f"{rain}% rain")
-        return ", ".join(parts) if parts else None
+        summary = ", ".join(parts) if parts else None
+        if summary:
+            _weather_last_good = (_time.monotonic(), summary)
+        return summary
     except Exception:
-        logger.warning("_today_weather() failed", exc_info=True)
+        logger.warning("_today_weather() failed — trying last good reading", exc_info=True)
+        if _weather_last_good is not None:
+            cached_at, cached_summary = _weather_last_good
+            if _time.monotonic() - cached_at < _WEATHER_CACHE_TTL_SECONDS:
+                return cached_summary
         return None
 
 
@@ -268,8 +372,8 @@ def _today_training(today_iso: str) -> dict | None:
 _COACH_NOTE_MAX_LEN = 280
 
 
-def _sanitize_coach_note(note: str) -> str:
-    """Strip control/format chars + inline Markdown markers and clamp.
+def _strip_note_markup(note: str) -> str:
+    """Strip control/format chars + inline Markdown markers. No length limit.
 
     The coach note is the morning briefing's first line — first-party text, but
     it can carry Markdown (``#`` headers, ``**bold**``) or stray bidi/format
@@ -281,7 +385,73 @@ def _sanitize_coach_note(note: str) -> str:
         ch for ch in str(note)
         if ch in ("\n", "\t") or not unicodedata.category(ch).startswith("C")
     )
-    return cleaned.replace("**", "").replace("*", "").lstrip("#").strip()[:_COACH_NOTE_MAX_LEN]
+    return cleaned.replace("**", "").replace("*", "").lstrip("#").strip()
+
+
+def _sanitize_coach_note(note: str) -> str:
+    """Strip markup and hard-clamp to the note length limit."""
+    return _strip_note_markup(note)[:_COACH_NOTE_MAX_LEN]
+
+
+def _trim_to_note_length(note: str) -> str:
+    """Shorten a note to the length limit without cutting mid-word.
+
+    The morning review opens with a full paragraph, not the one-liner the retired
+    cascade produced, so a bare slice ended notes like "Nothing overnight changed
+    t". Prefer the last sentence that fits; fall back to the last whole word plus
+    an ellipsis, so the note always reads as a finished thought or an obvious
+    continuation — never as a typo.
+    """
+    if len(note) <= _COACH_NOTE_MAX_LEN:
+        return note
+
+    window = note[:_COACH_NOTE_MAX_LEN]
+    # Sentence end nearest the limit, provided it leaves a substantial note.
+    sentence_end = max(window.rfind(". "), window.rfind("! "), window.rfind("? "))
+    if sentence_end >= _COACH_NOTE_MAX_LEN // 2:
+        return window[: sentence_end + 1].strip()
+
+    word_end = window.rfind(" ")
+    if word_end <= 0:
+        return window.rstrip()
+    return window[:word_end].rstrip(" ,;:—-") + "…"
+
+
+def derive_coach_note(review_text: str) -> str:
+    """Reduce a published morning review to its one-line coach note.
+
+    The note the Hub renders is the review's opening line — the same rule the
+    retired Python morning cascade used before the Claude Routines cutover
+    (v6.0 Phase 33: "first non-empty line of final_text"). Restoring the
+    derivation here rather than in the skill keeps it a backend contract, so it
+    cannot drift with an un-uploaded skill version.
+
+    Returns "" when the text has no usable line, which callers treat as
+    "nothing to persist" rather than writing an empty note.
+    """
+    for line in str(review_text or "").splitlines():
+        cleaned = _strip_note_markup(line)
+        if cleaned:
+            return _trim_to_note_length(cleaned)
+    return ""
+
+
+def _read_self_state() -> dict:
+    """Return the self_state doc, JSON-safe. ``{}`` on any error — never raises.
+
+    Shared by both coach-note reads so a single ``/api/today`` costs one
+    Firestore round trip (SelfStateStore.get() is TTL-cached between writes).
+    """
+    try:
+        from memory.firestore_db import SelfStateStore, _jsonsafe_doc as _jsd  # lazy import
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        if not project_id:
+            return {}
+        return _jsd(SelfStateStore(project_id=project_id, database=database).get())
+    except Exception:
+        logger.warning("_read_self_state() failed", exc_info=True)
+        return {}
 
 
 def _today_coach_note(today_iso: str) -> str | None:
@@ -292,13 +462,7 @@ def _today_coach_note(today_iso: str) -> str | None:
     shows "Coach note coming after your morning briefing" per D-06.
     """
     try:
-        from memory.firestore_db import SelfStateStore, _jsonsafe_doc as _jsd  # lazy import
-        project_id = os.environ.get("GCP_PROJECT_ID", "")
-        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-        if not project_id:
-            return None
-        state_store = SelfStateStore(project_id=project_id, database=database)
-        state = _jsd(state_store.get())
+        state = _read_self_state()
         note = state.get("daily_note")
         note_date = state.get("daily_note_date")
         if note and note_date == today_iso:
@@ -306,6 +470,27 @@ def _today_coach_note(today_iso: str) -> str | None:
         return None
     except Exception:
         logger.warning("_today_coach_note() failed", exc_info=True)
+        return None
+
+
+def _today_coach_note_at(today_iso: str) -> str | None:
+    """Return when today's coach note was written, as an ISO timestamp.
+
+    The Hub renders this beside the note so it reads as what Klaus said at a
+    particular hour rather than as live advice — the note is a byproduct of the
+    morning review and is never recomposed later in the day.
+
+    Gated on the same `daily_note_date == today` check as the note itself, so a
+    stale timestamp can never outlive the note it describes.
+    """
+    try:
+        state = _read_self_state()
+        if not state.get("daily_note") or state.get("daily_note_date") != today_iso:
+            return None
+        written_at = state.get("daily_note_at")
+        return str(written_at) if written_at else None
+    except Exception:
+        logger.warning("_today_coach_note_at() failed", exc_info=True)
         return None
 
 

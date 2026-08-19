@@ -41,12 +41,14 @@ from core.hub.today import (  # noqa: F401
     _sanitize_coach_note,
     _today_calendar,
     _today_coach_note,
+    _today_coach_note_at,
     _today_departure_windows,
     _today_garmin,
     _today_meals,
     _today_nutrition_totals,
     _today_training,
     _today_weather,
+    derive_coach_note,
 )
 from core.hub.health_series import (  # noqa: F401
     _HEALTH_CACHE_TTL_SECONDS,
@@ -257,6 +259,25 @@ async def _normalize_mcp_mount_path(request: Request, call_next):
         request.scope["path"] = f"{path}/"
         request.scope["raw_path"] = f"{path}/".encode("ascii")
     return await call_next(request)
+
+
+@app.middleware("http")
+async def _no_store_api_responses(request: Request, call_next):
+    """Mark every Hub API response uncacheable.
+
+    The Hub is a live dashboard: /api/today reads Garmin, Google Calendar and the
+    weather per request, and a refresh is expected to show the current state. None
+    of these responses carried a Cache-Control header, which left freshness to
+    browser and intermediary heuristics — nothing is served stale today, but only
+    by luck. Applied as middleware so a new /api route cannot forget it.
+
+    Deliberately scoped to /api: the SPA's hashed assets are immutable and MUST
+    stay cacheable, and the service worker's own strategies handle the shell.
+    """
+    response = await call_next(request)
+    if request.scope.get("path", "").startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def _configure_subscription_interfaces() -> None:

@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from core.hub.today import (
     _today_calendar,
     _today_coach_note,
+    _today_coach_note_at,
     _today_departure_windows,
     _today_garmin,
     _today_meals,
@@ -47,7 +48,8 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
 
     Returns:
         JSONResponse: {"today", "calendar", "garmin", "weather", "meals",
-                       "training", "coach_note", "nutrition_totals"}
+                       "training", "coach_note", "coach_note_at",
+                       "nutrition_totals"}
     Raises:
         HTTPException 401: No valid session cookie (via require_hub_session).
     """
@@ -79,7 +81,9 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
     )
 
     # Phase 3: coach note is a lightweight Firestore read (single cached doc).
+    # Both reads hit the same TTL-cached self_state doc, so this stays one round trip.
     coach_note = await loop.run_in_executor(None, _today_coach_note, today_iso)
+    coach_note_at = await loop.run_in_executor(None, _today_coach_note_at, today_iso)
 
     # Assemble and JSON-safe the entire response (Pitfall 4 — _jsonsafe_doc on ALL Firestore data).
     payload = _jsonsafe_doc({
@@ -90,6 +94,9 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
         "meals": meal_data,
         "training": training_data,
         "coach_note": coach_note,
+        # When the note was written — the client renders it so a morning note is
+        # never mistaken for live advice. None whenever coach_note is None.
+        "coach_note_at": coach_note_at,
         "nutrition_totals": nutrition_totals,
     })
 

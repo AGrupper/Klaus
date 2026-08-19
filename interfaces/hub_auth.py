@@ -25,6 +25,7 @@ hmac.compare_digest, redacted logging, CRON_DEV_BYPASS bypass shape).
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -164,6 +165,25 @@ def verify_session_cookie(cookie_value: str, current_version: int) -> str:
 # Session version (D-02 revocation counter)                          #
 # ------------------------------------------------------------------ #
 
+# The revocation counter changes only when /api/auth/revoke-all bumps it, so
+# re-reading it from Firestore on every single /api/* request bought nothing and
+# cost a blocking round trip per request — roughly eight per Hub page load.
+# invalidate_session_version_cache() keeps a revocation immediate on this
+# instance; other instances converge within the TTL.
+_SESSION_VERSION_TTL_SECONDS = 60
+_session_version_cache: tuple[float, int] | None = None
+
+
+def invalidate_session_version_cache() -> None:
+    """Drop the cached session_version so the next read goes to Firestore.
+
+    Called by /api/auth/revoke-all: without it, sign-out-everywhere (D-02) would
+    keep honouring existing cookies on this instance for up to the TTL.
+    """
+    global _session_version_cache
+    _session_version_cache = None
+
+
 def get_session_version() -> int:
     """Read the current session_version from UserProfileStore.
 
@@ -172,9 +192,18 @@ def get_session_version() -> int:
 
     WHY synchronous: this function is called from require_hub_session which runs
     inside asyncio; the caller must wrap this in run_in_executor when called from
-    an async context (same pattern as /cron/* routes). For the FastAPI dependency
-    the call is lightweight and the event loop is not the bottleneck on auth.
+    an async context (same pattern as /cron/* routes).
+
+    Served from a short process-local TTL cache between revocations, so the
+    blocking Firestore read happens roughly once a minute per instance rather than
+    once per request.
     """
+    global _session_version_cache
+    import time as _time
+
+    cached = _session_version_cache
+    if cached is not None and _time.monotonic() - cached[0] < _SESSION_VERSION_TTL_SECONDS:
+        return cached[1]
     try:
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
@@ -183,10 +212,12 @@ def get_session_version() -> int:
         from memory.firestore_db import UserProfileStore  # lazy import
         store = UserProfileStore(project_id=project_id, database=database)
         profile = store.load()
-        return int(profile.get("session_version", 0))
+        version = int(profile.get("session_version", 0))
     except Exception:
         logger.warning("get_session_version() failed — defaulting to 0", exc_info=True)
         return 0
+    _session_version_cache = (_time.monotonic(), version)
+    return version
 
 
 # ------------------------------------------------------------------ #
@@ -291,5 +322,10 @@ async def require_hub_session(request: Request) -> str:
             detail={"error": "Not authenticated"},
         )
 
-    current_version = get_session_version()
+    # Pitfall 2: get_session_version() is a blocking Firestore read and this
+    # dependency runs on the event loop for EVERY /api/* request. Left unwrapped
+    # it stalled the loop ~8 times per Hub page load — the same failure mode as
+    # the slow-reply and weekly-review-500 incidents.
+    loop = asyncio.get_running_loop()
+    current_version = await loop.run_in_executor(None, get_session_version)
     return verify_session_cookie(cookie_value, current_version)

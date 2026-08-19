@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tests.test_web_server import _stub_web_server_imports, _BASE_ENV
 
@@ -97,3 +97,59 @@ def test_the_route_walker_actually_finds_the_hub_api():
     assert "/api/today" in api_paths
     assert "/api/tasks" in api_paths
     assert len(api_paths) >= 20, f"only found {len(api_paths)} API routes"
+
+
+def test_api_responses_are_marked_no_store():
+    """Every /api response carries Cache-Control: no-store.
+
+    The Hub is a live dashboard — /api/today reads Garmin, Google Calendar and
+    the weather per request — but no route set a cache header, leaving freshness
+    to browser and intermediary heuristics. Applied as middleware so a new route
+    cannot forget it, which is what this asserts.
+    """
+    from fastapi.testclient import TestClient
+
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs), patch.dict(os.environ, _BASE_ENV):
+        import interfaces.web_server as ws
+
+        client = TestClient(ws.app, raise_server_exceptions=False)
+        # An unauthenticated call is enough: middleware runs on the way out
+        # regardless of the status code.
+        api_response = client.get("/api/today")
+        assert api_response.headers.get("Cache-Control") == "no-store"
+
+        # Hashed SPA assets must stay cacheable — the header is scoped to /api.
+        root_response = client.get("/")
+        assert root_response.headers.get("Cache-Control") != "no-store"
+
+
+def test_session_version_is_cached_and_dropped_on_revoke():
+    """The revocation counter is read once per TTL, not once per request.
+
+    get_session_version() is a blocking Firestore read inside the dependency that
+    guards EVERY /api route — roughly eight reads per Hub page load. Caching it is
+    only safe if revoke-all still takes effect immediately, so both halves are
+    asserted here.
+    """
+    stubs = _stub_web_server_imports()
+    with patch.dict(sys.modules, stubs), patch.dict(os.environ, _BASE_ENV):
+        import interfaces.hub_auth as hub_auth
+
+        store = MagicMock()
+        store.load.return_value = {"session_version": 3}
+        hub_auth.invalidate_session_version_cache()
+
+        with patch("memory.firestore_db.UserProfileStore", return_value=store):
+            assert hub_auth.get_session_version() == 3
+            assert hub_auth.get_session_version() == 3
+            assert hub_auth.get_session_version() == 3
+            assert store.load.call_count == 1
+
+            # Revoking must not wait for the TTL to expire.
+            store.load.return_value = {"session_version": 4}
+            hub_auth.invalidate_session_version_cache()
+            assert hub_auth.get_session_version() == 4
+            assert store.load.call_count == 2
+
+        hub_auth.invalidate_session_version_cache()

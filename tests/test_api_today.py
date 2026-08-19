@@ -587,3 +587,242 @@ def test_sanitize_coach_note_strips_controls_and_markdown_header():
     assert not out.startswith("#")
     # Length is clamped.
     assert len(_sanitize_coach_note("x" * 1000)) <= 280
+
+
+# ------------------------------------------------------------------ #
+# Coach note derivation (restored after the 2026-08-11 cutover)      #
+# ------------------------------------------------------------------ #
+
+def test_derive_coach_note_takes_first_non_empty_line():
+    """The note is the review's opening line, sanitized and clamped.
+
+    Regression guard for the cutover to Claude Routines, which left `daily_note`
+    with no writer at all: config/self_state kept an 8-day-old daily_note_date,
+    the /api/today date gate returned None every day, and the Hub showed its
+    placeholder permanently.
+    """
+    from core.hub.today import derive_coach_note
+
+    review = (
+        "\n"
+        "   \n"
+        "## **Morning, Sir.** Wednesday's split stands untouched.\n"
+        "Recovery: 6.5h sleep, HRV at baseline.\n"
+    )
+
+    assert derive_coach_note(review) == (
+        "Morning, Sir. Wednesday's split stands untouched."
+    )
+
+
+def test_derive_coach_note_returns_empty_when_nothing_usable():
+    """No usable line → "" so callers skip the write instead of storing a blank."""
+    from core.hub.today import derive_coach_note
+
+    assert derive_coach_note("") == ""
+    assert derive_coach_note("\n\n   \n") == ""
+    assert derive_coach_note(None) == ""
+    # A line that sanitizes away to nothing must not become the note.
+    assert derive_coach_note("###\n**Real line**") == "Real line"
+
+
+def test_coach_note_and_timestamp_are_gated_on_today():
+    """A note from a previous day is not served, and neither is its timestamp.
+
+    Both reads share the same date gate — a stale timestamp must never outlive
+    the note it describes.
+    """
+    from core.hub import today as hub_today
+
+    state = {
+        "daily_note": "Morning, Sir.",
+        "daily_note_date": "2026-08-11",
+        "daily_note_at": "2026-08-11T04:40:00+00:00",
+    }
+    with patch.object(hub_today, "_read_self_state", return_value=state):
+        assert hub_today._today_coach_note("2026-08-19") is None
+        assert hub_today._today_coach_note_at("2026-08-19") is None
+
+        assert hub_today._today_coach_note("2026-08-11") == "Morning, Sir."
+        assert hub_today._today_coach_note_at("2026-08-11") == "2026-08-11T04:40:00+00:00"
+
+
+def test_coach_note_timestamp_absent_when_never_stamped():
+    """A note written before daily_note_at existed still renders, unstamped."""
+    from core.hub import today as hub_today
+
+    state = {"daily_note": "Morning, Sir.", "daily_note_date": "2026-08-19"}
+    with patch.object(hub_today, "_read_self_state", return_value=state):
+        assert hub_today._today_coach_note("2026-08-19") == "Morning, Sir."
+        assert hub_today._today_coach_note_at("2026-08-19") is None
+
+
+# ------------------------------------------------------------------ #
+# Garmin write-through + stored fallback                             #
+# ------------------------------------------------------------------ #
+
+def test_today_garmin_falls_back_to_stored_biometrics():
+    """A failed live Garmin read serves the stored row instead of blanking.
+
+    Without this the Hub shows "Sleep stats syncing…" all day on a rate limit,
+    even though the 05:30 cron already has the numbers.
+    """
+    from core.hub import today as hub_today
+
+    stored_row = {
+        "date": "2026-08-19",
+        "resting_hr": 48,
+        "hrv_overnight": 107,
+        "sleep_duration": 6.5,
+        "body_battery_max": 63,
+    }
+    with patch.dict(sys.modules, {"mcp_tools.garmin_tool": MagicMock()}):
+        sys.modules["mcp_tools.garmin_tool"].fetch_garmin_today.side_effect = (
+            RuntimeError("garmin rate limited")
+        )
+        with patch(
+            "core.health_reads.fetch_biometric_range", return_value=[stored_row]
+        ):
+            out = hub_today._today_garmin()
+
+    assert out is not None
+    assert out["sleep"] == 6.5
+    assert out["hrv"] == 107
+    assert out["resting_hr"] == 48
+    # body_battery_max is the day's peak, not the morning read — flagged so the
+    # client can say the numbers are stored rather than live.
+    assert out["body_battery"] == 63
+    assert out["stored"] is True
+
+
+def test_today_garmin_returns_none_when_neither_source_has_data():
+    """Live failure + empty stored row still yields the D-06 placeholder."""
+    from core.hub import today as hub_today
+
+    with patch.dict(sys.modules, {"mcp_tools.garmin_tool": MagicMock()}):
+        sys.modules["mcp_tools.garmin_tool"].fetch_garmin_today.side_effect = (
+            RuntimeError("garmin down")
+        )
+        with patch("core.health_reads.fetch_biometric_range", return_value=[]):
+            assert hub_today._today_garmin() is None
+
+
+def test_persist_garmin_snapshot_writes_once_per_interval():
+    """The write-through is bounded so it cannot fire once per request.
+
+    /api/today runs on every Hub refresh AND every ten-minute alert tick; an
+    ungated write would open a Postgres connection each time.
+    """
+    from core.hub import today as hub_today
+
+    data = {"date": "2026-08-19", "sleep_hours": 6.5, "hrv_overnight": 107,
+            "resting_hr": 48, "body_battery_morning": 63}
+
+    writer = MagicMock()
+    hub_today._biometric_write_through_seen.clear()
+    with patch.dict(sys.modules, {"mcp_tools.garmin_tool": MagicMock()}):
+        sys.modules["mcp_tools.garmin_tool"].write_biometrics_to_postgres = writer
+        hub_today._persist_garmin_snapshot(data)
+        hub_today._persist_garmin_snapshot(data)
+        hub_today._persist_garmin_snapshot(data)
+    hub_today._biometric_write_through_seen.clear()
+
+    assert writer.call_count == 1
+    # The FULL dict is persisted — the narrowed four Hub fields would drop
+    # sleep_score, hrv_baseline, training_readiness and vo2_max.
+    assert writer.call_args[0][0] is data
+
+
+def test_persist_garmin_snapshot_skips_an_empty_day():
+    """A watch-off day writes nothing — an all-NULL row would mask the gap."""
+    from core.hub import today as hub_today
+
+    writer = MagicMock()
+    hub_today._biometric_write_through_seen.clear()
+    with patch.dict(sys.modules, {"mcp_tools.garmin_tool": MagicMock()}):
+        sys.modules["mcp_tools.garmin_tool"].write_biometrics_to_postgres = writer
+        hub_today._persist_garmin_snapshot({
+            "date": "2026-08-19", "sleep_hours": None, "hrv_overnight": None,
+            "resting_hr": None, "body_battery_morning": None,
+        })
+        hub_today._persist_garmin_snapshot({"sleep_hours": 6.5})  # no date
+    hub_today._biometric_write_through_seen.clear()
+
+    assert writer.call_count == 0
+
+
+# ------------------------------------------------------------------ #
+# Weather last-good fallback                                         #
+# ------------------------------------------------------------------ #
+
+def test_today_weather_serves_last_good_reading_on_failure():
+    """wttr.in fails several times an hour; a stale line beats a bare "—"."""
+    from core.hub import today as hub_today
+
+    payload = {
+        "current": {"condition": "Sunny", "temp_c": 30},
+        "today": {"max_c": 32, "min_c": 24, "rain_chance": 0},
+    }
+    hub_today._weather_last_good = None
+    with patch.dict(sys.modules, {"mcp_tools.weather_tool": MagicMock()}):
+        weather = sys.modules["mcp_tools.weather_tool"]
+        weather.fetch_weather.return_value = payload
+        first = hub_today._today_weather()
+
+        weather.fetch_weather.side_effect = RuntimeError("wttr.in read timed out")
+        second = hub_today._today_weather()
+    hub_today._weather_last_good = None
+
+    assert first == "Sunny, 30°C, H 32°/L 24°"
+    assert second == first
+
+
+def test_today_weather_returns_none_with_no_cached_reading():
+    """A failure with nothing cached still degrades to None (client shows "—")."""
+    from core.hub import today as hub_today
+
+    hub_today._weather_last_good = None
+    with patch.dict(sys.modules, {"mcp_tools.weather_tool": MagicMock()}):
+        sys.modules["mcp_tools.weather_tool"].fetch_weather.side_effect = (
+            RuntimeError("wttr.in 500")
+        )
+        assert hub_today._today_weather() is None
+
+
+def test_derive_coach_note_trims_on_a_sentence_boundary():
+    """A long opening paragraph is cut at a sentence end, not mid-word.
+
+    The Claude Routines morning review opens with a full paragraph rather than
+    the one-liner the retired cascade produced, so a bare 280-char slice ended
+    real notes like "Nothing overnight changed t".
+    """
+    from core.hub.today import _COACH_NOTE_MAX_LEN, derive_coach_note
+
+    note = derive_coach_note(
+        "Morning, Sir. Wednesday's split stands untouched — Track Workout at "
+        "08:15, and Heavy Lower Body Gym at 17:00, both still carrying their "
+        "Get Ready and travel buffers. " + "Filler that runs past the limit. " * 8
+    )
+
+    assert len(note) <= _COACH_NOTE_MAX_LEN
+    assert note.endswith(".")
+    assert "…" not in note
+
+
+def test_derive_coach_note_falls_back_to_a_word_boundary():
+    """With no sentence end in range, cut at a whole word and mark it elided."""
+    from core.hub.today import _COACH_NOTE_MAX_LEN, derive_coach_note
+
+    note = derive_coach_note("alpha bravo charlie delta " * 40)
+
+    assert len(note) <= _COACH_NOTE_MAX_LEN + 1  # the ellipsis
+    assert note.endswith("…")
+    # Never a partial word before the ellipsis.
+    assert note[:-1].split()[-1] in {"alpha", "bravo", "charlie", "delta"}
+
+
+def test_short_notes_are_left_exactly_as_written():
+    """The common case — a note under the limit — is untouched."""
+    from core.hub.today import derive_coach_note
+
+    assert derive_coach_note("Morning, Sir. Easy day.") == "Morning, Sir. Easy day."

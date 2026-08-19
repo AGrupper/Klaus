@@ -114,6 +114,41 @@ class OutreachLogStore:
             logger.warning("OutreachLogStore.get_today(%r) failed", date_str, exc_info=True)
             return []
 
+    def get_days(self, date_strs: list[str]) -> dict[str, list[dict]]:
+        """Return ``{date: entries}`` for several days in ONE Firestore round trip.
+
+        The Hub bell renders a multi-day window and used to call ``get_today``
+        once per day — seven sequential document reads on every bell fetch, which
+        happens on page load and again every five minutes. Because the doc ids ARE
+        the dates, ``get_all`` fetches the exact set in a single batched RPC; no
+        range query and therefore no index requirement.
+
+        Never raises — returns ``{}`` on Firestore error, matching ``get_today``,
+        so a bell fetch degrades to "no outreach" rather than failing the request.
+
+        Args:
+            date_strs: YYYY-MM-DD calendar dates. Duplicates are collapsed.
+
+        Returns:
+            Dict keyed by date; dates with no document are absent from the result.
+        """
+        if not date_strs:
+            return {}
+        try:
+            refs = [self._col.document(d) for d in dict.fromkeys(date_strs)]
+            result: dict[str, list[dict]] = {}
+            for snap in self._client.get_all(refs):
+                if not snap.exists:
+                    continue
+                data = snap.to_dict() or {}
+                result[snap.id] = list(data.get("entries") or [])
+            return result
+        except Exception:
+            logger.warning(
+                "OutreachLogStore.get_days(%d dates) failed", len(date_strs), exc_info=True
+            )
+            return {}
+
     def topics_today(self, date_str: str) -> list[str]:
         """Return today's list of `topic_key` strings, in append order. Never raises.
 

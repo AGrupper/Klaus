@@ -8,6 +8,11 @@
  *
  * WHY same-origin only — no CORS headers are set on the server. All hub
  * requests go to the same origin that served the SPA.
+ *
+ * WHY cache: 'no-store' — the Hub is a live dashboard and a refresh must show
+ * current state. The server sends Cache-Control: no-store on /api too; this is
+ * the client half of the same guarantee, so no browser heuristic can decide a
+ * response is still fresh.
  */
 export async function apiFetch<T>(
   path: string,
@@ -17,6 +22,7 @@ export async function apiFetch<T>(
   const res = await fetch(path, {
     ...init,
     credentials: 'include', // Send httpOnly session cookie on every request
+    cache: 'no-store',      // Never serve a Hub payload from the HTTP cache
     headers: {
       'Content-Type': 'application/json',
       ...init?.headers,

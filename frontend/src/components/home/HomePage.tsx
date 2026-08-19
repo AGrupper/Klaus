@@ -269,6 +269,17 @@ function Timeline({ today }: { today: TodayData }) {
   const totals = today.nutrition_totals
   const mealsCount = today.meals.length
 
+  // Written-at stamp for the coach note. Guarded against an unparseable value so a
+  // malformed timestamp degrades to an unstamped note, never a blank Today view.
+  const coachNoteAt = (() => {
+    if (!today.coach_note_at) return null
+    const parsed = new Date(today.coach_note_at)
+    if (Number.isNaN(parsed.getTime())) return null
+    return new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jerusalem',
+    }).format(parsed)
+  })()
+
   /**
    * Every row carries a sort key in minutes-from-midnight so the day reads in
    * real order. Routines sort by their anchor_time — that's what puts the
@@ -408,6 +419,11 @@ function Timeline({ today }: { today: TodayData }) {
       {today.coach_note && (
         <p style={{ margin: '10px 2px 0', fontSize: '13.5px', lineHeight: 1.5, color: 'var(--muted)' }}>
           {today.coach_note}
+          {/* The note is written once by the morning review and never recomposed,
+              so stamp it — otherwise a 07:40 read looks like live advice at 18:00. */}
+          {coachNoteAt && (
+            <span style={{ opacity: 0.65 }}>{` · ${coachNoteAt}`}</span>
+          )}
         </p>
       )}
     </Section>
@@ -430,7 +446,7 @@ function StatsRow({ today }: { today: TodayData }) {
     : []
 
   return (
-    <Section label="This morning" step={2}>
+    <Section label={garmin?.stored ? 'This morning · stored' : 'This morning'} step={2}>
       {garmin ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
           {stats.map(({ value, label }) => (
