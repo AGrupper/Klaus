@@ -14,7 +14,6 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, Clock, PenTool } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAgentStatus } from '../../api/agent'
-import { claudeAppUrl } from '../../utils/claudeLink'
 import { fetchPortfolio } from '../../api/portfolio'
 import type { TimedEvent, TodayData } from '../../api/today'
 import { useFollowups, useNotifications } from '../../hooks/useNotifications'
@@ -98,14 +97,10 @@ function KlausCta() {
     queryFn: fetchAgentStatus,
     staleTime: 10 * 60_000,
   })
-  // On iOS the raw project URL opens in the PWA's in-app browser — the Claude
-  // app only claims a fixed set of claude.ai paths, and /cowork/project/<id>
-  // is not one of them. claudeAppUrl downgrades it to /cowork there so the
-  // app itself opens; desktop keeps the exact project page. See claudeLink.ts.
-  const url = claudeAppUrl(data?.claude_project_url)
+  const url = data?.claude_project_url
   return (
     <a
-      href={url}
+      href={url ?? undefined}
       target="_blank"
       rel="noopener noreferrer"
       aria-disabled={!url}
