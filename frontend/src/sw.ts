@@ -234,35 +234,21 @@ function safeNotificationPath(value: unknown): string {
   }
 }
 
-/**
- * External push targets: https claude.ai only (mirrors the server-side
- * allowlist in core/push_sender.py — validated again here so a forged
- * payload can never turn a notification tap into an open-redirect).
- */
-function safeExternalUrl(value: unknown): string | null {
-  if (typeof value !== 'string') return null
-  try {
-    const parsed = new URL(value)
-    if (parsed.protocol !== 'https:') return null
-    if (parsed.hostname !== 'claude.ai' && parsed.hostname !== 'www.claude.ai') return null
-    return value
-  } catch {
-    return null
-  }
-}
-
-// ── 6. Tap → claude.ai deep link (reviews) or the validated Hub path ──
+// ── 6. Tap → always the validated Hub path, never an external URL ──
+// Review pushes still carry `external_url` (the exact Claude session) in the
+// notification data, but the tap deliberately does NOT open it. On iOS,
+// `clients.openWindow()` with an out-of-scope https URL renders the page in
+// the PWA's in-app browser view — WebKit does not run Universal Link
+// resolution for a programmatic navigation, so claude.ai loads as a web page
+// and the Claude app is bypassed. Only a user-activated
+// `<a target="_blank">` is handed to the system link handler, which is why
+// tapping "Continue in Claude" inside the bell opens the app correctly.
+// So the tap lands in the Hub at the review path (→ `/?bell=1`, bell open on
+// the review) and the bell's own link makes the final hop into the app.
 self.addEventListener('notificationclick', (event) => {
   event.notification.close()
   event.waitUntil(
     (async () => {
-      // Review pushes carry the exact Claude session URL — a lock-screen tap
-      // behaves like tapping the item in the bell: straight to Claude.
-      const external = safeExternalUrl(event.notification.data?.external_url)
-      if (external) {
-        await self.clients.openWindow(external)
-        return
-      }
       const path = safeNotificationPath(event.notification.data?.url)
       const clientList = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
       const client = clientList[0]

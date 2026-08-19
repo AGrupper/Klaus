@@ -212,7 +212,11 @@ describe('sw.ts', () => {
     expect(options.data.external_url).toBe('https://claude.ai/chat/abc')
   })
 
-  it('notificationclick opens the claude.ai session directly when present', async () => {
+  // iOS: clients.openWindow() renders an out-of-scope https URL in the PWA's
+  // in-app browser view — it never resolves claude.ai's Universal Link, so the
+  // Claude app is bypassed. The tap must land in the Hub instead; the bell's
+  // user-activated <a target="_blank"> is the only path iOS hands to the app.
+  it('notificationclick lands in the Hub even when a claude.ai session is present', async () => {
     const postMessage = vi.fn()
     const focus = vi.fn().mockResolvedValue(undefined)
     matchAll.mockResolvedValueOnce([{ focus, postMessage }])
@@ -222,7 +226,10 @@ describe('sw.ts', () => {
     notificationClickListener({
       notification: {
         close: vi.fn(),
-        data: { url: '/', external_url: 'https://claude.ai/chat/abc-123' },
+        data: {
+          url: '/klaus/reviews/nightly/2026-08-18',
+          external_url: 'https://claude.ai/chat/abc-123',
+        },
       },
       waitUntil: (p: Promise<unknown>) => {
         waitUntilPromises.push(p)
@@ -230,8 +237,35 @@ describe('sw.ts', () => {
     })
     await Promise.all(waitUntilPromises)
 
-    expect(openWindow).toHaveBeenCalledWith('https://claude.ai/chat/abc-123')
-    expect(postMessage).not.toHaveBeenCalled()
+    expect(openWindow).not.toHaveBeenCalled()
+    expect(focus).toHaveBeenCalled()
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'NAVIGATE',
+      path: '/klaus/reviews/nightly/2026-08-18',
+    })
+  })
+
+  it('notificationclick opens the Hub review path on a cold start', async () => {
+    matchAll.mockResolvedValueOnce([])
+    const notificationClickListener = getListener(listeners, 'notificationclick')
+    const waitUntilPromises: Promise<unknown>[] = []
+
+    notificationClickListener({
+      notification: {
+        close: vi.fn(),
+        data: {
+          url: '/klaus/reviews/nightly/2026-08-18',
+          external_url: 'https://claude.ai/chat/abc-123',
+        },
+      },
+      waitUntil: (p: Promise<unknown>) => {
+        waitUntilPromises.push(p)
+      },
+    })
+    await Promise.all(waitUntilPromises)
+
+    expect(openWindow).toHaveBeenCalledWith('/klaus/reviews/nightly/2026-08-18')
+    expect(openWindow).not.toHaveBeenCalledWith('https://claude.ai/chat/abc-123')
   })
 
   it.each([
@@ -239,7 +273,7 @@ describe('sw.ts', () => {
     'http://claude.ai/chat/abc',
     'https://claude.ai.evil.example/x',
     'javascript:alert(1)',
-  ])('notificationclick ignores a hostile external_url %j', async (external) => {
+  ])('notificationclick never opens external_url %j', async (external) => {
     const postMessage = vi.fn()
     const focus = vi.fn().mockResolvedValue(undefined)
     matchAll.mockResolvedValueOnce([{ focus, postMessage }])
@@ -254,7 +288,7 @@ describe('sw.ts', () => {
     })
     await Promise.all(waitUntilPromises)
 
-    // Falls through to the in-app path — never opens the hostile URL.
+    // Every external_url — hostile or not — falls through to the in-app path.
     expect(openWindow).not.toHaveBeenCalled()
     expect(postMessage).toHaveBeenCalledWith({ type: 'NAVIGATE', path: '/' })
   })
