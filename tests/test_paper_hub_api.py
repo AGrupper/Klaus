@@ -308,6 +308,51 @@ class TestRoutinesFeed:
                     ws.app.dependency_overrides.clear()
 
 
+    def test_remind_round_trips_through_create_and_patch(self):
+        """The reminder switch must survive both write paths untouched."""
+        stubs = _stub_web_server_imports()
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws
+            from fastapi.testclient import TestClient
+
+            store = MagicMock()
+            store.create.return_value = {"id": "r9", "name": "Nightly", "remind": True}
+            store.get.return_value = {"id": "r9", "name": "Nightly"}
+            store.update.return_value = {"id": "r9", "name": "Nightly", "remind": False}
+            with patch.dict(os.environ, _ENV):
+                ws.app.dependency_overrides[ws.require_hub_session] = (
+                    lambda: "amit.grupper@gmail.com"
+                )
+                try:
+                    with patch("memory.firestore_db.RoutineStore", return_value=store), \
+                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()):
+                        client = TestClient(ws.app, raise_server_exceptions=False)
+                        created = client.post(
+                            "/api/routines",
+                            json={"name": "Nightly", "anchor_time": "21:30",
+                                  "remind": True},
+                        )
+                        assert created.status_code == 200
+                        assert store.create.call_args[0][0]["remind"] is True
+
+                        # Off by default when the client says nothing.
+                        client.post("/api/routines", json={"name": "Quiet"})
+                        assert store.create.call_args[0][0]["remind"] is False
+
+                        # PATCH sends only what changed — remind must be in it
+                        # when set, and absent when it is not.
+                        turned_off = client.patch(
+                            "/api/routines/r9", json={"remind": False}
+                        )
+                        assert turned_off.status_code == 200
+                        assert store.update.call_args[0][1] == {"remind": False}
+
+                        client.patch("/api/routines/r9", json={"name": "Renamed"})
+                        assert "remind" not in store.update.call_args[0][1]
+                finally:
+                    ws.app.dependency_overrides.clear()
+
+
 def test_routine_store_delete_detaches_members():
     """RoutineStore.delete reassigns members to None and never deletes them."""
     from memory.stores.habits import RoutineStore

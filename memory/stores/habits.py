@@ -198,14 +198,19 @@ class RoutineStore:
     """Named routine groups that habits belong to (Paper Hub revamp).
 
     Collection: ``routines/{routine_id}`` —
-        ``{id, name, emoji, order, anchor_time, color, created_at}``
+        ``{id, name, emoji, order, anchor_time, color, remind, created_at}``
         (+ ``updated_at`` sentinel, stripped by ``_jsonsafe_doc`` on reads).
 
     ``anchor_time`` is an "HH:MM" wall-clock hint (or None) that places the
     routine in the Today timeline — a morning routine sorts above a 10:00
     meeting instead of collecting at the bottom of the day. ``color`` is an
     optional "#RRGGBB" that overrides the global flame colour for this
-    routine's ring and streak badge.
+    routine's ring and streak badge. ``remind`` arms a push reminder at
+    ``anchor_time`` (core/routines/alerts.py) and means nothing without one.
+
+    Routines created before the reminder field simply have no ``remind`` key,
+    so every reader must treat a missing value as False — there is no
+    migration and no backfill.
 
     Membership lives on the habit (``habits/{id}.routine_id``), not here, so
     deleting a routine can never orphan completion history — habits are
@@ -233,6 +238,7 @@ class RoutineStore:
             "order": 0,
             "anchor_time": None,
             "color": None,
+            "remind": False,
             **{k: v for k, v in routine.items() if k != "id"},
             "id": routine_id,
             "created_at": datetime.now(timezone.utc).isoformat(),

@@ -29,6 +29,8 @@ export interface Routine {
   anchor_time: string | null
   /** "#RRGGBB" overriding the global flame colour, or null. */
   color: string | null
+  /** Push a reminder at anchor_time when the routine is still unfinished. */
+  remind: boolean
   streak: number
   done_today: boolean
   scheduled_today: number
@@ -47,6 +49,7 @@ export interface CreateRoutineInput {
   order?: number
   anchor_time?: string | null
   color?: string | null
+  remind?: boolean
 }
 
 export async function createRoutine(input: CreateRoutineInput): Promise<Routine> {

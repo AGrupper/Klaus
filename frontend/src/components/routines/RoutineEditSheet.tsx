@@ -4,7 +4,8 @@
  * Fields: name · emoji · colour · time of day. From Amit's 2026-08-17 UAT:
  *  - colour is per-routine (the ring, the flame badge and its Today dot),
  *  - "time of day" is the anchor that places it in the Today timeline, so a
- *    morning routine sits at the top of the day rather than the bottom,
+ *    morning routine sits at the top of the day rather than the bottom, and
+ *    (2026-08-19) the moment a reminder fires if "Remind me" is on,
  *  - deleting now asks what to do with the items instead of silently
  *    dumping them into "Unassigned".
  */
@@ -50,6 +51,7 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
   const [emoji, setEmoji] = useState('')
   const [color, setColor] = useState<string>(CALENDAR_COLORS[0].hex)
   const [anchorTime, setAnchorTime] = useState('')
+  const [remind, setRemind] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
 
   const createMutation = useCreateRoutine()
@@ -63,6 +65,7 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
     setEmoji(routine?.emoji ?? '')
     setColor(routine?.color ?? CALENDAR_COLORS[0].hex)
     setAnchorTime(routine?.anchor_time ?? '')
+    setRemind(routine?.remind ?? false)
     setConfirmingDelete(false)
   }, [open, routine])
 
@@ -77,6 +80,7 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
       emoji: emoji.trim() || null,
       color: normalizeHex(color) ?? null,
       anchor_time: anchorTime || null,
+      remind: anchorTime ? remind : false,
     }
     if (editing && routine?.id) {
       editMutation.mutate({ id: routine.id, input })
@@ -149,6 +153,68 @@ export function RoutineEditSheet({ routine, open, onClose }: RoutineEditSheetPro
         Sets where the routine appears in Today. Leave empty to keep it at the
         end of the day.
       </p>
+
+      <div
+        style={{
+          background: 'var(--surface)',
+          borderRadius: 'var(--r)',
+          padding: '12px 14px',
+          marginTop: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          opacity: anchorTime ? 1 : 0.55,
+        }}
+      >
+        <span>
+          <span style={{ display: 'block', fontSize: '15px', fontWeight: 500, color: 'var(--ink)' }}>
+            Remind me
+          </span>
+          <span style={{ display: 'block', fontSize: '12px', color: 'var(--muted)', marginTop: '1px', lineHeight: 1.4 }}>
+            {anchorTime
+              ? `A notification at ${anchorTime}, only if anything is still open.`
+              : 'Set a time of day first.'}
+          </span>
+        </span>
+        <button
+          role="switch"
+          aria-checked={remind}
+          aria-label="Remind me"
+          disabled={!anchorTime}
+          onClick={() => {
+            tapFeedback()
+            setRemind((on) => !on)
+          }}
+          style={{
+            marginLeft: 'auto',
+            width: '48px',
+            height: '29px',
+            borderRadius: '15px',
+            border: 'none',
+            background: remind ? 'var(--good)' : '#D9D9DE',
+            position: 'relative',
+            transition: 'background 0.2s',
+            flexShrink: 0,
+            cursor: anchorTime ? 'pointer' : 'default',
+          }}
+        >
+          <span
+            style={{
+              position: 'absolute',
+              top: '2.5px',
+              left: '2.5px',
+              transform: remind ? 'translateX(19px)' : 'translateX(0)',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              background: '#FFFFFF',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.25)',
+              transition: 'transform 0.24s cubic-bezier(0.32,1.4,0.5,1)',
+            }}
+            aria-hidden="true"
+          />
+        </button>
+      </div>
 
       <span style={labelStyle}>Colour</span>
       <div

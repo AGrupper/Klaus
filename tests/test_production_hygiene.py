@@ -146,7 +146,10 @@ def test_manifest_pins_claude_first_production_boundary():
         **manifest["schedulers"]["required"][0],
         "name": "klaus-deterministic-alerts",
         "category": "deterministic_alerts",
-        "schedule": "*/10 7-21 * * *",
+        # Every 10 minutes around the clock: routine reminders may be anchored
+        # at any hour, and the 07:00-21:59 gate for every other rule now lives
+        # in core/routines/alerts.py rather than in the cron expression.
+        "schedule": "*/10 * * * *",
         "time_zone": "Asia/Jerusalem",
         "path": "/cron/deterministic-alerts",
     }

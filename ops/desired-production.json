@@ -97,7 +97,7 @@
       {
         "name": "klaus-deterministic-alerts",
         "category": "deterministic_alerts",
-        "schedule": "*/10 7-21 * * *",
+        "schedule": "*/10 * * * *",
         "time_zone": "Asia/Jerusalem",
         "path": "/cron/deterministic-alerts"
       },

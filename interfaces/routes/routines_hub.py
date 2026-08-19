@@ -36,7 +36,9 @@ class CreateRoutineInput(BaseModel):
     """POST /api/routines body — name required, the rest optional.
 
     ``anchor_time`` ("HH:MM") places the routine in the Today timeline;
-    ``color`` ("#RRGGBB") overrides the global flame colour for this routine.
+    ``color`` ("#RRGGBB") overrides the global flame colour for this routine;
+    ``remind`` arms a push reminder at ``anchor_time`` and does nothing
+    without one.
     """
 
     name: str = Field(..., min_length=1, max_length=200)
@@ -44,6 +46,7 @@ class CreateRoutineInput(BaseModel):
     order: int = Field(0, ge=0, le=999)
     anchor_time: str | None = Field(None, pattern=_TIME_PATTERN)
     color: str | None = Field(None, pattern=_HEX_PATTERN)
+    remind: bool = False
 
 
 class EditRoutineInput(BaseModel):
@@ -54,6 +57,7 @@ class EditRoutineInput(BaseModel):
     order: int | None = Field(None, ge=0, le=999)
     anchor_time: str | None = Field(None, pattern=_TIME_PATTERN)
     color: str | None = Field(None, pattern=_HEX_PATTERN)
+    remind: bool | None = None
 
 
 def _stores():

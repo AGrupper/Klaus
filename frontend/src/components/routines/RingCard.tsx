@@ -4,10 +4,12 @@
  * The SVG ring fills as scheduled members get checked; the flame badge pops
  * (flamepop keyframes) the moment done_today flips true. Checkbox taps are
  * optimistic via useCheckinMember; tapping a member's name opens its edit
- * sheet; the pencil opens the routine's own edit sheet.
+ * sheet; the pencil opens the routine's own edit sheet. A small bell sits
+ * beside the name when the routine is armed to remind, so the state is legible
+ * without opening that sheet.
  */
 import { useEffect, useRef, useState } from 'react'
-import { Check, Pencil, Plus } from 'lucide-react'
+import { Bell, Check, Pencil, Plus } from 'lucide-react'
 import type { Routine, RoutineMember } from '../../api/routines'
 import { useCheckinMember } from '../../hooks/useRoutines'
 import { successFeedback, tapFeedback } from '../../utils/haptics'
@@ -112,6 +114,14 @@ export function RingCard({ routine, todayIso, onEditRoutine, onEditHabit, onAddH
             {routine.emoji ? `${routine.emoji} ` : ''}
             {routine.name}
           </span>
+          {routine.remind && routine.anchor_time && (
+            <Bell
+              size={12}
+              strokeWidth={2.2}
+              aria-label={`Reminder at ${routine.anchor_time}`}
+              style={{ color: 'var(--faint)', flexShrink: 0, marginTop: '4px' }}
+            />
+          )}
           {routine.id !== null && (
             <button
               onClick={() => onEditRoutine(routine)}
