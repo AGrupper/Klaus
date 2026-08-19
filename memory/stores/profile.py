@@ -381,6 +381,7 @@ class HubSettingsStore:
             "accent": "#1C2540",   # midnight — Amit's accent
             "flame": "#B02A2A",    # dark red — streaks and urgency
             "font": "default",     # default | serif | rounded | mono
+            "emoji": None,         # Klaus's mark; None = the pen-nib icon
         },
         "home_sections": {
             "leaveby": True,

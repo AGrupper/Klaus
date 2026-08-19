@@ -495,6 +495,62 @@ class TestSettingsPatch:
     def test_empty_patch_rejected(self):
         assert self._patch_settings({}, MagicMock()).status_code == 400
 
+    def test_klaus_mark_round_trips(self):
+        store = MagicMock()
+        appearance = {
+            "accent": "#1C2540", "flame": "#B02A2A",
+            "font": "default", "emoji": "\U0001F3A9",
+        }
+        store.get.return_value = {"appearance": appearance}
+        resp = self._patch_settings({"appearance": appearance}, store)
+        assert resp.status_code == 200
+        store.set.assert_called_once_with({"appearance": appearance})
+        assert resp.json()["appearance"]["emoji"] == "\U0001F3A9"
+
+    def test_clearing_the_mark_is_written_not_dropped(self):
+        """An empty mark must reach Firestore as "", not vanish from the patch.
+
+        HubSettingsStore.set() merges nested maps key by key, so a patch that
+        omitted `emoji` would leave the previous mark in the document and the
+        button would keep an emoji the user just cleared.
+        """
+        store = MagicMock()
+        store.get.return_value = {"appearance": {}}
+        sent = {"accent": "#1C2540", "flame": "#B02A2A", "font": "default", "emoji": ""}
+        assert self._patch_settings({"appearance": sent}, store).status_code == 200
+        written = store.set.call_args.args[0]["appearance"]
+        assert written["emoji"] == ""
+
+    def test_mark_omitted_leaves_the_stored_one_alone(self):
+        """A client that predates the field must not wipe the mark."""
+        store = MagicMock()
+        store.get.return_value = {"appearance": {}}
+        sent = {"accent": "#1C2540", "flame": "#B02A2A", "font": "default"}
+        assert self._patch_settings({"appearance": sent}, store).status_code == 200
+        assert "emoji" not in store.set.call_args.args[0]["appearance"]
+
+    def test_mark_is_stripped_of_invisibles_and_length_capped(self):
+        store = MagicMock()
+        store.get.return_value = {"appearance": {}}
+        # A zero-width space would leave the tile looking empty for no visible
+        # reason; the ZWJ inside a family sequence has to survive.
+        sent = {"accent": "#1C2540", "flame": "#B02A2A", "font": "default",
+                "emoji": "\u200b\U0001F3A9\u200e"}
+        assert self._patch_settings({"appearance": sent}, store).status_code == 200
+        assert store.set.call_args.args[0]["appearance"]["emoji"] == "\U0001F3A9"
+
+        family = {"accent": "#1C2540", "flame": "#B02A2A", "font": "default",
+                  "emoji": "\U0001F468\u200d\U0001F469\u200d\U0001F467"}
+        store.reset_mock()
+        assert self._patch_settings({"appearance": family}, store).status_code == 200
+        assert store.set.call_args.args[0]["appearance"]["emoji"] == family["emoji"]
+
+        long_mark = {"accent": "#1C2540", "flame": "#B02A2A", "font": "default",
+                     "emoji": "x" * 17}
+        store.reset_mock()
+        assert self._patch_settings({"appearance": long_mark}, store).status_code == 422
+        store.set.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # /api/notifications

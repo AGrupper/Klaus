@@ -7,6 +7,9 @@
  *    Amit compared both and kept these for the app chrome.)
  *  - Font: Notion-style Ag cards — SF / New York / SF Rounded / SF Mono
  *    (all native faces, zero downloads).
+ *  - Klaus's mark: the glyph on the Talk to Klaus button and beside his coach
+ *    note. Suggestions plus a free field, because the emoji keyboard already is
+ *    the picker on the device this is used on.
  *  - Home sections: iOS-style toggles for leave-by, numbers, corner, portfolio.
  *
  * Writes are debounced and last-write-wins (useUpdateSettings); the CSS
@@ -19,11 +22,15 @@ import {
   applyAppearance,
   FLAME_COLORS,
   FONT_STACKS,
+  KLAUS_MARKS,
+  latestMark,
+  normalizeMark,
   type Appearance,
   type FontChoice,
 } from '../../tokens'
 import { defaultHomeSections, useSettings, useUpdateSettings } from '../../hooks/useSettings'
 import type { HomeSections } from '../../api/settings'
+import { KlausMark } from '../shared/KlausMark'
 import { Sheet } from '../shared/Sheet'
 import { tapFeedback } from '../../utils/haptics'
 
@@ -127,6 +134,169 @@ function SwatchGrid({ options, value, onChange, ariaLabel }: SwatchGridProps) {
   )
 }
 
+/**
+ * Klaus's mark — the glyph on the Talk to Klaus button and beside his note.
+ *
+ * Suggestions plus a free field rather than a closed set: this is a phone, the
+ * emoji keyboard already is a picker, and unlike the colours a bad choice here
+ * cannot make anything unreadable. The pen nib is offered as an explicit tile
+ * so going back to the default is a tap, not a "clear the field and hope".
+ */
+function MarkPicker({
+  mark,
+  onChange,
+}: {
+  mark: string
+  onChange: (mark: string) => void
+}) {
+  const options: Array<{ mark: string; label: string }> = [
+    { mark: '', label: 'Pen nib' },
+    ...KLAUS_MARKS.map((m) => ({ mark: m, label: m })),
+  ]
+
+  return (
+    <>
+      {/* Both places the mark appears, so the choice is judged where it lands
+          rather than as a glyph on its own. */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '12px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            borderRadius: 'var(--r)',
+            background: 'var(--accent)',
+            color: 'var(--accent-ink)',
+            padding: '10px 12px',
+          }}
+        >
+          <span
+            style={{
+              width: '30px',
+              height: '30px',
+              borderRadius: '9px',
+              flexShrink: 0,
+              background: 'rgba(255,255,255,0.16)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <KlausMark emoji={mark} size={16} />
+          </span>
+          <span style={{ fontSize: '14px', fontWeight: 600 }}>Talk to Klaus</span>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            borderRadius: 'var(--r)',
+            background: 'var(--surface)',
+            padding: '10px 12px',
+          }}
+        >
+          <span
+            style={{
+              width: '22px',
+              height: '22px',
+              borderRadius: '7px',
+              flexShrink: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: mark
+                ? 'color-mix(in srgb, var(--accent) 10%, var(--surface))'
+                : 'var(--accent)',
+              color: 'var(--accent-ink)',
+            }}
+          >
+            <KlausMark emoji={mark} size={mark ? 15 : 12} />
+          </span>
+          <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--ink)' }}>Klaus</span>
+          <span style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--faint)' }}>07:42</span>
+        </div>
+      </div>
+
+      <div
+        role="radiogroup"
+        aria-label="Klaus's mark"
+        style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}
+      >
+        {options.map((option) => {
+          const active = option.mark === mark
+          return (
+            <button
+              key={option.mark || 'default'}
+              role="radio"
+              aria-checked={active}
+              aria-label={option.mark ? `Mark ${option.mark}` : 'Pen nib (default)'}
+              className="press"
+              onClick={() => {
+                tapFeedback()
+                onChange(option.mark)
+              }}
+              style={{
+                border: `1.5px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                background: 'var(--surface)',
+                borderRadius: '12px',
+                // Fixed height, not padding: only the pen-nib tile carries a
+                // caption, and letting the rows size to their content left the
+                // grid visibly ragged.
+                height: '54px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                color: 'var(--accent)',
+              }}
+            >
+              <span style={{ height: '22px', display: 'flex', alignItems: 'center' }}>
+                <KlausMark emoji={option.mark} size={20} />
+              </span>
+              {!option.mark && (
+                <span style={{ fontSize: '10.5px', lineHeight: 1, color: active ? 'var(--accent)' : 'var(--muted)' }}>
+                  Default
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+
+      <label
+        htmlFor="klaus-mark"
+        style={{ display: 'block', fontSize: '12.5px', color: 'var(--muted)', margin: '12px 2px 6px' }}
+      >
+        Or type any emoji — the keyboard's whole set works.
+      </label>
+      <input
+        id="klaus-mark"
+        value={mark}
+        // The field holds one glyph and the emoji keyboard appends, so the
+        // newest character wins; emptying it goes back to the pen nib.
+        onChange={(e) => onChange(latestMark(e.target.value))}
+        placeholder="🎩"
+        inputMode="text"
+        autoComplete="off"
+        style={{
+          width: '92px',
+          fontSize: '20px',
+          textAlign: 'center',
+          padding: '9px 10px',
+          borderRadius: '10px',
+          border: '1px solid var(--sep)',
+          background: 'var(--surface)',
+          color: 'var(--ink)',
+          fontFamily: 'inherit',
+        }}
+      />
+    </>
+  )
+}
+
 interface CustomizeSheetProps {
   open: boolean
   onClose: () => void
@@ -221,6 +391,14 @@ export function CustomizeSheet({ open, onClose }: CustomizeSheetProps) {
           )
         })}
       </div>
+
+      <Label>Klaus's mark</Label>
+      <MarkPicker
+        mark={normalizeMark(appearance.emoji)}
+        // Always a string, never null: '' is how the server is told to clear
+        // the mark, and an omitted key would leave the old one in Firestore.
+        onChange={(emoji) => setAppearance({ ...appearance, emoji })}
+      />
 
       <Label>Home sections</Label>
       <div style={{ background: 'var(--surface)', borderRadius: 'var(--r)' }}>

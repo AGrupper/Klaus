@@ -9,13 +9,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import unicodedata
 from datetime import date as _date_cls, datetime, timedelta
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from core.hub.reviews import _review_for_client
 from interfaces.flags import (
@@ -64,12 +65,51 @@ async def api_get_settings(
 _MAX_BELL_READ_IDS = 500
 
 
+#: Cap on a stored Klaus mark. One emoji, but a family or flag sequence is
+#: several code points joined by zero-width joiners, so the limit is generous
+#: enough to hold one of those and nothing like a sentence. Mirrors
+#: KLAUS_MARK_MAX in the Hub's tokens.ts.
+_MAX_MARK_LEN = 16
+
+
 class AppearanceInput(BaseModel):
-    """Customize-sheet appearance: hex colors + one of four native fonts."""
+    """Customize-sheet appearance: hex colors, a native font, Klaus's mark."""
 
     accent: str = Field(..., pattern=r"^#[0-9A-Fa-f]{6}$")
     flame: str = Field(..., pattern=r"^#[0-9A-Fa-f]{6}$")
     font: Literal["default", "serif", "rounded", "mono"] = "default"
+    # The glyph on Talk to Klaus and beside the coach note. "" means the pen
+    # nib — the shipped default, and what every account had before the field
+    # existed. Deliberately not constrained to an emoji block: a letter is a
+    # legitimate mark, and no choice here can render anything unreadable.
+    #
+    # Omitted (None) and cleared ("") are different requests, and the store is
+    # why. HubSettingsStore.set() writes with Firestore merge=True, which
+    # merges nested maps key by key — so an appearance patch that simply left
+    # `emoji` out would leave the old mark sitting in the document forever.
+    # Clearing therefore has to travel as an explicit "", while None keeps its
+    # ordinary meaning of "this patch says nothing about the mark" and is
+    # dropped by exclude_none. That also means a stale client that predates the
+    # field cannot wipe a mark just by changing a colour.
+    emoji: str | None = Field(None, max_length=_MAX_MARK_LEN)
+
+    @field_validator("emoji")
+    @classmethod
+    def _clean_emoji(cls, value: str | None) -> str | None:
+        """Strip invisible characters from a mark, preserving clear-vs-omit.
+
+        A pasted mark can carry bidi controls or a zero-width space: invisible,
+        but they still occupy the field, so the button would look blank with no
+        way to tell why. Anything that cleans away to nothing becomes "" — a
+        clear — rather than None, which would silently mean "leave it alone".
+        """
+        if value is None:
+            return None
+        return "".join(
+            ch for ch in value
+            if ch == "\u200d"  # ZWJ: joins emoji sequences, must survive
+            or not unicodedata.category(ch).startswith("C")
+        ).strip()
 
 
 class SettingsPatchInput(BaseModel):

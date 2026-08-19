@@ -11,7 +11,7 @@
  */
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ArrowRight, Clock, PenTool } from 'lucide-react'
+import { ArrowRight, Clock } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAgentStatus } from '../../api/agent'
 import { fetchPortfolio } from '../../api/portfolio'
@@ -20,6 +20,8 @@ import { useFollowups, useNotifications } from '../../hooks/useNotifications'
 import { useRoutines } from '../../hooks/useRoutines'
 import { useSettings } from '../../hooks/useSettings'
 import { useToday } from '../../hooks/useToday'
+import { normalizeMark } from '../../tokens'
+import { KlausMark } from '../shared/KlausMark'
 import { PushEnableBanner } from '../shared/PushEnableBanner'
 
 // ---------------------------------------------------------------------------
@@ -97,6 +99,7 @@ function KlausCta() {
     queryFn: fetchAgentStatus,
     staleTime: 10 * 60_000,
   })
+  const { appearance } = useSettings()
   const url = data?.claude_project_url
   return (
     <a
@@ -131,7 +134,7 @@ function KlausCta() {
           justifyContent: 'center',
         }}
       >
-        <PenTool size={19} strokeWidth={1.7} aria-hidden="true" />
+        <KlausMark emoji={appearance.emoji} size={19} />
       </span>
       <span>
         <span style={{ display: 'block', fontSize: '16px', fontWeight: 600 }}>Talk to Klaus</span>
@@ -141,6 +144,92 @@ function KlausCta() {
       </span>
       <ArrowRight size={17} strokeWidth={2} style={{ marginLeft: 'auto', opacity: 0.7 }} aria-hidden="true" />
     </a>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Coach note
+// ---------------------------------------------------------------------------
+
+/**
+ * The morning's coach note, sitting directly under Talk to Klaus.
+ *
+ * It used to trail the bottom of the Today card in grey caption type, where it
+ * read as a footnote to the schedule. It is the opposite of a footnote: the
+ * note says how to navigate the day — where the pressure is, what to protect —
+ * so it goes above the schedule it is advice about (Amit, 2026-08-19).
+ *
+ * The card is attributed rather than plain, because a white card on Today looks
+ * like every other white card on Today. Klaus's mark and his name say the words
+ * inside are his, and the mark is the same one on the button above it.
+ */
+function CoachNote({ today }: { today: TodayData }) {
+  const { appearance } = useSettings()
+
+  // Guarded against an unparseable value so a malformed timestamp degrades to
+  // an unstamped note, never a blank Today view.
+  const writtenAt = (() => {
+    if (!today.coach_note_at) return null
+    const parsed = new Date(today.coach_note_at)
+    if (Number.isNaN(parsed.getTime())) return null
+    return new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jerusalem',
+    }).format(parsed)
+  })()
+
+  // D-06: before the morning review runs there is no note. Render nothing
+  // rather than a placeholder — an empty card every night until 07:00 is worse
+  // than the page simply starting at Today.
+  if (!today.coach_note) return null
+
+  const mark = normalizeMark(appearance.emoji)
+
+  return (
+    <div
+      className="rise"
+      style={{
+        margin: '0 20px 18px',
+        background: 'var(--surface)',
+        borderRadius: 'var(--r)',
+        padding: '13px 15px 15px',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px' }}>
+        <span
+          style={{
+            width: '22px',
+            height: '22px',
+            borderRadius: '7px',
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            // The pen nib is drawn in the accent and needs the solid tile to
+            // read; an emoji brings its own colour, so it gets a wash instead
+            // of a slab that would fight it.
+            background: mark
+              ? 'color-mix(in srgb, var(--accent) 10%, var(--surface))'
+              : 'var(--accent)',
+            color: 'var(--accent-ink)',
+          }}
+        >
+          <KlausMark emoji={appearance.emoji} size={mark ? 15 : 12} />
+        </span>
+        <span style={{ fontSize: '13.5px', fontWeight: 700, color: 'var(--ink)', letterSpacing: '-0.01em' }}>
+          Klaus
+        </span>
+        {/* The note is written once by the morning review and never recomposed,
+            so stamp it — otherwise a 07:40 read looks like live advice at 18:00. */}
+        {writtenAt && (
+          <span style={{ marginLeft: 'auto', fontSize: '11.5px', color: 'var(--faint)' }}>
+            {writtenAt}
+          </span>
+        )}
+      </div>
+      <p style={{ fontSize: '14.5px', lineHeight: 1.5, color: 'var(--ink)', textWrap: 'pretty' }}>
+        {today.coach_note}
+      </p>
+    </div>
   )
 }
 
@@ -268,17 +357,6 @@ function Timeline({ today }: { today: TodayData }) {
 
   const totals = today.nutrition_totals
   const mealsCount = today.meals.length
-
-  // Written-at stamp for the coach note. Guarded against an unparseable value so a
-  // malformed timestamp degrades to an unstamped note, never a blank Today view.
-  const coachNoteAt = (() => {
-    if (!today.coach_note_at) return null
-    const parsed = new Date(today.coach_note_at)
-    if (Number.isNaN(parsed.getTime())) return null
-    return new Intl.DateTimeFormat('en-GB', {
-      hour: '2-digit', minute: '2-digit', hourCycle: 'h23', timeZone: 'Asia/Jerusalem',
-    }).format(parsed)
-  })()
 
   /**
    * Every row carries a sort key in minutes-from-midnight so the day reads in
@@ -416,16 +494,6 @@ function Timeline({ today }: { today: TodayData }) {
           )
         })}
       </Group>
-      {today.coach_note && (
-        <p style={{ margin: '10px 2px 0', fontSize: '13.5px', lineHeight: 1.5, color: 'var(--muted)' }}>
-          {today.coach_note}
-          {/* The note is written once by the morning review and never recomposed,
-              so stamp it — otherwise a 07:40 read looks like live advice at 18:00. */}
-          {coachNoteAt && (
-            <span style={{ opacity: 0.65 }}>{` · ${coachNoteAt}`}</span>
-          )}
-        </p>
-      )}
     </Section>
   )
 }
@@ -675,6 +743,7 @@ export function HomePage() {
 
       {today && (
         <>
+          <CoachNote today={today} />
           {homeSections.leaveby && <LeaveByHero events={today.calendar.timed} />}
           <Timeline today={today} />
           {homeSections.stats && <StatsRow today={today} />}

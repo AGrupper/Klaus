@@ -108,12 +108,100 @@ export interface Appearance {
   accent: string
   flame: string
   font: FontChoice
+  /**
+   * Klaus's mark — the glyph on the Talk to Klaus button and beside his note.
+   * Empty, null or absent means the pen nib, which is the shipped default and
+   * what every account had before this field existed.
+   */
+  emoji?: string | null
 }
 
 export const defaultAppearance: Appearance = {
   accent: defaultAccent,
   flame: defaultFlame,
   font: 'default',
+  emoji: null,
+}
+
+// --------------------------------------------------------------------------- //
+// Klaus's mark                                                                //
+// --------------------------------------------------------------------------- //
+
+/**
+ * Suggested marks for the Customize sheet. Convenience only — the field below
+ * takes anything the iOS emoji keyboard can produce, so this list never has to
+ * be exhaustive.
+ */
+export const KLAUS_MARKS: string[] = ['🎩', '🧠', '⚡️', '🧭', '🦉', '🐺', '🖋️']
+
+/** Hard cap on a stored mark. Mirrors the server's `max_length` (misc.py). */
+export const KLAUS_MARK_MAX = 16
+
+/**
+ * Split text into grapheme clusters — what a person calls "one character".
+ *
+ * Slicing by code unit would split a flag or a skin-toned emoji into mojibake,
+ * so anything that trims a mark has to count clusters instead: 👨‍👩‍👧 is one
+ * family, not a man and two orphans. Intl.Segmenter is everywhere the Hub runs
+ * (iOS 16.4+, Node 18+); the crude fallback is for anywhere it isn't.
+ */
+export function graphemes(value: string): string[] {
+  // No segmenter: treat the whole string as one cluster rather than guessing
+  // where to cut. The length check downstream rejects it if that is too long,
+  // which is a mark that does not apply — never a mark rendered as mojibake.
+  if (typeof Intl.Segmenter !== 'function') return value ? [value] : []
+  return Array.from(
+    new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value),
+    (part) => part.segment,
+  )
+}
+
+/**
+ * Drop characters that occupy the field but draw nothing — the LRM/RLM and
+ * zero-width spaces a paste can smuggle in, which would otherwise leave the
+ * button looking blank with no way to tell why.
+ *
+ * The zero-width joiner is the exception and has to survive: it is a format
+ * character by category, but it is what holds 👨‍👩‍👧 together, and stripping
+ * it turns one family into a man and two orphans.
+ */
+function stripInvisible(value: string | null | undefined): string {
+  return String(value ?? '').replace(/\p{C}/gu, (ch) => (ch === '\u200d' ? ch : '')).trim()
+}
+
+/**
+ * Strip a typed mark down to something safe to render and store: exactly one
+ * glyph, or '' meaning "use the pen nib".
+ */
+export function normalizeMark(value: string | null | undefined): string {
+  const cleaned = stripInvisible(value)
+  if (!cleaned) return ''
+  return withinCap(graphemes(cleaned)[0] ?? '')
+}
+
+/**
+ * The newest glyph in a field the user is typing into.
+ *
+ * The mark field holds one glyph, and the emoji keyboard *appends* — so when
+ * the text grows, the character the user just picked is the one they meant,
+ * not the one already sitting there.
+ */
+export function latestMark(value: string): string {
+  const cleaned = stripInvisible(value)
+  if (!cleaned) return ''
+  const parts = graphemes(cleaned)
+  return withinCap(parts[parts.length - 1] ?? '')
+}
+
+/**
+ * Accept a cluster whole or not at all, measured the way the server measures.
+ *
+ * Trimming to the cap would cut a long joined sequence mid-cluster and produce
+ * exactly the mojibake the segmenter exists to prevent — and the server counts
+ * code points, so a UTF-16 slice here would disagree with it besides.
+ */
+function withinCap(mark: string): string {
+  return [...mark].length <= KLAUS_MARK_MAX ? mark : ''
 }
 
 /** Relative luminance 0..1 — decides readable text color over an accent. */

@@ -16,4 +16,4 @@ judged in context, never in isolation.
 | # | Name | Design Question | Winner | Tags |
 |---|------|----------------|--------|------|
 | 001 | coach-note-quote | How should the coach's note read as a quote block directly under Talk to Klaus? | **B** — quote card | hub, today, typography, coach-note |
-| 002 | coach-note-card-refine | Within the quote card, how does the note get marked as Klaus's voice? | _pending_ | hub, today, typography, coach-note |
+| 002 | coach-note-card-refine | Within the quote card, how does the note get marked as Klaus's voice? | **3** — Klaus mark | hub, today, typography, coach-note |

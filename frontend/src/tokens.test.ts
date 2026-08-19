@@ -6,8 +6,12 @@ import {
   applyAppearance,
   defaultAccent,
   FONT_STACKS,
+  graphemes,
+  KLAUS_MARK_MAX,
+  latestMark,
   luminance,
   normalizeHex,
+  normalizeMark,
 } from './tokens'
 
 describe('normalizeHex', () => {
@@ -60,5 +64,52 @@ describe('applyAppearance', () => {
     })
     expect(root().getPropertyValue('--accent')).toBe(defaultAccent)
     expect(root().getPropertyValue('--font-ui')).toBe(FONT_STACKS.default.ui)
+  })
+})
+
+describe("Klaus's mark", () => {
+  it('keeps a multi-code-point emoji whole', () => {
+    // The failure this guards: slicing by code unit turns a family into a man
+    // and two orphans, and a flag into two regional-indicator letters.
+    expect(normalizeMark('👨‍👩‍👧')).toBe('👨‍👩‍👧')
+    expect(normalizeMark('🇮🇱')).toBe('🇮🇱')
+    expect(normalizeMark('👍🏽')).toBe('👍🏽')
+  })
+
+  it('reduces anything longer to a single glyph', () => {
+    expect(normalizeMark('🎩🧠')).toBe('🎩')
+    expect(normalizeMark('Klaus')).toBe('K')
+    expect(graphemes('🎩🧠⚡')).toHaveLength(3)
+  })
+
+  it('has room for the most elaborate real emoji', () => {
+    // The couple-with-heart-and-kiss sequence is about as long as Unicode
+    // emoji get: two people, two skin tones, a heart and a kiss, joined. If
+    // the cap were ever tightened below this, real marks would start vanishing.
+    const longest = '👩🏽‍❤️‍💋‍👨🏿'
+    expect([...longest].length).toBeLessThanOrEqual(KLAUS_MARK_MAX)
+    expect(normalizeMark(longest)).toBe(longest)
+  })
+
+  it('rejects an over-long cluster whole rather than slicing it', () => {
+    // A base letter buried under combining marks is one cluster and no kind of
+    // mark. Cutting it to the cap would emit half a cluster; dropping it falls
+    // back to the pen nib, which is a thing the user can actually see.
+    const zalgo = 'a' + '\u0301'.repeat(40)
+    expect(normalizeMark(zalgo)).toBe('')
+  })
+
+  it("treats blank and invisible input as 'use the pen nib'", () => {
+    expect(normalizeMark('')).toBe('')
+    expect(normalizeMark(null)).toBe('')
+    expect(normalizeMark(undefined)).toBe('')
+    expect(normalizeMark('  ')).toBe('')
+    expect(normalizeMark('\u200e\u200f')).toBe('')  // bidi marks render as nothing
+  })
+
+  it('takes the newest glyph while typing, because the keyboard appends', () => {
+    expect(latestMark('🎩🧠')).toBe('🧠')
+    expect(latestMark('🎩👨‍👩‍👧')).toBe('👨‍👩‍👧')
+    expect(latestMark('')).toBe('')
   })
 })
