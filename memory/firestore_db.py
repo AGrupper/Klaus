@@ -96,6 +96,10 @@ from memory.stores.habits import (  # noqa: F401
     compute_streak_and_grid,
 )
 
+from memory.stores.reminders import (  # noqa: F401
+    ReminderScheduleStore,
+)
+
 from memory.stores.followups import (  # noqa: F401
     FollowupStore,
     StandingDirectiveStore,

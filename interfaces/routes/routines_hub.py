@@ -6,6 +6,10 @@ scheduled member habit was completed (``compute_routine_streak``). Habits keep
 their own history and check-in flow in interfaces/routes/habits.py — these
 routes only manage the grouping and the aggregate read.
 
+Every write here also re-syncs the routine's scheduled reminder
+(core/routines/reminders.py), which is what makes an armed routine notify at
+the minute it was given rather than at the next repair pass.
+
 Named ``routines_hub`` (not ``routines``) to stay unambiguous next to
 core/routines/, which coordinates the Claude morning/nightly/weekly reviews.
 """
@@ -67,6 +71,27 @@ def _stores():
     project = os.environ.get("GCP_PROJECT_ID", "")
     database = os.environ.get("FIRESTORE_DATABASE", "(default)")
     return RoutineStore(project, database), HabitStore(project, database)
+
+
+async def _resync_reminder(routine: dict) -> None:
+    """Bring this routine's scheduled notification in line with the doc.
+
+    Called after every write so arming a routine for two minutes from now
+    works immediately rather than waiting for the nightly re-arm. Never raises:
+    a scheduling failure must not fail Amit's edit, and /cron/schedule-reminders
+    repairs it the next day.
+    """
+    from core.routines.reminders import schedule_reminder  # lazy import
+
+    try:
+        await asyncio.get_running_loop().run_in_executor(
+            None, schedule_reminder, routine
+        )
+    except Exception:
+        logger.warning(
+            "routine %s saved but its reminder did not reschedule",
+            routine.get("id"), exc_info=True,
+        )
 
 
 @router.get("/api/routines")
@@ -160,6 +185,7 @@ async def api_create_routine(
     created = await loop.run_in_executor(
         None, routine_store.create, body.model_dump(exclude_none=False)
     )
+    await _resync_reminder(created)
     return JSONResponse(content=_jsonsafe_doc(created))
 
 
@@ -181,6 +207,9 @@ async def api_update_routine(
     if await loop.run_in_executor(None, routine_store.get, routine_id) is None:
         raise HTTPException(status_code=404, detail={"error": "routine not found"})
     updated = await loop.run_in_executor(None, routine_store.update, routine_id, patch)
+    # Re-derived from the saved doc, not from the patch: turning the switch off,
+    # clearing the time and moving the time all resolve through the same call.
+    await _resync_reminder(updated or {"id": routine_id})
     return JSONResponse(content=_jsonsafe_doc(updated or {}))
 
 
@@ -219,6 +248,9 @@ async def api_delete_routine(
     detached = await loop.run_in_executor(
         None, routine_store.delete, routine_id, habit_store
     )
+    from core.routines.reminders import cancel_reminder  # lazy import
+
+    await loop.run_in_executor(None, cancel_reminder, routine_id)
     return JSONResponse(content={
         "ok": True,
         "detached_habits": detached,

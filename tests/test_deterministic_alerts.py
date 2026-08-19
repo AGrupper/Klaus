@@ -10,6 +10,10 @@ import pytest
 
 TZ = ZoneInfo("Asia/Jerusalem")
 
+# The runner tests below fire at 14:00; a morning run earlier that day is what
+# holds the alert window open for them.
+MORNING_RUN = [{"routine": "morning", "created_at": "2026-08-08T07:10:00+03:00"}]
+
 
 def test_rules_only_surface_explicit_time_bound_conditions():
     from core.routines.alerts import evaluate_explicit_rules
@@ -101,7 +105,7 @@ def test_runner_deduplicates_topics_and_marks_followup_after_success():
                 {"id": "f2", "note": "Write", "due_at": "2026-08-08T14:00:00+03:00"},
             ],
             infrastructure_loader=lambda: [],
-            routines_loader=lambda: [],
+            runs_loader=lambda: MORNING_RUN,
             prior_topics_loader=lambda _day: ["followup:f2"],
             push_sender=lambda text, kind, *_args: sent.append((text, kind)) or {"sent": 1},
             outreach_logger=lambda day, entry: logged.append((day, entry)),
@@ -134,7 +138,7 @@ def test_alert_push_carries_topic_key_as_tag():
                 {"id": "f1", "note": "Call", "due_at": "2026-08-08T14:00:00+03:00"},
             ],
             infrastructure_loader=lambda: [],
-            routines_loader=lambda: [],
+            runs_loader=lambda: MORNING_RUN,
             prior_topics_loader=lambda _day: [],
             push_sender=lambda *args: calls.append(args) or {"sent": 1},
             outreach_logger=lambda _day, _entry: None,
@@ -171,176 +175,108 @@ def test_subscription_heartbeat_collects_retained_infrastructure_checkers():
     assert result == expected
 
 
+
 # --------------------------------------------------------------------------- #
-# Routine reminders                                                            #
+# The alert window                                                             #
 # --------------------------------------------------------------------------- #
 
-MORNING = {
-    "id": "r1",
-    "name": "Morning routine",
-    "emoji": "☀️",
-    "anchor_time": "07:00",
-    "remind": True,
-}
-DAILY = [{"effective_from": "2026-01-01", "days": "daily"}]
-MEMBERS = [
-    {"id": "h1", "routine_id": "r1", "schedule_history": DAILY},
-    {"id": "h2", "routine_id": "r1", "schedule_history": DAILY},
-    {"id": "other", "routine_id": "r2", "schedule_history": DAILY},
-]
+def _run(routine: str, at: str) -> dict:
+    return {"routine": routine, "created_at": at}
 
 
-def test_reminder_fires_in_window_when_the_routine_is_unfinished():
-    from core.routines.alerts import evaluate_routine_reminders
+def test_window_follows_the_most_recent_wake_or_sleep_signal():
+    from core.routines.alerts import alert_window_open
 
-    alerts = evaluate_routine_reminders(
-        [MORNING], MEMBERS, {"h1": {}}, now=datetime(2026, 8, 19, 7, 10, tzinfo=TZ)
-    )
+    now = datetime(2026, 8, 19, 14, 0, tzinfo=TZ)
+    woke = _run("morning", "2026-08-19T07:05:00+03:00")
+    slept = _run("nightly", "2026-08-19T13:00:00+03:00")
 
-    assert len(alerts) == 1
-    assert alerts[0]["kind"] == "routine_reminder"
-    assert alerts[0]["topic_key"] == "routine-reminder:r1:2026-08-19"
-    assert alerts[0]["message_class"] == "habit_nudge"
-    assert alerts[0]["destination"] == "/routines"
-    assert alerts[0]["text"] == "☀️ Morning routine, Sir — 1 of 2 still open."
+    assert alert_window_open([woke], now) is True
+    # Newest first or oldest first, the newest signal is the one that counts.
+    assert alert_window_open([slept, woke], now) is False
+    assert alert_window_open([woke, slept], now) is False
 
 
-def test_reminder_stays_silent_when_nothing_is_left_to_do():
-    from core.routines.alerts import evaluate_routine_reminders
+def test_window_ignores_the_weekly_review():
+    """Sunday's weekly review says nothing about whether Amit is awake."""
+    from core.routines.alerts import alert_window_open
 
-    now = datetime(2026, 8, 19, 7, 10, tzinfo=TZ)
-    assert evaluate_routine_reminders(
-        [MORNING], MEMBERS, {"h1": {}, "h2": {}}, now=now
-    ) == []
-
-
-def test_reminder_stays_silent_when_the_day_schedules_nothing():
-    from core.routines.alerts import evaluate_routine_reminders
-
-    # 2026-08-19 is a Wednesday; these members only run on Mondays.
-    mondays = [{"effective_from": "2026-01-01", "days": [0]}]
-    members = [{"id": "h1", "routine_id": "r1", "schedule_history": mondays}]
-    assert evaluate_routine_reminders(
-        [MORNING], members, {}, now=datetime(2026, 8, 19, 7, 10, tzinfo=TZ)
-    ) == []
+    now = datetime(2026, 8, 19, 14, 0, tzinfo=TZ)
+    runs = [
+        _run("weekly", "2026-08-19T13:30:00+03:00"),
+        _run("nightly", "2026-08-19T13:00:00+03:00"),
+    ]
+    # The weekly run is the newest of the three, but a review is not a wake
+    # signal — the 13:00 nightly is what decides, and it closed the day.
+    assert alert_window_open(runs, now) is False
 
 
-def test_reminder_needs_both_the_switch_and_a_time():
-    from core.routines.alerts import evaluate_routine_reminders
+def test_window_opens_at_the_fallback_hour_when_the_wake_trigger_misses():
+    from core.routines.alerts import alert_window_open
 
-    now = datetime(2026, 8, 19, 7, 10, tzinfo=TZ)
-    unarmed = {**MORNING, "remind": False}
-    absent = {key: value for key, value in MORNING.items() if key != "remind"}
-    untimed = {**MORNING, "anchor_time": None}
+    # Went to bed at 00:30, and the morning Shortcut never fired.
+    runs = [_run("nightly", "2026-08-19T00:30:00+03:00")]
 
-    assert evaluate_routine_reminders([unarmed], MEMBERS, {}, now=now) == []
-    assert evaluate_routine_reminders([absent], MEMBERS, {}, now=now) == []
-    assert evaluate_routine_reminders([untimed], MEMBERS, {}, now=now) == []
+    assert alert_window_open(runs, datetime(2026, 8, 19, 8, 0, tzinfo=TZ)) is False
+    assert alert_window_open(runs, datetime(2026, 8, 19, 10, 29, tzinfo=TZ)) is False
+    assert alert_window_open(runs, datetime(2026, 8, 19, 10, 30, tzinfo=TZ)) is True
 
 
-def test_reminder_window_opens_at_the_anchor_and_closes_an_hour_later():
-    from core.routines.alerts import evaluate_routine_reminders
+def test_a_nap_closes_the_day_and_the_fallback_does_not_undo_it():
+    """Amit's call: Focus on = day over, whenever it comes. The fallback must
+    not then reopen it an hour later — that would make the choice meaningless."""
+    from core.routines.alerts import alert_window_open
 
-    def fired(hour: int, minute: int) -> bool:
-        return bool(
-            evaluate_routine_reminders(
-                [MORNING], MEMBERS, {}, now=datetime(2026, 8, 19, hour, minute, tzinfo=TZ)
-            )
-        )
-
-    assert not fired(6, 50)     # before the anchor
-    assert fired(7, 0)          # exactly on it
-    assert fired(7, 59)         # last catch-up tick
-    assert not fired(8, 0)      # window closed
-
-
-def test_reminder_window_never_runs_past_midnight():
-    from core.routines.alerts import evaluate_routine_reminders
-
-    late = {**MORNING, "anchor_time": "23:30"}
-    assert evaluate_routine_reminders(
-        [late], MEMBERS, {}, now=datetime(2026, 8, 19, 23, 40, tzinfo=TZ)
-    )
-    # 00:10 the next day is inside anchor+60min in wall-clock terms only —
-    # it is a different day, with a different topic key and a fresh routine.
-    assert evaluate_routine_reminders(
-        [late], MEMBERS, {}, now=datetime(2026, 8, 20, 0, 10, tzinfo=TZ)
-    ) == []
+    runs = [
+        _run("nightly", "2026-08-19T16:00:00+03:00"),
+        _run("morning", "2026-08-19T07:00:00+03:00"),
+    ]
+    assert alert_window_open(runs, datetime(2026, 8, 19, 17, 0, tzinfo=TZ)) is False
+    assert alert_window_open(runs, datetime(2026, 8, 19, 22, 0, tzinfo=TZ)) is False
+    # Next morning, the wake trigger having failed too — now it reopens.
+    assert alert_window_open(runs, datetime(2026, 8, 20, 11, 0, tzinfo=TZ)) is True
 
 
-def test_runner_delivers_reminders_at_night():
-    """There are no quiet hours (removed 2026-08-19) — a routine anchored at
-    23:00 reminds him at 23:00, and the rest of the engine runs alongside it."""
+def test_window_closes_itself_when_the_sleep_trigger_misses():
+    from core.routines.alerts import alert_window_open
+
+    runs = [_run("morning", "2026-08-19T07:00:00+03:00")]
+
+    assert alert_window_open(runs, datetime(2026, 8, 19, 23, 0, tzinfo=TZ)) is True
+    assert alert_window_open(runs, datetime(2026, 8, 20, 2, 0, tzinfo=TZ)) is True
+    # 20 hours after waking, stop polling on his behalf.
+    assert alert_window_open(runs, datetime(2026, 8, 20, 4, 0, tzinfo=TZ)) is False
+
+
+def test_window_fails_toward_alerting_when_it_knows_nothing():
+    """No runs at all — including RoutineRunStore.list_recent having failed and
+    returned [] — must give a plain day, never a silent one."""
+    from core.routines.alerts import alert_window_open
+
+    assert alert_window_open([], datetime(2026, 8, 19, 4, 0, tzinfo=TZ)) is False
+    assert alert_window_open([], datetime(2026, 8, 19, 12, 0, tzinfo=TZ)) is True
+    # Unparseable timestamps are the same kind of "we don't know".
+    assert alert_window_open(
+        [_run("nightly", "not-a-date")], datetime(2026, 8, 19, 12, 0, tzinfo=TZ)
+    ) is True
+
+
+def test_a_closed_window_never_builds_the_life_snapshot():
+    """The whole point of the gate: outside Amit's day this pass costs one
+    query, not a calendar/tasks/health gather."""
     import asyncio
     from core.routines.alerts import run_rule_evaluator
 
-    calls = []
-    logged = []
     result = asyncio.run(
         run_rule_evaluator(
-            now=datetime(2026, 8, 19, 23, 10, tzinfo=TZ),
-            routines_loader=lambda: [{**MORNING, "anchor_time": "23:00"}],
-            habits_loader=lambda: MEMBERS,
-            completions_loader=lambda _day: {},
-            prior_topics_loader=lambda _day: [],
-            push_sender=lambda *args: calls.append(args) or {"sent": 1},
-            outreach_logger=lambda day, entry: logged.append((day, entry)),
-            snapshot_loader=lambda: {
-                "tasks": [
-                    {"id": "t1", "title": "Renew passport",
-                     "hard_deadline_at": "2026-08-20T00:00:00+03:00"},
-                ],
-                "habits_pending": [],
-                "today": {"calendar": {"timed": []}},
-            },
-            due_followups_loader=lambda _now: [],
-            infrastructure_loader=lambda: [],
-            followup_marker=lambda _followup_id: None,
+            now=datetime(2026, 8, 19, 4, 0, tzinfo=TZ),
+            runs_loader=lambda: [_run("nightly", "2026-08-19T00:30:00+03:00")],
+            snapshot_loader=lambda: pytest.fail("built the snapshot while closed"),
+            due_followups_loader=lambda _now: pytest.fail("read follow-ups while closed"),
+            infrastructure_loader=lambda: pytest.fail("ran heartbeat while closed"),
+            prior_topics_loader=lambda _day: pytest.fail("read outreach while closed"),
+            push_sender=lambda *args: pytest.fail("pushed while closed"),
         )
     )
 
-    # The reminder AND the midnight deadline, both at 23:10.
-    assert result == {"evaluated": 2, "sent": 2, "reminders_sent": 1}
-    assert {entry["kind"] for _day, entry in logged} == {
-        "routine_reminder", "hard_deadline"
-    }
-    text, message_class, destination, title, external_url, tag = calls[0]
-    assert message_class == "habit_nudge"
-    assert destination == "/routines"
-    assert external_url is None
-    assert tag == "routine-reminder:r1:2026-08-19"
-    assert logged[0][1]["kind"] == "routine_reminder"
-
-
-def test_runner_reminds_once_a_day_and_reads_no_habits_to_learn_it():
-    """A second tick inside the window must neither push again nor pay for the
-    habit/completion reads that would only prove what the log already says."""
-    import asyncio
-    from core.routines.alerts import run_rule_evaluator
-
-    reads = []
-
-    def habits_loader():
-        reads.append("habits")
-        return MEMBERS
-
-    result = asyncio.run(
-        run_rule_evaluator(
-            now=datetime(2026, 8, 19, 7, 30, tzinfo=TZ),
-            routines_loader=lambda: [MORNING],
-            habits_loader=habits_loader,
-            completions_loader=lambda _day: {},
-            prior_topics_loader=lambda _day: ["routine-reminder:r1:2026-08-19"],
-            push_sender=lambda *args: pytest.fail("reminded twice in one day"),
-            outreach_logger=lambda _day, _entry: None,
-            snapshot_loader=lambda: {
-                "tasks": [], "habits_pending": [], "today": {"calendar": {"timed": []}}
-            },
-            due_followups_loader=lambda _now: [],
-            infrastructure_loader=lambda: [],
-            followup_marker=lambda _followup_id: None,
-        )
-    )
-
-    assert result["sent"] == 0
-    assert reads == []
+    assert result == {"evaluated": 0, "sent": 0, "window_open": False}

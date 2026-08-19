@@ -4,7 +4,8 @@
 actually wakes or sets his Sleep Focus, which is why they exist separately from
 the cron backstops that catch a missed trigger. /internal/routine-fallback is
 the Cloud Tasks callback that publishes a deterministic review when Claude does
-not answer in time.
+not answer in time, and /internal/routine-reminder is the one that delivers a
+routine's scheduled reminder at the minute Amit set.
 """
 from __future__ import annotations
 
@@ -42,6 +43,33 @@ async def internal_routine_fallback(request: Request) -> JSONResponse:
 
     result = await build_subscription_routine_coordinator().publish_timeout_fallback(
         correlation_id
+    )
+    return JSONResponse(content=result)
+
+
+@router.post("/internal/routine-reminder")
+async def internal_routine_reminder(request: Request) -> JSONResponse:
+    """Cloud Tasks target that delivers one routine's scheduled reminder.
+
+    Enqueued by core/routines/reminders.py with an exact ``schedule_time``, so
+    this fires at the minute Amit set rather than on any cron's grid.
+
+    Deciding NOT to notify is a normal outcome and answers 200 — the routine
+    was finished, disarmed, retimed, or already reminded today. A retry would
+    only re-derive the same silence, and Cloud Tasks retries on 5xx.
+    """
+    await _verify_cron_request(request)
+    body = await request.json()
+    routine_id = str(body.get("routine_id") or "")
+    target_date = str(body.get("target_date") or "")
+    anchor_time = str(body.get("anchor_time") or "")
+    if not routine_id or len(routine_id) > 128 or not target_date:
+        raise HTTPException(status_code=400, detail={"error": "invalid reminder task"})
+
+    from core.routines.reminders import deliver_reminder
+
+    result = await asyncio.to_thread(
+        deliver_reminder, routine_id, target_date, anchor_time
     )
     return JSONResponse(content=result)
 

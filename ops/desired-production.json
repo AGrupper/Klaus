@@ -97,9 +97,16 @@
       {
         "name": "klaus-deterministic-alerts",
         "category": "deterministic_alerts",
-        "schedule": "*/10 * * * *",
+        "schedule": "*/30 * * * *",
         "time_zone": "Asia/Jerusalem",
         "path": "/cron/deterministic-alerts"
+      },
+      {
+        "name": "klaus-schedule-reminders",
+        "category": "routine_reminders",
+        "schedule": "10 0 * * *",
+        "time_zone": "Asia/Jerusalem",
+        "path": "/cron/schedule-reminders"
       },
       {
         "name": "klaus-heartbeat",
@@ -297,6 +304,8 @@
       "POST /trigger/nightly",
       "POST /trigger/morning",
       "POST /internal/routine-fallback",
+      "POST /internal/routine-reminder",
+      "POST /cron/schedule-reminders",
       "POST /cron/nightly-backstop",
       "POST /cron/morning-backstop",
       "POST /cron/deterministic-alerts",

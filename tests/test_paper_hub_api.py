@@ -111,6 +111,19 @@ _ENV: dict[str, str] = {
 }
 
 
+def _patch_reminder_scheduling():
+    """Silence the reminder scheduler for Hub-API tests.
+
+    Every /api/routines write re-syncs the routine's Cloud Task. Without this
+    the write tests would build a real Firestore/Cloud Tasks client just to
+    have it fail — network I/O in a unit test, and noise in the logs. The
+    scheduling behaviour itself is covered in tests/test_routine_reminders.py.
+    """
+    return patch("core.routines.reminders.schedule_reminder"), patch(
+        "core.routines.reminders.cancel_reminder"
+    )
+
+
 def _stub_web_server_imports() -> dict:
     stubs = {
         "telegram": sys.modules.get("telegram", MagicMock(name="telegram")),
@@ -294,9 +307,11 @@ class TestRoutinesFeed:
                 ws.app.dependency_overrides[ws.require_hub_session] = (
                     lambda: "amit.grupper@gmail.com"
                 )
+                schedule_patch, cancel_patch = _patch_reminder_scheduling()
                 try:
                     with patch("memory.firestore_db.RoutineStore", return_value=store), \
-                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()):
+                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()), \
+                         schedule_patch, cancel_patch:
                         client = TestClient(ws.app, raise_server_exceptions=False)
                         ok = client.post("/api/routines", json={"name": "Deep work"})
                         assert ok.status_code == 200
@@ -323,9 +338,11 @@ class TestRoutinesFeed:
                 ws.app.dependency_overrides[ws.require_hub_session] = (
                     lambda: "amit.grupper@gmail.com"
                 )
+                schedule_patch, cancel_patch = _patch_reminder_scheduling()
                 try:
                     with patch("memory.firestore_db.RoutineStore", return_value=store), \
-                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()):
+                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()), \
+                         schedule_patch, cancel_patch:
                         client = TestClient(ws.app, raise_server_exceptions=False)
                         created = client.post(
                             "/api/routines",
@@ -349,6 +366,48 @@ class TestRoutinesFeed:
 
                         client.patch("/api/routines/r9", json={"name": "Renamed"})
                         assert "remind" not in store.update.call_args[0][1]
+                finally:
+                    ws.app.dependency_overrides.clear()
+
+
+    def test_every_write_resyncs_the_routines_reminder(self):
+        """Arming has to schedule now, not at the nightly re-arm — that is what
+        makes "remind me in two minutes" work at all."""
+        stubs = _stub_web_server_imports()
+        with patch.dict(sys.modules, stubs):
+            import interfaces.web_server as ws
+            from fastapi.testclient import TestClient
+
+            saved = {"id": "r9", "name": "Nightly", "anchor_time": "21:37",
+                     "remind": True}
+            store = MagicMock()
+            store.create.return_value = saved
+            store.get.return_value = saved
+            store.update.return_value = {**saved, "anchor_time": "21:40"}
+            with patch.dict(os.environ, _ENV):
+                ws.app.dependency_overrides[ws.require_hub_session] = (
+                    lambda: "amit.grupper@gmail.com"
+                )
+                try:
+                    with patch("memory.firestore_db.RoutineStore", return_value=store), \
+                         patch("memory.firestore_db.HabitStore", return_value=MagicMock()), \
+                         patch("core.routines.reminders.schedule_reminder") as schedule, \
+                         patch("core.routines.reminders.cancel_reminder") as cancel:
+                        client = TestClient(ws.app, raise_server_exceptions=False)
+
+                        client.post("/api/routines",
+                                    json={"name": "Nightly", "anchor_time": "21:37",
+                                          "remind": True})
+                        assert schedule.call_args[0][0] == saved
+
+                        # Re-synced from the SAVED doc, not the patch, so a
+                        # patch that only moves the time still reschedules.
+                        client.patch("/api/routines/r9", json={"anchor_time": "21:40"})
+                        assert schedule.call_args[0][0]["anchor_time"] == "21:40"
+
+                        assert cancel.call_count == 0
+                        client.post("/api/routines/r9/delete")
+                        cancel.assert_called_once_with("r9")
                 finally:
                     ws.app.dependency_overrides.clear()
 

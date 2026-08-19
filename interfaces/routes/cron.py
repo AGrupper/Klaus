@@ -74,12 +74,39 @@ async def cron_morning_backstop(request: Request) -> JSONResponse:
     return response
 
 
+@router.post("/cron/schedule-reminders")
+async def cron_schedule_reminders(request: Request) -> JSONResponse:
+    """Arm every routine's reminder for the coming day.
+
+    Schedule: 10 0 * * *  (Asia/Jerusalem) — just after midnight, so every
+    anchor_time it schedules is still ahead of it.
+
+    The write paths in interfaces/routes/routines_hub.py already schedule a
+    reminder the moment Amit arms one, which is what makes "remind me in two
+    minutes" work. This job is the repair pass: it re-arms routines for the new
+    day and heals anything the write path failed to enqueue. Idempotent — it
+    cancels and recreates through the same one-doc-per-routine store.
+    """
+    await _verify_cron_request(request)
+    from core.routines.reminders import schedule_all
+
+    try:
+        result = await asyncio.to_thread(schedule_all)
+        _log_cron_run("schedule-reminders", ok=True)
+    except Exception:
+        _log_cron_run("schedule-reminders", ok=False)
+        raise
+    return JSONResponse(content={"ok": True, **result})
+
+
 @router.post("/cron/deterministic-alerts")
 async def cron_deterministic_alerts(request: Request) -> JSONResponse:
     """Run the deterministic rules with no legacy runtime dependency.
 
-    Schedule: */10 * * * *  (Asia/Jerusalem) — every hour of the day. The
-    outreach window was removed 2026-08-19; core/routines/alerts.py says why.
+    Schedule: */30 * * * *  (Asia/Jerusalem). Round the clock on purpose — the
+    day opens on Amit's wake trigger at whatever hour that lands, so the window
+    lives in ``alert_window_open`` and not in this cron expression. Outside the
+    window the pass costs one indexed query and returns.
     """
     await _verify_cron_request(request)
     from core.routines.alerts import run_rule_evaluator

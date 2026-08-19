@@ -146,10 +146,10 @@ def test_manifest_pins_claude_first_production_boundary():
         **manifest["schedulers"]["required"][0],
         "name": "klaus-deterministic-alerts",
         "category": "deterministic_alerts",
-        # Every 10 minutes around the clock: routine reminders may be anchored
-        # at any hour, and the 07:00-21:59 gate for every other rule now lives
-        # in core/routines/alerts.py rather than in the cron expression.
-        "schedule": "*/10 * * * *",
+        # Every 30 minutes around the clock. Round the clock because Amit's
+        # day opens on his wake trigger at whatever hour that lands, so the
+        # window lives in alert_window_open, not in the cron expression.
+        "schedule": "*/30 * * * *",
         "time_zone": "Asia/Jerusalem",
         "path": "/cron/deterministic-alerts",
     }
@@ -157,6 +157,7 @@ def test_manifest_pins_claude_first_production_boundary():
         job["category"] for job in manifest["schedulers"]["required"]
     } == {
         "deterministic_alerts",
+        "routine_reminders",
         "health",
         "claude_review_backstop",
         "things_sync",
