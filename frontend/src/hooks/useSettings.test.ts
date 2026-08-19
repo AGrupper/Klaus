@@ -23,6 +23,7 @@ function settingsWith(accent: string): settingsApi.HubSettings {
     appearance: { ...APPEARANCE, accent },
     home_sections: { leaveby: true, stats: true, corner: true, portfolio: false },
     bell_last_seen: null,
+    bell_read_ids: [],
   }
 }
 

@@ -354,9 +354,64 @@ class TestSettingsEndpoint:
         body = resp.json()
         assert set(body.keys()) == {
             "push_enabled_at", "appearance", "home_sections", "bell_last_seen",
+            "bell_read_ids",
         }
         assert body["push_enabled_at"] == "2026-07-01T00:00:00+00:00"
         assert "telegram_mirror_enabled" not in body
+
+    def test_get_settings_exposes_bell_read_ids(self):
+        """The bell's per-item read set reaches the client.
+
+        Read state moved from a cursor to a set of item keys: the feed is
+        newest-first, so a cursor could not express "the rows on screen are
+        read, the ones below are not".
+        """
+        mock_settings_store = MagicMock()
+        mock_settings_store.get.return_value = {
+            "bell_read_ids": ["alert:a:2026-08-18T10:00:00"],
+        }
+        resp = self._call("get", mock_settings_store)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["bell_read_ids"] == ["alert:a:2026-08-18T10:00:00"]
+
+    def test_get_settings_defaults_bell_read_ids_to_empty_list(self):
+        """A doc predating the field reads back as [] rather than null, so the
+        client never has to guard the type."""
+        mock_settings_store = MagicMock()
+        mock_settings_store.get.return_value = {"bell_last_seen": None}
+        resp = self._call("get", mock_settings_store)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["bell_read_ids"] == []
+
+    def test_patch_settings_persists_bell_read_ids(self):
+        mock_settings_store = MagicMock()
+        mock_settings_store.get.return_value = {"bell_read_ids": ["alert:a:1"]}
+        resp = self._call(
+            "patch", mock_settings_store, json={"bell_read_ids": ["alert:a:1"]}
+        )
+        assert resp.status_code == 200, resp.text
+        mock_settings_store.set.assert_called_once_with({"bell_read_ids": ["alert:a:1"]})
+
+    def test_patch_settings_caps_bell_read_ids(self):
+        """The set is unbounded from the client's side, so the server keeps the
+        newest MAX and drops the rest — a runaway client cannot grow the doc."""
+        mock_settings_store = MagicMock()
+        mock_settings_store.get.return_value = {}
+        ids = [f"alert:{n}:2026-08-18T10:00:00" for n in range(600)]
+        resp = self._call("patch", mock_settings_store, json={"bell_read_ids": ids})
+        assert resp.status_code == 200, resp.text
+        written = mock_settings_store.set.call_args[0][0]["bell_read_ids"]
+        assert len(written) == 500
+        assert written[-1] == ids[-1]   # newest survive
+
+    def test_patch_settings_rejects_overlong_bell_read_id(self):
+        mock_settings_store = MagicMock()
+        resp = self._call(
+            "patch", mock_settings_store, json={"bell_read_ids": ["x" * 200]}
+        )
+        assert resp.status_code == 422
+        mock_settings_store.set.assert_not_called()
 
     def test_patch_settings_writes_only_customization_sections(self):
         """PATCH exists (Paper Hub Customize sheet) but cannot write anything

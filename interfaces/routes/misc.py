@@ -10,7 +10,7 @@ import asyncio
 import logging
 import os
 from datetime import date as _date_cls, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -55,7 +55,13 @@ async def api_get_settings(
         "appearance": settings.get("appearance"),
         "home_sections": settings.get("home_sections"),
         "bell_last_seen": settings.get("bell_last_seen"),
+        "bell_read_ids": settings.get("bell_read_ids") or [],
     })
+
+
+#: Cap on stored bell read ids. Mirrors MAX_READ_IDS in the Hub's
+#: api/notifications.ts; the client prunes first, this is the backstop.
+_MAX_BELL_READ_IDS = 500
 
 
 class AppearanceInput(BaseModel):
@@ -78,6 +84,12 @@ class SettingsPatchInput(BaseModel):
     # ISO timestamp of the newest bell item the user has seen. Account-level
     # so "mark all read" on the phone also clears the dot on the Mac.
     bell_last_seen: str | None = Field(None, max_length=64)
+    # Keys of bell items already read (see the Hub's api/notifications.ts
+    # `itemKey`). Per-item rather than a cursor because the bell marks rows
+    # read as they scroll into view and the feed is newest-first: "everything
+    # older than X" cannot express "the rows on screen, but not the ones
+    # below". Over-long lists are truncated, not rejected — see the handler.
+    bell_read_ids: list[Annotated[str, Field(max_length=128)]] | None = None
 
 
 @router.patch("/api/settings")
@@ -94,6 +106,11 @@ async def api_patch_settings(
     from memory.firestore_db import _jsonsafe_doc  # lazy import
 
     patch = body.model_dump(exclude_none=True)
+    if "bell_read_ids" in patch:
+        # Keep the newest ids. The client already prunes to its 7-day feed;
+        # this is the backstop that keeps a buggy or hostile client from
+        # growing the settings doc without bound.
+        patch["bell_read_ids"] = patch["bell_read_ids"][-_MAX_BELL_READ_IDS:]
     if not patch:
         raise HTTPException(status_code=400, detail={"error": "empty patch"})
 
@@ -106,6 +123,7 @@ async def api_patch_settings(
         "appearance": settings.get("appearance"),
         "home_sections": settings.get("home_sections"),
         "bell_last_seen": settings.get("bell_last_seen"),
+        "bell_read_ids": settings.get("bell_read_ids") or [],
     })
 
 

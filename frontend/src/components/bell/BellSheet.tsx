@@ -7,15 +7,26 @@
  *  - action  → no link; it's a record ("Klaus did")
  *  - system  → /settings (system health lives there), rendered dimmed
  *
+ * Read marking (Amit, 2026-08-19: "it doesn't automatically mark what I
+ * interact with as read... I'd like it to mark the things I can see in my
+ * direct vicinity"). A row marks itself read the moment half of it is on
+ * screen — no dwell — via one IntersectionObserver shared by every row, and
+ * tapping a row's action marks it too. Unread rows carry an accent dot that
+ * fades as they are marked, so the clearing is visible rather than silent.
+ *
  * All content renders as plain React text — never HTML (T-28-xss).
  */
+import { useCallback, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ArrowUpRight, CheckCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAgentStatus } from '../../api/agent'
-import type { BellItem } from '../../api/notifications'
+import { itemKey, type BellItem } from '../../api/notifications'
 import { useNotifications } from '../../hooks/useNotifications'
 import { Sheet } from '../shared/Sheet'
+
+/** Fraction of a row that must be on screen before it counts as seen. */
+const SEEN_THRESHOLD = 0.5
 
 const KIND_STYLES: Record<BellItem['type'], { label: string; bg: string; color: string }> = {
   review: { label: 'Review', bg: 'color-mix(in srgb, var(--accent) 10%, var(--surface))', color: 'var(--accent)' },
@@ -56,7 +67,9 @@ interface BellSheetProps {
 
 export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
   const navigate = useNavigate()
-  const { markAllRead, dismissOne, unread } = useNotifications()
+  const { markRead, markAllRead, dismissOne, unread, unreadKeys } = useNotifications()
+  const unreadSet = new Set(unreadKeys)
+
   // Project URL fallback for fallback-published reviews without a session URL.
   const { data: agentStatus } = useQuery({
     queryKey: ['agent', 'status'],
@@ -64,6 +77,49 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
     staleTime: 10 * 60_000,
     enabled: open,
   })
+
+  // --- viewport read-marking -----------------------------------------------
+  // markRead's identity churns (it depends on the settings mutation), so it is
+  // held in a ref: the observer is built once per open, not per keystroke of
+  // React state, and rows keep their subscription across re-renders.
+  const markReadRef = useRef(markRead)
+  markReadRef.current = markRead
+  const byKey = useRef(new Map<string, BellItem>())
+  byKey.current = new Map(items.map((item) => [itemKey(item), item]))
+
+  const observer = useRef<IntersectionObserver | null>(null)
+  const rows = useRef(new Set<Element>())
+
+  useEffect(() => {
+    if (!open || typeof IntersectionObserver === 'undefined') return
+    const created = new IntersectionObserver(
+      (entries) => {
+        const seen = entries
+          .filter((entry) => entry.isIntersecting)
+          .map((entry) => byKey.current.get((entry.target as HTMLElement).dataset.key ?? ''))
+          .filter((item): item is BellItem => item !== undefined)
+        if (seen.length > 0) markReadRef.current(seen)
+      },
+      { threshold: SEEN_THRESHOLD },
+    )
+    observer.current = created
+    // Rows that mounted before this effect ran still need observing.
+    rows.current.forEach((node) => created.observe(node))
+    return () => {
+      created.disconnect()
+      observer.current = null
+    }
+  }, [open])
+
+  // Stable ref callback (React 19 cleanup form) so rows attach exactly once.
+  const registerRow = useCallback((node: HTMLDivElement) => {
+    rows.current.add(node)
+    observer.current?.observe(node)
+    return () => {
+      rows.current.delete(node)
+      observer.current?.unobserve(node)
+    }
+  }, [])
 
   function reviewUrl(item: BellItem): string | null {
     return item.claude_session_url || agentStatus?.claude_project_url || null
@@ -130,18 +186,41 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
           </div>
           {group.items.map((item) => {
             const kind = KIND_STYLES[item.type]
+            const key = itemKey(item)
+            const isUnread = unreadSet.has(key)
             return (
               <div
-                key={`${item.type}:${item.id}:${item.at}`}
+                key={key}
+                ref={registerRow}
+                data-key={key}
+                data-testid={`bell-row-${key}`}
+                data-unread={isUnread ? 'true' : 'false'}
                 style={{
-                  background: 'var(--surface)',
+                  background: isUnread
+                    ? 'color-mix(in srgb, var(--accent) 6%, var(--surface))'
+                    : 'var(--surface)',
                   borderRadius: 'var(--r)',
                   padding: '12px 14px',
                   marginBottom: '8px',
                   opacity: item.type === 'system' ? 0.7 : 1,
+                  transition: 'background 260ms ease',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                  <span
+                    aria-label={isUnread ? 'Unread' : undefined}
+                    style={{
+                      width: '7px',
+                      height: '7px',
+                      borderRadius: '50%',
+                      flex: '0 0 auto',
+                      background: 'var(--accent)',
+                      opacity: isUnread ? 1 : 0,
+                      // Collapse the gap once it fades, so read rows sit flush.
+                      marginRight: isUnread ? 0 : '-15px',
+                      transition: 'opacity 260ms ease, margin-right 260ms ease',
+                    }}
+                  />
                   <span
                     style={{
                       fontSize: '10.5px',
@@ -181,7 +260,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                     href={reviewUrl(item) ?? undefined}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onClick={() => dismissOne(item.push_tag)}
+                    onClick={() => dismissOne(item)}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -200,7 +279,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                 {item.type === 'alert' && (
                   <button
                     onClick={() => {
-                      dismissOne(item.push_tag)
+                      dismissOne(item)
                       onClose()
                       navigate('/')
                     }}
@@ -225,7 +304,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
                 {item.type === 'system' && (
                   <button
                     onClick={() => {
-                      dismissOne(item.push_tag)
+                      dismissOne(item)
                       onClose()
                       navigate('/settings')
                     }}

@@ -15,7 +15,12 @@
  */
 import { useCallback, useEffect, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchSettings, patchSettings, type HubSettings } from '../api/settings'
+import {
+  fetchSettings,
+  patchSettings,
+  type HubSettings,
+  type SettingsPatch,
+} from '../api/settings'
 import { applyAppearance, defaultAppearance } from '../tokens'
 
 /** Trailing debounce for appearance writes — long enough to swallow a drag. */
@@ -54,14 +59,10 @@ export function useUpdateSettings() {
   const issued = useRef(0)
   const latest = useRef(0)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const queued = useRef<
-    Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>> | null
-  >(null)
+  const queued = useRef<SettingsPatch | null>(null)
 
   const mutation = useMutation({
-    mutationFn: async (
-      patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>>,
-    ) => {
+    mutationFn: async (patch: SettingsPatch) => {
       const sequence = ++issued.current
       const settings = await patchSettings(patch)
       return { settings, sequence }
@@ -93,7 +94,7 @@ export function useUpdateSettings() {
    * (the sheet does) — this keeps the query cache and the network in step.
    */
   const save = useCallback(
-    (patch: Partial<Pick<HubSettings, 'appearance' | 'home_sections' | 'bell_last_seen'>>) => {
+    (patch: SettingsPatch) => {
       const previous = queryClient.getQueryData<HubSettings>(['settings'])
       if (previous) {
         queryClient.setQueryData<HubSettings>(['settings'], { ...previous, ...patch })

@@ -4,8 +4,13 @@
  * GET /api/notifications?days=N → { notifications: BellItem[] } newest-first
  * GET /api/followups            → { followups: Followup[] } soonest-first
  *
- * Unread state is client-side: the bell stores a last-seen ISO cursor in
- * localStorage; anything newer counts as unread. The server stays stateless.
+ * Unread state is client-side and per-item: the bell keeps a set of read item
+ * keys (mirrored to the account as `bell_read_ids`). It is deliberately NOT a
+ * cursor — the feed is newest-first, so "everything older than X is read"
+ * cannot express "I have seen the three rows on screen but not the nine below
+ * them", which is exactly what viewport-marking needs. The pre-existing
+ * `bell_last_seen` cursor survives read-only, as a floor. The server stays a
+ * dumb projection either way.
  */
 import { apiFetch } from './client'
 
@@ -47,11 +52,34 @@ export async function fetchFollowups(): Promise<Followup[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Last-seen cursor (unread dot)
+// Per-item read state (unread dot)
 // ---------------------------------------------------------------------------
 
 const LAST_SEEN_KEY = 'klaus-bell-last-seen'
+const READ_IDS_KEY = 'klaus-bell-read-ids'
 
+/** Cap the stored set so a long-running install cannot grow it unbounded.
+ *  Matches the server-side cap in interfaces/routes/misc.py. */
+export const MAX_READ_IDS = 500
+
+/**
+ * Stable identity for a bell item.
+ *
+ * `id` alone is not unique across the feed's three sources — an action and an
+ * alert can collide — so the key carries the type and the timestamp too. This
+ * is the same composite the sheet already used for its React keys.
+ */
+export function itemKey(item: BellItem): string {
+  return `${item.type}:${item.id}:${item.at}`
+}
+
+/**
+ * The legacy cursor, read-only.
+ *
+ * Nothing writes it any more. It is kept so that upgrading does not resurrect
+ * a week of already-read history as unread: anything at or before the cursor
+ * is read regardless of the read set.
+ */
 export function getLastSeen(): string {
   try {
     return localStorage.getItem(LAST_SEEN_KEY) ?? ''
@@ -60,17 +88,41 @@ export function getLastSeen(): string {
   }
 }
 
-export function setLastSeen(at: string): void {
+export function getReadIds(): string[] {
   try {
-    localStorage.setItem(LAST_SEEN_KEY, at)
+    const raw = localStorage.getItem(READ_IDS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string') : []
+  } catch {
+    // Garbage or private-mode failure — treat as "nothing read yet".
+    return []
+  }
+}
+
+export function setReadIds(ids: string[]): void {
+  try {
+    localStorage.setItem(READ_IDS_KEY, JSON.stringify(ids.slice(-MAX_READ_IDS)))
   } catch {
     // Private-mode storage failure — the dot just stays on; harmless.
   }
 }
 
-export function countUnread(items: BellItem[]): number {
-  const lastSeen = getLastSeen()
-  return items.filter((item) => item.at > lastSeen).length
+/** Items still unread: not in the read set, and newer than the legacy floor. */
+export function unreadItems(
+  items: BellItem[],
+  readIds: Set<string>,
+  lastSeen: string,
+): BellItem[] {
+  return items.filter(
+    (item) => !readIds.has(itemKey(item)) && !(lastSeen && item.at <= lastSeen),
+  )
+}
+
+/** Drop read ids for items that have aged out of the feed's window. */
+export function pruneReadIds(ids: string[], items: BellItem[]): string[] {
+  const live = new Set(items.map(itemKey))
+  return ids.filter((id) => live.has(id))
 }
 
 // ---------------------------------------------------------------------------

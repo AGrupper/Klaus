@@ -388,9 +388,12 @@ class HubSettingsStore:
             "corner": True,
             "portfolio": False,    # survives as an off-by-default toggle
         },
-        # Bell read-cursor. Account-level, not per-device: marking everything
-        # read on the phone must clear the dot on the Mac too.
+        # Legacy bell read-cursor. Read-only now, kept as a floor so the
+        # per-item switch did not resurrect already-read history.
         "bell_last_seen": None,
+        # Keys of bell items already read. Account-level, not per-device:
+        # marking things read on the phone must clear the dot on the Mac too.
+        "bell_read_ids": [],
     }
 
     def __init__(self, project_id: str, database: str = "(default)") -> None:
