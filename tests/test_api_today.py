@@ -535,7 +535,7 @@ def test_departure_window_actually_fires_the_deterministic_leave_now_push():
     from datetime import datetime  # noqa: PLC0415
     from zoneinfo import ZoneInfo  # noqa: PLC0415
 
-    from core.routines.alerts import evaluate_daytime_rules  # noqa: PLC0415
+    from core.routines.alerts import evaluate_explicit_rules  # noqa: PLC0415
 
     tz = ZoneInfo("Asia/Jerusalem")
     # Departure is 15 min before an 18:00 event, so 17:45. "Now" is 17:50:
@@ -543,7 +543,7 @@ def test_departure_window_actually_fires_the_deterministic_leave_now_push():
     calendar = _departure_windows(_located_calendar("2026-06-15T18:00:00+03:00"))
     now = datetime(2026, 6, 15, 17, 50, tzinfo=tz)
 
-    alerts = evaluate_daytime_rules(
+    alerts = evaluate_explicit_rules(
         {"tasks": [], "habits_pending": [], "today": {"calendar": calendar}},
         [],
         [],

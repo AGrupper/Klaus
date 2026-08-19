@@ -7,9 +7,12 @@ failures. Untimed tasks, habits, nutrition, and coaching never create pushes.
 The one habit-shaped exception is the routine reminder: a Hub routine Amit has
 armed himself (``remind: true``) at a wall-clock time he chose
 (``anchor_time``). That is an explicit, time-bound reminder he set — not Klaus
-inferring urgency from an untimed habit, which stays forbidden. Reminders are
-also the only rule that fires outside waking hours; a routine anchored at 23:00
-must still be able to remind him.
+inferring urgency from an untimed habit, which stays forbidden.
+
+There are no quiet hours (removed 2026-08-19 at Amit's request). Every rule
+here is already explicit and time-bound — it fires because something he set
+came due, never because Klaus decided the moment was interesting — so an
+outreach window was suppressing wanted alerts rather than unwanted ones.
 """
 from __future__ import annotations
 
@@ -128,7 +131,7 @@ def evaluate_routine_reminders(
     return alerts
 
 
-def evaluate_daytime_rules(
+def evaluate_explicit_rules(
     snapshot: dict,
     due_followups: list[dict],
     infrastructure_signals: list[Any],
@@ -260,17 +263,12 @@ async def run_rule_evaluator(
 ) -> dict:
     """Evaluate, de-duplicate, deliver, and audit explicit alerts.
 
-    Two passes share one delivery loop:
-
-    * routine reminders run at **any** hour — a routine anchored at 23:00 must
-      still be able to remind him;
-    * every other rule stays inside waking hours (07:00–21:59), and the loads
-      those rules need — the life snapshot above all — happen only then. A
-      quiet 03:00 tick costs one routine read, and not even the habits behind
-      it unless a routine is actually inside its window.
+    Runs at every hour of the day — see the module docstring on why there is
+    no outreach window. Two passes share one delivery loop: routine reminders,
+    which read only the routines unless one is actually inside its window, and
+    everything else, which needs the life snapshot.
     """
     local_now = (now or datetime.now(_TZ)).astimezone(_TZ)
-    quiet_hours = local_now.hour < 7 or local_now.hour > 21
 
     project = os.environ.get("GCP_PROJECT_ID", "klaus-agent")
     database = os.environ.get("FIRESTORE_DATABASE", "klaus-firestore")
@@ -301,9 +299,9 @@ async def run_rule_evaluator(
     day = local_now.date().isoformat()
     seen = set(await _resolve(prior_topics_loader, day) or [])
 
-    # Pass 1 — routine reminders, at any hour. Filtering on the window and on
-    # what has already gone out today keeps the habit/completion reads off
-    # every tick that has nothing to say.
+    # Pass 1 — routine reminders. Filtering on the window and on what has
+    # already gone out today keeps the habit/completion reads off every tick
+    # that has nothing to say.
     routines = await _resolve(routines_loader) or []
     candidates = [
         routine for routine in routines
@@ -321,34 +319,34 @@ async def run_rule_evaluator(
         )
     reminder_topics = {alert["topic_key"] for alert in alerts}
 
-    # Pass 2 — everything else, waking hours only.
-    if not quiet_hours:
-        if snapshot_loader is None:
-            from core.life_snapshot import build_life_snapshot
+    # Pass 2 — everything else. These rules need the life snapshot, which
+    # is the expensive load on this path.
+    if snapshot_loader is None:
+        from core.life_snapshot import build_life_snapshot
 
-            snapshot_loader = build_life_snapshot
-        if due_followups_loader is None:
-            from memory.firestore_db import FollowupStore
+        snapshot_loader = build_life_snapshot
+    if due_followups_loader is None:
+        from memory.firestore_db import FollowupStore
 
-            due_followups_loader = FollowupStore(project, database).list_due
-        if infrastructure_loader is None:
-            from core.routines.heartbeat import collect_deterministic_signals
+        due_followups_loader = FollowupStore(project, database).list_due
+    if infrastructure_loader is None:
+        from core.routines.heartbeat import collect_deterministic_signals
 
-            infrastructure_loader = collect_deterministic_signals
-        if followup_marker is None:
-            from memory.firestore_db import FollowupStore
+        infrastructure_loader = collect_deterministic_signals
+    if followup_marker is None:
+        from memory.firestore_db import FollowupStore
 
-            followup_marker = FollowupStore(project, database).mark_done
+        followup_marker = FollowupStore(project, database).mark_done
 
-        utc_now = local_now.astimezone(timezone.utc).isoformat()
-        snapshot, followups, infrastructure = await asyncio.gather(
-            _resolve(snapshot_loader),
-            _resolve(due_followups_loader, utc_now),
-            _resolve(infrastructure_loader),
-        )
-        alerts += evaluate_daytime_rules(
-            snapshot or {}, followups or [], infrastructure or [], now=local_now
-        )
+    utc_now = local_now.astimezone(timezone.utc).isoformat()
+    snapshot, followups, infrastructure = await asyncio.gather(
+        _resolve(snapshot_loader),
+        _resolve(due_followups_loader, utc_now),
+        _resolve(infrastructure_loader),
+    )
+    alerts += evaluate_explicit_rules(
+        snapshot or {}, followups or [], infrastructure or [], now=local_now
+    )
 
     sent = 0
     reminders_sent = 0
@@ -389,5 +387,4 @@ async def run_rule_evaluator(
         "evaluated": len(alerts),
         "sent": sent,
         "reminders_sent": reminders_sent,
-        "quiet_hours": quiet_hours,
     }

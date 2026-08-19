@@ -27,7 +27,7 @@ def _web_server():
 def test_deterministic_alerts_is_the_canonical_scheduler_endpoint(monkeypatch):
     """A scheduler tick evaluates explicit rules without booting legacy runtime."""
     web_server = _web_server()
-    evaluator = AsyncMock(return_value={"evaluated": 2, "sent": 1, "quiet_hours": False})
+    evaluator = AsyncMock(return_value={"evaluated": 2, "sent": 1, "reminders_sent": 0})
     deterministic = MagicMock(run_rule_evaluator=evaluator)
     web_server._application = None
 
@@ -37,7 +37,7 @@ def test_deterministic_alerts_is_the_canonical_scheduler_endpoint(monkeypatch):
         response = TestClient(web_server.app).post("/cron/deterministic-alerts")
 
     assert response.status_code == 200
-    assert response.json() == {"ok": True, "evaluated": 2, "sent": 1, "quiet_hours": False}
+    assert response.json() == {"ok": True, "evaluated": 2, "sent": 1, "reminders_sent": 0}
     evaluator.assert_awaited_once()
     log_cron_run.assert_called_once_with("deterministic-alerts", ok=True)
 

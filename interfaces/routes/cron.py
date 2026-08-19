@@ -76,7 +76,11 @@ async def cron_morning_backstop(request: Request) -> JSONResponse:
 
 @router.post("/cron/deterministic-alerts")
 async def cron_deterministic_alerts(request: Request) -> JSONResponse:
-    """Run deterministic daytime rules with no legacy runtime dependency."""
+    """Run the deterministic rules with no legacy runtime dependency.
+
+    Schedule: */10 * * * *  (Asia/Jerusalem) — every hour of the day. The
+    outreach window was removed 2026-08-19; core/routines/alerts.py says why.
+    """
     await _verify_cron_request(request)
     from core.routines.alerts import run_rule_evaluator
 

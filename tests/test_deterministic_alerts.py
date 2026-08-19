@@ -1,4 +1,4 @@
-"""No-model daytime alert rules for the subscription-first runtime."""
+"""No-model alert rules for the subscription-first runtime."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -12,7 +12,7 @@ TZ = ZoneInfo("Asia/Jerusalem")
 
 
 def test_rules_only_surface_explicit_time_bound_conditions():
-    from core.routines.alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_explicit_rules
 
     now = datetime(2026, 8, 8, 14, 20, tzinfo=TZ)
     snapshot = {
@@ -23,14 +23,14 @@ def test_rules_only_surface_explicit_time_bound_conditions():
         "habits_pending": [{"id": "walk", "name": "Walk"}],
         "today": {"calendar": {"timed": []}},
     }
-    alerts = evaluate_daytime_rules(snapshot, [], [], now=now)
+    alerts = evaluate_explicit_rules(snapshot, [], [], now=now)
 
     assert [alert["kind"] for alert in alerts] == ["hard_deadline"]
     assert "Submit form" in alerts[0]["text"]
 
 
 def test_rules_detect_due_followup_calendar_overlap_and_travel_conflict():
-    from core.routines.alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_explicit_rules
 
     now = datetime(2026, 8, 8, 14, 20, tzinfo=TZ)
     snapshot = {
@@ -56,7 +56,7 @@ def test_rules_detect_due_followup_calendar_overlap_and_travel_conflict():
             }
         },
     }
-    alerts = evaluate_daytime_rules(
+    alerts = evaluate_explicit_rules(
         snapshot,
         [{"id": "f1", "note": "Call the clinic", "due_at": now.isoformat()}],
         [],
@@ -67,9 +67,9 @@ def test_rules_detect_due_followup_calendar_overlap_and_travel_conflict():
 
 
 def test_rules_include_only_critical_automation_failures():
-    from core.routines.alerts import evaluate_daytime_rules
+    from core.routines.alerts import evaluate_explicit_rules
 
-    alerts = evaluate_daytime_rules(
+    alerts = evaluate_explicit_rules(
         {"tasks": [], "habits_pending": [], "today": {"calendar": {"timed": []}}},
         [],
         [
@@ -268,7 +268,9 @@ def test_reminder_window_never_runs_past_midnight():
     ) == []
 
 
-def test_runner_delivers_reminders_at_night_while_daytime_rules_stay_quiet():
+def test_runner_delivers_reminders_at_night():
+    """There are no quiet hours (removed 2026-08-19) — a routine anchored at
+    23:00 reminds him at 23:00, and the rest of the engine runs alongside it."""
     import asyncio
     from core.routines.alerts import run_rule_evaluator
 
@@ -283,13 +285,24 @@ def test_runner_delivers_reminders_at_night_while_daytime_rules_stay_quiet():
             prior_topics_loader=lambda _day: [],
             push_sender=lambda *args: calls.append(args) or {"sent": 1},
             outreach_logger=lambda day, entry: logged.append((day, entry)),
-            # A snapshot loader that would explode if the daytime pass ran.
-            snapshot_loader=lambda: (_ for _ in ()).throw(AssertionError("quiet hours")),
+            snapshot_loader=lambda: {
+                "tasks": [
+                    {"id": "t1", "title": "Renew passport",
+                     "hard_deadline_at": "2026-08-20T00:00:00+03:00"},
+                ],
+                "habits_pending": [],
+                "today": {"calendar": {"timed": []}},
+            },
+            due_followups_loader=lambda _now: [],
+            infrastructure_loader=lambda: [],
+            followup_marker=lambda _followup_id: None,
         )
     )
 
-    assert result == {
-        "evaluated": 1, "sent": 1, "reminders_sent": 1, "quiet_hours": True
+    # The reminder AND the midnight deadline, both at 23:10.
+    assert result == {"evaluated": 2, "sent": 2, "reminders_sent": 1}
+    assert {entry["kind"] for _day, entry in logged} == {
+        "routine_reminder", "hard_deadline"
     }
     text, message_class, destination, title, external_url, tag = calls[0]
     assert message_class == "habit_nudge"
