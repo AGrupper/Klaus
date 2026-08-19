@@ -1,0 +1,23 @@
+/* Native skin — the Hub's live tokens, lifted from frontend/src/index.css so
+   sketches judge the note against the real palette, not an invented one. */
+:root {
+  --ground: #F2F2F6;
+  --surface: #FFFFFF;
+  --ink: #1C1C1E;
+  --muted: #85858B;
+  --faint: #AEAEB4;
+  --sep: #E5E5EA;
+  --good: #2E7D4F;
+  --good-soft: #E7F2EB;
+  --destructive: #C0392B;
+
+  --accent: #1C2540;      /* midnight */
+  --accent-ink: #FFFFFF;
+  --flame: #B02A2A;       /* dark red */
+  --flame-soft: #F7E9E9;
+
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+
+  --r: 12px;
+}

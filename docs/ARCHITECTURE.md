@@ -30,7 +30,9 @@ Claude Project ──MCP/OAuth──▶  /mcp/interactive   ─┐
                                                    ├──▶  tool dispatch ──▶ stores
 Web Hub (React) ──session cookie──▶  /api/*       ─┤
                                                    │
-Cloud Scheduler ──OIDC──▶  /cron/*, /trigger/*   ─┘
+Cloud Scheduler ──OIDC──▶  /cron/*                ─┤
+Cloud Tasks ─────OIDC──▶  /internal/*             ─┤
+iOS Shortcuts ───token──▶  /trigger/*             ─┘
 ```
 
 1. **MCP** — Claude calls tools. Two scoped endpoints: `interactive` (live
@@ -43,14 +45,45 @@ Cloud Scheduler ──OIDC──▶  /cron/*, /trigger/*   ─┘
    Customize sheet; tasks, health charts and the Claude launcher tab were
    retired from the UI in v8.0, though their read APIs remain for Claude and
    for the day view.
-3. **Cron and triggers** — Cloud Scheduler drives ingestion (Garmin, Hevy,
-   HealthKit, Things), deterministic alerts, and the routine backstops. iOS
-   Shortcuts hit `/trigger/*` for the real wake and sleep moments.
+3. **Scheduled and triggered** — three machine callers, each with its own
+   verifier in `interfaces/routes/_verify.py`.
+   - *Cloud Scheduler* (`/cron/*`) drives ingestion (Garmin, Hevy, HealthKit,
+     Things), the routine backstops, the daily reminder re-arm, and the
+     deterministic alert pass.
+   - *Cloud Tasks* (`/internal/*`) delivers work that has to happen at one
+     exact moment: a routine's reminder at the minute it was set, and a
+     routine's fallback review when Claude misses its deadline.
+   - *iOS Shortcuts* (`/trigger/*`) report the real wake and Sleep-Focus
+     moments. These do double duty: they start the morning and nightly
+     routines, **and** they are what opens and closes the alert window (see
+     below), so Amit's actual day — not a cron expression — decides when
+     Klaus may interrupt him.
 
 Routines are coordinated, not executed, here: Cloud Run fires a Remote Routine
 at Claude, waits, and publishes whatever comes back. If Claude misses the
 deadline, a deterministic fallback review is published instead so a routine
 never produces silence.
+
+## When Klaus may interrupt
+
+Two unrelated mechanisms put a notification on Amit's phone, and the difference
+between them is the difference between a known moment and an unknown one.
+
+**Reminders are scheduled.** A Hub routine armed with `remind` has a fire time
+the instant it is set, so `core/routines/reminders.py` enqueues one Cloud Task
+for that exact minute. Editing the time cancels and re-creates; the routine's
+own id keys the single record of what is queued, and the delivery handler drops
+any task whose baked-in `anchor_time` no longer matches the routine — so a
+changed time cannot produce two notifications even if the cancel fails.
+
+**Everything else is polled**, because a calendar collision or an approaching
+deadline cannot be known in advance. `core/routines/alerts.py` runs every 30
+minutes and evaluates only explicit, time-bound conditions. It is gated by
+`alert_window_open`, which reads the existing morning/nightly routine runs:
+open from the wake trigger, closed by Sleep Focus, opening by 10:30 regardless
+if the wake trigger missed and closing itself 20 hours after opening if the
+sleep trigger did. An unreadable window opens rather than closes — silence is
+the worse failure. Reminders ignore the window entirely.
 
 ## Where the code lives
 
@@ -73,6 +106,8 @@ never produces silence.
 - Gemini is permitted solely as the embedding credential and embedding model.
 - Historical Firestore documents, vectors, logs and reviews are preserved.
 - Production is never deployed or mutated without explicit authorization.
+- A moment known in advance is **scheduled**, never polled. Polling exists only
+  for conditions that cannot be known ahead of time.
 - The SPA is mounted at `/` and must remain the **last** route registered —
   anything after it is unreachable.
 
