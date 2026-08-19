@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sketch 002 — The quote card, four ways</title>
+<link rel="stylesheet" href="../themes/default.css">
+<link rel="stylesheet" href="sketch.css">
+</head>
+<body>
+<div id="variant-nav">
+  <div class="nav-row">
+    <span class="nav-label">Card</span>
+    <button class="variant-tab active" data-variant="b1">1 &middot; As you saw it</button>
+    <button class="variant-tab" data-variant="b2">2 &middot; Accent edge</button>
+    <button class="variant-tab" data-variant="b3">3 &middot; Klaus mark</button>
+    <button class="variant-tab" data-variant="b4">4 &middot; Tinted</button>
+    <button class="variant-tab" data-variant="all">All four</button>
+  </div>
+  <div class="nav-row">
+    <span class="nav-label">Note</span>
+    <button class="state-tab active" data-state="long">Long (215 ch)</button>
+    <button class="state-tab" data-state="short">Short (60 ch)</button>
+    <button class="state-tab" data-state="max">At the 280 cap</button>
+    <button class="state-tab" data-state="none">Not written yet</button>
+  </div>
+</div>
+
+<header class="intro">
+  <p class="intro-eyebrow">Klaus Hub &middot; Today &middot; Round 2</p>
+  <h1 class="intro-title">The quote card, four ways</h1>
+  <p class="intro-body">
+    You picked the card. These keep it &mdash; same white surface, same place under
+    <strong>Talk to Klaus</strong>, same 12px corners &mdash; and change only how the card
+    says <em>this is Klaus talking</em>. That's the part that wasn't landing:
+    a plain white card looks like every other card on the page.
+  </p>
+</header>
+
+<div id="stage"></div>
+
+<div id="sketch-tools">
+  <div class="tool-row">
+    <span>Width</span>
+    <button data-w="393" class="active">393</button>
+    <button data-w="430">430</button>
+    <button data-w="768">768</button>
+  </div>
+  <div class="tool-row">
+    <span>Accent</span>
+    <button data-accent="#1C2540" class="active" title="Midnight">M</button>
+    <button data-accent="#1C1C1E" title="Black">B</button>
+    <button data-accent="#1F4E63" title="Deep teal">T</button>
+    <button data-accent="#20563A" title="Forest">F</button>
+  </div>
+</div>
+
+<script>
+/* ------------------------------------------------------------------ data */
+const NOTES = {
+  long: "Upper body at 17:00 is the only fixed thing today — everything else can move around it. You're a night of sleep down, so keep the accessory work honest and don't chase the top set. Eat before you go, not after.",
+  short: "Light day. Protect the 17:00 session, let the rest slide.",
+  max: "Upper body at 17:00 is the only fixed thing today — everything else can move around it. You're a night of sleep down, so keep the accessory work honest, don't chase the top set, and eat before you go rather than after. The rest of the day is yours.",
+  none: null,
+};
+const NOTE_AT = "07:42";
+let state = "long";
+let variant = "b1";
+let frameWidth = 393;
+
+const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+/* The pen-nib glyph from the Talk to Klaus button, reused as Klaus's mark. */
+const PEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>';
+
+const EMPTY = "Coach note lands after the morning briefing.";
+
+/* -------------------------------------------------------- card treatments */
+
+/* 1 — as you saw it: uppercase label row, quote glyph, time on the right. */
+function cardB1(note) {
+  if (!note) return `<div class="card c1 empty"><p>${EMPTY}</p></div>`;
+  return `
+    <div class="card c1 press">
+      <div class="c1-head">
+        <span class="c1-mark">&ldquo;</span>
+        <span class="c1-who">Klaus, this morning</span>
+        <span class="c1-at">${NOTE_AT}</span>
+      </div>
+      <p class="body">${esc(note)}</p>
+    </div>`;
+}
+
+/* 2 — accent edge: the words start the card; attribution drops to a footer. */
+function cardB2(note) {
+  if (!note) return `<div class="card c2 empty"><p>${EMPTY}</p></div>`;
+  return `
+    <div class="card c2 press">
+      <p class="body">${esc(note)}</p>
+      <footer class="c2-foot">Klaus &middot; ${NOTE_AT}</footer>
+    </div>`;
+}
+
+/* 3 — Klaus mark: the CTA's pen nib as an avatar. Reads as a message from him. */
+function cardB3(note) {
+  if (!note) return `
+    <div class="card c3 empty">
+      <div class="c3-head">
+        <span class="c3-avatar c3-avatar-off">${PEN}</span>
+        <span class="c3-who">Klaus</span>
+      </div>
+      <p>${EMPTY}</p>
+    </div>`;
+  return `
+    <div class="card c3 press">
+      <div class="c3-head">
+        <span class="c3-avatar">${PEN}</span>
+        <span class="c3-who">Klaus</span>
+        <span class="c3-at">${NOTE_AT}</span>
+      </div>
+      <p class="body">${esc(note)}</p>
+    </div>`;
+}
+
+/* 4 — tinted: the accent wash is the identity. No label, just a watermark. */
+function cardB4(note) {
+  if (!note) return `<div class="card c4 empty"><p>${EMPTY}</p></div>`;
+  return `
+    <div class="card c4 press">
+      <span class="c4-mark" aria-hidden="true">&ldquo;</span>
+      <p class="body">${esc(note)}</p>
+      <footer class="c4-foot">Klaus &middot; ${NOTE_AT}</footer>
+    </div>`;
+}
+
+const TREATMENTS = {
+  b1: { label: "1 &middot; As you saw it", blurb: "The version you picked, unchanged — here as the thing to beat.", render: cardB1 },
+  b2: { label: "2 &middot; Accent edge", blurb: "A midnight edge down the card and the attribution moved to a footer, so the note's own words open the card.", render: cardB2 },
+  b3: { label: "3 &middot; Klaus mark", blurb: "The pen nib from the Talk to Klaus button, reused as his avatar. The card reads as a message from him.", render: cardB3 },
+  b4: { label: "4 &middot; Tinted", blurb: "The card itself washed in the accent, with a quote mark watermark. No label — the colour does the attributing.", render: cardB4 },
+};
+
+/* ------------------------------------------------------------ page shell */
+function phone(key) {
+  const t = TREATMENTS[key];
+  const note = NOTES[state];
+  return `
+  <figure class="frame-wrap">
+    <figcaption class="frame-cap">
+      <strong>${t.label}</strong>
+      <span>${t.blurb}</span>
+    </figcaption>
+    <div class="phone" style="width:${frameWidth}px">
+      <div class="status-bar"><span>9:41</span><span class="sb-right">&#9679;&#9679;&#9679;&#9679;</span></div>
+      <div class="page">
+        <h1 class="greeting">Good morning, Sir.</h1>
+        <p class="subline">24&deg;C, clear &middot; slept 7:12</p>
+
+        <a class="cta press" href="#">
+          <span class="cta-icon">
+            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>
+          </span>
+          <span class="cta-text">
+            <span class="cta-title">Talk to Klaus</span>
+            <span class="cta-sub">Dump a thought &mdash; he'll file it</span>
+          </span>
+          <svg class="cta-arrow" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
+        </a>
+
+        ${t.render(note)}
+
+        <div class="section">
+          <div class="section-label">Today</div>
+          <div class="group">
+            <div class="row">
+              <span class="row-time">10:00</span><span class="dot" style="background:var(--accent)"></span>
+              <span class="row-body"><span class="row-title">Standup</span><span class="row-sub">leave by 09:40</span></span>
+            </div>
+            <div class="row">
+              <span class="row-time">07:00</span><span class="dot" style="background:#F6BF26"></span>
+              <span class="row-body"><span class="row-title">Morning routine</span><span class="row-sub">3/4 done &middot; &#128293; 12</span></span>
+            </div>
+            <div class="row">
+              <span class="row-time">17:00</span><span class="dot" style="background:var(--flame)"></span>
+              <span class="row-body"><span class="row-title">Upper body</span><span class="row-sub">Week 3 of 8</span></span>
+            </div>
+            <div class="row">
+              <span class="row-time">Meals</span><span class="dot" style="background:var(--good)"></span>
+              <span class="row-body"><span class="row-title">2 logged &middot; 1180 kcal</span><span class="row-sub">96g protein &middot; 14g fiber</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-label">This morning</div>
+          <div class="stats">
+            <div class="stat"><b>7:12</b><span>Sleep</span></div>
+            <div class="stat"><b>58</b><span>HRV</span></div>
+            <div class="stat"><b>76</b><span>Battery</span></div>
+            <div class="stat"><b>47</b><span>Rest HR</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="tab-bar"><span class="tb active">Today</span><span class="tb">Routines</span><span class="tb">Ask</span><span class="tb">More</span></div>
+    </div>
+  </figure>`;
+}
+
+function render() {
+  const stage = document.getElementById("stage");
+  const keys = variant === "all" ? ["b1", "b2", "b3", "b4"] : [variant];
+  stage.className = variant === "all" ? "stage stage-all" : "stage";
+  stage.innerHTML = keys.map(phone).join("");
+}
+
+/* -------------------------------------------------------------- controls */
+function wire(sel, fn) {
+  document.querySelectorAll(sel).forEach((b) =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll(sel).forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      fn(b);
+      render();
+    })
+  );
+}
+wire(".variant-tab", (b) => { variant = b.dataset.variant; });
+wire(".state-tab", (b) => { state = b.dataset.state; });
+wire("#sketch-tools [data-w]", (b) => { frameWidth = Number(b.dataset.w); });
+document.querySelectorAll("#sketch-tools [data-accent]").forEach((b) =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#sketch-tools [data-accent]").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    document.documentElement.style.setProperty("--accent", b.dataset.accent);
+  })
+);
+
+render();
+</script>
+</body>
+</html>

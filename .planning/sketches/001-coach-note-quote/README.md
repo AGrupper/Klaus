@@ -2,7 +2,7 @@
 sketch: 001
 name: coach-note-quote
 question: "How should the coach's note read as a quote block directly under Talk to Klaus?"
-winner: null
+winner: "B"
 tags: [hub, today, typography, coach-note]
 ---
 
@@ -22,7 +22,7 @@ open .planning/sketches/001-coach-note-quote/index.html
 
 ## Variants
 - **A: Hairline rule** — a 3px accent rule, no container; the note is an aside on the page.
-- **B: Quote card** — the app's own grouped-card idiom with an attribution row. Path of least resistance: it is a `<Group>`.
+- **B: Quote card** ★ SELECTED — the app's own grouped-card idiom with an attribution row. Path of least resistance: it is a `<Group>`.
 - **C: Attached to CTA** — squared into the bottom of the Talk-to-Klaus button and tinted with the accent, so button + note read as one object: Klaus speaking.
 - **D: Pull quote** — editorial. Display type, oversized quote mark, no container; the loudest thing under the button.
 
