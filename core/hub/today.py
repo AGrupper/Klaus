@@ -436,6 +436,27 @@ def derive_coach_note(review_text: str) -> str:
     return ""
 
 
+def coach_note_from_publish(structured: dict, review_text: str) -> str:
+    """Pick the Hub's coach note out of a morning publish.
+
+    Prefers `structured.daily_note`, which the morning skill authors deliberately:
+    the note's job is to say how to navigate the day — where the pressure is, what
+    to protect, what to let go — across training, work and everything else. The
+    review's opening line is a schedule recap, and a recap tells Amit what he can
+    already see on the same screen.
+
+    Falls back to that opening line anyway when the field is absent, so an
+    uploaded skill that predates the field still fills the card rather than
+    leaving it blank. Both paths get the same sanitizing and length trim.
+    """
+    authored = ""
+    if isinstance(structured, dict):
+        authored = _strip_note_markup(structured.get("daily_note") or "")
+    if authored:
+        return _trim_to_note_length(authored)
+    return derive_coach_note(review_text)
+
+
 def _read_self_state() -> dict:
     """Return the self_state doc, JSON-safe. ``{}`` on any error — never raises.
 

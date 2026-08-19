@@ -5,7 +5,7 @@ description: Use when running Klaus's Sunday full-life Remote Routine or prepari
 
 # Klaus Weekly Review
 
-Skill version: 7.6.0
+Skill version: 7.7.0
 
 Use Opus for this routine. The Klaus backend is authoritative.
 

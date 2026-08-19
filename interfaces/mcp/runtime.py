@@ -292,15 +292,17 @@ def build_custom_handlers() -> dict[str, Any]:
             # (core/hub/today.py) returned None every day and the card showed its
             # "coming after your morning briefing" placeholder permanently.
             #
-            # Derived here rather than requested from the skill so restoring it
-            # needs no skill version bump and no Claude Project re-upload.
+            # The skill authors this as `structured.daily_note` — a schedule recap
+            # is not coaching, and the review's opening line is a recap. Falls
+            # back to deriving it from the review text so a stale uploaded skill
+            # still produces a note instead of a blank card.
             #
             # Never fatal: the review is already published atomically above and the
             # push still has to go out. A convenience note must not take that down.
             try:
-                from core.hub.today import derive_coach_note  # lazy import
+                from core.hub.today import coach_note_from_publish  # lazy import
 
-                note = derive_coach_note(text)
+                note = coach_note_from_publish(structured, text)
                 if note:
                     morning_state = self_state if isinstance(self_state, dict) else {}
                     SelfStateStore(*_settings()).set({

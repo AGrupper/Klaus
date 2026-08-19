@@ -511,13 +511,17 @@ def test_morning_publish_writes_the_hub_coach_note(monkeypatch):
             "**Morning, Sir.** Wednesday's split stands untouched.\n"
             "Recovery: 6.5h sleep, HRV at baseline."
         ),
-        "structured": {"self_state": {"mood": "steady", "current_focus": "Week 9"}},
+        "structured": {
+            "daily_note": "Protect the 08:15 — the gym can slide, the track cannot.",
+            "self_state": {"mood": "steady", "current_focus": "Week 9"},
+        },
         "action_ids": [],
         "partial_actions": [],
     })
 
     state = memory.firestore_db.SelfStateStore("test-project").get()
-    assert state["daily_note"] == "Morning, Sir. Wednesday's split stands untouched."
+    # The skill's authored note, not the review's opening schedule recap.
+    assert state["daily_note"] == "Protect the 08:15 — the gym can slide, the track cannot."
     assert state["daily_note_date"] == "2026-08-19"
     assert state["daily_note_at"]  # stamped so the Hub can show when it was written
     # The self_state the skill already sends is merged, not dropped.
@@ -586,4 +590,56 @@ def test_nightly_publish_does_not_clobber_the_coach_note(monkeypatch):
 
     state = memory.firestore_db.SelfStateStore("test-project").get()
     assert state["daily_note"] == "Morning, Sir."
+    assert state["daily_note_date"] == "2026-08-19"
+
+
+def test_morning_publish_falls_back_when_the_skill_sends_no_note(monkeypatch):
+    """A stale uploaded skill still fills the card rather than blanking it.
+
+    The daily_note field arrived in skill 7.7.0. Uploading skills is a manual
+    step, so the backend must not depend on it having happened.
+    """
+    import core.push_sender
+    import memory.firestore_db
+    from core.routines.subscription import SubscriptionRoutineCoordinator
+    from interfaces.mcp.runtime import build_custom_handlers
+    from tests.routine_firestore_fakes import (
+        VersionedFirestoreClient,
+        transactional_with_retry,
+    )
+
+    client = VersionedFirestoreClient(
+        server_timestamp=memory.firestore_db.firestore.SERVER_TIMESTAMP
+    )
+    monkeypatch.setattr("memory.stores.base._make_firestore_client", lambda *_args: client)
+    monkeypatch.setattr(
+        memory.firestore_db.firestore, "transactional", transactional_with_retry
+    )
+    monkeypatch.setattr(
+        core.push_sender, "send_push_to_all", lambda *_args, **_kw: {"sent": 1}
+    )
+
+    coordinator = SubscriptionRoutineCoordinator(
+        run_store=memory.firestore_db.RoutineRunStore("test-project"),
+        review_store=memory.firestore_db.RoutineReviewStore("test-project"),
+        remote_fire=lambda _payload: {"accepted": True},
+        enqueue_fallback=lambda _cid, _delay: True,
+        snapshot_builder=lambda: {},
+        push_sender=lambda *_args, **_kw: {"sent": 1},
+        public_url="https://klaus.example.com",
+    )
+    correlation_id = coordinator.start("morning", "2026-08-19", "wake")["correlation_id"]
+
+    build_custom_handlers()["publish_review"]({
+        "correlation_id": correlation_id,
+        "routine": "morning",
+        "target_date": "2026-08-19",
+        "text": "Morning, Sir. Track Workout at 08:15.\nRecovery: 6.5h sleep.",
+        "structured": {"self_state": {"mood": "steady"}},
+        "action_ids": [],
+        "partial_actions": [],
+    })
+
+    state = memory.firestore_db.SelfStateStore("test-project").get()
+    assert state["daily_note"] == "Morning, Sir. Track Workout at 08:15."
     assert state["daily_note_date"] == "2026-08-19"

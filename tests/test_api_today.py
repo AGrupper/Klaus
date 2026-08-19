@@ -826,3 +826,49 @@ def test_short_notes_are_left_exactly_as_written():
     from core.hub.today import derive_coach_note
 
     assert derive_coach_note("Morning, Sir. Easy day.") == "Morning, Sir. Easy day."
+
+
+# ------------------------------------------------------------------ #
+# Authored coach note (structured.daily_note)                        #
+# ------------------------------------------------------------------ #
+
+def test_authored_note_wins_over_the_review_opening_line():
+    """The skill's deliberate note beats the derived one.
+
+    The opening line is a schedule recap, and the card sits directly under the
+    schedule it would be repeating — so an authored note is the point of the
+    field, not an optimization.
+    """
+    from core.hub.today import coach_note_from_publish
+
+    note = coach_note_from_publish(
+        {"daily_note": "**Protect the 08:15** — everything else can slide."},
+        "Morning, Sir. Track Workout at 08:15–09:15 and Heavy Lower Body at 17:00.",
+    )
+
+    assert note == "Protect the 08:15 — everything else can slide."
+
+
+def test_publish_falls_back_when_the_skill_sends_no_note():
+    """A skill version that predates the field still fills the card."""
+    from core.hub.today import coach_note_from_publish
+
+    review = "Morning, Sir. Track Workout at 08:15.\nRecovery: 6.5h sleep."
+
+    assert coach_note_from_publish({}, review) == "Morning, Sir. Track Workout at 08:15."
+    assert coach_note_from_publish({"daily_note": ""}, review).startswith("Morning, Sir.")
+    assert coach_note_from_publish({"daily_note": "   "}, review).startswith("Morning, Sir.")
+    # A non-dict `structured` must not crash the publish.
+    assert coach_note_from_publish(None, review).startswith("Morning, Sir.")
+
+
+def test_an_authored_note_is_trimmed_like_a_derived_one():
+    """Both paths get the same sanitizing and sentence-aware length trim."""
+    from core.hub.today import _COACH_NOTE_MAX_LEN, coach_note_from_publish
+
+    note = coach_note_from_publish(
+        {"daily_note": "Protect the morning block. " * 20}, "fallback"
+    )
+
+    assert len(note) <= _COACH_NOTE_MAX_LEN
+    assert note.endswith(".")

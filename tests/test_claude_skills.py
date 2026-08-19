@@ -153,7 +153,7 @@ def test_skill_version_is_consistent_everywhere():
     """
     from interfaces.mcp.server import EXPECTED_SKILL_VERSION
 
-    assert EXPECTED_SKILL_VERSION == "7.6.0"
+    assert EXPECTED_SKILL_VERSION == "7.7.0"
     assert f'"skill_version": "{EXPECTED_SKILL_VERSION}"' in (
         ROOT / "core" / "routines" / "subscription.py"
     ).read_text()
@@ -179,6 +179,23 @@ def test_live_agent_captures_and_files_tasks_in_the_moment():
     lowered = text.lower()
     assert "do not ask" in lowered or "never ask" in lowered
     assert "invent" in lowered, "must forbid inventing dates"
+
+
+def test_morning_review_authors_the_hub_coach_note():
+    """The note must be coaching, and the skill is the only place that decides that.
+
+    The backend prefers `structured.daily_note` and falls back to the review's
+    opening line — a schedule recap, which is what the card showed before and is
+    useless directly above the schedule itself. If these instructions ever go
+    missing the fallback takes over silently and the card quietly regresses.
+    """
+    text = _skill_text("klaus-morning-review")
+    assert "## The Hub coach note" in text
+    assert "daily_note" in text, "the skill must name the field it authors"
+    lowered = text.lower()
+    assert "cross-domain" in lowered, "a training-only note is the failure mode"
+    assert "repeat" in lowered or "recap" in lowered, "must forbid restating the day"
+    assert "280" in text, "the length limit has to reach the author"
 
 
 def test_nightly_review_plans_tomorrow_and_writes_the_plan():

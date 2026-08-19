@@ -48,6 +48,7 @@ from core.hub.today import (  # noqa: F401
     _today_nutrition_totals,
     _today_training,
     _today_weather,
+    coach_note_from_publish,
     derive_coach_note,
 )
 from core.hub.health_series import (  # noqa: F401

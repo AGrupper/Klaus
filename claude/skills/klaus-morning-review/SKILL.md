@@ -5,7 +5,7 @@ description: Use when running or completing Klaus's morning Remote Routine, incl
 
 # Klaus Morning Review
 
-Skill version: 7.6.0
+Skill version: 7.7.0
 
 Run only for a Klaus morning routine. The trigger supplies a correlation ID, target date, and routine name. The Klaus backend is authoritative.
 
@@ -56,5 +56,33 @@ Amit does not log food and has not since July 2026 — a settled choice, not a l
 When you reshape the day, check it against the real durations in the profile's `footprints` section — a day that only fits on paper is the most common way a morning plan fails. Protect approximately 20% of the day's usable time as slack rather than filling every opening. Recurring fixtures live in the calendar and training plan; read them there rather than assuming a weekly template.
 
 Only create or move `[klaus]`-tagged blocks. Never move or delete an untagged calendar event or training session. Training changes are recommendation-only.
+
+## The Hub coach note
+
+`publish_review` takes a `daily_note` inside `structured`: one short piece of
+coaching that sits on the Hub's Today card all day, under the day's timeline.
+
+It is the only thing Amit sees from you without opening the review, and it sits
+directly above the schedule it must not repeat. Telling him what is on today is
+wasted — the events are listed two inches higher, and he lived the calendar when
+he made it. The note earns its place by saying how to *handle* the day: where the
+day is likely to bend, what to protect and what to drop if it does, what order
+makes the pieces fit, where his energy will and will not be there. Cross-domain
+by default — training, work, errands, people, whatever the day actually holds.
+Never a training-only note on a day that is mostly not training.
+
+It comes from the same reasoning as the review, so it should be the thing you
+would say if you had one sentence and he was already halfway out the door. Two or
+three sentences, under 280 characters; longer gets trimmed at a sentence break.
+It is written once and never recomposed, and the Hub stamps it with the time it
+was written, so it must read as counsel given this morning rather than as
+narration of a day already underway.
+
+Some mornings the honest note is that nothing needs managing. Say that plainly
+and stop — a manufactured concern is worse than a short note.
+
+Omit `daily_note` only if you genuinely have nothing; the backend then falls back
+to the review's opening line, which is a recap and the thing this field exists to
+replace.
 
 <!-- INCLUDE: safety -->
