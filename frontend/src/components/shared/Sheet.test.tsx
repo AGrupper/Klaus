@@ -90,3 +90,32 @@ describe('Sheet height with the keyboard open', () => {
     expect(dialog.style.maxHeight).toBe('88dvh')
   })
 })
+
+/**
+ * 2026-08-19, Amit's phone: the Save/Delete row of "Edit routine" was trapped
+ * under the tab bar and no amount of scrolling in the sheet reached it — the
+ * drag just sprang back. Cause: PullToRefresh wraps every page in a div with
+ * `transform: translateY(0px)`, and *any* transform makes that div the
+ * containing block for `position: fixed` descendants (and a stacking context
+ * that the z:100 tab bar paints over). Measured live: the dialog's box ran
+ * top -31 → bottom 640 in an 889px viewport, and its scroll region had
+ * scrollHeight === clientHeight, i.e. nothing to scroll.
+ *
+ * The sheet must therefore live outside the page tree entirely.
+ */
+describe('Sheet placement', () => {
+  it('escapes a transformed ancestor by rendering into document.body', () => {
+    const { container } = render(
+      <div style={{ transform: 'translateY(0px)' }}>
+        <Sheet open onClose={() => {}} title="Edit routine">
+          <p>body</p>
+        </Sheet>
+      </div>,
+    )
+
+    const dialog = screen.getByRole('dialog')
+    const transformed = container.querySelector('div[style*="transform"]')!
+    expect(transformed.contains(dialog)).toBe(false)
+    expect(dialog.parentElement).toBe(document.body)
+  })
+})

@@ -19,9 +19,20 @@
  * And one from 2026-08-19: the keyboard inset now shrinks the sheet as well as
  * lifting it, so a tall form's top stays on screen while you type in it.
  *
+ * And a second from that day: the whole sheet renders through a portal on
+ * document.body. Pages live inside PullToRefresh, whose children sit in a div
+ * carrying `transform: translateY(0px)` at rest — and *any* transform makes
+ * that div the containing block for `position: fixed` descendants, so a sheet
+ * opened from a page was anchored to the scrolling page content instead of the
+ * viewport (measured: top -31 → bottom 640 in an 889px viewport, with nothing
+ * to scroll inside it) and painted underneath the z:100 tab bar. The portal
+ * puts every sheet back on the viewport, above everything, wherever it is
+ * mounted from.
+ *
  * Purely presentational: open/close state lives with the caller.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { useVisualViewport } from '../../hooks/useVisualViewport'
 
 /** Drag distance past which the release dismisses instead of snapping back. */
@@ -79,7 +90,7 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
 
   const dragging = dragStartY.current !== null
 
-  return (
+  return createPortal(
     <>
       {/* Scrim */}
       <div
@@ -223,6 +234,7 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
           {children}
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
