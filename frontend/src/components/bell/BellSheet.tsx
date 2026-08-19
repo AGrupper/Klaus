@@ -21,6 +21,7 @@ import { useQuery } from '@tanstack/react-query'
 import { ArrowRight, ArrowUpRight, CheckCheck } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { fetchAgentStatus } from '../../api/agent'
+import { claudeAppUrl } from '../../utils/claudeLink'
 import { itemKey, type BellItem } from '../../api/notifications'
 import { useNotifications } from '../../hooks/useNotifications'
 import { Sheet } from '../shared/Sheet'
@@ -122,7 +123,7 @@ export function BellSheet({ open, onClose, items, loading }: BellSheetProps) {
   }, [])
 
   function reviewUrl(item: BellItem): string | null {
-    return item.claude_session_url || agentStatus?.claude_project_url || null
+    return item.claude_session_url || claudeAppUrl(agentStatus?.claude_project_url) || null
   }
 
   // Group consecutive items by calendar day (items arrive newest-first).
