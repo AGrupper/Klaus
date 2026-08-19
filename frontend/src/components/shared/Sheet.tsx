@@ -16,6 +16,9 @@
  *  - The grab handle drags: touch/pointer down on the header pulls the sheet
  *    with your finger and releases into a dismiss past ~90px or a snap back.
  *
+ * And one from 2026-08-19: the keyboard inset now shrinks the sheet as well as
+ * lifting it, so a tall form's top stays on screen while you type in it.
+ *
  * Purely presentational: open/close state lives with the caller.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -114,8 +117,13 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
           boxShadow: '0 -8px 40px rgba(0,0,0,0.18)',
           transform: open ? `translateY(${dragOffset}px)` : 'translateY(105%)',
           transitionTimingFunction: 'cubic-bezier(0.3,0.9,0.3,1)',
-          // Cap the sheet, then let the body scroll inside it.
-          maxHeight: '88dvh',
+          // Cap the sheet, then let the body scroll inside it. The cap has to
+          // shrink by the same inset that lifts the sheet: 88dvh is measured
+          // against the layout viewport, which the iOS keyboard does not
+          // shrink, so a lifted sheet at full cap has its top — and the field
+          // being typed into — pushed off the top of the screen, with no
+          // overflow inside the body to scroll it back.
+          maxHeight: keyboardInset > 0 ? `calc(88dvh - ${keyboardInset}px)` : '88dvh',
           display: 'flex',
           flexDirection: 'column',
           minHeight: 0,
@@ -205,8 +213,11 @@ export function Sheet({ open, onClose, title, subtitle, children, ariaLabel }: S
             touchAction: 'pan-y',
             padding: '0 20px',
             // Clear the fixed TabBar (60px) and the home indicator so the
-            // final button in a form is never trapped behind them.
-            paddingBottom: 'calc(76px + env(safe-area-inset-bottom, 0px))',
+            // final button in a form is never trapped behind them. With the
+            // keyboard up both sit behind it and the sheet is short — spending
+            // 76px of it on clearance nobody can see wastes the form's room.
+            paddingBottom:
+              keyboardInset > 0 ? '16px' : 'calc(76px + env(safe-area-inset-bottom, 0px))',
           }}
         >
           {children}
