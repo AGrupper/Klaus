@@ -152,3 +152,32 @@ class TestReadUserProfileTool:
         )
         assert "error" in parsed
         assert "content" not in parsed
+
+
+def test_snapshot_names_the_weekday_so_claude_never_computes_it():
+    """On 2026-08-20 Klaus called a Thursday "Wednesday" in both the nightly
+    and the morning review, and booked a Heavy Lower Body Day on the wrong day
+    off the back of it. He was given only the date and did the arithmetic
+    himself. The snapshot now states the weekday outright."""
+    import asyncio
+    from unittest.mock import patch
+
+    import core.life_snapshot as life_snapshot
+
+    with patch("core.hub.today._today_calendar", return_value={}), \
+         patch("core.hub.today._today_garmin", return_value={}), \
+         patch("core.hub.today._today_weather", return_value={}), \
+         patch("core.hub.today._today_meals", return_value={}), \
+         patch("core.hub.today._today_training", return_value={}), \
+         patch("core.hub.today._today_nutrition_totals", return_value={}), \
+         patch("core.hub.today._today_departure_windows", side_effect=lambda c: c), \
+         patch("core.hub.today._today_coach_note", return_value=None), \
+         patch("memory.firestore_db._jsonsafe_doc", side_effect=lambda d: d):
+        today = asyncio.run(life_snapshot._normalized_hub_today())
+
+    from datetime import date
+    assert today["weekday"] == date.fromisoformat(today["today"]).strftime("%A")
+    # Spelled out, not an index Claude would have to map back to a name.
+    assert today["weekday"] in {
+        "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+    }

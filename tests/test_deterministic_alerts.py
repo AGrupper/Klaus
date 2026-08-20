@@ -305,56 +305,41 @@ def test_a_wind_down_is_named_after_the_evening_it_started():
     """A night belongs to the evening it began, not the calendar date the
     clock happens to show — 00:15 on the 20th is still the night of the 19th."""
     assert _night_of(datetime(2026, 8, 19, 22, 0, tzinfo=TZ)) == "2026-08-19"
-    assert _night_of(datetime(2026, 8, 19, 23, 59, tzinfo=TZ)) == "2026-08-19"
     assert _night_of(datetime(2026, 8, 20, 0, 15, tzinfo=TZ)) == "2026-08-19"
-    assert _night_of(datetime(2026, 8, 20, 0, 59, tzinfo=TZ)) == "2026-08-19"
-    # Past the 01:00 rollover, a new night has begun.
-    assert _night_of(datetime(2026, 8, 20, 1, 0, tzinfo=TZ)) == "2026-08-20"
+    assert _night_of(datetime(2026, 8, 20, 3, 59, tzinfo=TZ)) == "2026-08-19"
+    # Past the 04:00 rollover, a new night has begun.
+    assert _night_of(datetime(2026, 8, 20, 4, 0, tzinfo=TZ)) == "2026-08-20"
     assert _night_of(datetime(2026, 8, 20, 12, 0, tzinfo=TZ)) == "2026-08-20"
 
 
-def test_the_backstop_checks_the_night_that_closed_not_the_one_starting():
+def test_the_backstop_covers_the_night_it_runs_inside():
     """The regression this fixes: Amit slept at 22:00, the backstop had already
     claimed that key, and his real trigger deduplicated itself into silence for
     three nights running.
 
-    The backstop runs at 01:30 — half an hour INTO a new night — so deriving
-    its target from the clock would hand it the night he has not gone to bed
-    for yet. It must look one night further back.
+    The backstop runs at 01:30, INSIDE the night that began the previous
+    evening, so it resolves to that same night — finds Amit's trigger already
+    handled it, and leaves the coming night alone.
     """
-    from unittest.mock import patch as _patch
+    slept = _night_of(datetime(2026, 8, 20, 22, 0, tzinfo=TZ))
+    backstop = _night_of(datetime(2026, 8, 21, 1, 30, tzinfo=TZ))
 
-    import interfaces.routes.triggers as triggers
-
-    class FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            moment = datetime(2026, 8, 21, 1, 30, tzinfo=TZ)
-            return moment.astimezone(tz) if tz else moment
-
-    with _patch.object(triggers, "datetime", FrozenDatetime):
-        checked = triggers.night_just_ended()
-
-    # It checks the night Amit's 22:00 bedtime on the 20th belongs to...
-    assert checked == "2026-08-20"
-    assert checked == _night_of(datetime(2026, 8, 20, 22, 0, tzinfo=TZ))
-    # ...and NOT the night that began 30 minutes ago, which is still his to claim.
-    assert checked != _night_of(datetime(2026, 8, 21, 1, 30, tzinfo=TZ))
+    assert slept == backstop == "2026-08-20"
+    # And the night Amit has not gone to bed for is untouched.
+    assert backstop != "2026-08-21"
 
 
-def test_the_backstop_still_catches_a_night_that_was_never_triggered():
-    from unittest.mock import patch as _patch
+def test_a_bedtime_after_the_backstop_asks_for_a_review_already_sent():
+    """Amit's rule: if he goes to bed at 02:00 he has already had the 01:30
+    review and does not want a second one. The 01:30-to-04:00 window resolves
+    to the night just reviewed, so the trigger deduplicates — deliberately —
+    and the coming night stays free for his real bedtime that evening."""
+    reviewed_at_0130 = _night_of(datetime(2026, 8, 21, 1, 30, tzinfo=TZ))
+    late_to_bed = _night_of(datetime(2026, 8, 21, 2, 0, tzinfo=TZ))
+    that_evening = _night_of(datetime(2026, 8, 21, 22, 0, tzinfo=TZ))
 
-    import interfaces.routes.triggers as triggers
-
-    class FrozenDatetime(datetime):
-        @classmethod
-        def now(cls, tz=None):
-            moment = datetime(2026, 8, 22, 1, 30, tzinfo=TZ)
-            return moment.astimezone(tz) if tz else moment
-
-    with _patch.object(triggers, "datetime", FrozenDatetime):
-        assert triggers.night_just_ended() == "2026-08-21"
+    assert late_to_bed == reviewed_at_0130 == "2026-08-20"   # no second review
+    assert that_evening == "2026-08-21"                      # still his to claim
 
 
 def test_two_wind_downs_in_one_night_are_the_same_night():

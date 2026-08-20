@@ -88,6 +88,13 @@ async def api_today(_email: str = Depends(require_hub_session)) -> JSONResponse:
     # Assemble and JSON-safe the entire response (Pitfall 4 — _jsonsafe_doc on ALL Firestore data).
     payload = _jsonsafe_doc({
         "today": today_iso,
+        # The weekday, spelled out, because Claude should never have to
+        # derive it. On 2026-08-20 he called a Thursday "Wednesday" in both
+        # the nightly and the morning review, and booked a Heavy Lower Body
+        # Day on the wrong day off the back of it. Python knows the answer;
+        # handing it over removes the arithmetic rather than asking him to
+        # be more careful with it.
+        "weekday": datetime.fromisoformat(today_iso).strftime("%A"),
         "calendar": calendar_with_routes,
         "garmin": garmin_data,
         "weather": weather_data,

@@ -124,9 +124,9 @@ async def trigger_nightly(request: Request) -> JSONResponse:
 
 
 # A wind-down before this hour belongs to the night that started yesterday.
-# Amit's call, 2026-08-20. The one hard constraint: /cron/nightly-backstop must
-# run AFTER this hour, so the night it checks has already closed. It runs 01:30.
-_NIGHT_ROLLOVER_HOUR = 1
+# The hard constraint, and it is the inverse of what it looks like: the
+# nightly backstop must run BEFORE this hour, never after. It runs 01:30.
+_NIGHT_ROLLOVER_HOUR = 4
 
 
 def nightly_target_date_now() -> str:
@@ -134,7 +134,7 @@ def nightly_target_date_now() -> str:
 
     Not simply today's date: a night is named after the evening it started, so
     winding down at 00:15 on the 20th belongs to the night of the 19th. Night N
-    runs from 01:00 on day N to 00:59 on day N+1.
+    runs from 04:00 on day N to 03:59 on day N+1.
 
     This is what keeps :func:`trigger_nightly` and ``/cron/nightly-backstop``
     talking about the same night. A plain calendar date made them disagree: the
@@ -144,34 +144,21 @@ def nightly_target_date_now() -> str:
     was self-sustaining, since the backstop then took the next night too. Three
     of Amit's nights were swallowed that way (2026-08-17 through 08-19).
 
-    Residual edge, accepted: a bedtime after 01:00 opens that night early, so
-    going to bed at 01:15 and then again at 22:00 the same evening would
-    collide the same way. Any date-based key has such a boundary; Amit's
-    bedtimes run 21:00–00:15, which keeps him on the safe side of this one.
+    **The window between the backstop (01:30) and this hour is deliberate.**
+    Going to bed at 02:00 resolves to the night the backstop has just written a
+    review for, so the trigger finds it published and stays quiet. That is what
+    Amit wants: he has already been sent tonight's review, and does not want a
+    second one half an hour later. It also leaves the coming night unclaimed,
+    so his real bedtime that evening still gets its own review.
+
+    Residual edge, accepted: a bedtime after 04:00 opens that night early, so
+    04:30 followed by 22:00 the same evening would collide. Amit's bedtimes run
+    21:00–00:15.
     """
-    return _night_containing(datetime.now(ZoneInfo("Asia/Jerusalem")))
-
-
-def _night_containing(moment: datetime) -> str:
-    """The night ``moment`` falls inside, as a date string."""
-    if moment.hour < _NIGHT_ROLLOVER_HOUR:
-        moment -= timedelta(days=1)
-    return moment.date().isoformat()
-
-
-def night_just_ended() -> str:
-    """The night that has already closed — what the backstop is a net for.
-
-    The backstop must never derive its target from the clock the way the
-    trigger does. It runs at 01:30, half an hour *into* the new night, so
-    "the night now" is the one Amit has not gone to bed for yet — claiming it
-    is precisely the bug this pair of helpers exists to prevent. What it wants
-    is the night before that.
-    """
-    from datetime import date as _date, timedelta as _timedelta
-
-    current = _date.fromisoformat(nightly_target_date_now())
-    return (current - _timedelta(days=1)).isoformat()
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    if now.hour < _NIGHT_ROLLOVER_HOUR:
+        now -= timedelta(days=1)
+    return now.date().isoformat()
 
 
 # D-31 dark-ship sequencing (closed in plan 33-12/33-13): this route shipped

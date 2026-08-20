@@ -37,6 +37,13 @@ async def _normalized_hub_today() -> dict[str, Any]:
     return _jsonsafe_doc(
         {
             "today": today_iso,
+            # The weekday, spelled out, because Claude should never have to
+            # derive it. On 2026-08-20 he called a Thursday "Wednesday" in both
+            # the nightly and the morning review, and booked a Heavy Lower Body
+            # Day on the wrong day off the back of it. Python knows the answer;
+            # handing it over removes the arithmetic rather than asking him to
+            # be more careful with it.
+            "weekday": datetime.fromisoformat(today_iso).strftime("%A"),
             "calendar": calendar,
             "garmin": garmin,
             "weather": weather,
