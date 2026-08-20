@@ -21,7 +21,7 @@ from interfaces.routes._verify import _log_cron_run, _verify_cron_request
 from interfaces.routes.triggers import (
     _routine_cutover_enabled,
     _start_subscription_routine,
-    nightly_target_date_now,
+    night_just_ended,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,11 @@ router = APIRouter()
 async def cron_nightly_backstop(request: Request) -> JSONResponse:
     """Safety-net for the nightly review if the Sleep-Focus trigger never fired.
 
-    Schedule: 0 1 * * *  (Asia/Jerusalem) — ~01:00. Authenticated via OIDC bearer.
+    Schedule: 30 1 * * *  (Asia/Jerusalem) — half an hour after the night it
+    covers has closed (``_NIGHT_ROLLOVER_HOUR``). That ordering is the whole
+    point: run it *before* the rollover and it claims the night Amit has not
+    gone to bed for yet, which silently swallowed his real Sleep-Focus trigger
+    for three nights. Authenticated via OIDC bearer.
     Idempotent: run_nightly no-ops if the trigger already sent tonight's review, so
     on a normal night this fires, sees "already sent", and does nothing.
 
@@ -47,7 +51,7 @@ async def cron_nightly_backstop(request: Request) -> JSONResponse:
             HTTP 503 if Cloud Tasks enqueue fails — Cloud Scheduler retries.
     """
     await _verify_cron_request(request)
-    target = nightly_target_date_now()
+    target = night_just_ended()
     if _routine_cutover_enabled("nightly"):
         response = await _start_subscription_routine("nightly", target, "backstop")
         _log_cron_run("nightly-backstop", ok=response.status_code == 202)

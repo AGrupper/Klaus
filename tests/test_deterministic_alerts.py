@@ -307,25 +307,54 @@ def test_a_wind_down_is_named_after_the_evening_it_started():
     assert _night_of(datetime(2026, 8, 19, 22, 0, tzinfo=TZ)) == "2026-08-19"
     assert _night_of(datetime(2026, 8, 19, 23, 59, tzinfo=TZ)) == "2026-08-19"
     assert _night_of(datetime(2026, 8, 20, 0, 15, tzinfo=TZ)) == "2026-08-19"
-    assert _night_of(datetime(2026, 8, 20, 3, 59, tzinfo=TZ)) == "2026-08-19"
-    # Past the rollover, a new night has begun.
-    assert _night_of(datetime(2026, 8, 20, 4, 0, tzinfo=TZ)) == "2026-08-20"
+    assert _night_of(datetime(2026, 8, 20, 0, 59, tzinfo=TZ)) == "2026-08-19"
+    # Past the 01:00 rollover, a new night has begun.
+    assert _night_of(datetime(2026, 8, 20, 1, 0, tzinfo=TZ)) == "2026-08-20"
     assert _night_of(datetime(2026, 8, 20, 12, 0, tzinfo=TZ)) == "2026-08-20"
 
 
-def test_the_backstop_cannot_steal_the_night_the_sleep_trigger_needs():
-    """The regression this fixes: Amit slept at 22:00, the 01:00 backstop had
-    already claimed that calendar date, and his real trigger deduplicated
-    itself into silence for three nights running."""
-    slept = _night_of(datetime(2026, 8, 20, 22, 0, tzinfo=TZ))
-    backstop_next_morning = _night_of(datetime(2026, 8, 21, 1, 0, tzinfo=TZ))
+def test_the_backstop_checks_the_night_that_closed_not_the_one_starting():
+    """The regression this fixes: Amit slept at 22:00, the backstop had already
+    claimed that key, and his real trigger deduplicated itself into silence for
+    three nights running.
 
-    # Same key: the backstop finds his night already published and no-ops,
-    # instead of claiming the night he has not gone to bed for yet.
-    assert slept == backstop_next_morning == "2026-08-20"
+    The backstop runs at 01:30 — half an hour INTO a new night — so deriving
+    its target from the clock would hand it the night he has not gone to bed
+    for yet. It must look one night further back.
+    """
+    from unittest.mock import patch as _patch
 
-    # And a night he genuinely never triggered is still caught.
-    assert _night_of(datetime(2026, 8, 22, 1, 0, tzinfo=TZ)) == "2026-08-21"
+    import interfaces.routes.triggers as triggers
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            moment = datetime(2026, 8, 21, 1, 30, tzinfo=TZ)
+            return moment.astimezone(tz) if tz else moment
+
+    with _patch.object(triggers, "datetime", FrozenDatetime):
+        checked = triggers.night_just_ended()
+
+    # It checks the night Amit's 22:00 bedtime on the 20th belongs to...
+    assert checked == "2026-08-20"
+    assert checked == _night_of(datetime(2026, 8, 20, 22, 0, tzinfo=TZ))
+    # ...and NOT the night that began 30 minutes ago, which is still his to claim.
+    assert checked != _night_of(datetime(2026, 8, 21, 1, 30, tzinfo=TZ))
+
+
+def test_the_backstop_still_catches_a_night_that_was_never_triggered():
+    from unittest.mock import patch as _patch
+
+    import interfaces.routes.triggers as triggers
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            moment = datetime(2026, 8, 22, 1, 30, tzinfo=TZ)
+            return moment.astimezone(tz) if tz else moment
+
+    with _patch.object(triggers, "datetime", FrozenDatetime):
+        assert triggers.night_just_ended() == "2026-08-21"
 
 
 def test_two_wind_downs_in_one_night_are_the_same_night():
