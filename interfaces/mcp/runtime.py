@@ -326,7 +326,20 @@ def build_custom_handlers() -> dict[str, Any]:
                 {**reflection, "source": "claude_subscription", "correlation_id": correlation_id},
             )
             SelfStateStore(*_settings()).set(
-                {**self_state, "source": "claude_subscription", "reflection_date": target_date}
+                {
+                    **self_state,
+                    # mood/current_focus/recent_context are named here rather than
+                    # left to the spread alone: the Hub renders all three, and a
+                    # field that only ever reaches Firestore inside an opaque
+                    # `**payload` is invisible to the missing-writer guard in
+                    # tests/test_hub_field_writers.py. _validate_publish_review
+                    # has already required each one to be a non-empty string.
+                    "mood": self_state["mood"],
+                    "current_focus": self_state["current_focus"],
+                    "recent_context": self_state["recent_context"],
+                    "source": "claude_subscription",
+                    "reflection_date": target_date,
+                }
             )
             feedback_store = BehavioralFeedbackStore(*_settings())
             for index, proposal in enumerate(structured.get("behavioral_feedback") or []):

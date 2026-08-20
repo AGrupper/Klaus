@@ -16,6 +16,7 @@ Container entry point:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -126,6 +127,24 @@ logger = logging.getLogger(__name__)
 _mcp_bundle = None
 
 
+def _bootstrap_user_profile() -> None:
+    """Seed the users/amit scaffold if the document is absent. Never raises.
+
+    Blocking Firestore work — the lifespan calls this in an executor so a slow
+    Firestore never delays the container becoming ready.
+    """
+    try:
+        project_id = os.environ.get("GCP_PROJECT_ID", "")
+        if not project_id:
+            return
+        database = os.environ.get("FIRESTORE_DATABASE", "(default)")
+        from memory.firestore_db import UserProfileStore  # lazy import
+
+        UserProfileStore(project_id=project_id, database=database).bootstrap_if_empty()
+    except Exception:
+        logger.warning("_bootstrap_user_profile() failed — skipping", exc_info=True)
+
+
 # ------------------------------------------------------------------ #
 # FastAPI lifespan                                                    #
 # ------------------------------------------------------------------ #
@@ -156,6 +175,15 @@ async def lifespan(fastapi_app: FastAPI) -> AsyncGenerator[None, None]:
         if _flag_enabled("KLAUS_CLAUDE_ROUTINES_ENABLED"):
             await mcp_stack.enter_async_context(_mcp_bundle.routine.session_manager.run())
         logger.info("Klaus MCP session managers initialised.")
+
+    # users/amit is the one document the rest of the service assumes: Hub auth
+    # reads session_version off it, and coaching/nutrition/training all read the
+    # v4.0 scaffold. Every reader degrades to {} rather than erroring, so a lost
+    # document would fail quietly and be re-created field-by-field by the next
+    # merge write — a partial profile with no schema_version. Seeding here keeps
+    # the scaffold whole. Idempotent (writes only when the doc is absent) and it
+    # never raises, so it cannot hold up a cold start.
+    await asyncio.get_running_loop().run_in_executor(None, _bootstrap_user_profile)
 
     try:
         yield  # Server is live and handling requests from here.

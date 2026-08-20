@@ -108,6 +108,14 @@ the worse failure. Reminders ignore the window entirely.
 - Production is never deployed or mutated without explicit authorization.
 - A moment known in advance is **scheduled**, never polled. Polling exists only
   for conditions that cannot be known ahead of time.
+- A night is named after the evening it began: `_NIGHT_ROLLOVER_HOUR` (04:00)
+  in `interfaces/routes/triggers.py`, not the calendar date. The nightly
+  backstop must run **inside** the night it covers — before that hour, never
+  after. Move it past the rollover and it claims the night Amit has not gone to
+  bed for yet, so his real Sleep-Focus trigger finds the night already
+  published and deduplicates itself into silence. That is self-sustaining: the
+  backstop then takes the following night too. It swallowed three nights
+  (2026-08-17 to 08-19) and nothing failed or errored while it did.
 - The SPA is mounted at `/` and must remain the **last** route registered —
   anything after it is unreachable.
 

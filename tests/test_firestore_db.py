@@ -1193,21 +1193,6 @@ class TestActionLogStore:
         assert "never-told" in ids
         assert "told-already" not in ids
 
-    def test_mark_disclosed_flips_only_matching_entry(self):
-        """mark_disclosed(date, [id]) must flip only the matching entry's
-        disclosed flag, leaving sibling entries in the same doc untouched."""
-        client = _ActionLogFakeClient()
-        with patch("memory.stores.base._make_firestore_client", return_value=client):
-            store = firestore_db.ActionLogStore("test-project")
-            store.append("2026-08-01", {**self._ENTRY, "id": "flip-me", "disclosed": False})
-            store.append("2026-08-01", {**self._ENTRY, "id": "leave-me", "disclosed": False})
-
-            store.mark_disclosed("2026-08-01", ["flip-me"])
-            result = {e["id"]: e["disclosed"] for e in store.get_recent(1, today="2026-08-01")}
-
-        assert result["flip-me"] is True
-        assert result["leave-me"] is False
-
     def test_get_recent_jsonsafe_on_datetime_like_value(self):
         """A DatetimeWithNanoseconds-like value (any object with .isoformat())
         inside a stored entry must come back as a str from get_recent, and the

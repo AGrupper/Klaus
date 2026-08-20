@@ -617,3 +617,30 @@ def test_deploy_runs_the_test_suites_before_shipping():
     needs = jobs["deploy"].get("needs")
     needs = [needs] if isinstance(needs, str) else (needs or [])
     assert "test" in needs, "deploy does not depend on the test job"
+
+
+def test_the_nightly_backstop_runs_inside_the_night_it_covers() -> None:
+    """The backstop must fire BEFORE the night rolls over, never after.
+
+    Move it past ``_NIGHT_ROLLOVER_HOUR`` and it resolves to the night Amit has
+    not gone to bed for yet and claims it, so his real Sleep-Focus trigger
+    arrives to find that night already published and deduplicates itself into
+    silence — self-sustainingly, since the backstop then takes the next night
+    too. It swallowed 2026-08-17 through 08-19 exactly that way, and nothing
+    failed or errored while it did, which is why this is a test and not a
+    comment. See docs/ARCHITECTURE.md, Invariants.
+    """
+    from interfaces.routes.triggers import _NIGHT_ROLLOVER_HOUR
+
+    manifest = load_manifest(MANIFEST_PATH)
+    backstop = next(
+        job for job in manifest["schedulers"]["required"]
+        if job["name"] == "klaus-nightly-backstop"
+    )
+    minute, hour, *_rest = backstop["schedule"].split()
+    assert hour.isdigit(), f"backstop schedule must pin one hour, got {backstop['schedule']!r}"
+    assert int(hour) < _NIGHT_ROLLOVER_HOUR, (
+        f"klaus-nightly-backstop runs at {hour}:{minute} but the night does not "
+        f"roll over until {_NIGHT_ROLLOVER_HOUR}:00 — it would claim the night "
+        f"Amit has not gone to bed for yet"
+    )

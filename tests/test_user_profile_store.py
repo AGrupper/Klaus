@@ -250,3 +250,58 @@ def test_bootstrap_never_raises_on_error():
     store, _ = _build_store(get_raises=True)
     # If this line raises, the test fails.
     store.bootstrap_if_empty()
+
+
+# ---------------------------------------------------------------------------
+# The scaffold seed must stay wired to startup
+# ---------------------------------------------------------------------------
+
+def test_lifespan_bootstraps_the_user_profile():
+    """The seed is only worth keeping if something still calls it.
+
+    `bootstrap_if_empty` lost its caller when AgentOrchestrator was deleted in
+    the 2026-08-11 cutover, and nothing failed — users/amit already existed, so
+    an orphaned seed looks exactly like a working one. This asserts the call is
+    reachable from the lifespan rather than merely present in the store.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    from interfaces import web_server
+
+    with patch.object(web_server, "_bootstrap_user_profile") as seed:
+        asyncio.run(_drive_lifespan(web_server))
+
+    seed.assert_called_once()
+
+
+async def _drive_lifespan(web_server) -> None:
+    """Enter and exit the lifespan context once."""
+    async with web_server.lifespan(web_server.app):
+        pass
+
+
+def test_bootstrap_helper_seeds_through_the_store():
+    """_bootstrap_user_profile must reach UserProfileStore.bootstrap_if_empty."""
+    from unittest.mock import patch
+
+    from interfaces import web_server
+
+    store = MagicMock()
+    with patch.dict("os.environ", {"GCP_PROJECT_ID": "test-project"}, clear=False), \
+            patch("memory.firestore_db.UserProfileStore", return_value=store):
+        web_server._bootstrap_user_profile()
+
+    store.bootstrap_if_empty.assert_called_once()
+
+
+def test_bootstrap_helper_never_raises():
+    """A Firestore failure at startup must not take the container down."""
+    from unittest.mock import patch
+
+    from interfaces import web_server
+
+    with patch.dict("os.environ", {"GCP_PROJECT_ID": "test-project"}, clear=False), \
+            patch("memory.firestore_db.UserProfileStore", side_effect=RuntimeError("boom")):
+        # If this line raises, the test fails.
+        web_server._bootstrap_user_profile()

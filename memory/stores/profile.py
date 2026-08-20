@@ -149,6 +149,11 @@ class UserProfileStore:
                 "updated_at": firestore.SERVER_TIMESTAMP,
             })
             logger.info("UserProfileStore: bootstrapped users/amit")
+            # load() caches {} for an absent doc, so a read that raced ahead of
+            # this seed would serve the empty profile for the rest of the TTL.
+            cache_key = getattr(self, "_cache_key", None)
+            if cache_key is not None:
+                _cache_invalidate_prefix(cache_key)
         except Exception:
             logger.warning(
                 "UserProfileStore.bootstrap_if_empty() failed — skipping",
@@ -160,12 +165,15 @@ class SelfStateStore:
     """Persistent self-model state stored in Firestore.
 
     Singleton document at collection='config', document='self_state'.
-    Fields: identity_summary (str), current_focus (str), recent_context (str),
-            mood (str), updated_at (timestamp), bootstrapped_at (timestamp).
+    Fields: current_focus (str), recent_context (str), mood (str),
+            daily_note (str), daily_note_date (str), daily_note_at (str),
+            reflection_date (str), source (str), updated_at (timestamp).
 
-    Phase 16: only identity_summary is populated (seeded from SELF.md intro paragraph
-    on first startup). current_focus, recent_context, mood are empty strings until
-    Phase 17 run_reflection() populates them.
+    Every field is written by the Claude routines through the MCP publish path
+    (`interfaces/mcp/runtime.py`) using `set()`, which merges and creates the
+    document on first write — there is no separate startup seed. Readers treat
+    an absent document and an empty one identically, so a missing doc degrades
+    to "no coach note yet" rather than an error.
     """
 
     _COLLECTION = "config"
@@ -214,31 +222,6 @@ class SelfStateStore:
         cache_key = getattr(self, "_cache_key", None)
         if cache_key is not None:
             _cache_invalidate_prefix(cache_key)
-
-    def bootstrap_if_empty(self, identity_summary: str) -> None:
-        """Seed config/self_state with identity_summary if the document does not exist.
-
-        Safe to call on every startup — only writes when the document is absent.
-        Never raises (startup must not fail due to Firestore unavailability).
-        """
-        try:
-            snap = self._doc_ref.get()
-            if snap.exists:
-                return
-            self._doc_ref.set({
-                "identity_summary": identity_summary,
-                "current_focus": "",
-                "recent_context": "",
-                "mood": "",
-                "bootstrapped_at": firestore.SERVER_TIMESTAMP,
-                "updated_at": firestore.SERVER_TIMESTAMP,
-            })
-            logger.info("SelfStateStore: bootstrapped config/self_state")
-            cache_key = getattr(self, "_cache_key", None)
-            if cache_key is not None:
-                _cache_invalidate_prefix(cache_key)
-        except Exception:
-            logger.warning("SelfStateStore.bootstrap_if_empty() failed — skipping", exc_info=True)
 
 
 class JournalStore:

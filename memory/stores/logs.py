@@ -192,8 +192,7 @@ class ActionLogStore:
     on any Firestore error so a read failure never blocks an occasion's
     compose step. Writes (``append``) re-raise after logging, matching
     ``OutreachLogStore.append`` — an action write failing silently would
-    defeat the D-25 no-invisible-action guarantee. ``mark_disclosed`` never
-    raises (see its own docstring for why a missed flip self-heals).
+    defeat the D-25 no-invisible-action guarantee.
 
     NOTE 2 (mirrors ``OutreachLogStore``) — do NOT put
     ``firestore.SERVER_TIMESTAMP`` (or any other sentinel) inside an
@@ -333,48 +332,6 @@ class ActionLogStore:
             for entry in self.get_recent(days, today=today)
             if entry.get("disclosed") is not True
         ]
-
-    def mark_disclosed(self, date_str: str, action_ids: list[str]) -> None:
-        """Mark the entries whose `id` is in `action_ids` as disclosed.
-
-        Read-modify-write: ``ArrayUnion`` cannot update a list element in
-        place, so this reads `date_str`'s `entries` list, sets
-        `disclosed=True` on every entry whose `id` is in `action_ids`, and
-        writes the whole list back with `set({"entries": [...]}, merge=True)`.
-
-        Last-writer-wins caveat: a concurrent read-modify-write race could
-        drop another caller's flip. Acceptable in practice — the D-19
-        in-flight marker enforces one occasion composing at a time, so two
-        concurrent callers are not expected. Never raises: a Firestore
-        failure here is logged and swallowed, since a missed disclosure flip
-        self-heals (the next occasion still sees the entry as undisclosed and
-        discloses it again, per D-25 — nothing is lost, only re-said).
-
-        Args:
-            date_str:   YYYY-MM-DD (Asia/Jerusalem calendar date) whose doc
-                holds the entries to flip.
-            action_ids: `id` values (see entry shape) to mark disclosed.
-        """
-        try:
-            snap = self._col.document(date_str).get()
-            if not snap.exists:
-                return
-            data = snap.to_dict() or {}
-            entries = list(data.get("entries") or [])
-            ids = set(action_ids)
-            changed = False
-            for entry in entries:
-                if entry.get("id") in ids and entry.get("disclosed") is not True:
-                    entry["disclosed"] = True
-                    changed = True
-            if not changed:
-                return
-            self._col.document(date_str).set({"entries": entries}, merge=True)
-        except Exception:
-            logger.warning(
-                "ActionLogStore.mark_disclosed(%r, %r) failed",
-                date_str, action_ids, exc_info=True,
-            )
 
 
 class BehavioralFeedbackStore:
