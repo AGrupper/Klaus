@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, HTTPException, Request
@@ -123,9 +123,39 @@ async def trigger_nightly(request: Request) -> JSONResponse:
     )
 
 
+# A wind-down before this hour belongs to the night that started yesterday.
+# Amit's call, 2026-08-20.
+_NIGHT_ROLLOVER_HOUR = 4
+
+
 def nightly_target_date_now() -> str:
-    """The wind-down date for 'now' in Asia/Jerusalem (import-light helper)."""
-    return datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+    """The date of the *night* 'now' falls in, Asia/Jerusalem.
+
+    Not simply today's date: a night is named after the evening it started, so
+    winding down at 00:15 on the 20th belongs to the night of the 19th.
+
+    This is what keeps :func:`trigger_nightly` and ``/cron/nightly-backstop``
+    talking about the same night. Both derive the run's key from this helper,
+    and a plain calendar date made them disagree: the 01:00 backstop on day D
+    claimed D, which is the very key Amit's Sleep Focus needed that same
+    evening — so his real trigger arrived to find the night already published
+    and deduplicated itself into silence. Worse, it was self-sustaining, since
+    the backstop then took the next night too. Three of Amit's nights were
+    swallowed that way (2026-08-17 through 08-19) before he reported it.
+
+    With the rollover the 01:00 backstop resolves to the night that has just
+    ended — the one his 22:00 trigger already claimed — so it correctly finds
+    the work done and does nothing.
+
+    Residual edge, accepted: winding down *after* 04:00 files under that day,
+    so a 04:30 bedtime followed by a 22:00 bedtime the same evening would
+    collide the same way. Any date-based key has such a boundary; this one is
+    placed where Amit is least likely to cross it.
+    """
+    now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+    if now.hour < _NIGHT_ROLLOVER_HOUR:
+        now -= timedelta(days=1)
+    return now.date().isoformat()
 
 
 # D-31 dark-ship sequencing (closed in plan 33-12/33-13): this route shipped

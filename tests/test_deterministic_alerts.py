@@ -280,3 +280,57 @@ def test_a_closed_window_never_builds_the_life_snapshot():
     )
 
     assert result == {"evaluated": 0, "sent": 0, "window_open": False}
+
+
+# --------------------------------------------------------------------------- #
+# Which night a wind-down belongs to                                           #
+# --------------------------------------------------------------------------- #
+
+def _night_of(local: datetime) -> str:
+    """nightly_target_date_now() as it would answer at `local`."""
+    from unittest.mock import patch as _patch
+
+    import interfaces.routes.triggers as triggers
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return local.astimezone(tz) if tz else local
+
+    with _patch.object(triggers, "datetime", FrozenDatetime):
+        return triggers.nightly_target_date_now()
+
+
+def test_a_wind_down_is_named_after_the_evening_it_started():
+    """A night belongs to the evening it began, not the calendar date the
+    clock happens to show — 00:15 on the 20th is still the night of the 19th."""
+    assert _night_of(datetime(2026, 8, 19, 22, 0, tzinfo=TZ)) == "2026-08-19"
+    assert _night_of(datetime(2026, 8, 19, 23, 59, tzinfo=TZ)) == "2026-08-19"
+    assert _night_of(datetime(2026, 8, 20, 0, 15, tzinfo=TZ)) == "2026-08-19"
+    assert _night_of(datetime(2026, 8, 20, 3, 59, tzinfo=TZ)) == "2026-08-19"
+    # Past the rollover, a new night has begun.
+    assert _night_of(datetime(2026, 8, 20, 4, 0, tzinfo=TZ)) == "2026-08-20"
+    assert _night_of(datetime(2026, 8, 20, 12, 0, tzinfo=TZ)) == "2026-08-20"
+
+
+def test_the_backstop_cannot_steal_the_night_the_sleep_trigger_needs():
+    """The regression this fixes: Amit slept at 22:00, the 01:00 backstop had
+    already claimed that calendar date, and his real trigger deduplicated
+    itself into silence for three nights running."""
+    slept = _night_of(datetime(2026, 8, 20, 22, 0, tzinfo=TZ))
+    backstop_next_morning = _night_of(datetime(2026, 8, 21, 1, 0, tzinfo=TZ))
+
+    # Same key: the backstop finds his night already published and no-ops,
+    # instead of claiming the night he has not gone to bed for yet.
+    assert slept == backstop_next_morning == "2026-08-20"
+
+    # And a night he genuinely never triggered is still caught.
+    assert _night_of(datetime(2026, 8, 22, 1, 0, tzinfo=TZ)) == "2026-08-21"
+
+
+def test_two_wind_downs_in_one_night_are_the_same_night():
+    """Focus toggled off and on again at 23:50 and 00:30 must not open a
+    second night."""
+    assert _night_of(datetime(2026, 8, 19, 23, 50, tzinfo=TZ)) == _night_of(
+        datetime(2026, 8, 20, 0, 30, tzinfo=TZ)
+    )
