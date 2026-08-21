@@ -36,8 +36,9 @@ def _block_stores():
             "Read Amit's living training plan merged with the currently-active "
             "mesocycle block. Returns the stored profile/plan fields "
             "plus the active block (resolved automatically by today's date — no "
-            "start_block needed). Call when Amit asks 'what's my plan?' — the answer "
-            "is his dated goals; he schedules his own training week."
+            "start_block needed): which week he is in, how far through the block, how "
+            "many days until its goal, and what that goal's targets are. Call when Amit "
+            "asks 'what's my plan?' or 'what week am I in?'."
         ),
         "input_schema": {
             "type": "object",
@@ -46,26 +47,43 @@ def _block_stores():
         },
     })
 def _handle_get_plan() -> str:
-    """The plan is the dated goals in the profile — nothing more.
+    """The plan is the run-up to the next dated goal.
 
-    This used to also return the date-resolved training block and a 1-based week
-    number computed against a plan_start_date that defaulted to a hardcoded
-    2026-06-21. That 16-week blueprint was retired on 2026-08-21, so both fields
-    described a plan that no longer exists: today they would answer "week 9 of
-    Deep Waters -> Peak Engine", with focus facets of bench and squat, neither of
-    which Amit trains for. Same failure as the Hub's "Week N of 16" row — an
-    invented position reads as real, where its absence reads as nothing.
+    This used to report the seeded blueprint block plus a week number computed
+    against a hardcoded 2026-06-21 — "week 9 of 16, Deep Waters -> Peak Engine".
+    Amit's verdict on that was "I don't really know what that means", but he
+    explicitly asked to KEEP the week count, the sense of progress through the
+    block, and how close its goal is. It was the phase name from an abandoned
+    plan he was rejecting, not the counter.
 
-    Amit schedules his own training and does not want a programme, so there is no
-    week to be in. The honest answer to "what's my plan?" is what he is aiming at
-    and when.
+    So the block is derived from his own dated goals now (see
+    core/training/goal_blocks). Same arithmetic he was already seeing — 16 weeks
+    from 2026-06-21 lands two days past the 5K — pointed at a race he is actually
+    running. When every goal is behind him, `block` is None rather than a
+    position in a plan that has ended.
     """
+    from datetime import date as _date
+
+    from core.training.goal_blocks import current_block
     from memory.firestore_db import _jsonsafe_doc
+
     _blocks, _benchmarks, profiles = _block_stores()
     profile = _jsonsafe_doc(profiles.load())
+    goals = profile.get("dated_goals") or []
+    today = _date.today().isoformat()
+
+    from core.training.goal_blocks import DEFAULT_ANCHOR
+
+    anchor = profile.get("plan_start_date") or DEFAULT_ANCHOR
+    block = current_block(goals, today, anchor_iso=anchor)
     return json.dumps({
         "profile": profile,
-        "dated_goals": profile.get("dated_goals") or [],
+        "dated_goals": goals,
+        "block": block,
+        "upcoming_goals": [
+            g for g in goals
+            if isinstance(g, dict) and str(g.get("target_date") or "") > today
+        ],
     })
 
 

@@ -1,4 +1,6 @@
-"""One-off: replace the retired blueprint's goals in users/amit with the real ones.
+"""Replace the retired blueprint's goals in users/amit with the real ones.
+
+Safe to re-run — it overwrites dated_goals wholesale rather than appending.
 
 Run once, on 2026-08-21 or later:
 
@@ -35,7 +37,11 @@ DATED_GOALS = [
      "metrics": {"five_k_time": "17:30"}},
     {"target_date": "2026-10-28", "goal_label": "15K race",
      "metrics": {"fifteen_k_pace": "4:00/km"}},
-    {"target_date": "2026-11-30", "goal_label": "November test day (exact date not yet known)",
+    # Label stays short: it is rendered in the Hub's training row as
+    # "Week N of M — <label>". The date is a mid-November estimate; Amit does not
+    # know the real one yet and has no way to check, so this is deliberately
+    # approximate rather than false precision.
+    {"target_date": "2026-11-15", "goal_label": "November test day",
      "metrics": {"pull_ups": 26, "push_ups": 85, "3k_time": "9:45", "400m_time": "56s"}},
 ]
 

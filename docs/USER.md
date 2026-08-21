@@ -40,7 +40,7 @@ list — if something is not here, it is not a goal he is training for.
 |---|---|---|
 | **2026-10-09** | 5K race | Sub-**17:30** (3:30/km) |
 | **2026-10-28** | 15K race | No pace target he cares about; expects to come in under **4:00/km** (sub-1:00:00) |
-| **November 2026**, exact date not yet known | Testing session at practice — 3K, pull-ups, push-ups, 400m | 3K sub-**9:45** (3:15/km) · **26+** pull-ups · **85+** push-ups · 400m sub-**56s** |
+| **Mid-November 2026**, exact date not yet known | Testing session at practice — 3K, pull-ups, push-ups, 400m | 3K sub-**9:45** (3:15/km) · **26+** pull-ups · **85+** push-ups · 400m sub-**56s** |
 
 **Barbell numbers are explicitly not goals.** Bench press and squat targets were
 part of an earlier blueprint and Amit has said plainly he does not care about

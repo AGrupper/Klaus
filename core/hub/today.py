@@ -303,21 +303,25 @@ def _today_meals(today_iso: str) -> list[dict]:
 
 
 def _today_training(today_iso: str) -> dict | None:
-    """Return today's planned session from the profile's weekly template, or None.
+    """Where Amit is in the run-up to his next race, or None.
 
-    This used to derive "Week N of 16 — {split}" from a hardcoded 2026-06-21
-    anchor and the 16-week blueprint's training blocks. That blueprint was
-    retired on 2026-08-21: Amit schedules his own training around how the day
-    looks, and `docs/USER.md` makes the calendar the authority on what is
-    actually planned. A week counter against a plan that no longer exists is
-    worse than no counter, because it reads as real to both Amit and Klaus.
+    This is the row that read "Week 9 of 16 — Deep Waters -> Peak Engine", which
+    Amit summed up as "I don't really know what that means". Two separate faults
+    were in that string: the phase name came from an abandoned 16-week half
+    marathon build, and the count was derived from a plan_start_date hardcoded
+    here rather than read from anywhere.
 
-    So this now reports only what the profile explicitly declares for today. If
-    `weekly_split` has no entry, there is no template, and None is the honest
-    answer — the client renders the D-06 placeholder and the calendar speaks
-    for itself.
+    He asked to keep the week count and lose the jargon, so the block is now
+    derived from his own dated goals (core/training/goal_blocks) and named after
+    the race it runs to. `block_context` keeps the "Week N of M — ..." shape
+    because the frontend extracts that substring by regex; the half after the
+    dash is now a race he is running rather than a phase of one he is not.
+
+    None once every goal is behind him — the client renders the D-06 placeholder,
+    which is the honest answer when there is no next race.
     """
     try:
+        from core.training.goal_blocks import DEFAULT_ANCHOR, current_block
         from memory.firestore_db import UserProfileStore  # lazy import
 
         project_id = os.environ.get("GCP_PROJECT_ID", "")
@@ -326,33 +330,27 @@ def _today_training(today_iso: str) -> dict | None:
             return None
 
         profile = UserProfileStore(project_id=project_id, database=database).load()
-        from datetime import date as _d
-
-        # Every hop is type-checked rather than trusted. This payload is JSON
-        # encoded by the route, so a non-string label here is a 500 on /api/today,
-        # not a wrong label — and `weekly_split` is free-form Firestore data that
-        # no schema enforces.
-        split = profile.get("weekly_split")
-        if not isinstance(split, dict):
-            return None
-        # NOTE: production stores these keys lowercase ("thursday") while %A
-        # yields "Thursday", so this lookup has never matched a real profile —
-        # the Hub row fell through to the block label for as long as it existed.
-        # Left as-is deliberately: weekly_split is being retired, and a
-        # case-insensitive lookup here would resurrect the dead blueprint's
-        # session labels rather than fix anything.
-        day_name = _d.fromisoformat(today_iso).strftime("%A")
-        split_today = split.get(day_name)
-        if not isinstance(split_today, dict):
-            return None
-        am_slot = split_today.get("am")
-        if not isinstance(am_slot, dict):
-            return None
-        label = am_slot.get("label")
-        if not isinstance(label, str) or not label.strip():
+        if not isinstance(profile, dict):
             return None
 
-        return {"item": label, "split_name": label}
+        anchor = profile.get("plan_start_date")
+        block = current_block(
+            profile.get("dated_goals") or [],
+            today_iso,
+            anchor_iso=anchor if isinstance(anchor, str) and anchor else DEFAULT_ANCHOR,
+        )
+        if not block:
+            return None
+
+        label = block["goal_label"]
+        return {
+            "item": label,
+            "block_context": f"Week {block['week_num']} of {block['total_weeks']} — {label}",
+            "goal_date": block["goal_date"],
+            "days_out": block["days_out"],
+            "week_num": block["week_num"],
+            "total_weeks": block["total_weeks"],
+        }
     except Exception:
         logger.warning("_today_training(%r) failed", today_iso, exc_info=True)
         return None
