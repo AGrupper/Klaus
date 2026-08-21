@@ -1,0 +1,13 @@
+{
+  "access_count": 0,
+  "claude_routines_successful": [
+    "morning",
+    "nightly",
+    "weekly"
+  ],
+  "generative_usage_count": 0,
+  "measurement_errors": [],
+  "observation_started_at": "2026-08-13T00:00:00Z",
+  "offenders": [],
+  "resources_still_disabled": true
+}

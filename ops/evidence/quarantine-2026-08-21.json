@@ -1,0 +1,16 @@
+{
+  "access_count": 0,
+  "claude_routines_successful": [
+    "morning",
+    "nightly",
+    "weekly"
+  ],
+  "generative_usage_count": 0,
+  "measurement_errors": [],
+  "observation_started_at": "2026-08-13T00:00:00Z",
+  "offenders": [
+    "secret klaus-notion-api-token is ENABLED",
+    "secret klaus-home-address is ENABLED"
+  ],
+  "resources_still_disabled": false
+}
