@@ -188,7 +188,7 @@ class ActionLogStore:
     disciplines into one collection would blur which invariant governs which
     write.
 
-    Reads (``get_recent``, ``undisclosed``) never raise — they return ``[]``
+    Reads (``get_recent``) never raise — they return ``[]``
     on any Firestore error so a read failure never blocks an occasion's
     compose step. Writes (``append``) re-raise after logging, matching
     ``OutreachLogStore.append`` — an action write failing silently would
@@ -310,28 +310,6 @@ class ActionLogStore:
                 logger.warning("ActionLogStore.get_recent day %r failed", d_iso, exc_info=True)
                 continue
         return results
-
-    def undisclosed(self, days: int = 7, *, today: str | None = None) -> list[dict]:
-        """Return `get_recent(days)` entries not yet marked disclosed (D-25).
-
-        Feeds the Layer-2 disclosure block (plan 33-04) and the heartbeat's
-        undisclosed-actions anomaly check (plan 33-11, D-28 #4) — "I already
-        did this but never told him". Never raises — inherits
-        ``get_recent``'s fail-soft-per-day contract.
-
-        Args:
-            days:  How many calendar days back to look. Defaults to 7.
-            today: YYYY-MM-DD anchor; defaults to today (Asia/Jerusalem).
-
-        Returns:
-            The subset of `get_recent(days, today=today)` whose `disclosed`
-            field is not literally `True`.
-        """
-        return [
-            entry
-            for entry in self.get_recent(days, today=today)
-            if entry.get("disclosed") is not True
-        ]
 
 
 class BehavioralFeedbackStore:

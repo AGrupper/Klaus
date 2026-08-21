@@ -1000,7 +1000,7 @@ class _ActionLogFakeDoc:
 
     Unlike ``_make_mock_client_with_collection``'s bare MagicMock, this fake
     actually accumulates ``entries`` across successive ``append()`` calls —
-    needed so ``get_recent``/``undisclosed`` tests can build multi-day,
+    needed so ``get_recent`` tests can build multi-day,
     multi-entry state realistically instead of hand-seeding every field.
     """
 
@@ -1177,21 +1177,6 @@ class TestActionLogStore:
 
         ids = [e["id"] for e in results]
         assert ids == ["day0", "day1"]
-
-    def test_undisclosed_excludes_disclosed_true_includes_false(self):
-        """undisclosed() must exclude disclosed=True entries and include
-        disclosed=False (or absent) ones — feeds the D-25 disclosure block."""
-        client = _ActionLogFakeClient()
-        with patch("memory.stores.base._make_firestore_client", return_value=client):
-            store = firestore_db.ActionLogStore("test-project")
-            store.append("2026-08-01", {**self._ENTRY, "id": "told-already", "disclosed": True})
-            store.append("2026-08-01", {**self._ENTRY, "id": "never-told", "disclosed": False})
-
-            result = store.undisclosed(2, today="2026-08-01")
-
-        ids = [e["id"] for e in result]
-        assert "never-told" in ids
-        assert "told-already" not in ids
 
     def test_get_recent_jsonsafe_on_datetime_like_value(self):
         """A DatetimeWithNanoseconds-like value (any object with .isoformat())
