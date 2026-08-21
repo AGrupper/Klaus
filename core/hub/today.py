@@ -303,66 +303,56 @@ def _today_meals(today_iso: str) -> list[dict]:
 
 
 def _today_training(today_iso: str) -> dict | None:
-    """Fetch today's training plan item + "Week N of 16 — {split name}" block context.
+    """Return today's planned session from the profile's weekly template, or None.
 
-    TIME-04: uses BlockStore.get_current() (date-range resolution) mirroring the
-    morning briefing block-fetch path (core/morning_briefing.py lines 399–420).
-    Returns None when no block is active (pre/post-cycle) so the client can show
-    the D-06 "no training block" placeholder.
+    This used to derive "Week N of 16 — {split}" from a hardcoded 2026-06-21
+    anchor and the 16-week blueprint's training blocks. That blueprint was
+    retired on 2026-08-21: Amit schedules his own training around how the day
+    looks, and `docs/USER.md` makes the calendar the authority on what is
+    actually planned. A week counter against a plan that no longer exists is
+    worse than no counter, because it reads as real to both Amit and Klaus.
+
+    So this now reports only what the profile explicitly declares for today. If
+    `weekly_split` has no entry, there is no template, and None is the honest
+    answer — the client renders the D-06 placeholder and the calendar speaks
+    for itself.
     """
     try:
-        from datetime import date as _date
-        from memory.firestore_db import BlockStore, UserProfileStore  # lazy import
+        from memory.firestore_db import UserProfileStore  # lazy import
 
         project_id = os.environ.get("GCP_PROJECT_ID", "")
         database = os.environ.get("FIRESTORE_DATABASE", "(default)")
-
-        block = None
-        if project_id:
-            bs = BlockStore(project_id=project_id, database=database)
-            block = bs.get_current(today_iso)
-
-        split_name = None
-        if project_id:
-            profile = UserProfileStore(project_id=project_id, database=database).load()
-            # weekly_split is keyed by day name e.g. "Monday"
-            try:
-                from datetime import date as _d
-                day_name = _d.fromisoformat(today_iso).strftime("%A")
-                split_today = profile.get("weekly_split", {}).get(day_name) or {}
-                am_slot = split_today.get("am") or {}
-                split_name = am_slot.get("label")
-            except Exception:
-                pass
-
-        if not block:
+        if not project_id:
             return None
 
-        # Derive week number the same way morning_briefing does — from plan_start_date 2026-06-21.
-        try:
-            plan_start = _date.fromisoformat("2026-06-21")
-            today_date = _date.fromisoformat(today_iso)
-            week_num = max(1, (today_date - plan_start).days // 7 + 1)
-        except Exception:
-            week_num = None
+        profile = UserProfileStore(project_id=project_id, database=database).load()
+        from datetime import date as _d
 
-        block_context = None
-        if week_num is not None:
-            label = block.get("label") or "Training"
-            if split_name:
-                block_context = f"Week {week_num} of 16 — {split_name}"
-            else:
-                block_context = f"Week {week_num} of 16 — {label}"
+        # Every hop is type-checked rather than trusted. This payload is JSON
+        # encoded by the route, so a non-string label here is a 500 on /api/today,
+        # not a wrong label — and `weekly_split` is free-form Firestore data that
+        # no schema enforces.
+        split = profile.get("weekly_split")
+        if not isinstance(split, dict):
+            return None
+        # NOTE: production stores these keys lowercase ("thursday") while %A
+        # yields "Thursday", so this lookup has never matched a real profile —
+        # the Hub row fell through to the block label for as long as it existed.
+        # Left as-is deliberately: weekly_split is being retired, and a
+        # case-insensitive lookup here would resurrect the dead blueprint's
+        # session labels rather than fix anything.
+        day_name = _d.fromisoformat(today_iso).strftime("%A")
+        split_today = split.get(day_name)
+        if not isinstance(split_today, dict):
+            return None
+        am_slot = split_today.get("am")
+        if not isinstance(am_slot, dict):
+            return None
+        label = am_slot.get("label")
+        if not isinstance(label, str) or not label.strip():
+            return None
 
-        return {
-            # "item" matches the frontend TrainingItem contract — the day's
-            # workout name (split label, falling back to the block label).
-            "item": split_name or block.get("label"),
-            "block_context": block_context,
-            "block_label": block.get("label"),
-            "week_num": week_num,
-            "split_name": split_name,
-        }
+        return {"item": label, "split_name": label}
     except Exception:
         logger.warning("_today_training(%r) failed", today_iso, exc_info=True)
         return None

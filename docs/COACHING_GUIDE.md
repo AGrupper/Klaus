@@ -529,8 +529,8 @@ required to hit 35 bodyweight pull-ups by November.
 
 | Movement | November Target |
 |----------|-----------------|
-| Push-ups | 80+ reps |
-| Pull-ups | 26 reps |
+| Push-ups | 85+ reps |
+| Pull-ups | 26+ reps |
 | 3K | sub-9:45 (3:15/km) |
 | 400m | sub-56s |
 
@@ -581,11 +581,11 @@ clean heavy rep beats two broken reps.
 These are test-day numbers, so the question is what capacity produces them, not
 which day of the week the work happens on — Amit schedules that himself.
 
-**80+ push-ups** wants comfortable sets of 25–30 at ~90s rest. Bodyweight volume is
+**85+ push-ups** wants comfortable sets of 25–30 at ~90s rest. Bodyweight volume is
 the specific stimulus; a rising weighted-dip ceiling raises the ceiling but does not
 by itself buy the reps.
 
-**26 pull-ups** wants 10+ per set at 2–3min rest, and for most athletes that follows
+**26+ pull-ups** wants 10+ per set at 2–3min rest, and for most athletes that follows
 a weighted ceiling somewhere around 15–20kg added. Bodyweight volume is not optional
 padding around the weighted work — it is the adaptation that the rep target tests.
 
