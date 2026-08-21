@@ -129,7 +129,6 @@ from core.tools.strength import (  # noqa: F401,E402
     _handle_get_training_reality,
 )
 from core.tools.blocks import (  # noqa: F401,E402
-    _PLAN_START_DEFAULT,
     _block_stores,
     _handle_end_block,
     _handle_get_benchmark_history,

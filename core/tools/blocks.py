@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 # Default cycle start used for week-number framing when the profile has no
 # plan_start_date set yet (anchor: first mesocycle block, 2026-06-21).
-_PLAN_START_DEFAULT = "2026-06-21"
 
 
 def _block_stores():
@@ -37,8 +36,8 @@ def _block_stores():
             "Read Amit's living training plan merged with the currently-active "
             "mesocycle block. Returns the stored profile/plan fields "
             "plus the active block (resolved automatically by today's date — no "
-            "start_block needed) and the current 1-based week number. Call when Amit "
-            "asks 'what's my plan?' or 'what block/week am I in?'."
+            "start_block needed). Call when Amit asks 'what's my plan?' — the answer "
+            "is his dated goals; he schedules his own training week."
         ),
         "input_schema": {
             "type": "object",
@@ -47,25 +46,26 @@ def _block_stores():
         },
     })
 def _handle_get_plan() -> str:
-    """BLOCK-01 profile/plan merged with the date-resolved active block.
+    """The plan is the dated goals in the profile — nothing more.
 
-    The block is resolved by date range (get_current) — never depends on a manual
-    start_block call (D-01). week_num is computed against the profile plan_start_date
-    (default 2026-06-21).
+    This used to also return the date-resolved training block and a 1-based week
+    number computed against a plan_start_date that defaulted to a hardcoded
+    2026-06-21. That 16-week blueprint was retired on 2026-08-21, so both fields
+    described a plan that no longer exists: today they would answer "week 9 of
+    Deep Waters -> Peak Engine", with focus facets of bench and squat, neither of
+    which Amit trains for. Same failure as the Hub's "Week N of 16" row — an
+    invented position reads as real, where its absence reads as nothing.
+
+    Amit schedules his own training and does not want a programme, so there is no
+    week to be in. The honest answer to "what's my plan?" is what he is aiming at
+    and when.
     """
-    from memory.firestore_db import get_week_num, _jsonsafe_doc
-    from datetime import date as _date
-    blocks, _benchmarks, profiles = _block_stores()
+    from memory.firestore_db import _jsonsafe_doc
+    _blocks, _benchmarks, profiles = _block_stores()
     profile = _jsonsafe_doc(profiles.load())
-    block = blocks.get_current()
-    today = _date.today().isoformat()
-    plan_start = profile.get("plan_start_date") or _PLAN_START_DEFAULT
-    week_num = get_week_num(plan_start, today)
     return json.dumps({
         "profile": profile,
-        "current_block": block,
-        "week_num": week_num,
-        "plan_start_date": plan_start,
+        "dated_goals": profile.get("dated_goals") or [],
     })
 
 
