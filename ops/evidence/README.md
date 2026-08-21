@@ -29,3 +29,24 @@ service account `klaus-log-uploader@`, and the two connector secrets above.
 
 After deletion: `/health` 200 and `audit_production_drift.py` reported a clean
 match. The embedding credential and every runtime secret were untouched.
+
+## 2026-08-21 — connector secrets, and the rest of the original set
+
+`klaus-notion-api-token` and `klaus-home-address` were disabled (one enabled
+version each), which starts their own seven-day window. Disabling is
+reversible; deletion is not, so they stay until the window closes on
+**2026-08-28**.
+
+Tidied at the same time, all inert and past the original gate: scheduler jobs
+`klaus-autonomous-tick` and `klaus-reflect` deleted (both PAUSED), and the
+disabled service account `klaus-log-uploader@` deleted — it held no
+project-level role. The remaining ten scheduler jobs are the required set and
+all ENABLED.
+
+`quarantine-connectors-started-2026-08-21.json` records the new window opening.
+Gate correctly closed on two counts that only time resolves: the seven days are
+not up, and only the morning routine has run since the window opened — nightly
+lands tonight and weekly on Sunday. No offenders, zero access, zero generative
+usage.
+
+After all of it: `/health` 200 and `audit_production_drift.py` a clean match.
