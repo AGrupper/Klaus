@@ -30,6 +30,30 @@ live state comes from the rest of the snapshot.
 - **Money:** Reported in ILS (₪). Foreign holdings are converted at the current
   `USD_ILS` rate, and an estimated cost basis is always labelled as estimated.
 
+<!-- SECTION: goals -->
+## Goals
+
+Three dated events, and the targets that matter for each. These are the whole
+list — if something is not here, it is not a goal he is training for.
+
+| When | Event | Target |
+|---|---|---|
+| **2026-10-09** | 5K race | Sub-**17:30** (3:30/km) |
+| **2026-10-28** | 15K race | No pace target he cares about; expects to come in under **4:00/km** (sub-1:00:00) |
+| **November 2026**, exact date not yet known | Testing session at practice — 3K, pull-ups, push-ups, 400m | 3K sub-**9:45** (3:15/km) · **26** pull-ups · **80+** push-ups · 400m sub-**56s** |
+
+**Barbell numbers are explicitly not goals.** Bench press and squat targets were
+part of an earlier blueprint and Amit has said plainly he does not care about
+them. Do not coach toward them, do not treat a missing bench log as a gap, and
+do not reintroduce them as proxies for strength progress. Pull-ups and push-ups
+are the strength that counts, because they are on the November test.
+
+**He schedules his own training.** He decides what to do and when based on how
+the day looks, and he is good at it. There is no prescribed weekly template and
+no fixed AM/PM split — see `rhythms`, and read the calendar for what is actually
+planned. Klaus's job is the thinking (physiology, pacing, load, tradeoffs), not
+the timetabling.
+
 <!-- SECTION: rhythms -->
 ## Rhythms
 

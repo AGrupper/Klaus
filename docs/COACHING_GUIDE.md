@@ -1,7 +1,8 @@
 # Klaus — Hybrid Athlete Coaching Guide
 
 **Generated for:** Amit Grupper
-**Blueprint:** Hybrid Athlete Master Blueprint (October + November peaks)
+**Goals:** See the `goals` section of `docs/USER.md` — that file is the single
+source of what Amit is training for. This guide holds the physiology, not the targets.
 **Purpose:** Expert coaching knowledge base. Slim core (below) is injected into every
 system prompt. Ten deep sections are read on-demand via `read_coaching_guide(topic)`.
 
@@ -17,66 +18,47 @@ activates AMPK (energy-sensing pathway), which suppresses mTOR (the anabolic sig
 pathway driving muscle protein synthesis). This is the interference effect, and it is
 real — but **entirely manageable with ≥6h session separation**. [PEER]
 
-Amit's blueprint solves this correctly. AM run finishes by ~09:00. PM strength is ≥17:00.
-Separation window: ≈8 hours — adequate for AMPK signal clearance and full anabolic
-restoration before the lift. This is not aesthetic scheduling; it is the primary mitigation.
+When he does put both in one day, the separation is what makes it work — a morning
+run and an evening lift are far enough apart for AMPK to clear. He arranges this
+himself; the point here is to recognise when a plan collapses the gap, not to
+prescribe the schedule.
 
-**The one red flag to volunteer immediately:** If Amit ever proposes heavy strength
-immediately after a threshold run with no separation (e.g., same AM block), flag it.
-AMPK will be elevated and the strength adaptation signal will be blunted.
+**The one red flag to volunteer immediately:** if he proposes heavy strength
+immediately after a threshold run with no separation, flag it. AMPK will be elevated
+and the strength adaptation signal blunted.
 
-Order rule for single-session training (rare for Amit — Sunday mixed practice): strength
-before endurance is superior for lower-body adaptations. Sunday's mixed practice is
-skill/capacity, not heavy strength, so order is less critical there.
+Order rule for single-session training: strength before endurance is superior for
+lower-body adaptations. Skill/capacity practice is not heavy strength, so order
+matters less there.
 
-### Session-by-Session Execution Cues
+### Session-Type Execution Cues
 
-**Wednesday AM — Threshold Run (The 1:25 HM Engine):**
-RPE 6–7 ("comfortably hard" — can say 3–4 words, not a sentence). Pace: 3:50–3:55/km
-in blocks 1–3, locking to 4:01/km in Weeks 13–14. Volume builds 6km (Week 1) → 11km
-(Week 11). Structure: 2–3km Zone-2 warm-up → threshold intervals → 1–2km cool-down.
-Critical discipline: **do not exceed target pace on good days** — pace consistency over
-peak effort. This session is the primary aerobic adaptation driver toward 4:01/km HM.
+Organised by what a session *is*, not by weekday. Amit decides what he does and when,
+based on how the day looks — there is no fixed template, and the calendar is the
+authority on what is actually planned.
 
-**Monday + Thursday AM — Easy Runs (Zone-2):**
-4:50–5:30/km. Conversational pace — full sentences possible, HR ≤75% HRmax. Monday
-flushes legs after Sunday; Thursday is active recovery. These build base, not fitness.
-Resist the urge to push; going harder undermines the recovery purpose.
+**Threshold run** — RPE 6–7, "comfortably hard": 3–4 words at a time, not a sentence.
+For his 5K and 15K targets that is roughly **3:45–3:55/km**. Structure: Zone-2 warm-up
+→ threshold work → cool-down. The discipline that matters: **do not exceed target pace
+on good days.** Pace consistency beats peak effort; this is the main aerobic driver.
 
-**Tuesday AM — Medium Long Run + Strides:**
-Zone-2 4:50–5:30/km for the main volume, then 6×20s strides at ~3:00–3:20/km
-(neuromuscular priming, not exhausting). Full recovery between strides. Strides are
-CNS activation, not fitness work.
+**Easy / Zone-2 run** — **4:50–5:30/km**, conversational, full sentences, HR ≤75% HRmax.
+These build base, not fitness. Going harder undermines the recovery purpose, which is
+the entire reason the session exists.
 
-**Friday AM — Long Run:**
-Weeks 1–8: strictly Zone-2 4:50–5:30/km, no progression run. Start 16km (Week 1) →
-26km (Week 11). HM-pace finish segments added only from Phase 4 (Weeks 9–11). Zone-2
-discipline on the long run is the most common injury-prevention rule — do not compromise it.
+**Long run** — Zone-2 discipline is the most common injury-prevention rule, so do not
+compromise it. Race-pace finishing segments are a late-block tool for the 15K, not a
+default.
 
-**Monday PM — Lower Body A (Heavy Absolute Strength):**
-Top-set squats: 3×3–5 reps driving toward 120kg. Top set = 85–95% 1RM. Double
-progression: add 2.5–5kg when all reps hit clean. Never go to failure on top set.
-Back-off sets at 80–85% of top set weight.
+**VO2max intervals** — 4–6×3min at ≥90% VO2max effort, 90s–2min recovery. This is the
+primary lever for the 3K and 5K, both of which sit well above threshold.
 
-**Tuesday PM — Upper Body A (Heavy Push/Pull + Drop Set):**
-Top-set bench: 4×3–5 reps driving toward 100kg by October. Current working estimate:
-~92kg. Immediately after final bench set: 1 max-effort set of bodyweight push-ups
-(fatigue squeeze — capitalizes on pump for hypertrophy). Same pattern for weighted
-pull-ups: 3 sets heavy → 1 max-rep bodyweight drop set.
+**Sprints / speed** — 20s true sprints, 2–3min full recovery. Neuromuscular work for
+the 400m. Full recovery is the point; short-rest sprinting is a different (aerobic)
+stimulus and does not build a sub-56.
 
-**Wednesday PM — Lower Body B (Speed/Hypertrophy):**
-Speed squats: 3×8–10 at moderate weight, fast bar speed. Depth jumps for power.
-Core: ab wheel rollouts + heavy suitcase carries.
-
-**Thursday PM — Upper Body B (Volume/Capacity — Absolute Ceiling):**
-Weighted dips: 3 sets heavy + max-rep bodyweight drop set. Weighted pull-ups: same.
-OHP, rows, lateral raises. This is the primary session for the November 125 push-up /
-35 pull-up targets. Do not skip the bodyweight drop sets — volume is the adaptation driver.
-
-**Sunday PM — Mixed Practice (Sprints + VO2 Max + Calisthenics):**
-4–6×3min at ≥90% VO2max effort with 90s–2min recovery for VO2max development.
-20s true sprints with 2–3min full recovery for neuromuscular/400m prep. Bodyweight
-calisthenics at skill/capacity pace — not heavy. Sunday is not a strength session.
+**Calisthenics volume** — bodyweight sets at capacity pace for the push-up and pull-up
+tests. Weighted work raises the ceiling; bodyweight volume converts it into reps.
 
 ### Fueling Slot Map
 
@@ -130,27 +112,26 @@ One time per conversation per topic — do not repeat.
 - **AM/PM ordering:** Heavy strength before a threshold run (no separation) = interference
   risk. Flag immediately.
 
-- **Long-run Zone-2 discipline:** Weeks 1–8, the long run must stay Zone-2. Adding
-  intensity early is the primary injury vector. Flag if Amit reports pushing pace on
-  the long run in early blocks.
+- **Long-run Zone-2 discipline:** the long run stays Zone-2 outside a deliberate
+  race-pace segment. Adding intensity to it is the primary injury vector. Flag if he
+  reports pushing pace on a long run.
 
 ### Tier A/B Quick Reference
 
-**Tier A — Blueprint targets (always citable):**
-dated_goals, weekly_split targets, nutrition_targets, plan_start_date, fueling_timeline,
-supplement_schedule. Always cite as "your target" or "your plan calls for." These are
-always current.
+**Tier A — Stated targets (always citable):**
+The dated goals in the `goals` section of `docs/USER.md` — the 5K, the 15K and the
+November test. Always cite as "your target." These are always current.
 
 **Tier B — Measured actuals (recency-gated, never invented):**
-- Strength lifts (bench, squat, weighted pull-ups): citable if logged ≤14 days ago
+- Strength (weighted pull-ups, dips, bodyweight rep sets): citable if logged ≤14 days ago
 - Running pace (threshold, long run, interval): citable if logged ≤7 days ago
 - Garmin recovery (HRV, sleep, body battery, resting HR): always fresh — always cite
 
 Past window but data exists → cite with staleness flag:
-"Your last bench was 92kg — that was 18 days ago, Sir, stale reference."
+"Your last weighted pull-up set was 15kg — that was 18 days ago, Sir, stale reference."
 
 Beyond 3× window (lifts >42d, pace >21d) → treat as no data:
-"I don't have a recent bench logged, Sir. Your target is 100kg by October."
+"I don't have a recent 5K logged, Sir. Your target is sub-17:30 on 9 October."
 
 **Nutrition is not a Tier B source.** Amit stopped logging food in July 2026 by
 choice, and that is a settled decision, not a lapse. The meal tools and the
@@ -295,21 +276,6 @@ The rationale: concentrated stimulus produces greater specific adaptation than d
 concurrent stimulus. A block focused on aerobic base develops aerobic base better than
 a block trying to simultaneously peak aerobic base, threshold capacity, and max strength.
 
-### Amit's 16-Week Block Structure
-
-| Block | Weeks | Primary Focus | Secondary |
-|-------|-------|---------------|-----------|
-| Aerobic Base | 1–4 | Zone-2 volume foundation | Strength: 3–5RM top sets |
-| Capacity Build | 5–8 | Threshold volume + progression run introduction | Strength maintained |
-| Deep Waters / Peak Engine | 9–12 | Near-target threshold paces, long run HM-pace segments | Strength: peak top sets |
-| Race Specificity | 13–14 | 4:01/km lock-in, HM simulation | Strength maintained, volume reduced |
-| Taper | 15 | Volume reduction, intensity maintained | Strength: maintenance only |
-| Race Week | 16 | HM Race (1:25 target) | Rest/shakeout |
-
-This structure is already defined in the blueprint's aerobic table (§4). Klaus should
-reference block phase names when contextualizing training: "You're in the Aerobic Base
-block, Sir — this is the volume-building phase, not the intensity phase."
-
 ### Deload Weeks: Non-Negotiable Recovery Gates
 
 Deload weeks are Weeks 4, 8, and 12 — every fourth week. [PEER/CONSENSUS]
@@ -352,23 +318,6 @@ Klaus should reinforce this when Amit mentions wanting to test mid-block.
 Phase 23 will build the tooling (`BlockStore` + `BenchmarkStore`) to track block
 state and trigger benchmark reminders. In Phase 22, reference the principle
 informationally.
-
-### Why Block Structure for the 1:25 HM Goal
-
-A 4:01/km half marathon target is a genuine competitive goal — roughly sub-elite
-recreational level. A pure concurrent approach (same intensity weekly, no periodization)
-is appropriate for maintenance but will plateau for this target. The 4:01/km pace
-requires:
-1. LT2 threshold developed to ~3:50–3:55/km (≈8% faster than race pace, per
-   threshold training science)
-2. Sustained VO2max development across the block
-3. Race-specific mechanical habituation at 4:01/km in the final blocks
-
-Block structure provides each of these in sequence, with each block building on the
-last. Attempting to train all three simultaneously at high intensity every week leads
-to overreaching and injury before the race. [CONSENSUS]
-
----
 
 <!-- SECTION: threshold-runs -->
 ## Threshold Runs
@@ -578,11 +527,12 @@ required to hit 35 bodyweight pull-ups by November.
 
 ### The November Targets
 
-| Movement | November Target | Current Approach |
-|----------|-----------------|-----------------|
-| Push-ups | 125 total reps | Bench drop sets (Tue/Wed) + dip drop sets (Thu) |
-| Pull-ups | 35 total reps | Pull-up drop sets (Tue + Thu) |
-| Sprints | 9:30 3km / 55s 400m | Sunday mixed practice intervals |
+| Movement | November Target |
+|----------|-----------------|
+| Push-ups | 80+ reps |
+| Pull-ups | 26 reps |
+| 3K | sub-9:45 (3:15/km) |
+| 400m | sub-56s |
 
 These are performance targets, not 1RM tests. The training approach to achieve them
 is volume accumulation + strength ceiling raising, not just "do more reps."
@@ -628,21 +578,19 @@ clean heavy rep beats two broken reps.
 
 ### Volume Targets for November Goals
 
-To achieve 125 push-ups: Amit needs to be able to perform sets of 25–30 with short
-rest (~90s). This is not a single-set test but a cumulative total. The training path:
-- Current (estimated): sets of 15–20 from the bench/dip drop sets
-- By Month 3: sets of 20–25 with the weighted dip ceiling rising
-- By November: sets of 25–30 with 2 minutes rest between sets of 5
+These are test-day numbers, so the question is what capacity produces them, not
+which day of the week the work happens on — Amit schedules that himself.
 
-To achieve 35 pull-ups: Amit needs to be able to perform 10+ per set with 2–3min
-rest. The training path:
-- The weighted pull-up ceiling needs to be at ~15–20kg added weight before 35
-  bodyweight reps is achievable for most athletes
-- Thursday Upper B drop sets provide 3 sets of maximum bodyweight reps per session —
-  2 sessions per week (Tuesday + Thursday) = 6 quality sets of bodyweight pull-ups per week
+**80+ push-ups** wants comfortable sets of 25–30 at ~90s rest. Bodyweight volume is
+the specific stimulus; a rising weighted-dip ceiling raises the ceiling but does not
+by itself buy the reps.
 
-**Do not replace drop sets with additional weighted sets.** The bodyweight volume is
-not optional training — it is the specific adaptation stimulus for the 35-rep target.
+**26 pull-ups** wants 10+ per set at 2–3min rest, and for most athletes that follows
+a weighted ceiling somewhere around 15–20kg added. Bodyweight volume is not optional
+padding around the weighted work — it is the adaptation that the rep target tests.
+
+**Do not trade bodyweight volume for additional weighted sets.** Weighted work raises
+the ceiling; only bodyweight volume converts the ceiling into reps on the day.
 
 Source: [calisthenicsassociation.org](https://calisthenicsassociation.org/blog/weighted-pull-up-program/)
 
