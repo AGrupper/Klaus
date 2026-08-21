@@ -11,7 +11,6 @@ Tests cover:
   - get_current result is json-safe (no DatetimeWithNanoseconds)
   - Week number helper: get_week_num formula correctness
   - upsert uses merge=True
-  - set_benchmark_due writes the flag via merge
   - start_block / end_block update status (bookkeeping only)
 
 Mocks google.cloud.firestore at sys.modules level so tests run without the lib
@@ -296,7 +295,7 @@ def test_week_num_formula_before_start():
 
 
 # ------------------------------------------------------------------ #
-# upsert / set_benchmark_due — merge=True                             #
+# upsert — merge=True                                                #
 # ------------------------------------------------------------------ #
 
 def test_upsert_uses_merge_true():
@@ -311,24 +310,6 @@ def test_upsert_uses_merge_true():
     args, kwargs = doc_mock.set.call_args
     assert kwargs.get("merge") is True
 
-
-def test_set_benchmark_due_writes_flag():
-    """set_benchmark_due(block_id, True) writes benchmark_due=True via merge."""
-    s = _store()
-    doc_mock = MagicMock()
-    s._col.document.return_value = doc_mock
-
-    s.set_benchmark_due("2026-06-21_aerobic_base", True)
-
-    args, kwargs = doc_mock.set.call_args
-    payload = args[0]
-    assert payload.get("benchmark_due") is True
-    assert kwargs.get("merge") is True
-
-
-# ------------------------------------------------------------------ #
-# start_block / end_block — bookkeeping only                          #
-# ------------------------------------------------------------------ #
 
 def test_start_end_block_update_status():
     """start_block sets status 'active'; end_block sets status 'complete' via merge."""

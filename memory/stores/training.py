@@ -257,7 +257,9 @@ class BlockStore:
         status:               str  — "active"|"complete"|"abandoned"|"pending"
                                      BOOKKEEPING ONLY — get_current does NOT filter on status
         notes:                str  — ""
-        benchmark_due:        bool — False until deload week triggers it
+        benchmark_due:        bool — legacy. The end-of-block nudge that set this
+                                     was retired 2026-08-21 (Amit tests on his own
+                                     schedule); nothing writes or reads it now.
         created_at:           SERVER_TIMESTAMP
         updated_at:           SERVER_TIMESTAMP
 
@@ -269,7 +271,7 @@ class BlockStore:
         not a precondition of get_current's correctness.
 
     Read discipline: get_current / get_all never raise (return None/[] on error).
-    Write discipline: upsert / set_benchmark_due / start_block / end_block re-raise.
+    Write discipline: upsert / start_block / end_block re-raise.
     """
 
     _COLLECTION = "training_blocks"
@@ -335,7 +337,7 @@ class BlockStore:
     def upsert(self, block: dict) -> None:
         """Write or merge a block doc. Re-raises on Firestore failure.
 
-        Uses merge=True so partial updates (e.g. set_benchmark_due) are safe.
+        Uses merge=True so partial updates are safe.
         Stamps created_at and updated_at with SERVER_TIMESTAMP.
 
         Args:
@@ -360,27 +362,6 @@ class BlockStore:
             ref.set(payload, merge=True)
         except Exception:
             logger.error("BlockStore.upsert(%r) failed", doc_id, exc_info=True)
-            raise
-
-    def set_benchmark_due(self, block_id: str, due: bool) -> None:
-        """Set or clear the benchmark_due flag on an existing block.
-
-        Uses merge=True — touches only benchmark_due and updated_at.
-
-        Args:
-            block_id: Block doc ID.
-            due:      True to mark benchmark due; False to clear.
-
-        Raises:
-            Exception: Re-raises any Firestore write failure.
-        """
-        try:
-            self._col.document(block_id).set(
-                {"benchmark_due": due, "updated_at": firestore.SERVER_TIMESTAMP},
-                merge=True,
-            )
-        except Exception:
-            logger.error("BlockStore.set_benchmark_due(%r, %r) failed", block_id, due, exc_info=True)
             raise
 
     def start_block(self, block_id: str) -> None:

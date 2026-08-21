@@ -362,7 +362,6 @@ def _today_training(today_iso: str) -> dict | None:
             "block_label": block.get("label"),
             "week_num": week_num,
             "split_name": split_name,
-            "benchmark_due": block.get("benchmark_due", False),
         }
     except Exception:
         logger.warning("_today_training(%r) failed", today_iso, exc_info=True)
