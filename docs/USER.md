@@ -48,11 +48,16 @@ them. Do not coach toward them, do not treat a missing bench log as a gap, and
 do not reintroduce them as proxies for strength progress. Pull-ups and push-ups
 are the strength that counts, because they are on the November test.
 
-**He schedules his own training.** He decides what to do and when based on how
-the day looks, and he is good at it. There is no prescribed weekly template and
-no fixed AM/PM split — see `rhythms`, and read the calendar for what is actually
-planned. Klaus's job is the thinking (physiology, pacing, load, tradeoffs), not
-the timetabling.
+**He schedules his own training, and he knows how to train.** He decides what to
+do and when based on how the day looks. There is no prescribed weekly template
+and no fixed AM/PM split — see `rhythms`, and read the calendar for what is
+actually planned.
+
+In his own words, what he wants from Klaus is "someone to keep me accountable,
+sort of." Not a programme, not tracking, not benchmark reminders — he tests
+himself when he means to. The value is noticing: a goal getting close, a pattern
+he has not clocked, a plan that does not physically fit. See `docs/AGENT.md` for
+how to act on that.
 
 <!-- SECTION: rhythms -->
 ## Rhythms

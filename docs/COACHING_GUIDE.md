@@ -233,24 +233,25 @@ work in the PM — correctly removing the interference conflict on the highest a
 1. **Heavy strength immediately after a threshold run, no separation:** AMPK will be
    elevated, strength adaptation will be blunted. Flag immediately. [PEER]
 
-2. **Long run day (Friday) adding PM strength:** Friday PM is mobility — keep it that
-   way. Adding PM strength after a 16–26km run is an interference and recovery risk.
+2. **Heavy PM strength on a long-run day:** adding a heavy lift after a long run is
+   an interference and recovery risk. Mobility is the right pairing there.
 
 3. **Easy run converted to tempo within 2h of PM lift:** If Amit reports running faster
    than Zone-2 on a nominally easy day, the AMPK elevation will be higher heading into
    the PM session. Flag if he then also did a hard PM lift.
 
-4. **Threshold run AND heavy lower-body session same PM:** Lower Body B (Wed PM) is
-   speed/hypertrophy at moderate weight, fast bar speed — correct pairing with
-   threshold AM. Heavy lower-body squats (Lower Body A) are correctly placed on Monday
-   (easy run AM). Do not swap these days.
+4. **Threshold run and heavy lower-body work on the same day:** moderate-weight,
+   fast-bar-speed lower-body work pairs acceptably with a threshold morning. Heavy
+   squatting does not. If both land on one day, say so.
 
 ### Competitive vs. Compatible Training
 
 Research consensus: concurrent training **reduces the ceiling** of strength and
 hypertrophy gains compared to strength-only, but does not prevent meaningful progress.
-For Amit's goals (100kg bench, 120kg squat) — these are competitive but reachable in
-a concurrent program if:
+His goals are almost entirely endurance and bodyweight-rep targets, which sit far
+more comfortably in a concurrent programme than heavy barbell goals would — the
+strength he needs is what supports 26+ pull-ups and 85+ push-ups, not a maximal
+lift. That remains true if:
 1. Session separation is maintained (≥6h)
 2. Protein intake is adequate (≥1.8g/kg — see protein-timing section)
 3. Sleep and recovery are adequate (Garmin body battery ≥65 on heavy lift days)
@@ -333,42 +334,26 @@ this is the primary mechanism for improving half marathon performance. [PEER]
 Sources: [PMC10496601](https://pmc.ncbi.nlm.nih.gov/articles/PMC10496601/),
 [PMC10611166](https://pmc.ncbi.nlm.nih.gov/articles/PMC10611166/)
 
-**Applied to Amit's 1:25 HM goal (4:01/km race pace):**
-Threshold training pace should be approximately 8–10% faster than race pace.
-For 4:01/km target pace: threshold training pace = ~3:50–3:55/km in Blocks 1–3,
-locking to 4:01/km in the Race Specificity block (Weeks 13–14) to habituate to
-exact race mechanics.
+**Applied to Amit's goals:**
+Threshold training pace runs roughly 8–10% faster than the race pace being
+targeted. His events are a 5K at 3:30/km and a 15K around 4:00/km, which puts
+threshold work in the region of **3:45–3:55/km**. The 15K is the event threshold
+work most directly serves; the 5K sits above threshold and is driven more by the
+VO2max work in the intervals chapter.
 
-### Wednesday Protocol — The 1:25 HM Engine
-
-Wednesday is the only threshold session in the week. All other running is Zone-2
-(easy/long) or neuromuscular (strides, sprints).
-
-**Volume progression:**
-
-| Weeks | Phase | Threshold Volume |
-|-------|-------|-----------------|
-| 1–3 | Aerobic Base | 6km → 8km |
-| 4 | Deload | 5km |
-| 5–7 | Capacity Build | 8km → 10km |
-| 8 | Deload | 6km |
-| 9–11 | Deep Waters/Peak | 9km → 11km |
-| 12 | Deload | 7km |
-| 13–14 | Race Specificity | 10km → 8km |
-| 15 | Taper | 5km (Fartlek, light) |
-
-Threshold volume = total work volume, not total session distance. The warm-up and
-cool-down are in addition to these numbers.
+There is no fixed number of threshold sessions per week and no prescribed volume
+progression — he decides that. What is worth saying is the shape: threshold
+volume is the work portion only, warm-up and cool-down on top, and the adaptation
+is cumulative across weeks rather than bought in any one session.
 
 **Session structure:**
 1. 2–3km easy Zone-2 warm-up (4:50–5:30/km)
-2. Threshold intervals at target pace (see pace table above)
+2. Threshold work at target pace
 3. 1–2km easy cool-down
 
-For the early blocks, threshold intervals can be continuous (e.g., 6km continuous
-at threshold pace) or structured as intervals (e.g., 3×2km with 2min easy between).
-Both are effective; continuous threshold runs at the lower-volume weeks, interval
-format at higher volumes. [CONSENSUS]
+Continuous (e.g. 6km at threshold) and interval formats (e.g. 3×2km with 2min
+easy) are both effective — continuous suits lower volumes, intervals higher.
+[CONSENSUS]
 
 ### Execution Cues
 
@@ -381,38 +366,36 @@ minutes, pace is too fast. [CONSENSUS]
 The most common threshold training mistake is going too fast on good days. Consistency
 at target pace produces more adaptation than occasional faster efforts. The adaptation
 from threshold work is cumulative across weeks — any given session matters less than
-the pattern over 16 weeks.
+the pattern over months.
 
-Wrong: "I felt great so I ran 3:44/km instead of 3:55/km."
-Right: "I held 3:53/km as prescribed."
+Wrong: "I felt great so I ran 3:38/km instead of 3:50/km."
+Right: "I held 3:50/km, which is what the session was for."
 
 **Clock the first km:** Threshold runners often go out too fast. Check the first km
 split — if it is faster than target, consciously back off. The body will want to run
 faster than threshold pace on fresh legs. Resist.
 
-### Over/Unders in the Deep Waters Phase (Weeks 9–10)
+### Over/Unders
 
-Weeks 9–10 introduce "Over/Unders": alternating between ~3:50/km (slightly above
-threshold) and ~4:10/km (just below threshold) within the same interval set. This
-trains the body to recover lactate while still running, developing the ability to
-"absorb" pace surges in the HM without blowing up.
+Alternating between slightly above threshold (~3:45/km for him) and just below
+(~4:05/km) within the same interval set trains the body to clear lactate while
+still running — the ability to absorb a pace surge without blowing up. Useful for
+the 15K, and for the 5K where the whole race sits near that edge.
 
-This is an advanced training stimulus — do not introduce before Week 9. Amit's
-blueprint applies it correctly.
+This is an advanced stimulus and wants a solid threshold base underneath it
+first. It is not a session to introduce in the same week as a step up in volume.
 
-### Easy Run Cues (Monday + Thursday AM)
+### Easy Run Cues
 
 Zone-2 = 4:50–5:30/km. HR ≤75% HRmax. Can hold a full conversation.
 
-Monday: active recovery flush from Sunday mixed practice. The purpose is blood flow,
-not fitness. Resist pushing pace.
+The purpose is blood flow and aerobic base, not fitness gained on the day. The
+single most common error is running these too hard, which turns a recovery day
+into a mediocre hard day and compromises the next real session.
 
-Thursday: second easy day ahead of Upper Body B (volume/capacity) PM session. Protect
-the legs for the weighted pull-up/dip drop sets.
+### Long Run Cues
 
-### Long Run Cues (Friday AM)
-
-**Weeks 1–8: strictly Zone-2, no exceptions.** 16km (Week 1) → 26km (Week 11) peak.
+**Strictly Zone-2, outside a deliberate race-pace segment.**
 Zone-2 on the long run serves two purposes: (1) develops mitochondrial density and
 fat oxidation at volume without accumulated fatigue, and (2) avoids the injury risk
 of long runs at moderate-to-hard effort.
@@ -449,43 +432,28 @@ working volume. The top set is the "anchor"; back-off sets are the "volume."
 Source: [StrongFirst 3-5 method](https://www.strongfirst.com/the-3-5-method-revisited/),
 [powerliftingtechnique.com](https://powerliftingtechnique.com/how-powerlifters-use-top-and-working-sets-to-build-max-strength/)
 
-### Bench Press — Upper Body A (Tuesday PM)
+### Applying the Top Set to the Lifts That Matter
 
-**Blueprint prescription:** 4 sets × 3–5 reps, driving toward 100kg by October.
-
-**Working application:**
-- Top set: heaviest set, 85–95% 1RM, 3–5 reps (clean form, no grinders)
-- Back-off sets: 3 additional sets at 80–85% of top set weight, 3–5 reps
-- Final set completion: immediately perform 1 max-effort set of bodyweight push-ups
-  (the "fatigue squeeze" / drop set)
-
-The drop set capitalizes on the pump state after heavy benching — at elevated blood
-flow, bodyweight push-ups recruit additional hypertrophy stimulus that heavy loads
-alone cannot achieve. This dual stimulus (neural strength top set + metabolic drop
-set) is the most efficient path to concurrent strength and hypertrophy gains. [CONSENSUS]
-
-**Current target:** ~92kg working estimate toward 100kg October goal.
-
-**Double progression model:**
-1. When all 4 sets hit 5 reps with clean form → add 1.25–2.5kg to the bar next session
-2. If the top set only hit 3 reps → stay at the same weight next session
-3. Target rate: ~+2.5kg every 2–3 weeks
-
-At this rate: 10–12 weeks = ~10kg gain. 92kg → 100kg in one block is achievable if
-the model is applied consistently and nutrition supports it.
-
-### Squat — Lower Body A (Monday PM)
-
-**Blueprint prescription:** 3 sets × 3–5 reps, driving toward 120kg by October.
+Amit has said plainly that bench and squat numbers are not goals. The top-set
+method still applies, but to the movements the November test actually measures:
+**weighted pull-ups and weighted dips**, which raise the strength ceiling that
+bodyweight rep tests draw on.
 
 **Working application:**
-- Top set: heaviest set, 85–95% 1RM, 3–5 reps
-- 2 back-off sets at 80–85% of top set weight
-- No drop set after squats (lower body fatigue + running volume makes this impractical)
+- Top set: heaviest set, 85–95% of that movement's 1RM, 3–5 reps, clean form
+- Back-off sets at 80–85% of top-set load
+- Immediately after the final heavy set: one max-effort bodyweight set
 
-Double progression: same model as bench — add 2.5–5kg when all reps hit 5 clean.
-Squat increments can be larger (2.5–5kg) than bench because the lower body is more
-load-tolerant.
+That last step is the one to protect. The drop set capitalises on the pump state
+after heavy work — at elevated blood flow, bodyweight reps recruit a hypertrophy
+stimulus heavy loads alone do not reach. Neural strength from the top set plus
+metabolic stress from the drop set is the efficient path to both. [CONSENSUS]
+
+**Double progression:** when every set hits the top of the rep range with clean
+form, add load next session. If the top set only reaches the bottom of the range,
+hold the load. For weighted pull-ups and dips the useful increment is small —
+1.25–2.5kg — because the loads are lower than barbell work and the elbow and
+shoulder connective tissue adapts more slowly than the muscle does.
 
 ### Red Flags for Top-Set Strength Work
 
@@ -502,19 +470,20 @@ from too many warm-up sets or assistance exercises. The top set requires a fresh
 Warm up with submaximal weights (50%, 70%, 85% of target) — do not grind through 5+
 sets before the heavy work.
 
-**Same-day heavy lower body + morning threshold run:** Lower Body A is Monday (easy
-run AM). Lower Body B is Wednesday (threshold run AM). The blueprint correctly pairs
-the heavy squat day with the easy run. If Amit reports swapping Monday Lower A to
-Wednesday (threshold AM), flag the interference risk.
+**Same-day heavy lower body + threshold run:** pairing heavy lower-body work with a
+threshold run on the same day is the interference case worth flagging — heavy legs
+against an easy run is fine, heavy legs against threshold work is not. He arranges
+his own week, so this is something to notice and mention, not a rule to enforce.
 
 ### Weighted Pull-Ups — Both Upper Sessions
 
-Both Upper A (Tuesday) and Upper B (Thursday) include weighted pull-ups with a
-bodyweight drop set.
+Weighted pull-ups carry more of the load toward his November targets than anything
+else in the strength work, so they are worth getting right.
 
-**Upper A context:** Heavy weighted pull-ups (3 sets, 85–95% of weighted pull-up 1RM)
-immediately followed by 1 max-rep bodyweight set. This develops the neural strength
-needed for the 35-pull-up November target alongside the bench focus of the session.
+Heavy weighted pull-ups (3 sets at 85–95% of weighted pull-up 1RM) immediately
+followed by one max-rep bodyweight set. The heavy sets raise the ceiling; the
+bodyweight set is what converts that ceiling into reps on the day — 26+ is a rep
+test, not a strength test.
 
 **Upper B context:** Same prescription, but embedded in a volume/capacity day
 (weighted dips + pull-ups with drop sets). This accumulates the total rep volume
@@ -648,7 +617,7 @@ skill/capacity at training volume, not a top-set heavy day.
 **Coaching implication:** If Amit describes Sunday as "easy" or proposes adding heavy
 weighted work to Sunday, clarify the intent. The Sunday session should be taxing
 aerobically and neurologically but should not create the compound recovery debt of
-a Lower Body A or Upper Body A heavy day.
+a heavy strength day.
 
 **Recovery state for Sunday:** Sunday follows Saturday's complete rest. Amit should
 arrive at Sunday mixed practice as the freshest point in the week. If Garmin body
@@ -922,17 +891,25 @@ opportunity on rest days and under-fuels high-demand days. [CONSENSUS]
 
 Source: [sensai.fit carbohydrate periodization](https://www.sensai.fit/blog/carbohydrate-periodization-training-intensity-fueling-framework)
 
-### Day-by-Day Applied to Amit's Split
+### Carbohydrate Load by Session Type
 
-| Day | AM Session | PM Session | Carb Guidance | Rationale |
-|-----|-----------|-----------|---------------|-----------|
-| Sunday | — | Mixed Practice (VO2, sprints, calisthenics) | **High — 350g+** | High-intensity intervals deplete glycogen rapidly; Slot 5 and pre-bed load for Monday |
-| Monday | Easy Run | Lower Body A (heavy squats) | **High — 350g** | PM heavy squats require full glycogen; easy AM does not drain reserves heavily |
-| Tuesday | Medium Long Run + Strides | Upper Body A (heavy bench) | **High — 350g+** if long run ≥12km | Moderate-to-high run volume; heavy upper body PM |
-| Wednesday | Threshold Run | Lower Body B (speed/power) | **High — 350g+** | Threshold runs consume glycogen at ~3× the rate of Zone-2; prioritize Slot 1 + Slot 2 |
-| Thursday | Easy Run | Upper Body B (volume/capacity) | **Moderate — 300–350g** | Lighter run day; volume training is less glycolytic than heavy strength |
-| Friday | Long Run (16–26km) | Mobility only | **High — 350g+** | 16–26km runs at any intensity require significant glycogen; intra-run carbs for runs >90min |
-| Saturday | Rest / light flush | Rest | **Moderate — 250–300g** | Genuine passive rest; reduce from peak intake; maintain protein |
+The old version of this section was a Sunday-to-Saturday table pinned to a fixed
+weekly split. That split no longer exists — Amit arranges his own week — so the
+guidance is by what the day contains, not what day it is.
+
+| Day contains | Carb guidance | Rationale |
+|---|---|---|
+| High-intensity intervals, VO2 or sprint work | **High** | Intervals deplete glycogen rapidly |
+| A threshold run | **High** | Threshold consumes glycogen at ~3× the Zone-2 rate |
+| A long run | **High** | Significant glycogen cost at any intensity; intra-run carbs beyond ~90min |
+| Heavy strength work | **High** | Heavy compound work wants full glycogen |
+| An easy run, or volume/capacity strength | **Moderate** | Lower glycolytic demand |
+| Genuine rest | **Moderate, reduced** | Come down from peak intake; hold protein |
+
+**Read this alongside the nutrition rule in the digest above.** Amit stopped
+logging food in July 2026 by choice, and that is settled. This section is
+background for reasoning about fuelling if he raises it — it is not licence to
+open a conversation about intake, and never a prompt to ask him to log again.
 
 ### Intra-Run Carbohydrates (Long Run Days)
 
