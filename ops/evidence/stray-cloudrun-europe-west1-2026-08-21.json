@@ -1,0 +1,77 @@
+{
+  "deleted_because": [
+    "Publicly invokable (roles/run.invoker granted to allUsers) while running as klaus-runtime, the SAME service account as production, against the SAME Firestore database (klaus-firestore) with the same Secret Manager access. An unmaintained second front door to live data.",
+    "Zero requests in the preceding 90 days of Cloud Logging.",
+    "None of the 10 Cloud Scheduler jobs targeted it; all point at the me-west1 URL.",
+    "No reference to the europe-west1 URL anywhere in the repo.",
+    "Still on revision 00002, created 2026-05-16 by a manual `gcloud run deploy --source`, never updated by CI (deploy.yml deploys me-west1 only).",
+    "Did not even serve: GET /health and GET / both returned 500.",
+    "Its own CLOUD_RUN_URL env var pointed at the me-west1 service."
+  ],
+  "deleted_on": "2026-08-21",
+  "not_the_reason": "Cost. It had no minScale, so it scaled to zero and billed ~nothing. This was removed as attack surface, not as spend.",
+  "note": "Env captured here is a fossil of the May-2026 architecture (gemini brain, TickTick, Telegram) and must NOT be used to recreate anything. It is recorded only to show what the service had access to.",
+  "reconstructible_from": {
+    "created": "2026-05-16T18:37:06.661589Z",
+    "env": {
+      "CHAT_LOGS_BUCKET": "klaus-chat-logs-klaus-agent",
+      "CLOUD_RUN_URL": "https://klaus-agent-y2abtypx4q-zf.a.run.app",
+      "CLOUD_SCHEDULER_SA_EMAIL": "klaus-heartbeat@klaus-agent.iam.gserviceaccount.com",
+      "CONVERSATION_STORE": "firestore",
+      "ENVIRONMENT": "production",
+      "FIRESTORE_DATABASE": "klaus-firestore",
+      "GARMIN_EMAIL": "<from secret>",
+      "GARMIN_PASSWORD": "<from secret>",
+      "GCP_PROJECT_ID": "klaus-agent",
+      "GOOGLE_TOKEN_SECRET_NAME": "klaus-google-oauth-token",
+      "GOOGLE_TOKEN_STORAGE": "secret_manager",
+      "HOME_ADDRESS": "<from secret>",
+      "NOTION_AI_CHAT_DB_ID": "<redacted — Notion retired 2026-08-16; id has no reconstructive value>",
+      "NOTION_API_TOKEN": "<from secret>",
+      "NOTION_CHAT_LOG_DB_ID": "<redacted — Notion retired 2026-08-16; id has no reconstructive value>",
+      "PINECONE_API_KEY": "<from secret>",
+      "PINECONE_INDEX_NAME": "klaus-memory",
+      "PROACTIVE_FREE_TIME_MIN": "60",
+      "PROACTIVE_GAP_MIN": "30",
+      "PROACTIVE_RAIN_THRESHOLD": "20",
+      "PROACTIVE_TEMP_MAX": "38",
+      "PROACTIVE_TEMP_MIN": "8",
+      "READWISE_TOKEN": "<from secret>",
+      "SMART_AGENT_API_KEY": "<from secret>",
+      "SMART_AGENT_BACKEND": "gemini",
+      "SMART_AGENT_FALLBACK_API_KEY": "<from secret>",
+      "SMART_AGENT_FALLBACK_BACKEND": "anthropic",
+      "SMART_AGENT_FALLBACK_MODEL": "claude-haiku-4-5",
+      "SMART_AGENT_MODEL": "gemini-3-flash-preview",
+      "TELEGRAM_ALLOWED_USER_IDS": "8626312520",
+      "TELEGRAM_BOT_TOKEN": "<from secret>",
+      "TELEGRAM_WEBHOOK_SECRET": "<from secret>",
+      "TICKTICK_CLIENT_ID": "<from secret>",
+      "TICKTICK_CLIENT_SECRET": "<from secret>",
+      "TICKTICK_TOKEN_STORAGE": "secret_manager",
+      "TZ": "Asia/Jerusalem",
+      "WORKER_AGENT_API_KEY": "<from secret>",
+      "WORKER_AGENT_BACKEND": "gemini",
+      "WORKER_AGENT_MODEL": "gemini-2.5-flash"
+    },
+    "iam_bindings": [
+      {
+        "members": [
+          "allUsers"
+        ],
+        "role": "roles/run.invoker"
+      }
+    ],
+    "image": "europe-west1-docker.pkg.dev/klaus-agent/cloud-run-source-deploy/klaus-agent:latest",
+    "max_scale": "2",
+    "region": "europe-west1",
+    "revision": "klaus-agent-00002-x89",
+    "service_account": "klaus-runtime@klaus-agent.iam.gserviceaccount.com",
+    "urls": [
+      "https://klaus-agent-838733343862.europe-west1.run.app",
+      "https://klaus-agent-y2abtypx4q-ew.a.run.app"
+    ]
+  },
+  "secret_handling": "Every credential in this service was a secretKeyRef, so no secret VALUE is recorded here — those entries read '<from secret>'. Notion database ids were redacted as dead internal identifiers.",
+  "what": "Cloud Run service klaus-agent in europe-west1 — a duplicate of the live me-west1 service"
+}
