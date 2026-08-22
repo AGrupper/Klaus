@@ -99,3 +99,32 @@ class TestNeverRaises:
     def test_bad_anchor_falls_back_rather_than_raising(self):
         b = current_block(GOALS, "2026-08-21", anchor_iso="nonsense")
         assert b is None or b["goal_label"] == "5K race"
+
+
+class TestBlockId:
+    """Benchmarks bind to a block by id, and log_benchmark takes that id from
+    whatever Klaus was last told. A goal-derived block therefore needs an id that
+    is stable across every call within the same block — otherwise two benchmarks
+    logged a week apart land in different buckets and the cross-block delta in
+    get_block_status compares a block against itself."""
+
+    def test_block_id_is_derived_from_the_goal(self):
+        b = current_block(GOALS, "2026-08-21", anchor_iso=ANCHOR)
+        assert b["block_id"] == "2026-10-09_5k_race"
+
+    def test_block_id_is_stable_across_the_block(self):
+        early = current_block(GOALS, "2026-06-21", anchor_iso=ANCHOR)["block_id"]
+        late = current_block(GOALS, "2026-10-09", anchor_iso=ANCHOR)["block_id"]
+        assert early == late
+
+    def test_block_id_differs_between_blocks(self):
+        a = current_block(GOALS, "2026-08-21", anchor_iso=ANCHOR)["block_id"]
+        b = current_block(GOALS, "2026-10-20", anchor_iso=ANCHOR)["block_id"]
+        assert a != b
+
+    def test_block_id_survives_an_awkward_label(self):
+        goals = [{"target_date": "2026-11-15",
+                  "goal_label": "November test day (exact date TBC!)", "metrics": {}}]
+        bid = current_block(goals, "2026-11-01", anchor_iso=ANCHOR)["block_id"]
+        assert bid == "2026-11-15_november_test_day_exact_date_tbc"
+        assert " " not in bid and "(" not in bid

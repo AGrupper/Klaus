@@ -28,6 +28,7 @@ properties the seeded blocks did not:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,12 @@ logger = logging.getLogger(__name__)
 # period began here; it is only a fallback for the earliest block, since every
 # later block starts the day after the previous goal.
 DEFAULT_ANCHOR = "2026-06-21"
+
+
+def _slug(text: str) -> str:
+    """Lowercase, underscore-joined, punctuation stripped. Stable for a given label."""
+    cleaned = re.sub(r"[^a-z0-9]+", "_", str(text).lower()).strip("_")
+    return cleaned or "goal"
 
 
 def _as_date(value) -> date | None:
@@ -63,6 +70,8 @@ def current_block(
 
     Returns:
         None, or a JSON-safe dict:
+          block_id        "{goal_date}_{slug}" — stable for the whole block, so
+                          benchmarks logged weeks apart group together
           goal_label, goal_date, metrics, start_date,
           week_num        1-based, never exceeds total_weeks
           total_weeks     length of the block in weeks, minimum 1
@@ -111,8 +120,13 @@ def current_block(
         total_weeks = max(span_days // 7 + 1, 1)
         week_num = min(elapsed_days // 7 + 1, total_weeks)
 
+        label = goal.get("goal_label") or "next goal"
         return {
-            "goal_label": goal.get("goal_label") or "next goal",
+            # Derived from the goal, not from today, so every call inside the block
+            # returns the same id — log_benchmark is handed this by Klaus, and an
+            # id that drifted would scatter one block's benchmarks across many.
+            "block_id": f"{goal_date.isoformat()}_{_slug(label)}",
+            "goal_label": label,
             "goal_date": goal_date.isoformat(),
             "metrics": goal.get("metrics") or {},
             "start_date": start.isoformat(),

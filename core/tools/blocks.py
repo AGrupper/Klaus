@@ -90,10 +90,11 @@ def _handle_get_plan() -> str:
 @tool({
         "name": "get_block_status",
         "description": (
-            "Read the currently-active mesocycle block (resolved by today's date), "
-            "its recorded benchmarks, and the raw per-facet delta versus the prior "
-            "block. Call when Amit asks how the current block is going "
-            "or how his benchmarks compare to last block."
+            "Read the current block — the run-up to Amit's next race — with any "
+            "benchmarks recorded inside it and the raw per-facet delta versus the "
+            "previous block. Call when Amit asks how the current block is going or "
+            "how his numbers compare to last block. He rarely logs benchmarks, so "
+            "empty lists here mean 'nothing recorded', not 'no progress'."
         ),
         "input_schema": {
             "type": "object",
@@ -102,17 +103,34 @@ def _handle_get_plan() -> str:
         },
     })
 def _handle_get_block_status() -> str:
-    """BLOCK-01/BLOCK-03 active block + its benchmarks + raw cross-block deltas.
+    """The current block + its benchmarks + raw cross-block deltas.
+
+    The block comes from Amit's dated goals (core/training/goal_blocks), the same
+    source get_plan uses. It used to come from BlockStore's seeded documents,
+    which still describe the retired 16-week half-marathon blueprint — so this
+    tool answered "Deep Waters -> Peak Engine, focus facets bench_press_1rm and
+    squat_1rm" while get_plan answered with the 5K. Two block tools disagreeing
+    is worse than either being wrong alone.
 
     facet_deltas is raw (current_value - prior_block_value) per facet — NO trend
     projection (Phase 25 scope). The prior value is the most recent benchmark for
     that facet belonging to a DIFFERENT block than the current one.
     """
-    blocks, benchmarks, _profiles = _block_stores()
-    block = blocks.get_current()
+    from datetime import date as _date
+
+    from core.training.goal_blocks import DEFAULT_ANCHOR, current_block
+
+    _blocks, benchmarks, profiles = _block_stores()
+    profile = profiles.load()
+    anchor = profile.get("plan_start_date") if isinstance(profile, dict) else None
+    block = current_block(
+        (profile.get("dated_goals") if isinstance(profile, dict) else None) or [],
+        _date.today().isoformat(),
+        anchor_iso=anchor if isinstance(anchor, str) and anchor else DEFAULT_ANCHOR,
+    )
     if not block:
         return json.dumps({"current_block": None, "benchmarks": [], "facet_deltas": {}})
-    block_id = block.get("doc_id") or block.get("block_id")
+    block_id = block["block_id"]
     current = benchmarks.get_block_benchmarks(block_id)
     facet_deltas: dict[str, float] = {}
     for entry in current:
